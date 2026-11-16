@@ -3293,10 +3293,12 @@
     if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
   // The copy bar (terminal-clipboard.js, `state.clipboard`): a program's copy waiting for Copy, or a copy the browser refused (kind tap).
-  // The button writes inside its own tap, Cancel drops it.
+  // The button writes inside its own tap, Cancel drops it; it hides by itself after TerminalClipboard.BAR_TTL_MS.
   if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.setHost({ show: request => ui.set({ clipboard: request }) });
   ui.actions.clipboardConfirm = () => { if (typeof TerminalClipboard !== 'undefined') void TerminalClipboard.confirm(); };
   ui.actions.clipboardCancel = () => { if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.cancel(); };
+  // The user is on the bar (a mouse over it, the keyboard focus inside it): the bar does not hide by itself until they leave it.
+  ui.actions.clipboardHold = on => { if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.hold(on); };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
   // Types a preset command into the terminal like a paste; no Enter is sent, so the user checks it and presses Enter.

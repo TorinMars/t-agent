@@ -79,18 +79,86 @@ test('without a recent gesture a request asks first: nothing is written until Co
   assert.deepEqual(notices.at(-1), ['Copied 20 characters', 'success']);
 });
 
-test('Cancel copies nothing, and a waiting request expires after 60 seconds', () => {
-  const { term, context, writes, last, advance } = setup();
+test('Cancel copies nothing, and the bar hides by itself after 10 seconds like Cancel', () => {
+  const { term, context, writes, notices, last, advance } = setup();
+  assert.equal(context.clipboard.BAR_TTL_MS, 10000);
   term.osc(osc('one'));
   context.clipboard.cancel();
   assert.equal(last(), null);
   term.osc(osc('two'));
   assert.equal(last().kind, 'ask');
-  advance(context.clipboard.REQUEST_TTL_MS - 1);
+  assert.equal(last().ttl, 10000, 'the view says how long the bar stays (the countdown line)');
+  assert.equal(last().holding, false);
+  advance(context.clipboard.BAR_TTL_MS - 1);
   assert.equal(last().text, 'two');
   advance(1);
   assert.equal(last(), null);
   assert.deepEqual(writes, []);
+  assert.deepEqual(notices, [], 'hiding gives no notice');
+});
+
+test('a refused copy (kind tap) hides after 10 seconds too, writing nothing', async () => {
+  const { handle, context, writes, notices, last, advance, flush } = setup({ clipboardFails: true });
+  await handle.copy('refused text');
+  await flush();
+  assert.equal(last().kind, 'tap');
+  assert.equal(last().ttl, context.clipboard.BAR_TTL_MS);
+  advance(context.clipboard.BAR_TTL_MS);
+  assert.equal(last(), null);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(notices, []);
+});
+
+test('hold stops the timer while the user is on the bar; releasing starts the full 10 seconds again', () => {
+  const { term, context, writes, notices, shown, last, advance } = setup();
+  context.clipboard.hold(true); // no bar: nothing happens
+  assert.equal(shown.length, 0);
+  term.osc(osc('held'));
+  const first = last();
+  assert.equal(first.round, 0);
+  advance(6000);
+  context.clipboard.hold(true);
+  assert.equal(last().holding, true, 'the page is told the bar is held (its line stops)');
+  assert.equal(last().id, first.id, 'the same bar');
+  const count = shown.length;
+  context.clipboard.hold(true); // a second hold changes nothing
+  assert.equal(shown.length, count);
+  advance(context.clipboard.BAR_TTL_MS * 3);
+  assert.equal(last().text, 'held', 'a held bar does not hide');
+  context.clipboard.hold(false);
+  assert.equal(last().holding, false);
+  assert.equal(last().round, 1, 'a new round restarts the line');
+  advance(context.clipboard.BAR_TTL_MS - 1);
+  assert.equal(last().text, 'held', 'the full 10 seconds start again after the release');
+  advance(1);
+  assert.equal(last(), null);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(notices, []);
+  // A release without a hold (the pointer leaves a bar it never entered) does not restart the timer.
+  term.osc(osc('again'));
+  advance(6000);
+  context.clipboard.hold(false);
+  assert.equal(last().round, 0);
+  advance(4000);
+  assert.equal(last(), null);
+});
+
+test('Copy and Cancel still act on a held bar, and a new request is not held', async () => {
+  const { term, context, writes, last, advance, flush } = setup();
+  term.osc(osc('first'));
+  context.clipboard.hold(true);
+  assert.equal(await context.clipboard.confirm(), true);
+  await flush();
+  assert.deepEqual(writes, ['first']);
+  assert.equal(last(), null);
+  advance(context.clipboard.DUPLICATE_WINDOW_MS + 1);
+  term.osc(osc('second'));
+  assert.equal(last().holding, false, 'the hold ended with its bar');
+  context.clipboard.hold(true);
+  context.clipboard.cancel();
+  assert.equal(last(), null);
+  context.clipboard.hold(false); // the pointer leaves after the bar went away: nothing happens
+  assert.equal(last(), null);
 });
 
 test('right after a user gesture on the terminal the copy is written at once, once per gesture', async () => {
@@ -177,7 +245,7 @@ test('a page selection and a program copy after a gesture give the identical wri
     assert.deepEqual(notices, [], 'no notice while the bar waits');
   }
   assert.deepEqual(bars[0], bars[1]);
-  assert.deepEqual(bars[0], { kind: 'tap', text: 'x', preview: 'x', chars: 1 });
+  assert.deepEqual(bars[0], { kind: 'tap', text: 'x', preview: 'x', chars: 1, ttl: 10000, holding: false, round: 0 });
 });
 
 test('a page copy uses up the gesture, is ignored for a hidden terminal and merges with the program\'s copy of the same text', async () => {

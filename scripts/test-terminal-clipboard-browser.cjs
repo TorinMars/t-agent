@@ -2,12 +2,14 @@
 // from the terminal (public/js/terminal-clipboard.js), so a page selection and a program's OSC 52 copy cannot be told apart:
 // - a double / triple tap (touch) or a finished mouse drag (pointer) copies at once with "Copied N characters", no bar; Cmd+C gives no second notice;
 // - a program's copy right after the user's own tap or click is written at once with the identical notice (split request, duplicate merged);
-// - a program's copy without a gesture shows the bar with a one-line preview; Copy writes, Cancel does not, it expires after 60 s, later output
-//   cannot replace it;
+// - a program's copy without a gesture shows the bar with a one-line preview; Copy writes, Cancel does not, later output cannot replace it;
+// - the bar hides by itself after 10 s (nothing written): a 3px aria-hidden countdown line along its bottom edge shrinks over those 10 s; a mouse
+//   over the bar (pointer mode) or the keyboard focus inside it holds it past 10 s, and leaving starts the full 10 s and the line again;
 // - a write the browser refuses shows the same bar ("Press Copy to finish copying", same DOM) for both sources, and its Copy writes; when that
 //   fails too, one error notice; the same text from the page and the program within 2 s is one copy; replayed history never copies;
 // - the bar's look: a filled blue bar (the theme's `notice` blue, white text at WCAG AA), the copy icon, a title line over the preview, a white
-//   filled Copy and a text Cancel, inside the terminal box under the header; it slides in and pulses once, and not at all with reduced motion;
+//   filled Copy and a text Cancel, inside the terminal box under the header; it slides in and pulses once, and not at all with reduced motion
+//   (the countdown line is hidden then, and the bar still hides after 10 s);
 //   at 320 px with a long text and the on-screen keyboard open it still fits, with 44 px buttons.
 // The page is served over https (routed), so the real clipboard API is used with granted permissions. H5_SHOT_DIR=<dir> saves screenshots of the bar.
 const { chromium } = require('playwright');
@@ -24,8 +26,27 @@ const rgb = text => (text.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
 const luminance = colour => { const [r, g, b] = rgb(colour).map(v => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 const SHOTS = process.env.H5_SHOT_DIR;
-// Waits until the bar's slide-in and pulse (on the bar and its ::after) have finished, so boxes are measured at rest.
-const settled = page => page.evaluate(() => Promise.all((document.querySelector('#h5-clipboard-bar')?.getAnimations({ subtree: true }) || []).map(animation => animation.finished)));
+// Waits until the bar's slide-in and pulse (on the bar and its ::after) have finished, so boxes are measured at rest. The countdown line runs
+// for the bar's whole life and is left out.
+const settled = page => page.evaluate(() => Promise.all((document.querySelector('#h5-clipboard-bar')?.getAnimations({ subtree: true }) || [])
+  .filter(animation => animation.animationName !== 'h5-clipboard-timer').map(animation => animation.finished)));
+// The countdown line of the bar: its holder, its animation (the CSS name, duration, easing and progress) and its box against the bar's.
+const timerLine = page => page.evaluate(() => {
+  const bar = document.querySelector('#h5-clipboard-bar');
+  const holder = bar.querySelector('.h5-clipboard-timer');
+  const line = holder && holder.querySelector('.h5-clipboard-timer-line');
+  if (!line) return null;
+  const [animation] = line.getAnimations();
+  const style = getComputedStyle(line);
+  const box = line.getBoundingClientRect();
+  const outer = bar.getBoundingClientRect();
+  return {
+    hidden: holder.getAttribute('aria-hidden'), display: getComputedStyle(holder).display, holding: bar.dataset.holding || null,
+    name: style.animationName, duration: style.animationDuration, easing: style.animationTimingFunction, count: style.animationIterationCount,
+    running: animation ? animation.playState : null, time: animation ? animation.currentTime : null, total: animation ? animation.effect.getComputedTiming().duration : null,
+    height: box.height, full: line.offsetWidth, barWidth: bar.clientWidth, bottomGap: outer.bottom - box.bottom, background: style.backgroundColor,
+  };
+});
 
 async function openPage(browser, touch, size) {
   const viewport = size || (touch ? { width: 390, height: 844 } : { width: 1440, height: 900 });
@@ -241,12 +262,84 @@ async function run(browser, touch) {
   await press(page.locator('#h5-clipboard-cancel'));
   await bar.waitFor({ state: 'hidden' });
   assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: Cancel copies nothing`);
-  // A waiting request expires after 60 s.
+  // The bar hides by itself after 10 s, like Cancel; a thin countdown line along its bottom edge shrinks over those 10 s.
+  await notices();
+  // The mouse is still where Cancel was, and a bar that appears under it is held (that is the hover rule): move it off the bar first.
+  const mouseAway = async () => {
+    const off = await page.locator('.h5-xterm:not([hidden]) .xterm-screen').boundingBox();
+    await page.mouse.move(off.x + off.width / 2, off.y + off.height - 20, { steps: 3 });
+  };
+  if (!touch) await mouseAway();
   await emit(osc('expires'));
   await bar.waitFor({ state: 'visible' });
-  await page.clock.fastForward('01:01');
-  await bar.waitFor({ state: 'hidden' });
-  assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: an expired request copies nothing`);
+  const shownAt = await page.evaluate(() => Date.now()); // the page clock runs on while the line is checked (and shot)
+  await page.waitForTimeout(400);
+  const line = await timerLine(page);
+  assert.ok(line, `${mode}: the bar has a countdown line`);
+  assert.equal(line.hidden, 'true', `${mode}: the countdown line is decorative (aria-hidden)`);
+  assert.deepEqual([line.name, line.duration, line.easing, line.count, line.running, line.total], ['h5-clipboard-timer', '10s', 'linear', '1', 'running', 10000], `${mode}: the line runs once, linearly, over the bar's 10 s ${JSON.stringify(line)}`);
+  assert.ok(line.time > 200 && line.time < 3000, `${mode}: the line is counting down (${line.time} ms)`);
+  assert.ok(line.height === 3 && Math.abs(line.full - line.barWidth) <= 1 && line.bottomGap <= 1.5, `${mode}: a 3px line along the whole bottom edge ${JSON.stringify(line)}`);
+  assert.match(line.background, /^rgba\(255, 255, 255, 0\.[2-6]\d*\)$/, `${mode}: a light translucent white line`);
+  if (SHOTS) {
+    // Half-way: the line covers half the bar (the bar at rest, the notice of the copy before out of the way).
+    await settled(page);
+    await page.evaluate(() => {
+      for (const node of document.querySelectorAll('.MuiSnackbar-root')) node.style.visibility = 'hidden';
+      const [animation] = document.querySelector('.h5-clipboard-timer-line').getAnimations(); animation.pause(); animation.currentTime = 5000;
+    });
+    await page.screenshot({ path: path.join(SHOTS, `copy-bar-timer-${touch ? 390 : 1440}.png`) });
+    const shown = await bar.boundingBox();
+    await page.screenshot({ path: path.join(SHOTS, `copy-bar-timer-${touch ? 390 : 1440}-crop.png`), clip: { x: 0, y: Math.max(0, shown.y - 16), width: page.viewportSize().width, height: shown.height + 32 } });
+    await page.evaluate(() => {
+      for (const node of document.querySelectorAll('.MuiSnackbar-root')) node.style.visibility = '';
+      document.querySelector('.h5-clipboard-timer-line').getAnimations()[0].play();
+    });
+  }
+  await page.clock.fastForward(Math.max(0, shownAt + 9000 - await page.evaluate(() => Date.now())));
+  assert.equal(await bar.count(), 1, `${mode}: still shown before 10 s`);
+  await page.clock.fastForward(1500);
+  await bar.waitFor({ state: 'detached' });
+  assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: a bar that hid by itself copies nothing`);
+  assert.deepEqual(await notices(), [], `${mode}: hiding by itself gives no notice`);
+  // The keyboard focus inside the bar holds it: the line stands still at full width; leaving starts the full 10 s and the line again.
+  const holding = value => page.waitForFunction(on => (document.querySelector('#h5-clipboard-bar')?.dataset.holding === 'true') === on, value, { timeout: 3000 });
+  await emit(osc('focused bar'));
+  await bar.waitFor({ state: 'visible' });
+  await page.locator('#h5-clipboard-cancel').focus();
+  await holding(true);
+  const still = await timerLine(page);
+  assert.deepEqual([still.name, still.running, still.full === still.barWidth || Math.abs(still.full - still.barWidth) <= 1], ['none', null, true], `${mode}: a held bar's line stands still ${JSON.stringify(still)}`);
+  await page.clock.fastForward(30000);
+  assert.equal(await bar.count(), 1, `${mode}: the focus holds the bar past 10 s`);
+  await page.evaluate(() => document.activeElement.blur());
+  await holding(false);
+  const again = await timerLine(page);
+  assert.ok(again.running === 'running' && again.time < 1500, `${mode}: leaving restarts the line ${JSON.stringify(again)}`);
+  await page.clock.fastForward(9000);
+  assert.equal(await bar.count(), 1, `${mode}: the full 10 s start again after the focus leaves`);
+  await page.clock.fastForward(1500);
+  await bar.waitFor({ state: 'detached' });
+  if (!touch) {
+    // A mouse over the bar holds it too (pointer mode); moving off it starts the full 10 s again.
+    await emit(osc('hovered bar'));
+    await bar.waitFor({ state: 'visible' });
+    await settled(page);
+    const over = await bar.boundingBox();
+    await page.mouse.move(over.x + 30, over.y + over.height / 2, { steps: 3 });
+    await holding(true);
+    await page.clock.fastForward(30000);
+    assert.equal(await bar.count(), 1, `${mode}: the mouse over the bar holds it past 10 s`);
+    await mouseAway();
+    await holding(false);
+    assert.ok((await timerLine(page)).time < 1500, `${mode}: leaving restarts the line`);
+    await page.clock.fastForward(9000);
+    assert.equal(await bar.count(), 1, `${mode}: the full 10 s start again after the mouse leaves`);
+    await page.clock.fastForward(1500);
+    await bar.waitFor({ state: 'detached' });
+  }
+  assert.equal(await clipboard(), 'Remote program\nhello ✓ 中文', `${mode}: held bars that hid copy nothing`);
+  assert.deepEqual(await notices(), []);
   await page.waitForTimeout(1600);
 
   // 3. Right after a gesture (Claude Code copies a selection on release): written at once with the identical notice, even split over two writes.
@@ -338,6 +431,17 @@ async function run(browser, touch) {
   await press(page.locator('#h5-clipboard-cancel'));
   await bar.waitFor({ state: 'hidden' });
   assert.equal(await clipboard(), 'needs its own tap', `${mode}: Cancel copies nothing (reduced motion)`);
+  // No countdown line with reduced motion, and the bar still hides after 10 s.
+  if (!touch) await mouseAway();
+  await emit(osc('calm expiry'));
+  await bar.waitFor({ state: 'visible' });
+  const calmLine = await timerLine(page);
+  assert.deepEqual([calmLine.display, calmLine.running], ['none', null], `${mode}: no countdown line with reduced motion ${JSON.stringify(calmLine)}`);
+  await page.clock.fastForward(9000);
+  assert.equal(await bar.count(), 1);
+  await page.clock.fastForward(1500);
+  await bar.waitFor({ state: 'detached' });
+  assert.equal(await clipboard(), 'needs its own tap', `${mode}: the calm bar hid on time and copied nothing`);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await notices();
 
@@ -404,6 +508,6 @@ async function narrow(browser) {
     await run(browser, true);
     await run(browser, false);
     await narrow(browser);
-    console.log('PASS: copy on select in touch (390 px) and pointer (1440 px) mode: double / triple tap and mouse drag / double click copy at once with the OSC 52 notice, Cmd+C no second notice, program copy after a gesture (split, duplicate merged), bar with preview without one (Copy / Cancel / expiry, immutable; blue, icon, title, one slide and pulse, none with reduced motion), the same refused-copy bar for both sources, 320 px with a long text and the on-screen keyboard, error notice, merge across sources, replay ignored.');
+    console.log('PASS: copy on select in touch (390 px) and pointer (1440 px) mode: double / triple tap and mouse drag / double click copy at once with the OSC 52 notice, Cmd+C no second notice, program copy after a gesture (split, duplicate merged), bar with preview without one (Copy / Cancel / hides after 10 s with a countdown line, held by hover and focus, immutable; blue, icon, title, one slide and pulse, none with reduced motion), the same refused-copy bar for both sources, 320 px with a long text and the on-screen keyboard, error notice, merge across sources, replay ignored.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

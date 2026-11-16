@@ -940,3 +940,76 @@ test('end to end through the service: a delivery relayed to the sender reaches T
   assert.match(logs.join('\n'), /telegram item 4 waiting_user message: sent from K01/);
   plugin.close();
 });
+
+// ---- Direct messages (tcli notify) ----
+const MEGAPHONE = '\u{1F4E3}';
+test('a direct message card: the title, the text with its newlines, From and From device, the link; escaped and parsed by gramjs', () => {
+  const input = { reason: 'direct', message: { title: 'Build <done> & ok', text: 'Line one <b>bold?</b>\n\n\n\nLine **two** &amp;‮\u0007', from: 'Fix CI · Claude 1' }, link: LINK, origin: { name: 'K01 <office>' } };
+  const html = messageHtml(input);
+  assert.equal(html, [
+    `${MEGAPHONE} <b>Build &lt;done&gt; &amp; ok</b>`, '', 'Line one &lt;b&gt;bold?&lt;/b&gt;', '', 'Line **two** &amp;amp;', '',
+    'From Fix CI · Claude 1', 'From device K01 &lt;office&gt;', `<a href="${LINK}">Open in T-Agent</a>`,
+  ].join('\n'));
+  const { text, entities } = parsed(html);
+  assert.equal(text, `${MEGAPHONE} Build <done> & ok\n\nLine one <b>bold?</b>\n\nLine **two** &amp;\n\nFrom Fix CI · Claude 1\nFrom device K01 <office>\nOpen in T-Agent`);
+  assert.deepEqual(entities.map(entity => entity.type), ['Bold', 'TextUrl']);
+  assert.equal(messageText(input), `${MEGAPHONE} Build <done> & ok\n\nLine one <b>bold?</b>\n\nLine **two** &amp;\n\nFrom Fix CI · Claude 1\nFrom device K01 <office>\nOpen: ${LINK}`);
+  // No title, no from, no origin, no link: the default header and the text only.
+  assert.equal(messageHtml({ reason: 'direct', message: { text: 'Just this' } }), `${MEGAPHONE} <b>Message from an agent</b>\n\nJust this`);
+  assert.equal(messageText({ reason: 'direct', message: { text: 'x' }, link: 'javascript:alert(1)' }), `${MEGAPHONE} Message from an agent\n\nx`, 'only an http(s) link');
+});
+
+test('a long direct message is cut to fit, and the header, the From lines and the link stay', () => {
+  const input = { reason: 'direct', message: { title: 'T'.repeat(300), text: `${'word '.repeat(1000)}\n${'<&>'.repeat(500)}`, from: 'f'.repeat(300) }, link: LINK, origin: { name: 'n'.repeat(100) } };
+  for (const body of [messageText(input), parsed(messageHtml(input)).text]) {
+    assert.ok(body.length <= MESSAGE_MAX, `${body.length}`);
+    assert.ok(body.startsWith(`${MEGAPHONE} ${'T'.repeat(199)}…\n\n`), body.slice(0, 40));
+    assert.match(body, /…\n\nFrom f+…\nFrom device n+…\n/);
+    assert.ok(body.endsWith('Open in T-Agent') || body.endsWith(`Open: ${LINK}`));
+  }
+  assert.ok(!/&[a-z]*$/.test(messageHtml(input).split('\n\n')[1]), 'no entity is cut in half');
+});
+
+test('notify with reason direct sends the direct card as HTML, never a call, with the plain-text fallback', async () => {
+  const { gram, state } = mockGram();
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
+  assert.equal(plugin.direct, true, 'Telegram takes direct messages');
+  const message = { title: 'Decide <X>', text: 'Option A or B?', from: 'Task · Claude 2' };
+  assert.deepEqual(await plugin.notify({ reason: 'direct', mode: 'message', item: null, message, config: savedConfig(), link: LINK, origin: null }), { outcome: 'sent' });
+  assert.equal(state.messages[0].parseMode, 'html');
+  assert.equal(state.messages[0].linkPreview, false);
+  assert.equal(state.messages[0].message, `${MEGAPHONE} <b>Decide &lt;X&gt;</b>\n\nOption A or B?\n\nFrom Task · Claude 2\n<a href="${LINK}">Open in T-Agent</a>`);
+  assert.equal(state.invokes.filter(request => /RequestCall/.test(request.className)).length, 0);
+  // Telegram refuses the entities: the same card once more as plain text.
+  let calls = 0;
+  state.sendMessage = () => { calls += 1; if (calls === 1) throw rpcError('ENTITY_BOUNDS_INVALID'); return {}; };
+  const logs = [];
+  await plugin.notify({ reason: 'direct', mode: 'message', item: null, message, config: savedConfig(), link: LINK, log: (level, text) => logs.push(`${level} ${text}`) });
+  assert.equal(state.messages.at(-1).parseMode, false);
+  assert.equal(state.messages.at(-1).message, messageText({ reason: 'direct', message, link: LINK }));
+  assert.deepEqual(logs, ['warn formatted message refused (ENTITY_BOUNDS_INVALID), sending plain text'], 'no content in the log');
+  state.sendMessage = () => { throw rpcError('FLOOD', { seconds: 9 }); };
+  await assert.rejects(plugin.notify({ reason: 'direct', mode: 'message', item: null, message, config: savedConfig() }), /wait 9 seconds/);
+  plugin.close();
+});
+
+test('end to end through the service: sendDirect reaches Telegram with the From line, and a relayed one with From device', async () => {
+  const { gram, state } = mockGram();
+  const plugin = createTelegramNotifier({ loadGram: () => gram, timers: fakeTimers() });
+  const db = new Database(':memory:');
+  db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+  const logs = [];
+  const service = createAttentionNotify({ db, sessionSecret: SECRET, onChange: null, getOwner: () => 'owner', notifiers: [plugin], log: (level, message) => logs.push(message) });
+  await assert.rejects(service.sendDirect({ text: 'not yet' }), error => error.code === 'NOTIFY_NOT_CONFIGURED');
+  db.prepare("INSERT INTO system_state (key, value) VALUES ('attention-notify:telegram:owner', ?)").run(require('../lib/token-crypto').encryptToken(JSON.stringify(savedConfig()), SECRET));
+  assert.deepEqual(await service.sendDirect({ text: 'The build is green', from: 'Fix CI · Claude 1' }), { results: [{ notifier: 'telegram', outcome: 'sent' }] });
+  assert.equal(state.messages[0].message, `${MEGAPHONE} <b>Message from an agent</b>\n\nThe build is green\n\nFrom Fix CI · Claude 1`);
+  assert.deepEqual(await service.acceptRelayDirect({ notifier: 'telegram', message: { title: '', text: 'From afar', from: 'Task · Codex 1' }, link: LINK, origin: { instance_id: 'x', name: 'K01' } }), { outcome: 'sent' });
+  assert.equal(state.messages[1].message, `${MEGAPHONE} <b>Message from an agent</b>\n\nFrom afar\n\nFrom Task · Codex 1\nFrom device K01\n<a href="${LINK}">Open in T-Agent</a>`);
+  state.sendMessage = () => { throw rpcError('USER_IS_BLOCKED'); };
+  const failed = await service.sendDirect({ text: 'blocked' });
+  assert.equal(failed.results[0].outcome, 'error');
+  assert.ok(!JSON.stringify(failed).includes(SESSION) && !JSON.stringify(failed).includes(API_HASH));
+  assert.equal(logs.join('\n').includes('The build is green'), false, 'the text is never logged');
+  plugin.close();
+});

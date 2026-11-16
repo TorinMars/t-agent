@@ -1,6 +1,6 @@
 ---
 name: tcli
-description: The tcli command of T-Agent. Use it to manage files in the user's object storage (OSS bucket) - upload, download, list, copy, move or delete files, share a file by link, put an image or a build somewhere reachable on the web - and to drive the user's own Chrome through the T-Agent browser extension - open and read web pages, click and type, take screenshots, inspect network requests and record how a site works, with the user's logged-in sessions.
+description: The tcli command of T-Agent. Use it to manage files in the user's object storage (OSS bucket) - upload, download, list, copy, move or delete files, share a file by link, put an image or a build somewhere reachable on the web - and to drive the user's own Chrome through the T-Agent browser extension - open and read web pages, click and type, take screenshots, inspect network requests and record how a site works, with the user's logged-in sessions - and to message the user on Telegram or email.
 ---
 
 # tcli
@@ -9,6 +9,7 @@ description: The tcli command of T-Agent. Use it to manage files in the user's o
 
 - `oss`: files in the object storage bucket that the user set up in T-Agent (Settings → Tasks and files → Image and file upload).
 - `browser`: the user's Chrome on this computer, through the T-Agent browser extension (Settings → Tasks and files → Browser extension). See "Browser" below.
+- `notify`: a short message to the user on the notifiers they set up in T-Attention (Telegram, email). See "Notify the user" below.
 
 More groups may come later; `tcli help` lists what this version has.
 
@@ -137,6 +138,25 @@ These rules are strict. "Confirmation" means the user said yes in this conversat
 - Uploads and downloads go through the T-Agent server and can take a while. Tell the user before you move a large file (over about 100 MB), and run one big transfer at a time.
 - For a whole folder, upload the files one by one into one dated prefix, or pack them first (`tar -czf site.tar.gz site/`) and upload the archive. Say how many files you uploaded.
 - Do not print a large or binary file to standard output; write it with `-o <file>`.
+
+## Notify the user
+
+`tcli notify` sends the user a short message on every notifier they set up in T-Attention that takes messages (Telegram, email). T-Agent adds which task and terminal it came from, and a link to the page.
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" notify "The release build finished: 412 tests pass. Nothing else needs you."
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" notify --title "Decision needed" "Keep the old API or remove it? I stopped until you answer."
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" notify --via telegram --file ./summary.md
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" notify status
+```
+
+- When: a long task finished or failed while the user may be away, or you need a decision and cannot go on. Not for every step, and at most a few messages per task.
+- Keep it short (at most 3000 characters, title at most 200): say what happened and what you need from the user. `--link URL` adds a link, `-` reads the text from standard input.
+- Each notifier prints one line, such as `telegram  sent` or `telegram  relayed through T01 (sent)`.
+- Never put secrets, tokens, passwords or private data in a message.
+- Quiet hours, the hourly limit and the switch "Let agent sessions send messages (tcli notify)" are the user's choice. When a message is skipped, do not try again, reword it or use another way to get around them; tell the user in the conversation instead.
+
+Exit codes: `0` sent on at least one notifier; `1` everything was skipped (quiet hours, the same message within a minute, the hourly limit), nothing is set up (`NOTIFY_NOT_CONFIGURED`: tell the user to set up Telegram or email in Settings → T-Attention), or wrong usage; `2` not in a T-Agent terminal, or the user turned agent messages off (`NOTIFY_AGENT_ACCESS_OFF`: do not ask them to turn it on just for you); `4` the server, the network or every notifier failed (do not repeat it more than once).
 
 ## Browser
 

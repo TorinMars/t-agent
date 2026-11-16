@@ -177,8 +177,35 @@ const HTML_FORMAT = {
 };
 const same = value => value;
 const PLAIN_FORMAT = { text: same, bold: same, italic: same, pre: same, quote: same, code: same, link: href => `Open: ${href}` };
-const messageHtml = input => renderCard(cardOf(input), HTML_FORMAT);
-const messageText = input => renderCard(cardOf(input), PLAIN_FORMAT);
+// A direct message of an agent session (reason 'direct', `tcli notify`): no item, only { title, text, from }. The card is
+//   a megaphone and <b>title</b> (no title: "Message from an agent")
+//   the text, cleaned line by line (newlines kept, a run of empty lines folded to one) and cut to what is left of MESSAGE_MAX
+//   From <from> / From device <origin> (relayed from a linked device) / the link
+// The header, the From lines and the link are reserved first, like the item card, so a long text never pushes them out.
+const DIRECT_EMOJI = '\u{1F4E3}';
+const DIRECT_TITLE = 'Message from an agent';
+const paragraphs = value => String(value || '').split(/\r?\n/).map(line => oneLine(line, Infinity))
+  .filter((line, index, all) => line || (index > 0 && all[index - 1])).join('\n').trim();
+function directCardOf({ message, link, origin }) {
+  const source = message && typeof message === 'object' ? message : {};
+  const title = oneLine(source.title, 200) || DIRECT_TITLE;
+  const sender = oneLine(source.from, 200);
+  const from = sender ? `From ${sender}` : '';
+  const deviceName = origin && typeof origin === 'object' ? oneLine(origin.name, 60) : '';
+  const device = deviceName ? `From device ${deviceName}` : '';
+  const href = httpLink(link);
+  const left = MESSAGE_MAX - GROUP_GAPS - (DIRECT_EMOJI.length + 1 + title.length) - (from ? from.length + 1 : 0) - (device ? device.length + 1 : 0) - (href ? LINK_LABEL.length + 2 + href.length + 1 : 0);
+  const text = left >= SECTION_MIN ? cut(paragraphs(source.text), left - 1) : '';
+  return { title, text, from, device, href };
+}
+function renderDirect(card, format) {
+  const { text: plain, bold, link } = format;
+  const groups = [[`${DIRECT_EMOJI} ${bold(card.title)}`], [card.text && plain(card.text)], [card.from && plain(card.from), card.device && plain(card.device), card.href && link(card.href)]];
+  return groups.map(group => group.filter(Boolean).join('\n')).filter(Boolean).join('\n\n');
+}
+const isDirect = input => Boolean(input && input.reason === 'direct');
+const messageHtml = input => (isDirect(input) ? renderDirect(directCardOf(input), HTML_FORMAT) : renderCard(cardOf(input), HTML_FORMAT));
+const messageText = input => (isDirect(input) ? renderDirect(directCardOf(input), PLAIN_FORMAT) : renderCard(cardOf(input), PLAIN_FORMAT));
 // Telegram's answers that say the formatting of the message was refused: a plain copy can still be delivered. Other errors are not retried.
 const FORMAT_REFUSED = /^(ENTITY_|ENTITIES_|MESSAGE_EMPTY$|MESSAGE_TOO_LONG$)/;
 // What "Test message" in Settings sends: the real card with realistic content, so the format can be seen.
@@ -362,8 +389,13 @@ function createTelegramNotifier(options = {}) {
   const callSeconds = config => Math.min(120, Math.max(5, Number(config.callSeconds) || DEFAULT_CALL_SECONDS));
 
   // ---- The contract interface ----
-  async function notify({ item, reason, mode, config, log, link, error, origin }) {
+  async function notify({ item, reason, mode, config, log, link, error, origin, message }) {
     if (!ready(config)) throw new TelegramError('Telegram is not set up');
+    // A direct message (tcli notify) is always a message, never a call.
+    if (reason === 'direct') {
+      try { await sendMessage(config, { reason, message, link, origin }, log); return { outcome: 'sent' }; }
+      catch (failure) { throw new TelegramError(explain(failure), 502); }
+    }
     if (mode === 'call') {
       try {
         const how = await ring(config, callSeconds(config));
@@ -609,6 +641,7 @@ function createTelegramNotifier(options = {}) {
       { key: 'callSeconds', label: 'Ring time (seconds)', type: 'number', default: DEFAULT_CALL_SECONDS },
     ],
     modes: ['message', 'call', 'off'],
+    direct: true, // takes free-form messages of agent sessions (reason 'direct', tcli notify)
     ready, notify, test, status, routes,
     close() { for (const owner of [...logins.keys()]) dropLogin(owner); for (const session of [...clients.keys()]) closeClient(session); },
   };

@@ -66,7 +66,7 @@ async function makeDevice(t, name, { ready = false, older = false, capabilities 
   const tests = [];
   const device = { name, instanceId: ID[name], ready, calls, tests, logs, db, bus, timers, clock, links: [], received: [], peersOf: [] };
   const plugin = {
-    name: 'telegram', label: 'Telegram', configFields: [],
+    name: 'telegram', label: 'Telegram', configFields: [], direct: true,
     ready: () => device.ready,
     async notify(args) { calls.push(args); return device.notifyAnswer ? device.notifyAnswer(args) : { outcome: 'sent' }; },
     async test(config, options) { tests.push(options); return { ok: true, outcome: 'sent' }; },
@@ -463,6 +463,81 @@ test('without linked devices nothing changes: Telegram sends here, and the page 
   a.ready = false;
   assert.equal(a.relay.summary(), null, 'no device has Telegram: nothing to name');
   assert.equal(a.requests.length, 0, 'no request to anyone');
+});
+
+// ---- Direct messages (tcli notify) ----
+test('a direct message of a device that is not the sender is relayed with reason direct and no item; the sender sends it "From device"', async t => {
+  const a = await makeDevice(t, 'A', { ready: true });
+  const b = await makeDevice(t, 'B');
+  link(a, b);
+  const status = await b.service.directStatus('owner');
+  assert.deepEqual(status.notifiers, [{ name: 'telegram', label: 'Telegram', enabled: true, ready: true, via: 'A' }], 'B can send through A');
+  const answer = await b.service.sendDirect({ title: 'Build', text: 'The long build finished', from: 'Fix CI \u00b7 Claude 1', link: 'https://b.example.com/' });
+  assert.deepEqual(answer, { results: [{ notifier: 'telegram', outcome: 'relayed', detail: 'sent', via: 'A' }] });
+  assert.equal(b.calls.length, 0, 'B never sends itself');
+  assert.equal(a.calls.length, 1);
+  const sent = a.calls[0];
+  assert.equal(sent.reason, 'direct');
+  assert.equal(sent.mode, 'message');
+  assert.equal(sent.item, null);
+  assert.deepEqual(sent.message, { title: 'Build', text: 'The long build finished', from: 'Fix CI \u00b7 Claude 1' });
+  assert.deepEqual(sent.origin, { name: 'B' });
+  assert.equal(sent.link, 'https://b.example.com/');
+  const posted = JSON.parse(relayPosts(a).at(-1).raw);
+  assert.deepEqual(Object.keys(posted).sort(), ['link', 'message', 'mode', 'notifier', 'reason']);
+  assert.equal(posted.reason, 'direct');
+  const onA = a.service.recent()[0];
+  assert.deepEqual([onA.kind, onA.item_id, onA.outcome, onA.origin], ['direct', null, 'sent', 'B']);
+  const onB = b.service.recent()[0];
+  assert.deepEqual([onB.kind, onB.item_id, onB.outcome, onB.via, onB.detail], ['direct', null, 'relayed', 'A', 'sent']);
+  // Dedupe and quiet hours are decided on B: nothing more reaches A. The quiet hours of A do not apply.
+  assert.equal((await b.service.sendDirect({ title: 'Build', text: 'The long build finished' })).results[0].outcome, 'duplicate');
+  b.service.saveRules('owner', { quietHours: { enabled: true, start: '00:00', end: '23:59', timeZone: 'UTC' } });
+  assert.equal((await b.service.sendDirect({ text: 'at night' })).results[0].outcome, 'quiet_hours');
+  assert.equal(relayPosts(a).length, 1);
+  b.service.saveRules('owner', { quietHours: { enabled: false } });
+  a.service.saveRules('owner', { quietHours: { enabled: true, start: '00:00', end: '23:59', timeZone: 'UTC' }, rateLimit: { message: 2 } });
+  assert.deepEqual((await b.service.sendDirect({ text: 'second' })).results[0], { notifier: 'telegram', outcome: 'relayed', detail: 'sent', via: 'A' });
+  // The rate limit of A holds: relayed, but not sent there (and B may try the same text again).
+  assert.deepEqual((await b.service.sendDirect({ text: 'third' })).results[0], { notifier: 'telegram', outcome: 'relayed', detail: 'rate_limited', via: 'A' });
+  assert.equal(a.calls.length, 2);
+  assert.equal(b.timers.count(), 0, 'a direct message is never retried later');
+});
+
+test('a direct message through an older sender, an offline sender, and malformed direct relays', async t => {
+  const a = await makeDevice(t, 'A', { ready: true });
+  const b = await makeDevice(t, 'B');
+  link(a, b);
+  await b.relay.refreshStale();
+  // A sender of a version before direct messages: its accept refuses the reason.
+  const accept = a.relay.accept;
+  a.relay.accept = async () => { throw Object.assign(new Error('INVALID_REASON'), { statusCode: 400 }); };
+  assert.deepEqual((await b.service.sendDirect({ text: 'hello' })).results, [{ notifier: 'telegram', outcome: 'relay_failed', detail: 'The sender device needs a T-Agent update', via: 'A' }]);
+  assert.equal(b.timers.count(), 0, 'no retry');
+  a.relay.accept = accept;
+  assert.equal((await b.service.sendDirect({ text: 'hello' })).results[0].outcome, 'relayed', 'a failed message is not a duplicate');
+  // Offline: relay_offline at once, no retry, never a send from B.
+  setOnline(b, 'A', false);
+  assert.deepEqual((await b.service.sendDirect({ text: 'offline' })).results, [{ notifier: 'telegram', outcome: 'relay_offline', detail: 'REMOTE_OFFLINE', via: 'A' }]);
+  assert.equal(b.timers.count(), 0);
+  assert.equal(b.calls.length, 0);
+  // Malformed: a call, no text, a message that is not an object. An item in a direct relay is ignored.
+  const linkB = a.links.find(entry => entry.name === 'B');
+  const body = { notifier: 'telegram', mode: 'message', reason: 'direct', message: { text: 'ok' }, link: '' };
+  for (const [bad, code] of [[{ ...body, mode: 'call' }, 'INVALID_MODE'], [{ ...body, message: { text: '  ' } }, 'INVALID_MESSAGE'], [{ ...body, message: 'text' }, 'INVALID_MESSAGE'], [{ ...body, message: undefined }, 'INVALID_MESSAGE']]) {
+    await assert.rejects(a.relay.accept(linkB, bad), error => error.statusCode === 400 && error.message === code, code);
+  }
+  const before = a.calls.length;
+  assert.deepEqual(await a.relay.accept(linkB, { ...body, item: relayItem(item(3, 'failed')), message: { text: `${'x'.repeat(5000)}`, title: 't'.repeat(500), from: 'Spoofed origin' }, origin: { name: 'Spoofed' } }), { outcome: 'sent' });
+  const got = a.calls[before];
+  assert.equal(got.item, null);
+  assert.equal(got.message.text.length, 3000);
+  assert.equal(got.message.title.length, 200);
+  assert.deepEqual(got.origin, { name: 'B' }, 'the origin is the link, never the body');
+  // A sender switched off is no sender any more (409 NOT_SENDER), and its service says so when asked directly.
+  a.service.savePluginConfig('telegram', 'owner', { enabled: false });
+  await assert.rejects(a.relay.accept(linkB, body), error => error.statusCode === 409 && error.message === 'NOT_SENDER');
+  assert.deepEqual(await a.service.acceptRelayDirect({ notifier: 'telegram', message: { title: '', text: 'ok', from: '' }, link: '', origin: { instance_id: ID.B, name: 'B' } }), { outcome: 'skipped', detail: 'turned off' });
 });
 
 // ---- Two real services ----

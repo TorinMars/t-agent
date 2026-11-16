@@ -40,8 +40,10 @@ The hooks are in `rules/claude/settings.json` and reach `~/.claude/settings.json
 ```
 plugins/notifiers/<name>/
   manifest.json   {"name", "version", "kind": "notifier", "description", "config"?, "test"?, "customUi"?}
-  index.js        { name, label, configFields, notify(), test() } and optional ready(), status(), routes(), close()
+  index.js        { name, label, configFields, notify(), test() } and optional ready(), status(), routes(), close(), direct
 ```
+
+`direct: true` says the notifier also takes free-form messages of agent sessions (`tcli notify`): `notify({ reason: 'direct', mode: 'message', item: null, message: { title, text, from }, link, config, values, log, origin })`, where `text` is at most 3000 characters with newlines and `origin` (`{ name }` or null) is the linked device it was relayed from. See "Direct messages" under "T-Attention notifiers" in `DESIGN.md`.
 
 ### Settings in the manifest (`config`, `test`, `customUi`)
 

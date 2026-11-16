@@ -306,11 +306,12 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
       {pointer ? null : keyboard('draft', 'draft', 'Draft keyboard')}
       {/* Upload image or file is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger taps the input
           itself and the picker opens natively. iOS WebKit, a Home Screen web app above all, ignores a script `input.click()` on a hidden input here. h5.js checks
-          on the input's click (it can cancel it) and reads the chosen file. Not a <button>, so the bar's press capture leaves it alone. */}
+          on the input's click (it can cancel it) and reads the chosen files (`multiple`: up to nine go up in one batch). Not a <button>, so the bar's press capture
+          leaves it alone. */}
       <IconButton component="label" id="h5-image" data-action="image" sx={{ ...look, position: 'relative', overflow: 'hidden' }} {...named(image)}>
         <Icon name="image" />
         <input
-          type="file" id="h5-image-picker" tabIndex={-1} aria-hidden="true"
+          type="file" id="h5-image-picker" multiple tabIndex={-1} aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
         />
       </IconButton>

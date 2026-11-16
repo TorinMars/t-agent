@@ -197,6 +197,7 @@
   const translateInput = $('h5-translate-input');
   const bottomArea = $('h5-bottom'); // the function keys and the message bar; this box is what grows over the terminal
   const picker = $('h5-image-picker');
+  const UPLOAD_MAX_FILES = 9; // files per pick or paste; more are refused before anything goes up
 
   // ── Layout: follow the visual viewport so the on-screen keyboard pushes the keys up instead of covering them ──
   // The terminal itself keeps the size it had before the keyboard opened and is shifted up instead: a smaller terminal would
@@ -2145,15 +2146,14 @@
     attachFileLinks(s);
     watchWheel(s); // the wheel strip's thumb follows this terminal's buffer while it is shown
     attachGestures(s); // a sideways pan moves the wide terminal; vertical scrolling is the wheel strip's and xterm's
-    // A pasted image or file (long-press paste in the xterm textarea, a file copied in the file manager) is uploaded like a picked one;
-    // plain text keeps xterm's own paste.
+    // Pasted images or files (long-press paste in the xterm textarea, files copied in the file manager) are uploaded like picked ones, all of them
+    // in order (at most UPLOAD_MAX_FILES, checked by upload); plain text keeps xterm's own paste.
     el.addEventListener('paste', event => {
       const files = [...(event.clipboardData?.items || [])].filter(entry => entry.kind === 'file');
       if (!files.length) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (files.length !== 1) { tell('Upload one file at a time', 'error'); return; }
-      if (!uploading) void upload(s, files[0].getAsFile());
+      if (!uploading) void upload(s, files.map(entry => entry.getAsFile()));
     }, true);
     term.onData(data => typed(s, data));
     TerminalIme.attach(term, data => typed(s, data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
@@ -3052,8 +3052,9 @@
     target.term.paste(text);
     return true;
   }
-  function pasteImage(target, file) {
-    if (!uploading && target && !target.disposed) void upload(target, file);
+  // `files`: one File or an array of them (a paste can carry several); upload takes them all in order.
+  function pasteImage(target, files) {
+    if (!uploading && target && !target.disposed) void upload(target, files);
   }
   // The Paste sheet (Dialogs.jsx `PasteDialog`, `state.pasteSheet`). The element that had the focus (usually the terminal's textarea) gets it back on close.
   let pasteSheet = null; // { target, focus }
@@ -3073,11 +3074,13 @@
     if (!text) return;
     if (pasteInto(target, text)) closePasteSheet();
   };
-  ui.actions.pasteSheetFile = file => {
+  // `files`: the pasted Files in order (PasteDialog), or a single File.
+  ui.actions.pasteSheetFile = files => {
     const target = pasteSheet ? pasteSheet.target : session;
-    if (!file) return;
+    const list = Array.isArray(files) ? files : [files];
+    if (!list.some(Boolean)) return;
     closePasteSheet();
-    pasteImage(target, file);
+    pasteImage(target, list);
   };
   ui.actions.pasteSheetClose = () => closePasteSheet();
 
@@ -3583,21 +3586,25 @@
   });
   // The image action from code (for example a hardware keyboard): the same input, through its click.
   function pickImage() { picker.click(); }
+  // The picker takes several files (`multiple`); they all go to one upload, in the order the picker gives them.
   picker.addEventListener('change', () => {
-    const file = picker.files[0];
+    const files = [...(picker.files || [])];
     const target = pickedFor;
     pickedFor = null;
     picker.value = '';
-    if (file && target) void upload(target, file);
+    if (files.length && target) void upload(target, files);
   });
 
-  function lock() {
+  // The page stays locked for the whole batch. `count` ({ index, total }) says which file goes up; UploadDialog shows it when there are several.
+  function lock(total) {
     uploading = true;
     document.activeElement?.blur();
-    ui.set({ upload: { status: 'Reading OSS settings…', progress: 0 } });
+    ui.set({ upload: { status: 'Reading OSS settings…', progress: 0, count: { index: 1, total } } });
+    const change = patch => ui.set(state => ({ upload: state.upload && { ...state.upload, ...patch } }));
     return {
-      status: text => ui.set(state => ({ upload: state.upload && { ...state.upload, status: text } })),
-      progress: value => ui.set(state => ({ upload: state.upload && { ...state.upload, progress: value } })),
+      status: text => change({ status: text }),
+      progress: value => change({ progress: value }),
+      next: index => change({ progress: 0, count: { index, total } }),
       unlock() { ui.set({ upload: null }); uploading = false; },
     };
   }
@@ -3608,7 +3615,7 @@
     progress: value => ui2.progress(value),
   });
 
-  // When the terminal went away during the upload, keep the link on screen so it is not lost.
+  // When the terminal went away during the upload, keep the link (or the links, joined with spaces) on screen so it is not lost.
   function retain(url) { ui.set({ retainUrl: url }); }
   ui.actions.retainClose = () => ui.set({ retainUrl: null });
 
@@ -3827,24 +3834,38 @@
     return true;
   };
 
-  async function upload(target, file) {
+  // Uploads one File or several (an array, in order): the picker, a paste into the terminal and the Paste sheet all come here. More than
+  // UPLOAD_MAX_FILES are refused before anything is read. The OSS settings are read once for the batch; the files then go up one after another,
+  // and an empty or failed file does not stop the others. The links of the files that went up are typed with one paste at the end.
+  async function upload(target, files) {
+    const list = Array.isArray(files) ? files : [files];
+    if (list.length > UPLOAD_MAX_FILES) { tell(`Upload at most ${UPLOAD_MAX_FILES} files at a time`, 'error'); return; }
     // The type and size limits (images 10 MiB, other files 100 MiB) are checked by OssDirect, which reads the first bytes.
-    if (!file || file.size <= 0) { tell('The file is empty', 'error'); return; }
-    const ui = lock();
-    let result;
-    let failure;
+    const errors = list.map(file => (!file || file.size <= 0 ? 'The file is empty' : null));
+    const first = () => errors.find(Boolean);
+    if (!list.length || errors.every(Boolean)) { tell(first() || 'The file is empty', 'error'); return; }
+    const ui = lock(list.length);
+    const urls = [];
     try {
       let config;
       try { config = await api('GET', '/api/oss/config'); }
       catch { throw new Error('Could not read OSS settings. Check the connection and retry'); }
       // `shared_from`: not set up here, but a linked service signs the upload.
       if (!config || (!config.enabled && !config.shared_from)) throw new Error('Enable Alibaba Cloud OSS upload in this client’s settings first');
-      result = await transfer(file, ui);
-    } catch (error) { failure = error; } finally { ui.unlock(); }
-    if (failure) { tell(failure.message, 'error'); return; }
-    // xterm's paste keeps bracketed-paste semantics; a trailing space lets typing continue, and no Enter is sent.
-    if (connected(target)) target.term.paste(`${result.url} `);
-    else retain(result.url);
+      for (let index = 0; index < list.length; index++) {
+        if (errors[index]) continue;
+        ui.next(index + 1);
+        try { urls.push((await transfer(list[index], ui)).url); }
+        catch (error) { errors[index] = (error && error.message) || 'Upload failed'; }
+      }
+    } catch (error) { ui.unlock(); tell(error.message, 'error'); return; }
+    ui.unlock();
+    if (!urls.length) { tell(first(), 'error'); return; }
+    if (urls.length < list.length) tell(`${urls.length} of ${list.length} files uploaded. ${first()}`, 'error');
+    // xterm's paste keeps bracketed-paste semantics; one paste carries every link, a trailing space lets typing continue, and no Enter is sent.
+    const text = urls.join(' ');
+    if (connected(target)) target.term.paste(`${text} `);
+    else retain(text);
   }
 
   // ── A link to a chat (`?openChat=<task id>:<conversation id>`): the task is selected and the chat opens (the chat is shown at once when it is the open one). ──

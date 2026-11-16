@@ -68,13 +68,16 @@ export function CopyDialog({ state, ui }) {
   );
 }
 
-// While an image or file goes up the page is locked and says how far it is.
+// While images or files go up the page is locked and says how far it is: the status and progress of the file going up, and with several files
+// which one it is ("File 2 of 3", `upload.count`).
 export function UploadDialog({ state }) {
   const upload = state.upload;
+  const count = upload && upload.count;
   return (
     <Dialog className="h5-upload-overlay" open={Boolean(upload)} aria-label={t('Uploading file')} disableEscapeKeyDown transitionDuration={0}>
       {upload ? (
         <DialogContent sx={{ minWidth: 260 }}>
+          {count && count.total > 1 ? <DialogContentText id="h5-upload-count" sx={{ mb: 0.5 }}>{t(`File ${count.index} of ${count.total}`)}</DialogContentText> : null}
           <DialogContentText role="status" sx={{ mb: 2 }}>{t(upload.status)}</DialogContentText>
           <LinearProgress aria-label={t('Upload progress')} variant={upload.progress === null ? 'indeterminate' : 'determinate'} value={upload.progress === null ? undefined : upload.progress} />
         </DialogContent>
@@ -85,7 +88,7 @@ export function UploadDialog({ state }) {
 
 // The Paste sheet: the browser refused to read the clipboard (iOS asks for each read, and a dismissed "Paste" callout is a refusal), so the user pastes
 // with the system's own paste into this box. A paste of text into the empty box is sent at once; text typed or pasted next to other text waits for Send.
-// A pasted image or file goes to the upload. It sits at the top of the screen, so the on-screen keyboard does not cover it; h5.js returns the focus on close.
+// Pasted images or files go to the upload, all of them in order. It sits at the top of the screen, so the on-screen keyboard does not cover it; h5.js returns the focus on close.
 export function PasteDialog({ state, ui }) {
   const open = Boolean(state.pasteSheet && state.pasteSheet.open);
   const [text, setText] = useState('');
@@ -95,7 +98,7 @@ export function PasteDialog({ state, ui }) {
     const files = [...((data && data.items) || [])].filter(entry => entry.kind === 'file');
     if (files.length) {
       event.preventDefault();
-      ui.actions.pasteSheetFile(files[0].getAsFile());
+      ui.actions.pasteSheetFile(files.map(entry => entry.getAsFile()));
       return;
     }
     const pasted = data ? data.getData('text/plain') : '';
@@ -125,14 +128,16 @@ export function PasteDialog({ state, ui }) {
   );
 }
 
-// The link of an image or file that was uploaded when its terminal was already gone.
+// The link of an image or file that was uploaded when its terminal was already gone; several uploaded files give their links joined with spaces,
+// shown in a box that wraps so every link can be seen.
 export function RetainDialog({ state, ui }) {
   const url = state.retainUrl;
+  const several = Boolean(url && url.includes(' '));
   return (
     <Dialog className="h5-upload-overlay" open={url !== null} onClose={() => ui.actions.retainClose()} fullWidth maxWidth="xs" transitionDuration={0}>
-      <DialogTitle sx={{ fontSize: 16 }}>{t('Uploaded; the original terminal was switched or disconnected. Copy the link manually:')}</DialogTitle>
+      <DialogTitle sx={{ fontSize: 16 }}>{t(several ? 'Uploaded; the original terminal was switched or disconnected. Copy the links manually:' : 'Uploaded; the original terminal was switched or disconnected. Copy the link manually:')}</DialogTitle>
       <DialogContent>
-        <TextField fullWidth size="small" value={url || ''} slotProps={{ htmlInput: { readOnly: true, 'aria-label': t('Uploaded link'), onClick: event => event.target.select() } }} />
+        <TextField fullWidth size="small" multiline={several} maxRows={several ? 6 : undefined} value={url || ''} slotProps={{ htmlInput: { readOnly: true, 'aria-label': t(several ? 'Uploaded links' : 'Uploaded link'), onClick: event => event.target.select() } }} />
       </DialogContent>
       <DialogActions><Button onClick={() => ui.actions.retainClose()}>{t('Close')}</Button></DialogActions>
     </Dialog>

@@ -56,8 +56,8 @@ export const initialState = () => ({
   // The copy bar (public/js/terminal-clipboard.js): { id, kind, text, preview, chars }. kind 'ask': a program's copy without a recent gesture
   // of the user, written only on Copy; kind 'tap': the browser refused a copy (page selection or program), Copy on the bar writes it.
   clipboard: null,
-  upload: null, // { status, progress } while an image goes up (progress: 0-100, or null when it is not known)
-  retainUrl: null, // the link of an image that was uploaded after its terminal went away
+  upload: null, // { status, progress, count } while images or files go up (progress of the current file: 0-100, or null when it is not known; count: { index, total } of the batch)
+  retainUrl: null, // the link (several joined with spaces) of what was uploaded after its terminal went away
   pasteSheet: null, // { open } the Paste sheet (Dialogs.jsx `PasteDialog`) after the browser refused to read the clipboard (h5.js `paste`)
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
   files: null, // { open, key, base, dir } of the read-only file tree (FileTree.jsx): base = `<tasksBase>/<task>/files` (null without a task); a new key (task, working directory or Engine) draws a new tree

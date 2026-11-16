@@ -239,6 +239,36 @@ async function waitLoaded(id, timeout = 15000) {
   }
   fail('TIMEOUT', 'Navigation timed out');
 }
+// Back and forward. Chrome's own back skips history entries that were left without a user gesture (its history
+// manipulation intervention), and every navigation the extension starts (a click, a submit, tabs.navigate) is one, so
+// chrome.tabs.goBack often answers "Cannot find a next page in history" while the page's own history still has the
+// page. Then the step is taken inside the page with history.back() / history.forward(), which does not skip, and it
+// counts once the tab starts loading or its URL changes. Nothing within HISTORY_STEP_MS: there is no such page.
+const HISTORY_STEP_MS = 3000;
+async function historyStep(id, action) {
+  try {
+    if (action === 'back') await chrome.tabs.goBack(id);else await chrome.tabs.goForward(id);
+    return;
+  } catch {}
+  const { url } = await chrome.tabs.get(id);
+  await chrome.scripting.executeScript({
+    target: {
+      tabId: id
+    },
+    world: 'MAIN',
+    func: step => {
+      if (step === 'back') history.back();else history.forward();
+    },
+    args: [action]
+  });
+  const start = Date.now();
+  while (Date.now() - start < HISTORY_STEP_MS) {
+    const t = await chrome.tabs.get(id);
+    if (t.status === 'loading' || t.url !== url) return;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  fail('BAD_PARAMS', action === 'back' ? 'There is no earlier page in this tab' : 'There is no later page in this tab');
+}
 const modifiers = p => (p.modifiers || []).reduce((n, m) => n | ({
   Alt: 1,
   Control: 2,
@@ -337,7 +367,7 @@ export async function dispatch(method, p = {}) {
   }
   if (method === 'tabs.navigate') {
     if (p.url && !scriptable(p.url)) fail('TAB_NOT_SCRIPTABLE', 'Use an HTTP or HTTPS page');
-    if (p.action === 'back') await chrome.tabs.goBack(id);else if (p.action === 'forward') await chrome.tabs.goForward(id);else if (p.action === 'reload') await chrome.tabs.reload(id);else if (p.url) await chrome.tabs.update(id, {
+    if (p.action === 'back' || p.action === 'forward') await historyStep(id, p.action);else if (p.action === 'reload') await chrome.tabs.reload(id);else if (p.url) await chrome.tabs.update(id, {
       url: p.url
     });else fail('BAD_PARAMS', 'Supply url or action');
     return {

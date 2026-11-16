@@ -281,6 +281,35 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     }), /TAB_NOT_ALLOWED/);
     assert(badges.some(b => b.tabId === 12 && b.text === 'ON'));
   });
+  await t.test('back and forward fall back to the page history when Chrome skips the entries', async () => {
+    const id = opened.tab_id;
+    Object.assign(tabs.get(id), { url: 'http://localhost/second', status: 'complete' });
+    const steps = [];
+    chrome.tabs.goBack = async () => {
+      throw Error('Cannot find a next page in history.');
+    };
+    chrome.tabs.goForward = chrome.tabs.goBack;
+    const exec = chrome.scripting.executeScript;
+    chrome.scripting.executeScript = async p => {
+      const step = p.args?.[0];
+      if (step !== 'back' && step !== 'forward') return exec(p);
+      steps.push(step);
+      if (step === 'back') setTimeout(() => {
+        tabs.get(id).url = 'http://localhost/first';
+      }, 20);
+      return [{ result: undefined }];
+    };
+    try {
+      const back = await dispatch('tabs.navigate', { tab_id: id, action: 'back' });
+      assert.equal(back.tab.url, 'http://localhost/first');
+      await assert.rejects(dispatch('tabs.navigate', { tab_id: id, action: 'forward' }), /no later page/);
+      assert.deepEqual(steps, ['back', 'forward']);
+    } finally {
+      chrome.scripting.executeScript = exec;
+      delete chrome.tabs.goBack;
+      delete chrome.tabs.goForward;
+    }
+  });
   let request;
   await t.test('capture metadata, body, headers, console and raw boundary', async () => {
     await dispatch('net.start', {

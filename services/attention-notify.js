@@ -803,6 +803,10 @@ function createAttentionNotify(options) {
       const mode = modeOf(rules, plugin.name, item.status);
       if (mode === 'off') continue;
       if (!isEnabled(plugin.name, owner)) continue; // a plugin switched off gets nothing
+      // Nor does one that is not set up here and that no linked device sends for: before, each status change left "Message planned" and later
+      // "Skipped: not set up" for it in the recent list (every new notifier, email for one, until the person sets it up). A notifier a linked
+      // sender may send (relay.handles) still goes on: deliver() finds the sender when the time comes.
+      if (!(relay && relay.handles(plugin.name)) && !safeReady(plugin.name)) continue;
       const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode };
       const key = `${plugin.name}:${item.id}:${item.status}`;
       if (sentAt.has(key) && now() - sentAt.get(key) < DEDUPE_MS) { remember({ ...base, outcome: 'duplicate' }); continue; }
@@ -936,6 +940,7 @@ function createAttentionNotify(options) {
 
   // ---- One Telegram sender for linked devices (services/attention-relay.js) ----
   // Telegram (or another relayed notifier) is set up and switched on here, so this device can send.
+  const safeReady = name => { try { return localReady(name); } catch { return false; } };
   function localReady(name) {
     const plugin = byName.get(name);
     if (!plugin) return false;

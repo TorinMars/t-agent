@@ -346,3 +346,25 @@ test('a real nodemailer send to an SMTP server on this computer (security none i
   await new Promise(resolve => closed.close(resolve));
   await assert.rejects(email.test({ ...config, port }, {}), error => error.message === `Cannot reach the email server 127.0.0.1:${port}`);
 });
+
+test('tcli notify reaches email: sendDirect sends a direct email through the real plugin, and an unset email leaves no line on a status change', async t => {
+  const fake = fakeTransports();
+  const plugin = email.createEmailNotifier({ createTransport: fake.createTransport });
+  const service = notify.createAttentionNotify({ db: makeDb(), sessionSecret: SECRET, onChange: null, getOwner: () => 'owner', notifiers: [plugin], manifests: { email: MANIFEST }, log: () => {} });
+  t.after(() => service.stop());
+  service.saveRules('owner', { messageDelayMinutes: 0 });
+  // Not set up: a status change plans nothing and logs nothing; a direct message is refused as not configured.
+  await Promise.all(service.handle({ kind: 'updated', item: ITEM, previous: { ...ITEM, status: 'working' } }));
+  assert.equal(service.recent().length, 0);
+  await assert.rejects(service.sendDirect({ owner: 'owner', text: 'Build finished' }), error => error.code === 'NOTIFY_NOT_CONFIGURED');
+  service.savePluginConfig('email', 'owner', { values: GMAIL });
+  const answer = await service.sendDirect({ owner: 'owner', title: 'Build finished', text: 'All 1837 tests passed.\nReady to release.', from: 'Fix CI · Claude 1', link: 'https://t.example.com/', via: ['email'] });
+  assert.deepEqual(answer.results, [{ notifier: 'email', outcome: 'sent' }]);
+  const mail = fake.made.at(-1).mails[0];
+  assert.equal(mail.subject, '[T-Agent] Build finished');
+  assert.match(mail.text, /All 1837 tests passed\.\nReady to release\./);
+  assert.match(mail.text, /Fix CI · Claude 1/);
+  assert.match(mail.text, /https:\/\/t\.example\.com\//);
+  assert.equal(fake.made.at(-1).options.host, 'smtp.gmail.com');
+  assert.equal(service.recent()[0].kind, 'direct');
+});

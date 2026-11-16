@@ -276,13 +276,13 @@ test('a failed call falls back to a message, and errors are isolated from the bu
   assert.doesNotThrow(() => bus2.emit(change('created', item(1, 'failed'), null)));
 });
 
-test('a notifier that is not set up is skipped', async () => {
+test('a notifier that is not set up is skipped quietly', async () => {
   const off = fakeNotifier('fake', { ready: () => false });
   const { bus, service } = setup({ notifiers: [off.plugin] });
   bus.emit(change('created', item(1, 'failed'), null));
   await settle();
   assert.equal(off.calls.length, 0);
-  assert.equal(service.recent()[0].outcome, 'skipped');
+  assert.equal(service.recent().length, 0, 'nothing planned and no "not set up" line in the recent list');
 });
 
 test('a delayed call rings only if the item is still in that status, and is cancelled when it changes', async () => {

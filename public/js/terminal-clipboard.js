@@ -8,21 +8,24 @@
 // - Either way, when the browser refuses the write (no user activation any more, iOS Safari), the page shows the bar (kind tap), and a tap
 //   on its Copy writes inside its own gesture. If that also fails, one error notice says how to copy by hand.
 // - A program's request without a recent gesture is never written silently: the same bar shows a one-line preview with Copy / Cancel. Nothing is
-//   written before Copy, later output cannot replace the text, and the request expires after REQUEST_TTL_MS.
+//   written before Copy and later output cannot replace the text.
+// Either kind of bar hides by itself after BAR_TTL_MS, like Cancel (nothing is written, no notice); the page draws a countdown line for it
+// (`view.ttl`). While the user is on the bar (a mouse over it, the keyboard focus inside it) the page calls `hold(true)` and the timer stops;
+// `hold(false)` starts the full BAR_TTL_MS again (`view.round` changes, so the page restarts its line).
 // The same text again from the same terminal within DUPLICATE_WINDOW_MS is one copy, whatever the source (Claude Code runs pbcopy, which the
 // PTY's shim turns into OSC 52, and also sends its own OSC 52; a page selection and the program's copy of it): one write, one notice, one bar.
 // Never answered: clipboard reads (`?`); ignored: replayed history, hidden terminals, invalid base64 or UTF-8, more than MAX_BYTES.
-// The page draws the bar (the MUI shell, `state.clipboard`); it registers with `setHost({ show })` and calls `confirm()` / `cancel()`.
+// The page draws the bar (the MUI shell, `state.clipboard`); it registers with `setHost({ show })` and calls `confirm()` / `cancel()` / `hold()`.
 const TerminalClipboard = (() => {
   const GESTURE_WINDOW_MS = 1500;
-  const REQUEST_TTL_MS = 60000;
+  const BAR_TTL_MS = 10000; // the bar hides by itself after this long without the user on it
   const MAX_BYTES = 65536;
   const DUPLICATE_WINDOW_MS = 2000;
   const PREVIEW_CHARS = 120;
   const tell = (message, type) => (typeof notify === 'function' ? notify(message, type) : undefined); // the floating notice of the page
   const now = () => Date.now();
   let host = null; // { show(request | null) }: the page's bar
-  let current = null; // the one request the page shows: { id, kind: 'ask' | 'tap', text, item, expiry }
+  let current = null; // the one request the page shows: { id, kind: 'ask' | 'tap', text, item, expiry, holding, round }
   let ids = 0;
 
   function decodeOsc52(data) {
@@ -82,7 +85,12 @@ const TerminalClipboard = (() => {
     return Promise.resolve(legacyCopy(text));
   }
 
-  const view = request => (request ? { id: request.id, kind: request.kind, text: request.text, preview: previewOf(request.text), chars: countChars(request.text) } : null);
+  // ttl: how long the bar stays from now on (its countdown line); holding: the user is on the bar (the timer is stopped); round: changes each
+  // time the full ttl starts again after a hold, so the page restarts the line.
+  const view = request => (request ? {
+    id: request.id, kind: request.kind, text: request.text, preview: previewOf(request.text), chars: countChars(request.text),
+    ttl: BAR_TTL_MS, holding: request.holding, round: request.round,
+  } : null);
   function show(request) { if (host && host.show) host.show(view(request)); }
   function clear(request = current) {
     if (!request || current !== request) return;
@@ -93,9 +101,24 @@ const TerminalClipboard = (() => {
   function offer(item, text, kind) {
     if (current) clear();
     if (!host) return; // no page to show the bar on: copy nothing
-    const request = { id: ++ids, kind, text, item };
-    request.expiry = setTimeout(() => clear(request), REQUEST_TTL_MS);
+    const request = { id: ++ids, kind, text, item, holding: false, round: 0 };
+    arm(request);
     current = request;
+    show(request);
+  }
+  // The bar hides by itself after BAR_TTL_MS, the same as Cancel.
+  function arm(request) {
+    clearTimeout(request.expiry);
+    request.expiry = setTimeout(() => clear(request), BAR_TTL_MS);
+  }
+  // The user is on the bar (true: a mouse over it or the keyboard focus inside it) or left it (false). Holding stops the timer; leaving starts
+  // the full BAR_TTL_MS again. Without a bar, or without a change, nothing happens.
+  function hold(on) {
+    const request = current;
+    if (!request || request.holding === Boolean(on)) return;
+    request.holding = Boolean(on);
+    if (request.holding) clearTimeout(request.expiry);
+    else { request.round += 1; arm(request); }
     show(request);
   }
   // Copy on the bar (kind 'ask' or 'tap'): called from the tap itself, so the write is inside its user activation.
@@ -250,5 +273,5 @@ const TerminalClipboard = (() => {
     } catch (error) { return Promise.resolve({ kind: 'denied', error }); } // a read that throws at once (no gesture, policy)
     return pending.catch(error => ({ kind: 'denied', error }));
   }
-  return { attach, setHost, confirm, cancel, readClipboard, pickClipboard, decodeOsc52, writeText, previewOf, GESTURE_WINDOW_MS, REQUEST_TTL_MS, DUPLICATE_WINDOW_MS, MAX_BYTES };
+  return { attach, setHost, confirm, cancel, hold, readClipboard, pickClipboard, decodeOsc52, writeText, previewOf, GESTURE_WINDOW_MS, BAR_TTL_MS, DUPLICATE_WINDOW_MS, MAX_BYTES };
 })();

@@ -37,24 +37,45 @@ export function TerminalArea({ state, ui }) {
           copy alike), written inside this tap. The preview is one line, cut to the bar's width; later output cannot change it.
           It is a filled blue bar (`notice` in theme.mjs, white text) so it stands out from the dark terminal: the copy icon, a title line,
           the preview, then Copy (a white filled button) and Cancel (a text button). Keyed by the request, so each new request slides in and
-          pulses once (h5.css; off with reduced motion). */}
-      {state.clipboard ? (
-        <Paper
-          key={state.clipboard.id} className="h5-clipboard-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy to the clipboard')} elevation={8}
-          data-kind={state.clipboard.kind} onMouseDown={event => event.preventDefault()} sx={CLIPBOARD_BAR}
-        >
-          <span className="h5-clipboard-icon" aria-hidden="true"><Icon name="copy" size={22} /></span>
-          <span className="h5-clipboard-body">
-            <span className="h5-clipboard-title" id="h5-clipboard-title">{state.clipboard.kind === 'ask' ? t('Copy request from the terminal') : t('Press Copy to finish copying')}</span>
-            <span className="h5-clipboard-preview" id="h5-clipboard-text" translate="no" title={state.clipboard.text}>{state.clipboard.preview}</span>
-          </span>
-          <span className="h5-clipboard-actions">
-            <Button id="h5-clipboard-copy" size="small" variant="contained" onClick={() => ui.actions.clipboardConfirm()} sx={CLIPBOARD_COPY}>{t('Copy')}</Button>
-            <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()} sx={CLIPBOARD_CANCEL}>{t('Cancel')}</Button>
-          </span>
-        </Paper>
-      ) : null}
+          pulses once (h5.css; off with reduced motion). It hides by itself after `bar.ttl`, shown by a countdown line. */}
+      {state.clipboard ? <ClipboardBar key={state.clipboard.id} bar={state.clipboard} ui={ui} /> : null}
     </Box>
+  );
+}
+
+// The copy bar. A thin line along its bottom edge counts down `bar.ttl` (decorative, aria-hidden; static while held, restarted for each new
+// `bar.round`, hidden with reduced motion). A mouse over the bar or the keyboard focus inside it holds the timer (`clipboardHold`); a touch on
+// Copy / Cancel just acts.
+function ClipboardBar({ bar, ui }) {
+  const on = useRef({ hover: false, focus: false, held: false });
+  const hold = (key, value) => {
+    on.current[key] = value;
+    const held = on.current.hover || on.current.focus;
+    if (held === on.current.held) return;
+    on.current.held = held;
+    ui.actions.clipboardHold(held);
+  };
+  const hover = value => event => { if (event.pointerType === 'mouse') hold('hover', value); };
+  return (
+    <Paper
+      className="h5-clipboard-bar" id="h5-clipboard-bar" role="toolbar" aria-label={t('Copy to the clipboard')} elevation={8}
+      data-kind={bar.kind} data-holding={bar.holding ? 'true' : undefined} onMouseDown={event => event.preventDefault()} sx={CLIPBOARD_BAR}
+      onPointerEnter={hover(true)} onPointerLeave={hover(false)}
+      onFocus={() => hold('focus', true)} onBlur={event => hold('focus', event.currentTarget.contains(event.relatedTarget))}
+    >
+      <span className="h5-clipboard-icon" aria-hidden="true"><Icon name="copy" size={22} /></span>
+      <span className="h5-clipboard-body">
+        <span className="h5-clipboard-title" id="h5-clipboard-title">{bar.kind === 'ask' ? t('Copy request from the terminal') : t('Press Copy to finish copying')}</span>
+        <span className="h5-clipboard-preview" id="h5-clipboard-text" translate="no" title={bar.text}>{bar.preview}</span>
+      </span>
+      <span className="h5-clipboard-actions">
+        <Button id="h5-clipboard-copy" size="small" variant="contained" onClick={() => ui.actions.clipboardConfirm()} sx={CLIPBOARD_COPY}>{t('Copy')}</Button>
+        <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()} sx={CLIPBOARD_CANCEL}>{t('Cancel')}</Button>
+      </span>
+      <span className="h5-clipboard-timer" aria-hidden="true">
+        <span key={bar.round} className="h5-clipboard-timer-line" style={{ animationDuration: `${bar.ttl}ms` }} />
+      </span>
+    </Paper>
   );
 }
 

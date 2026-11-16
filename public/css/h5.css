@@ -164,7 +164,13 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 .h5-clipboard-bar .MuiButton-root { flex: none; white-space: nowrap; }
 @keyframes h5-clipboard-in { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
 @keyframes h5-clipboard-pulse { from { box-shadow: 0 0 0 0 var(--h5-clipboard-ring, #90caf9); } to { box-shadow: 0 0 0 12px transparent; } }
-@media (prefers-reduced-motion: reduce) { .h5-clipboard-bar, .h5-clipboard-bar::after { animation: none; } }
+/* The countdown: a 3px line along the bottom edge (clipped to the bar's rounded corners) that shrinks to nothing over the bar's ttl (the
+   duration is set inline). Full and still while the user holds the bar; hidden with reduced motion (the bar still hides on time). */
+.h5-clipboard-timer { position: absolute; inset: 0; border-radius: 13px; overflow: hidden; pointer-events: none; }
+.h5-clipboard-timer-line { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .42); transform-origin: left center; animation: h5-clipboard-timer 10s linear 1 both; }
+.h5-clipboard-bar[data-holding] .h5-clipboard-timer-line { animation: none; }
+@keyframes h5-clipboard-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .h5-clipboard-bar, .h5-clipboard-bar::after { animation: none; } .h5-clipboard-timer { display: none; } }
 
 /* Design document sheet (scripts/h5-shell/Design.jsx): the shared markdown.css is light, the phone page is dark. One more class wins over its rules. */
 .h5-design-body .markdown-body.markdown-body { color: #e6edf3; font-size: 14px; line-height: 1.7; }

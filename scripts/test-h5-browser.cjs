@@ -10,6 +10,11 @@ const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 't
 
 const ossUploads = [];
 const ossPolicies = [];
+// An image's policy request carries only its type and size, so the PNGs of the multi-file cases are told apart by size: 8 bytes is shot.png
+// (the single uploads), the others are the 8-byte PNG header padded with zeros. The OSS POST of slow.png waits until `releaseSlow` is called.
+const PNG_BY_SIZE = { 8: 'shot.png', 9: 'a.png', 10: 'b.png', 11: 'c.png', 12: 'slow.png' };
+const png = size => Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(size - 8)]);
+let releaseSlow = null;
 const pageErrors = [];
 // The conversations the page's server knows.
 const chats = [];
@@ -100,11 +105,17 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const asked = route.request().postDataJSON();
       ossPolicies.push(asked);
       if (asked.kind === 'file') {
+        if (asked.name !== 'notes.pdf') { // a file of a multi-file batch
+          assert.deepEqual(asked, { kind: 'file', type: 'text/plain', size: asked.size, name: asked.name });
+          return json({ host: 'https://bucket.oss.test', fields: { key: `terminal-images/${asked.name}`, policy: 'p' }, url: `https://img.test/${asked.name}`, expiresAt: null });
+        }
         assert.deepEqual(asked, { kind: 'file', type: 'application/pdf', size: 9, name: 'notes.pdf' });
         return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/notes.pdf', 'Content-Disposition': 'attachment; filename="notes.pdf"', policy: 'p' }, url: 'https://img.test/notes.pdf', expiresAt: null });
       }
-      assert.deepEqual(asked, { type: 'image/png', size: 8 });
-      return json({ host: 'https://bucket.oss.test', fields: { key: 'terminal-images/shot.png', policy: 'p', 'x-oss-signature': 's' }, url: 'https://img.test/shot.png', expiresAt: null });
+      const name = PNG_BY_SIZE[asked.size];
+      assert.ok(name, `an image of a known size (${asked.size})`);
+      assert.deepEqual(asked, { type: 'image/png', size: asked.size });
+      return json({ host: 'https://bucket.oss.test', fields: { key: `terminal-images/${name}`, policy: 'p', 'x-oss-signature': 's' }, url: `https://img.test/${name}`, expiresAt: null });
     }
     if (url.pathname === '/api/oss/images') return json({ error: 'the Client no longer receives images' }, 404);
     if (url.pathname === '/api/system/check-update') {
@@ -132,6 +143,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.match(request.headers()['content-type'], /^multipart\/form-data/);
     assert.ok(body.includes('name="key"') && body.indexOf('name="key"') < body.indexOf('name="file"'), 'the file is the last field');
     ossUploads.push(body);
+    if (body.includes('terminal-images/slow.png')) await new Promise(resolve => { releaseSlow = resolve; });
     await route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' }, body: '' });
   });
   page.on('pageerror', e => console.log('PAGEERR', e.message));
@@ -1026,6 +1038,96 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(ossUploads[2].includes('attachment; filename="notes.pdf"') && ossUploads[2].includes('%PDF-1.7'));
     assert.equal(ossPolicies.at(-1).kind, 'file');
     assert.notEqual((await sent()).at(-1), '\r', 'no Enter after the file link');
+
+    // Several files at once (the picker, a paste on the terminal): at most 9, the OSS settings are read once, the files go up one after another in order,
+    // and all the links are typed with ONE write, joined by spaces with a trailing space and no Enter. A failed file does not stop the others.
+    {
+      const configReads = () => calls.filter(call => call === 'GET /api/oss/config').length;
+      const pasteFiles = list => page.evaluate(files => {
+        const data = new DataTransfer();
+        for (const { name, size, type } of files) {
+          const bytes = new Uint8Array(size);
+          if (type === 'image/png') bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+          else bytes.fill(0x61);
+          data.items.add(new File([bytes], name, { type }));
+        }
+        document.querySelector('.h5-xterm:not([hidden]) textarea').dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      }, list);
+      const pick = async files => {
+        const [multi] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#h5-image').tap()]);
+        assert.equal(multi.isMultiple(), true, 'the picker takes several files');
+        await multi.setFiles(files);
+      };
+      // The floating notice with exactly this text (an earlier notice may contain the same words).
+      const notice = text => page.waitForFunction(want => [...document.querySelectorAll('.MuiSnackbar-root .MuiAlert-message')].some(el => el.textContent.trim() === want), text);
+      const done = () => page.locator('.h5-upload-overlay').waitFor({ state: 'detached' });
+
+      assert.equal(await page.locator('#h5-image-picker').getAttribute('multiple'), '', 'the picker has the multiple attribute');
+
+      // Two images from the picker.
+      let before = { sent: (await sent()).length, uploads: ossUploads.length, policies: ossPolicies.length, config: configReads() };
+      await pick([{ name: 'a.png', mimeType: 'image/png', buffer: png(9) }, { name: 'b.png', mimeType: 'image/png', buffer: png(10) }]);
+      await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/a.png https://img.test/b.png '));
+      await done();
+      assert.equal(ossUploads.length, before.uploads + 2, 'both images went to OSS');
+      assert.deepEqual(ossPolicies.slice(before.policies).map(asked => asked.size), [9, 10], 'one policy per image, in order');
+      assert.equal(configReads(), before.config + 1, 'the OSS settings are read once for the batch');
+      assert.deepEqual((await sent()).slice(before.sent), ['https://img.test/a.png https://img.test/b.png '], 'both links in one write, no Enter');
+
+      // Three files pasted on the terminal (an image, a text file, an image): the links in the order of the paste.
+      before = { sent: (await sent()).length, uploads: ossUploads.length, policies: ossPolicies.length, config: configReads() };
+      await pasteFiles([{ name: 'a.png', size: 9, type: 'image/png' }, { name: 'readme.txt', size: 5, type: 'text/plain' }, { name: 'c.png', size: 11, type: 'image/png' }]);
+      await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/a.png https://img.test/readme.txt https://img.test/c.png '));
+      await done();
+      assert.equal(ossUploads.length, before.uploads + 3, 'the three pasted files went to OSS');
+      assert.deepEqual(ossPolicies.slice(before.policies).map(asked => asked.name || asked.size), [9, 'readme.txt', 11], 'uploaded one after another in order');
+      assert.equal(configReads(), before.config + 1, 'one OSS settings read for the paste');
+      assert.deepEqual((await sent()).slice(before.sent), ['https://img.test/a.png https://img.test/readme.txt https://img.test/c.png '], 'the three links in one write');
+
+      // Ten files: refused at once, nothing goes up and nothing is typed.
+      before = { sent: (await sent()).length, uploads: ossUploads.length, policies: ossPolicies.length, config: configReads() };
+      await pasteFiles(Array.from({ length: 10 }, (_, i) => ({ name: `p${i}.png`, size: 9, type: 'image/png' })));
+      await notice('Upload at most 9 files at a time');
+      await page.waitForTimeout(200);
+      assert.equal(await page.locator('.h5-upload-overlay').count(), 0, 'no upload dialog for ten files');
+      assert.equal(configReads(), before.config, 'no OSS settings read for ten files');
+      assert.equal(ossPolicies.length, before.policies, 'no upload policy for ten files');
+      assert.equal(ossUploads.length, before.uploads);
+      assert.equal((await sent()).length, before.sent, 'nothing typed for ten files');
+
+      // An empty file first, then a good one: the good one still goes up, its link is typed and the notice says what failed.
+      before = { sent: (await sent()).length, uploads: ossUploads.length, policies: ossPolicies.length };
+      await pick([{ name: 'empty.txt', mimeType: 'text/plain', buffer: Buffer.alloc(0) }, { name: 'a.png', mimeType: 'image/png', buffer: png(9) }]);
+      await notice('1 of 2 files uploaded. The file is empty');
+      await done();
+      assert.equal(ossUploads.length, before.uploads + 1, 'only the good file went to OSS');
+      assert.deepEqual((await sent()).slice(before.sent), ['https://img.test/a.png '], 'the link of the file that went up is typed');
+
+      // Every file failed: the first failure's message as for one file, and nothing is typed.
+      before = { sent: (await sent()).length, policies: ossPolicies.length };
+      await pasteFiles([{ name: 'e1.txt', size: 0, type: 'text/plain' }, { name: 'e2.txt', size: 0, type: 'text/plain' }]);
+      await notice('The file is empty');
+      await done();
+      assert.equal(ossPolicies.length, before.policies, 'no policy for empty files');
+      assert.equal((await sent()).length, before.sent, 'nothing typed when every file failed');
+
+      // While several go up, the dialog says which one: "File 2 of 3" while the second (slow) one is on its way to OSS.
+      await pick([{ name: 'a.png', mimeType: 'image/png', buffer: png(9) }, { name: 'slow.png', mimeType: 'image/png', buffer: png(12) }, { name: 'c.png', mimeType: 'image/png', buffer: png(11) }]);
+      await pollUntil(() => releaseSlow);
+      assert.equal((await page.locator('#h5-upload-count').textContent()).trim(), 'File 2 of 3');
+      assert.ok((await page.locator('.h5-upload-overlay').textContent()).includes('File 2 of 3'), 'the count is in the upload dialog');
+      releaseSlow(); releaseSlow = null;
+      await page.waitForFunction(() => window.sockets[0].sent.includes('https://img.test/a.png https://img.test/slow.png https://img.test/c.png '));
+      await done();
+      // One file: no count line.
+      await pick([{ name: 'slow.png', mimeType: 'image/png', buffer: png(12) }]);
+      await pollUntil(() => releaseSlow);
+      assert.equal(await page.locator('#h5-upload-count').count(), 0, 'no count line for one file');
+      releaseSlow(); releaseSlow = null;
+      await page.waitForFunction(() => window.sockets[0].sent.filter(item => item === 'https://img.test/slow.png ').length === 1);
+      await done();
+      assert.notEqual((await sent()).at(-1), '\r', 'no Enter after the links');
+    }
 
     // The wheel strip on the right edge is a scrollbar: a thumb in the normal buffer, a spring in the alternate buffer; a drag on the
     // terminal body makes no wheel events. The touches are PointerEvents fired inside the page and the waits are the page's own timers

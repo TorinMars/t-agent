@@ -106,6 +106,9 @@ function widgetItem(engine, item) {
     result: item.result ?? null,
     attention_reason: item.attention_reason ?? null,
     pending,
+    // As stored (services/attention.js linkUrl): http(s), or a page path of the T-Agent app ('/...'). The window checks it again before opening it.
+    link_url: typeof item.link_url === 'string' && item.link_url ? item.link_url : null,
+    link_label: typeof item.link_label === 'string' && item.link_label ? item.link_label : null,
     priority: item.priority ?? null,
     due_date: item.due_date ?? null,
     sort_order: typeof item.sort_order === 'number' ? item.sort_order : null,

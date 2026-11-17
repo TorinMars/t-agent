@@ -114,6 +114,8 @@ struct WidgetItem: Equatable {
     var pending: String = ""  // the text of `pending` (an object { kind, text } or plain text)
     var notes: String?  // nil when the answer has no notes: the edit form then leaves them alone
     var sortOrder: Double = 0
+    var link: String = ""  // link_url when taskLink accepts it, else empty
+    var linkLabel: String = ""  // link_label on one line
 }
 
 struct EngineInfo: Equatable {
@@ -143,7 +145,35 @@ func decodeItem(_ object: [String: Any]) -> WidgetItem? {
                       attentionReason: (looseText(object["attention_reason"]) ?? "").trimmed,
                       pending: (looseText(object["pending"]) ?? "").trimmed,
                       notes: object.keys.contains("notes") ? (looseText(object["notes"]) ?? "") : nil,
-                      sortOrder: looseNumber(object["sort_order"]) ?? 0)
+                      sortOrder: looseNumber(object["sort_order"]) ?? 0,
+                      link: (object["link_url"] as? String).flatMap(taskLink) ?? "",
+                      linkLabel: ((object["link_label"] as? String) ?? "").oneLine)
+}
+
+/// The link of a task when the window may open it, trimmed: an http(s) address with a host and without a user name or
+/// password, or a page path of T-Agent ('/...', not '//host', no backslash), as services/attention.js linkUrl stores it
+/// and safeLink in scripts/h5-shell/attention-model.mjs opens it. Nil for anything else (javascript:, file:, ftp:, ...).
+func taskLink(_ value: String) -> String? {
+    let text = value.trimmed
+    guard !text.isEmpty, text.count <= 2000, !text.unicodeScalars.contains(where: {
+        CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) || $0 == "\\"
+    }) else { return nil }
+    if text.hasPrefix("/") { return text.hasPrefix("//") ? nil : text }
+    let lower = text.lowercased()
+    guard lower.hasPrefix("http://") || lower.hasPrefix("https://"), let url = URL(string: text),
+          let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+          let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
+    return text
+}
+
+/// The address a link opens: an http(s) address as it is, a page path on the T-Agent of the window (`base`, an http(s)
+/// origin without a trailing slash, WidgetAPI.base). Nil when it is not a link taskLink accepts.
+func linkTarget(_ link: String, base: String) -> URL? {
+    guard let text = taskLink(link) else { return nil }
+    guard text.hasPrefix("/") else { return URL(string: text) }
+    guard let origin = URL(string: base), let host = origin.host, let url = URL(string: base + text),
+          url.host == host, url.scheme == origin.scheme else { return nil }
+    return url
 }
 
 func decodeEngine(_ object: [String: Any]) -> EngineInfo? {
@@ -280,14 +310,16 @@ func displayOrder(_ items: [WidgetItem], _ section: Section, engines: [EngineInf
 }
 
 /// A button on a row of the Needs you section. The raw value is the last part of its request path.
+/// `link` opens the task's link in the browser and sends no request; rowActions never lists it.
 enum RowAction: String {
-    case confirm, reject, handled
+    case confirm, reject, handled, link
 
     var label: String {
         switch self {
         case .confirm: return L("Confirm")
         case .reject: return L("Reject")
         case .handled: return L("Handled")
+        case .link: return L("Open link")
         }
     }
 
@@ -320,8 +352,12 @@ struct Row: Equatable {
     let block: String
     let actions: [RowAction]  // part of the comparison, so a status change alone rebuilds the buttons
     let tag: EngineTag?  // shown when the answer lists more than one engine
+    var link: String = ""  // the task's link (taskLink), shown as an Open link button in every section
+    var linkLabel: String = ""
 
     var isChild: Bool { depth > 0 }
+    /// The tooltip of the link button: the label, else the address.
+    var linkTitle: String { linkLabel.isEmpty ? link : linkLabel }
 }
 
 struct Summary: Equatable {
@@ -367,7 +403,8 @@ func summarize(_ list: ItemList) -> Summary {
                        detail: detailText(item), depth: entry.depth, siblingKey: siblingKey(item, items, byKey),
                        ancestors: ancestorKeys(item, items, byKey), block: blockOf(item),
                        actions: section == .needs ? rowActions(for: item) : [],
-                       tag: showTags ? EngineTag(name: shortName(engine?.name ?? item.engine), colorIndex: engine?.colorIndex ?? -1) : nil)
+                       tag: showTags ? EngineTag(name: shortName(engine?.name ?? item.engine), colorIndex: engine?.colorIndex ?? -1) : nil,
+                       link: item.link, linkLabel: item.linkLabel)
         }
     }
     return Summary(unfinished: items.filter { !finishedStatuses.contains($0.status) }.count,
@@ -898,8 +935,9 @@ final class TaskRowView: NSView {
         return actionButtons.first { $0.convert($0.bounds, to: self).contains(local) } ?? self
     }
 
+    /// The link button stays on: opening the link does not touch the task.
     func setActionsEnabled(_ enabled: Bool) {
-        actionButtons.forEach { $0.isEnabled = enabled }
+        actionButtons.filter { $0.rowAction != .link }.forEach { $0.isEnabled = enabled }
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { contextMenu() }
@@ -1326,6 +1364,8 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// For --self-test and --render-sample: takes every request instead of the network, with the function that
     /// answers it (body, status), now or later.
     var requestHook: ((URLRequest, @escaping (Data?, Int) -> Void) -> Void)?
+    /// Opens a task's link in the default browser; --self-test and --render-sample replace it so nothing is opened.
+    var openURL: (URL) -> Void = { url in _ = NSWorkspace.shared.open(url) }
 
     init(api: WidgetAPI, parentPID: pid_t?, options: WidgetOptions) {
         self.api = api
@@ -1626,23 +1666,26 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pill = made
         }
         let key = row.key
-        let actionButtons = row.actions.map { makeActionButton($0, key) }
+        let actionButtons = (row.link.isEmpty ? [] : [makeLinkButton(row)]) + row.actions.map { makeActionButton($0, key) }
         let buttonsWidth = actionButtons.reduce(0) { $0 + $1.intrinsicContentSize.width } + CGFloat(max(actionButtons.count - 1, 0)) * 6
         // The buttons sit beside the second line when the title takes one line and the second line leaves room for
-        // them; otherwise they take a line of their own under the text.
-        let inline = !actionButtons.isEmpty && !row.detail.isEmpty
-            && lineWidth(rowText(row, titleOnly: true)) <= fieldWidth
+        // them; without a second line, beside a title that leaves room for them (left of the engine tag); otherwise
+        // they take a line of their own under the text.
+        let titleWidth = lineWidth(rowText(row, titleOnly: true))
+        let inline = !actionButtons.isEmpty && !row.detail.isEmpty && titleWidth <= fieldWidth
             && lineWidth(rowText(row, detailOnly: true)) + 8 + buttonsWidth <= fullWidth
+        let besideTitle = !actionButtons.isEmpty && row.detail.isEmpty && titleWidth + 8 + buttonsWidth <= fieldWidth
+        if besideTitle { fieldWidth -= buttonsWidth + 8 }
         let field = makeField(rowText(row, raiseDetail: inline), width: fieldWidth)
         view.addSubview(field)
         NSLayoutConstraint.activate([
-            field.topAnchor.constraint(equalTo: view.topAnchor),
+            field.topAnchor.constraint(equalTo: view.topAnchor, constant: besideTitle ? 1 : 0),
             field.leadingAnchor.constraint(equalTo: view.leadingAnchor),
         ])
         if let pill = pill {
             view.addSubview(pill)
             NSLayoutConstraint.activate([
-                pill.topAnchor.constraint(equalTo: view.topAnchor, constant: 0),
+                pill.topAnchor.constraint(equalTo: view.topAnchor, constant: besideTitle ? 1 : 0),  // centred on the buttons
                 pill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 view.bottomAnchor.constraint(greaterThanOrEqualTo: pill.bottomAnchor),
             ])
@@ -1656,7 +1699,17 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             buttons.spacing = 6
             buttons.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(buttons)
-            if inline {
+            if besideTitle {
+                NSLayoutConstraint.activate([
+                    buttons.topAnchor.constraint(equalTo: view.topAnchor),
+                    buttons.trailingAnchor.constraint(equalTo: pill?.leadingAnchor ?? view.trailingAnchor, constant: pill == nil ? 0 : -6),
+                    view.bottomAnchor.constraint(greaterThanOrEqualTo: buttons.bottomAnchor),
+                    view.bottomAnchor.constraint(greaterThanOrEqualTo: field.bottomAnchor),
+                ])
+                let hug = view.bottomAnchor.constraint(equalTo: buttons.bottomAnchor)
+                hug.priority = .defaultLow
+                hug.isActive = true
+            } else if inline {
                 NSLayoutConstraint.activate([
                     buttons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                     buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -1684,6 +1737,14 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stack.addArrangedSubview(view)
         stack.setCustomSpacing(spacing, after: view)
         rowViews[key] = view
+    }
+
+    /// Open link: the tooltip is the link's label, else its address; a click opens it and never reaches the row.
+    private func makeLinkButton(_ row: Row) -> ActionButton {
+        let button = makeActionButton(.link, row.key)
+        button.toolTip = row.linkTitle
+        button.setAccessibilityLabel(L("Open link: {1}", row.linkTitle))
+        return button
     }
 
     private func makeActionButton(_ action: RowAction, _ key: String) -> ActionButton {
@@ -2114,7 +2175,9 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.representedObject = key
             return item
         }
-        return makeMenu([item(L("Edit"), #selector(editItemClicked(_:))), item(L("Delete"), #selector(deleteItemClicked(_:)))])
+        let hasLink = items.contains { $0.key == key && !$0.link.isEmpty }
+        return makeMenu((hasLink ? [item(L("Open link"), #selector(openLinkItemClicked(_:)))] : [])
+                        + [item(L("Edit"), #selector(editItemClicked(_:))), item(L("Delete"), #selector(deleteItemClicked(_:)))])
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -2280,7 +2343,18 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func actionButtonClicked(_ sender: ActionButton) {
         guard let key = sender.identifier?.rawValue else { return }
-        runAction(key, sender.rowAction)
+        if sender.rowAction == .link { openLink(key) } else { runAction(key, sender.rowAction) }
+    }
+
+    /// Opens the link of a task as the list has it now, in the browser; nothing is sent to T-Agent.
+    private func openLink(_ key: String) {
+        guard let item = items.first(where: { $0.key == key }), let url = linkTarget(item.link, base: api.base) else { return }
+        openURL(url)
+    }
+
+    @objc private func openLinkItemClicked(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        openLink(key)
     }
 
     private func runAction(_ key: String, _ action: RowAction) {
@@ -2530,6 +2604,28 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func testButtonsEnabled(_ key: String) -> [Bool] { rowViews[key]?.actionButtons.map { $0.isEnabled } ?? [] }
+    func testButtonTitles(_ key: String) -> [String] { rowViews[key]?.actionButtons.map { $0.label } ?? [] }
+    func testButton(_ key: String, _ action: RowAction) -> ActionButton? {
+        rowViews[key]?.actionButtons.first { $0.rowAction == action }
+    }
+    func testRowHeight(_ key: String) -> CGFloat { rowViews[key]?.frame.height ?? 0 }
+    /// Whether the panel gives a press in the middle of the button to the button (and not to its row).
+    func testButtonTakesPress(_ key: String, _ action: RowAction) -> Bool {
+        guard let button = testButton(key, action), let root = detail.contentView else { return false }
+        let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        return root.hitTest(root.superview?.convert(point, from: nil) ?? point) === button
+    }
+    /// Whether every button of the row lies inside the row, clear of the engine tag and of the other buttons.
+    func testButtonsInside(_ key: String) -> Bool {
+        guard let row = rowViews[key] else { return false }
+        let pills = row.subviews.filter { $0 is EnginePill }.map { $0.frame }
+        let frames = row.actionButtons.map { $0.convert($0.bounds, to: row) }
+        return frames.enumerated().allSatisfy { index, frame in
+            frame.width > 0 && frame.minX >= 0 && frame.maxX <= row.bounds.width + 0.5 && frame.minY >= -0.5
+                && frame.maxY <= row.bounds.height + 0.5 && !pills.contains { $0.intersects(frame) }
+                && !frames.enumerated().contains { $0.offset != index && $0.element.intersects(frame) }
+        }
+    }
     func testHasPill(_ key: String) -> Bool { rowViews[key]?.subviews.contains { $0 is EnginePill } ?? false }
     func testHolding() -> Bool { holdsPanel }
     func testApply(_ newList: ItemList?) { apply(newList, problem: newList == nil ? L("Could not reach T-Agent") : nil) }
@@ -2596,21 +2692,23 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 func sampleList() -> ItemList {
     func item(_ key: String, _ status: String, _ title: String, order: Double, parent: String = "", custom: String = "",
-              result: String = "", reason: String = "", pending: String = "") -> WidgetItem {
+              result: String = "", reason: String = "", pending: String = "", link: String = "", label: String = "") -> WidgetItem {
         decodeItem(["key": key, "status": status, "title": title, "sort_order": order, "parent_key": parent,
                     "custom_status": custom, "result": result, "attention_reason": reason, "pending": ["kind": "question", "text": pending],
-                    "notes": ""])!
+                    "notes": "", "link_url": link, "link_label": label])!
     }
     return ItemList(items: [
         item("local:12", "waiting_user", "Deploy the staging build", order: 50, pending: "Allow running npm publish?"),
-        item("local:9", "review", "Refactor the login flow", order: 40, result: "Tests pass; ready to merge"),
+        item("local:9", "review", "Refactor the login flow", order: 40, result: "Tests pass; ready to merge",
+             link: "https://github.com/example/app/pull/42", label: "PR #42"),
+        item("local:14", "review", "Check the new icons", order: 45, result: "Ready", link: "/h5?attention=14"),
         item("remote:7:3", "waiting_user", "Plan the database migration", order: 90, reason: "Pick a date for the cut-over"),
         item("local:20", "working", "Build the widget API", order: 60, custom: "Blocked"),
         item("local:21", "working", "Write the route tests", order: 59, parent: "local:20"),
         item("local:22", "working", "Fix the flaky stream test", order: 58, parent: "local:21", result: "Seen twice in CI"),
-        item("local:23", "working", "Translate the strings", order: 57),
-        item("remote:7:8", "working", "Index the server logs", order: 80, custom: "Step 3 of 5"),
-        item("local:30", "todo", "Update the release notes", order: 10),
+        item("local:23", "working", "Translate the strings", order: 57, link: "/files?path=strings.json"),
+        item("remote:7:8", "working", "Index the server logs", order: 80, custom: "Step 3 of 5", link: "https://logs.example.com/run/8"),
+        item("local:30", "todo", "Update the release notes", order: 10, link: "/docs/release-notes", label: "Draft"),
         item("remote:9:2", "todo", "Back up the studio disk", order: 20),
         item("local:1", "done", "Old task", order: 1), item("local:2", "failed", "Broken task", order: 2),
         item("remote:7:1", "cancelled", "Dropped task", order: 3),
@@ -2632,6 +2730,7 @@ func renderSample(_ dir: String) -> Never {
     let controller = WidgetController(api: WidgetAPI(base: nil, token: nil), parentPID: nil, options: options)
     controller.requestHook = { _, _ in }  // never the network
     controller.moveHook = { _, _, _ in }
+    controller.openURL = { _ in }  // never the browser
     var written: [String] = []
     func save(_ name: String, _ ok: Bool) {
         let path = (dir as NSString).appendingPathComponent(name)
@@ -2691,11 +2790,12 @@ func runSelfTest() -> Never {
         if ok { passes += 1 } else { failures += 1 }
     }
     func it(_ key: String, _ status: String = "working", parent: String = "", order: Double = 0, title: String? = nil,
-            custom: String = "", result: String = "", reason: String = "", pending: String = "", notes: String? = "") -> WidgetItem {
+            custom: String = "", result: String = "", reason: String = "", pending: String = "", notes: String? = "",
+            link: String = "", label: String = "") -> WidgetItem {
         let cut = key.range(of: ":", options: .backwards)!
         return WidgetItem(key: key, engine: String(key[..<cut.lowerBound]), id: String(key[cut.upperBound...]), parentKey: parent,
                           title: title ?? key, status: status, customStatus: custom, result: result, attentionReason: reason,
-                          pending: pending, notes: notes, sortOrder: order)
+                          pending: pending, notes: notes, sortOrder: order, link: taskLink(link) ?? "", linkLabel: label)
     }
     let twoEngines = [EngineInfo(key: "local", name: "MacBook", local: true, colorIndex: 0),
                       EngineInfo(key: "remote:7", name: "K01", local: false, colorIndex: 3)]
@@ -2816,6 +2916,42 @@ func runSelfTest() -> Never {
           && summarize(listOf([it("local:1", "working")])).working.allSatisfy { $0.actions.isEmpty })
     check("buttons: a status change alone changes the row",
           summarize(listOf([it("local:1", "review")])) != summarize(listOf([it("local:1", "waiting_user")])))
+
+    // Links: which ones the window opens, and where.
+    for good in ["https://example.com/pr/1", "http://127.0.0.1:3000/h5", "HTTPS://Example.com", "https://example.com:8443/a?b=c#d",
+                 "/h5?task=1", "/", "/docs/a%20b"] {
+        check("links: accepts \(good)", taskLink(good) == good)
+    }
+    for bad in ["javascript:alert(1)", "JavaScript:alert(1)", "ftp://example.com/file", "file:///etc/passwd", "mailto:a@example.com",
+                "data:text/html,x", "//evil.example.com", "/\\evil.example.com", "/a\\b", "https://user:pw@example.com/",
+                "https://user@example.com/", "https:///nohost", "https:example.com", "https://exa mple.com", "/a b", "/a\nb",
+                "h5", "example.com", ""] {
+        check("links: refuses \(bad.debugDescription)", taskLink(bad) == nil)
+    }
+    check("links: trimmed", taskLink("  /h5  ") == "/h5" && taskLink(" https://example.com/x\n") == "https://example.com/x")
+    let linkBase = WidgetAPI(base: "http://127.0.0.1:3999/", token: nil).base
+    check("links: a page path opens on the window's T-Agent", linkTarget("/h5?task=1", base: linkBase)?.absoluteString
+          == "http://127.0.0.1:3999/h5?task=1")
+    check("links: the root path too", linkTarget("/", base: linkBase)?.absoluteString == "http://127.0.0.1:3999/")
+    check("links: a path cannot leave T-Agent", linkTarget("/@evil.example.com", base: linkBase)?.host == "127.0.0.1"
+          && linkTarget("//evil.example.com", base: linkBase) == nil)
+    check("links: a web address opens as it is", linkTarget("https://example.com/pr/1?a=b#c", base: linkBase)?.absoluteString
+          == "https://example.com/pr/1?a=b#c")
+    check("links: a refused link opens nothing", linkTarget("javascript:alert(1)", base: linkBase) == nil
+          && linkTarget("ftp://example.com", base: linkBase) == nil)
+    let decodedLink = decodeItem(["key": "local:1", "link_url": " https://example.com/a ", "link_label": "The\nPR"])
+    check("links: read from the answer, the label on one line", decodedLink?.link == "https://example.com/a" && decodedLink?.linkLabel == "The PR")
+    check("links: a refused, missing, null or non-text link is no link",
+          [["link_url": "javascript:alert(1)"], [:], ["link_url": NSNull()], ["link_url": 5], ["link_url": ["text": "/h5"]]].allSatisfy {
+              decodeItem($0.merging(["key": "local:1"]) { a, _ in a })?.link == "" })
+    let linked = summarize(listOf([it("local:1", "waiting_user", link: "/a", label: "A"), it("local:2", link: "https://example.com/b"),
+                                   it("local:3", "todo", link: "/c"), it("local:4", "todo")]))
+    check("links: rows in every section carry their link", linked.needs.first?.link == "/a" && linked.needs.first?.linkTitle == "A"
+          && linked.working.first?.link == "https://example.com/b" && linked.working.first?.linkTitle == "https://example.com/b"
+          && linked.todo.first { $0.key == "local:3" }?.link == "/c" && linked.todo.first { $0.key == "local:4" }?.link == "")
+    check("links: the link is not a server action", rowActions(for: it("local:1", "waiting_user", link: "/a")) == [.handled]
+          && linked.working.first?.actions.isEmpty == true)
+    check("links: a changed link changes the row", summarize(listOf([it("local:1", link: "/a")])) != summarize(listOf([it("local:1", link: "/b")])))
 
     // applyMove: the optimistic order.
     let flat = [it("local:1", order: 40), it("local:2", order: 30), it("local:3", order: 20), it("local:4", order: 10)]
@@ -3181,6 +3317,58 @@ func runSelfTest() -> Never {
     check("panel: an empty Needs you says so", empty.testLines.contains("Nothing needs you") && empty.testLines.contains("None"))
     check("panel: one engine shows no tag", !empty.testHasPill("local:1") && empty.testBadge == "")
 
+    // The Open link button: only on rows with a link, beside the text when it fits, and a click opens the browser only.
+    let links = WidgetController(api: WidgetAPI(base: "http://127.0.0.1:3999", token: "t"), parentPID: nil, options: options)
+    var linkRequests: [URLRequest] = []
+    var opened: [String] = []
+    links.requestHook = { request, _ in linkRequests.append(request) }
+    links.openURL = { opened.append($0.absoluteString) }
+    let longTitle = "A long task title that takes the whole width of the panel"
+    links.loadForTest(listOf([
+        it("local:1", "waiting_user", order: 50, pending: "Allow it?", link: "https://example.com/pr/1", label: "The PR"),
+        it("local:2", "review", order: 40, result: "ok", link: "/h5?task=2"),
+        it("local:3", "waiting_user", order: 30, pending: "Allow it?"),
+        it("local:4", order: 50, title: "Short", link: "https://example.com/logs"),
+        it("remote:7:1", order: 40, title: "Short", link: "/x"),
+        it("local:5", order: 30, title: "Short"),
+        it("local:6", "todo", order: 20, title: longTitle, link: "https://example.com/long"),
+        it("local:7", "todo", order: 10, title: "Bad", link: "javascript:alert(1)"),
+    ]))
+    let linkOrder = links.testOrder
+    check("link button: on rows with a link, first", links.testButtonTitles("local:1") == ["Open link", "Handled"]
+          && links.testButtonTitles("local:2") == ["Open link", "Confirm", "Reject"] && links.testButtonTitles("local:4") == ["Open link"]
+          && links.testButtonTitles("local:6") == ["Open link"])
+    check("link button: none without a link or with a refused one", links.testButtonTitles("local:3") == ["Handled"]
+          && links.testButtonTitles("local:5").isEmpty && links.testButtonTitles("local:7").isEmpty)
+    check("link button: the tooltip is the label, else the address", links.testButton("local:1", .link)?.toolTip == "The PR"
+          && links.testButton("local:2", .link)?.toolTip == "/h5?task=2" && links.testButton("local:4", .link)?.toolTip == "https://example.com/logs")
+    check("link button: the accessibility label names the link", links.testButton("local:1", .link)?.accessibilityLabel() == "Open link: The PR"
+          && links.testButton("local:2", .link)?.accessibilityLabel() == "Open link: /h5?task=2")
+    check("link button: inside its row, clear of the tag and the other buttons",
+          ["local:1", "local:2", "local:4", "remote:7:1", "local:6"].allSatisfy { links.testButtonsInside($0) })
+    check("link button: beside a short title the row stays one line", links.testRowHeight("local:4") <= links.testRowHeight("local:5") + 4
+          && links.testRowHeight("remote:7:1") <= links.testRowHeight("local:5") + 4)
+    check("link button: under a long title", links.testRowHeight("local:6") > links.testRowHeight("local:5") + 15)
+    check("link button: the panel gives its press to the button, not the row", links.testButtonTakesPress("local:4", .link)
+          && links.testButtonTakesPress("remote:7:1", .link) && links.testButtonTakesPress("local:1", .link))
+    check("link button: a click opens the address", links.testPressButton("local:1", .link) && opened == ["https://example.com/pr/1"])
+    check("link button: a page path opens on this T-Agent", links.testPressButton("local:2", .link)
+          && opened.last == "http://127.0.0.1:3999/h5?task=2")
+    check("link button: a click sends nothing and leaves the row alone", linkRequests.isEmpty && !links.testHolding()
+          && links.testOrder == linkOrder && links.testButtonTitles("local:1") == ["Open link", "Handled"])
+    check("link menu: a row with a link offers Open link", links.testMenuTitles("local:4") == ["Open link", "Edit", "Delete", "Quit"]
+          && links.testMenuTitles("local:5") == ["Edit", "Delete", "Quit"])
+    _ = links.testOpenFromRowMenu("local:4", "Open link")
+    check("link menu: Open link opens it", opened.last == "https://example.com/logs" && linkRequests.isEmpty)
+    stringTable = ["Open link": "OL", "Open link: {1}": "OL: {1}"]
+    links.testStringsChanged()
+    check("link button: its words come from the table", links.testButtonTitles("local:4") == ["OL"]
+          && links.testButton("local:4", .link)?.accessibilityLabel() == "OL: https://example.com/logs")
+    stringTable = [:]
+    links.testStringsChanged()
+    _ = links.testPressButton("local:1", .handled)
+    check("link button: stays on while the row's action is out", linkRequests.count == 1 && links.testButtonsEnabled("local:1") == [true, false])
+
     // Menus, the form and the delete question, off screen and without keyboard focus.
     let crud = WidgetController(api: WidgetAPI(base: "http://127.0.0.1:1", token: "t"), parentPID: nil, options: options)
     var sent: [URLRequest] = []
@@ -3315,7 +3503,7 @@ func runSelfTest() -> Never {
         check("delete: a 204 closes the question and refreshes", false)
     }
 
-    check("no window was put on screen", !mouse.testOnScreen && !crud.testOnScreen && !empty.testOnScreen)
+    check("no window was put on screen", !mouse.testOnScreen && !crud.testOnScreen && !empty.testOnScreen && !links.testOnScreen)
     print("\(passes) passed, \(failures) failed")
     exit(failures == 0 ? 0 : 1)
 }

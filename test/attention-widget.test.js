@@ -150,7 +150,7 @@ test('items: this machine and the connected services in one list, a failing engi
   const fake = fakeRemote();
   const laptop = fake.add('Laptop');
   laptop.items.push(
-    { id: 1, title: 'Remote parent', status: 'waiting_user', sort_order: 50, parent_id: null, context: { pending: { kind: 'permission', text: 'Allow rm?' } }, custom_status: 'Blocked', result: null, attention_reason: 'Approve', priority: 'high', due_date: '2026-12-01', created_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-02T00:00:00.000Z' },
+    { id: 1, title: 'Remote parent', status: 'waiting_user', sort_order: 50, parent_id: null, context: { pending: { kind: 'permission', text: 'Allow rm?' } }, custom_status: 'Blocked', result: null, attention_reason: 'Approve', link_url: 'https://example.test/pr/1', link_label: 'The PR', priority: 'high', due_date: '2026-12-01', created_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-02T00:00:00.000Z' },
     { id: 2, title: 'Remote child', status: 'waiting_user', sort_order: 49, parent_id: 1, created_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-02T00:00:00.000Z' },
   );
   fake.add('Broken', { fail: true });
@@ -164,7 +164,7 @@ test('items: this machine and the connected services in one list, a failing engi
   remoteRow('Slow');
   remoteRow('Disabled', { enabled: 0 });
   setHidden([`remote:${hiddenId}`]);
-  const local = service.create({ title: 'Local task', status: 'review', context: { pending: { kind: 'question', text: 'Which one?' } } }, { actor: 'user' });
+  const local = service.create({ title: 'Local task', status: 'review', link_url: '/h5?task=1', context: { pending: { kind: 'question', text: 'Which one?' } } }, { actor: 'user' });
   for (let index = 0; index < 55; index += 1) {
     const done = service.create({ title: `Done ${index}`, status: 'todo' }, { actor: 'user' });
     service.update(done.id, { status: 'done' }, { actor: 'user' });
@@ -185,10 +185,15 @@ test('items: this machine and the connected services in one list, a failing engi
   const parent = byKey.get(`remote:${laptopId}:1`);
   assert.deepEqual(parent, {
     key: `remote:${laptopId}:1`, engine: `remote:${laptopId}`, id: 1, parent_key: null, title: 'Remote parent', status: 'waiting_user', custom_status: 'Blocked',
-    result: null, attention_reason: 'Approve', pending: 'Allow rm?', priority: 'high', due_date: '2026-12-01', sort_order: 50,
+    result: null, attention_reason: 'Approve', pending: 'Allow rm?', link_url: 'https://example.test/pr/1', link_label: 'The PR', priority: 'high', due_date: '2026-12-01', sort_order: 50,
     updated_at: '2026-11-02T00:00:00.000Z', created_at: '2026-11-01T00:00:00.000Z',
   });
   assert.equal(byKey.get(`remote:${laptopId}:2`).parent_key, `remote:${laptopId}:1`);
+  // The link of a task, null when it has none (a remote item without the fields, or an empty one).
+  assert.equal(byKey.get(`remote:${laptopId}:2`).link_url, null);
+  assert.equal(byKey.get(`remote:${laptopId}:2`).link_label, null);
+  assert.equal(byKey.get(`local:${local.id}`).link_url, '/h5?task=1');
+  assert.equal(byKey.get(`local:${local.id}`).link_label, null);
   assert.equal(byKey.get(`local:${local.id}`).pending, 'Which one?');
   assert.equal(byKey.get(`local:${local.id}`).engine, 'local');
   const finished = items.filter(item => item.status === 'done');

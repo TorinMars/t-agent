@@ -1948,3 +1948,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.126.0 Email notifier (Gmail and 163 presets, other SMTP servers, encrypted app password / authorization code) and tcli notify: agent sessions message the user through Telegram (also through the linked sender) and email, with a switch in the notifier rules; notifiers that are not set up leave no line in the recent list
 > v2.127.0 The terminal's Upload image or file button, a paste on the terminal and the Paste sheet take up to 9 files at once; they go up one after another and all links are typed in one paste.
 > v2.127.1 The terminal copy bar hides by itself after 10 seconds, with a countdown line; a mouse over it or the keyboard focus inside it holds it.
+> v2.128.0 The multi-column view's top bar has an Update button at its left end; it opens the header's Update dialog and shows the same red dot.

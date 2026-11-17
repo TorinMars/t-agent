@@ -1985,3 +1985,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.127.1 The terminal copy bar hides by itself after 10 seconds, with a countdown line; a mouse over it or the keyboard focus inside it holds it.
 > v2.128.0 The multi-column view's top bar has an Update button at its left end; it opens the header's Update dialog and shows the same red dot.
 > v2.129.0 T-Attention tasks take a link in the page's edit dialog and open it with one click from the list, the desktop window, Telegram and email; a new Desktop window (macOS) notifier shows messages as a bubble beside the floating window, and a click opens the task's link or T-Agent.
+> v2.129.1 Terminal close, restart and server exit now end the terminal's foreground job (SIGTERM, then SIGKILL), so an orphaned Codex no longer keeps its session lock and blocks codex resume

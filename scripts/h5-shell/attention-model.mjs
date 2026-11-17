@@ -358,6 +358,41 @@ export function safeLink(url) {
   return null;
 }
 
+// The web links inside a read-only text (a reason, a summary, the last reply, a history line), as parts to draw: [{ text }] for plain text and
+// [{ url, text }] for a link. Only http:// and https:// addresses are links (never javascript:, data: or any other scheme). An address ends at white
+// space, at quotes or angle brackets and at CJK text or punctuation; trailing punctuation (.,;:!?'" and closing brackets, and the CJK ones) is left
+// out of it, but a closing bracket that closes one inside the address stays (https://en.wikipedia.org/wiki/A_(b)).
+const URL_IN_TEXT = /https?:\/\/[^\s<>"\u2018-\u201f\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]+/gi;
+const TRAILING = /[.,;:!?'"\u2018-\u201f\u3001\u3002\uff01\uff0c\uff0e\uff1a\uff1b\uff1f]$/;
+const CLOSERS = { ')': '(', ']': '[', '}': '{' };
+const count = (text, char) => text.split(char).length - 1;
+function trimUrl(url) {
+  let out = url;
+  for (;;) {
+    const last = out.slice(-1);
+    if (TRAILING.test(last)) { out = out.slice(0, -1); continue; }
+    if (CLOSERS[last] && count(out, last) > count(out, CLOSERS[last])) { out = out.slice(0, -1); continue; }
+    return out;
+  }
+}
+export function linkParts(text) {
+  const source = String(text ?? '');
+  const parts = [];
+  const plain = value => { if (!value) return; const last = parts[parts.length - 1]; if (last && !last.url) last.text += value; else parts.push({ text: value }); };
+  let at = 0;
+  for (const match of source.matchAll(URL_IN_TEXT)) {
+    const url = trimUrl(match[0]);
+    let host = '';
+    try { const parsed = new URL(url); host = ['http:', 'https:'].includes(parsed.protocol) ? parsed.hostname : ''; } catch { host = ''; }
+    if (!host) continue; // 'https://' alone, or not an address at all: left as text
+    plain(source.slice(at, match.index));
+    parts.push({ url, text: url });
+    at = match.index + url.length;
+  }
+  plain(source.slice(at));
+  return parts;
+}
+
 // The fields of the edit form that differ from the item, as the body of PATCH /api/attention/:id (null when nothing changed).
 // Empty notes and an empty due date are sent as null (cleared).
 export function patchFor(item, form) {
@@ -372,6 +407,12 @@ export function patchFor(item, form) {
   if (due !== String(item.due_date || '')) out.due_date = due || null;
   // The fields of a server with sub-tasks, only when the form has them: an empty one is cleared (null).
   for (const key of ['custom_status', 'result']) {
+    if (form[key] === undefined) continue;
+    const value = String(form[key] || '').trim();
+    if (value !== String(item[key] || '')) out[key] = value || null;
+  }
+  // The link and its label, when the form has them: an empty one is cleared (null).
+  for (const key of ['link_url', 'link_label']) {
     if (form[key] === undefined) continue;
     const value = String(form[key] || '').trim();
     if (value !== String(item[key] || '')) out[key] = value || null;

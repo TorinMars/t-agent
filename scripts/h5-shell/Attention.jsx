@@ -23,14 +23,16 @@ import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import {
   MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
   groupOf, hasTree, homeDetail, homeGroups, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, pendingLine, readCollapsed, rollbackItems,
-  safeLink, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
+  linkParts, safeLink, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
 } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
 // ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel. The list and the live
 // updates are in attention-feed.mjs (`state.attention`); this file only draws them and calls `ui.actions.attention*`. A tap on the circle marks a
 // task done (from any status; on a done task it opens it again); a tap on the row opens the edit view (a dialog: title, notes, status, priority,
-// due date, link, history, delete).
+// due date, link and its label, history, delete). A task with a link has a link button at the right of its row (a real <a>: a web address opens in
+// a new tab, a page path of this app in this one; it never opens the edit view); web addresses inside the read-only texts of the edit view (the
+// reason, the context card, the history) are links too (`Linked`, `linkParts` of attention-model.mjs).
 // Phone: the "Home view" of the t-attention skill (`homeGroups`, the grouping of `t-attention list --tree`, lib/attention-home.js): the sections Needs
 // you (waiting_user, then review), Working and To do, each heading with a coloured dot (red, green, yellow; an empty section says "None"), whole trees
 // (a tree is in the section of its most urgent open task, a sub-task always under its parent), each row with its own status pill, the section's
@@ -63,6 +65,29 @@ function Dot({ section }) {
   return <Box component="span" className="h5-attention-dot" data-section={section} aria-hidden="true" sx={{ flex: '0 0 auto', width: 8, height: 8, borderRadius: '50%', bgcolor: SECTION_DOT[section] || 'text.disabled' }} />;
 }
 
+// A read-only text with its http(s) addresses as links (`linkParts`): a new tab, no referrer, never translated, broken anywhere. Never used inside
+// an input.
+const LINK_SX = { color: 'primary.light', overflowWrap: 'anywhere', wordBreak: 'break-word', textUnderlineOffset: 3 };
+function Linked({ text }) {
+  return linkParts(text).map((part, index) => (part.url
+    ? <Box component="a" key={index} className="h5-attention-text-link" href={part.url} target="_blank" rel="noopener noreferrer" translate="no" sx={LINK_SX}>{part.text}</Box>
+    : part.text));
+}
+
+// The link button of a row (a task with a safe link_url): a real <a>, so a middle click, a long press and "open in a new tab" work. A web address opens
+// in a new tab; a page path of this app (`/…`) in this one. A tap on it never opens the edit view, and it never starts a drag (`ignore` of attentionDrag).
+function RowLink({ item }) {
+  const link = safeLink(item.link_url);
+  if (!link) return null;
+  const label = String(item.link_label || '').trim() || t('Open link');
+  return (
+    <IconButton
+      className="h5-attention-row-link" component="a" href={link.url} {...named(label)} {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+      onClick={event => event.stopPropagation()} sx={{ flex: '0 0 auto', mt: 0.25, color: 'primary.light', WebkitTouchCallout: 'default' }}
+    ><Icon name="link" size={18} /></IconButton>
+  );
+}
+
 // The second line of a row: the result of a task in Review or Done (when it has one), else what is pending (Needs you, Review, Failed).
 function secondLine(item, fields) {
   if (fields && ['review', 'done'].includes(item.status) && item.result) return { kind: 'result', text: String(item.result) };
@@ -89,6 +114,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
   const indent = node ? node.indent : 0;
   const actions = item.status === 'review' ? ['Confirm', 'Reject'] : item.status === 'waiting_user' ? ['Handled'] : [];
   const custom = fields && item.custom_status && !home ? String(item.custom_status) : '';
+  const linked = Boolean(safeLink(item.link_url));
   return (
     <Box
       className="h5-attention-row" data-id={item.id} data-key={keyOf(item)} data-engine={engineOf(item)} data-status={item.status} data-depth={node ? node.depth : 0} {...(hold || {})}
@@ -98,7 +124,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
         <Icon name={done ? 'attentionDone' : 'attentionOpen'} size={22} />
       </IconButton>
       <Box sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <ListItemButton className="h5-attention-open" onClick={() => onOpen(keyOf(item))} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold ? 0.5 : 2 }}>
+        <ListItemButton className="h5-attention-open" onClick={() => onOpen(keyOf(item))} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold || linked ? 0.5 : 2 }}>
           {node && node.parent ? (
             <Box className="h5-attention-parent-hint" sx={{ fontSize: 12, lineHeight: 1.35, color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {'↳ '}{node.parent.title}
@@ -137,6 +163,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
           </Box>
         ) : null}
       </Box>
+      {linked ? <RowLink item={item} /> : null}
       {fold}
     </Box>
   );
@@ -302,7 +329,7 @@ function ContextCard({ item, state, ui, onLeave }) {
       {pending ? (
         <Box id="h5-attention-context-pending" sx={{ color: REASON_COLOR.waiting_user }}>
           <Box sx={{ ...HEAD, color: 'warning.light' }}>{t('Needs you')}</Box>
-          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', color: 'text.primary' }}>{pending.text}</Box>
+          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', color: 'text.primary' }}><Linked text={pending.text} /></Box>
           {pending.command ? <Box component="pre" id="h5-attention-context-command" translate="no" sx={{ ...CODE, mt: 0.75 }}>{pending.command}</Box> : null}
         </Box>
       ) : null}
@@ -312,20 +339,20 @@ function ContextCard({ item, state, ui, onLeave }) {
             <Box sx={{ ...HEAD, flex: '1 1 auto', mb: 0 }}>{t('AI summary')}</Box>
             <Button id="h5-attention-summary-refresh" size="small" disabled={asking} onClick={() => void refresh()}>{t('Refresh')}</Button>
           </Box>
-          <Box sx={{ fontSize: 14, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{summary.text}</Box>
+          <Box sx={{ fontSize: 14, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}><Linked text={summary.text} /></Box>
           <Box sx={{ fontSize: 12, color: 'text.secondary' }}>{when(summary.at)}{summary.model ? ' \u00b7 ' : ''}<span translate="no">{summary.model || ''}</span></Box>
         </Box>
       ) : null}
       {context.goal ? (
         <Box id="h5-attention-context-goal">
           <Box sx={HEAD}>{t('Goal')}</Box>
-          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{context.goal}</Box>
+          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}><Linked text={context.goal} /></Box>
         </Box>
       ) : null}
       {reply || files.length || turns ? (
         <Box id="h5-attention-context-progress">
           <Box sx={HEAD}>{t('Progress')}</Box>
-          {reply ? <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{reply}</Box> : null}
+          {reply ? <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}><Linked text={reply} /></Box> : null}
           <Box sx={{ fontSize: 12, color: 'text.secondary', mt: 0.25 }}>
             {[when(context.turn_started_at || item.updated_at), turns ? `${t('Turns')}: ${turns}` : ''].filter(Boolean).join(' \u00b7 ')}
           </Box>
@@ -387,7 +414,7 @@ function Timeline({ events, titleOf }) {
               <Box component="li" key={entry.id} className="h5-attention-event" data-kind={entry.kind} sx={{ display: 'flex', gap: 1, py: 0.5, borderBottom: 1, borderColor: 'divider', fontSize: 13 }}>
                 <Box component="span" sx={{ flex: '0 0 auto', color: 'text.secondary', fontVariantNumeric: 'tabular-nums', minWidth: 44 }}>{clock(entry.at)}</Box>
                 <Box component="span" className="h5-attention-sentence" sx={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
-                  {entry.joined ? t(`${entry.key} ${entry.text}`) : entry.text ? `${t(entry.key)}: ${entry.text}` : t(entry.key)}
+                  {entry.joined ? t(`${entry.key} ${entry.text}`) : entry.text ? <>{`${t(entry.key)}: `}<Linked text={entry.text} /></> : t(entry.key)}
                   {entry.actor && ['status', 'created', 'updated', 'deleted'].includes(entry.kind) ? <Box component="span" translate="no" sx={{ color: 'text.secondary' }}>{` \u00b7 ${entry.actor}`}</Box> : null}
                 </Box>
               </Box>
@@ -404,6 +431,7 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
   const key = keyOf(item);
   const [form, setForm] = useState(() => ({
     title: item.title || '', notes: item.notes || '', status: item.status, priority: item.priority || 'none', due_date: item.due_date || '',
+    link_url: item.link_url || '', link_label: item.link_label || '',
     ...(fields ? { custom_status: item.custom_status || '', result: item.result || '', parent_id: item.parent_id == null ? '' : String(item.parent_id) } : {}),
   }));
   const [events, setEvents] = useState(null); // null: loading
@@ -423,7 +451,7 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
     setBusy(true);
     setError('');
     try { await ui.actions.attentionUpdate(key, body); ui.notify(t('Saved'), 'success'); onClose(); }
-    catch (failure) { setError(`${t('Could not save')}: ${failure.message}`); }
+    catch (failure) { setError(`${t('Could not save')}: ${errorText(failure)}`); } // the server's message (a link that is not http(s), ...)
     finally { setBusy(false); }
   };
   const remove = async () => {
@@ -456,10 +484,24 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
       <Box sx={{ flex: '1 1 auto', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, px: 2, pt: 2.5, pb: 2 }}>
         <ContextCard item={item} state={state} ui={ui} onLeave={onLeave} />
         {REMIND_STATUSES.includes(item.status) && item.attention_reason && !(contextOf(item).pending && contextOf(item).pending.text) ? (
-          <Box id="h5-attention-edit-reason" sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{item.attention_reason}</Box>
+          <Box id="h5-attention-edit-reason" sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}><Linked text={item.attention_reason} /></Box>
         ) : null}
         <Field id="h5-attention-edit-name" label="Title" value={form.title} onChange={set('title')} htmlInput={{ maxLength: 300 }} />
         <Field id="h5-attention-edit-notes" label="Notes" value={form.notes} onChange={set('notes')} multiline minRows={3} maxRows={12} htmlInput={{ maxLength: 20000 }} />
+        {/* The link: an http(s) address or a page path of this app; the server checks it (a refusal shows its message in the error line). */}
+        <Field
+          id="h5-attention-edit-link-url" label="Link" type="url" value={form.link_url} onChange={set('link_url')} placeholder={t('https://… or /path')}
+          htmlInput={{ maxLength: 2000, inputMode: 'url', autoCorrect: 'off', translate: 'no' }}
+        />
+        <Field id="h5-attention-edit-link-label" label="Link label" value={form.link_label} onChange={set('link_label')} placeholder={t('Shown instead of the address')} htmlInput={{ maxLength: 200 }} />
+        {/* The saved link (what the row's link button opens); a changed address is opened from here after Save. */}
+        {link ? (
+          <Button
+            id="h5-attention-edit-link" variant="outlined" component="a" href={link.url} startIcon={<Icon name="link" size={18} />}
+            {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            sx={{ justifyContent: 'flex-start', overflowWrap: 'anywhere', textAlign: 'left' }}
+          ><span translate="no">{item.link_label || item.link_url}</span></Button>
+        ) : null}
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', '& > *': { flex: '1 1 140px' } }}>
           <TextField id="h5-attention-edit-status" select label={t('Status')} size="small" value={form.status} onChange={set('status')} slotProps={{ select: { native: true } }}>
             {STATUSES.map(status => <option key={status} value={status}>{t(STATUS_LABELS[status])}</option>)}
@@ -500,13 +542,6 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
               ))}
             </Box>
           </Box>
-        ) : null}
-        {link ? (
-          <Button
-            id="h5-attention-edit-link" variant="outlined" component="a" href={link.url} startIcon={<Icon name="link" size={18} />}
-            {...(link.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            sx={{ justifyContent: 'flex-start', overflowWrap: 'anywhere', textAlign: 'left' }}
-          ><span translate="no">{item.link_label || item.link_url}</span></Button>
         ) : null}
         <Typography variant="caption" color="text.secondary" component="div" id="h5-attention-edit-meta" sx={{ overflowWrap: 'anywhere' }}>
           {`${t('Source')}: `}<span translate="no">{item.source || 'user'}</span>{tag ? <>{' · '}<span translate="no">{deviceText(tag)}</span></> : null}{item.created_at ? ` · ${t('Created')} ${when(item.created_at)}` : ''}{item.updated_at ? ` · ${t('Updated')} ${when(item.updated_at)}` : ''}
@@ -556,7 +591,7 @@ function attentionDrag(moveRef) {
     floatClass: 'h5-task-float h5-attention-float',
     clamp: false,
     hold: true,
-    ignore: '.h5-attention-check, .h5-attention-fold, .h5-attention-action',
+    ignore: '.h5-attention-check, .h5-attention-fold, .h5-attention-action, .h5-attention-row-link',
     focus: () => null,
     dragging: null,
     tap: null, // a tap is the row's own click: it opens the edit view

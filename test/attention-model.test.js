@@ -345,6 +345,38 @@ test('only web links and page addresses of this app can be opened', async () => 
   for (const bad of ['javascript:alert(1)', '//evil.test/x', '/\\evil.test', 'data:text/html,x', 'ftp://x', '', null, 'https://a b']) assert.equal(safeLink(bad), null, String(bad));
 });
 
+test('web addresses in a text become link parts; nothing else does', async () => {
+  const { linkParts } = await load();
+  const link = url => ({ url, text: url });
+  assert.deepEqual(linkParts('Open https://example.test/pr/1 now'), [{ text: 'Open ' }, link('https://example.test/pr/1'), { text: ' now' }]);
+  assert.deepEqual(linkParts('See http://a.test/x.'), [{ text: 'See ' }, link('http://a.test/x'), { text: '.' }], 'a full stop after it is text');
+  assert.deepEqual(linkParts('(https://a.test/q?x=1&y=2), "https://b.test/".'), [{ text: '(' }, link('https://a.test/q?x=1&y=2'), { text: '), "' }, link('https://b.test/'), { text: '".' }]);
+  assert.deepEqual(linkParts('https://en.wikipedia.org/wiki/A_(b)!'), [link('https://en.wikipedia.org/wiki/A_(b)'), { text: '!' }], 'a bracket opened inside stays');
+  assert.deepEqual(linkParts('a https://a.test/1\nb https://b.test/2;'), [{ text: 'a ' }, link('https://a.test/1'), { text: '\nb ' }, link('https://b.test/2'), { text: ';' }]);
+  // CJK text and punctuation end an address (written with escapes: Chinese text only lives in the dictionaries).
+  const cjk = '\u94fe\u63a5\uff1ahttps://a.test/p?q=1\uff0c\u7136\u540e\u770b https://b.test\u3002';
+  assert.deepEqual(linkParts(cjk), [{ text: '\u94fe\u63a5\uff1a' }, link('https://a.test/p?q=1'), { text: '\uff0c\u7136\u540e\u770b ' }, link('https://b.test'), { text: '\u3002' }]);
+  for (const text of ['javascript:alert(1)', 'data:text/html,<b>x</b>', 'ftp://a.test/x', 'https://', 'see https:// here', 'mailto:a@b.test', 'www.example.test']) {
+    assert.deepEqual(linkParts(text), [{ text }], text);
+  }
+  assert.ok(linkParts('javascript:void(0) https://a.test').filter(part => part.url).every(part => /^https?:\/\//.test(part.url)), 'every link is http(s)');
+  assert.deepEqual(linkParts(''), []);
+  assert.deepEqual(linkParts(null), []);
+  assert.deepEqual(linkParts(42), [{ text: '42' }]);
+});
+
+test('the edit form: the link and its label are sent when changed; emptied clears them (null)', async () => {
+  const { patchFor } = await load();
+  const base = item(1, 'todo', { notes: '', link_url: 'https://a.test/1', link_label: 'PR #1' });
+  const same = { title: 'T1', notes: '', status: 'todo', priority: 'none', due_date: '', link_url: 'https://a.test/1', link_label: 'PR #1' };
+  assert.equal(patchFor(base, same), null);
+  assert.deepEqual(patchFor(base, { ...same, link_url: ' https://a.test/2 ' }), { link_url: 'https://a.test/2' });
+  assert.deepEqual(patchFor(base, { ...same, link_url: '', link_label: '  ' }), { link_url: null, link_label: null });
+  assert.deepEqual(patchFor(item(2, 'todo'), { ...same, link_url: '/?openChat=c1', link_label: '' }), { title: 'T1', link_url: '/?openChat=c1' });
+  const { link_url: _u, link_label: _l, ...old } = same;
+  assert.equal(patchFor(base, old), null, 'a form without them sends none');
+});
+
 test('the edit form: custom status, result and parent only when the form has them; empty clears (null)', async () => {
   const { patchFor } = await load();
   const base = item(1, 'todo', { notes: '', custom_status: 'Blocked', result: null, parent_id: 4 });

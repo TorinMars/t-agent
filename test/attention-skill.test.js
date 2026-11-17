@@ -263,7 +263,7 @@ test('server.js mounts the skill router before the T-Attention router, which ans
 
 // The commands and flags of the t-attention CLI contract the skill may use (scripts/t-attention.js; `login` with --url / --token already existed).
 const COMMANDS = new Set(['add', 'update', 'review', 'confirm', 'reject', 'handled', 'wait', 'work', 'fail', 'move', 'list', 'tree', 'show', 'login']);
-const FLAGS = new Set(['parent', 'status', 'custom-status', 'result', 'notes', 'ref', 'json', 'title', 'note', 'reason', 'before', 'after', 'top', 'bottom', 'tree', 'url', 'token']);
+const FLAGS = new Set(['parent', 'status', 'custom-status', 'result', 'notes', 'ref', 'json', 'title', 'note', 'reason', 'link', 'label', 'before', 'after', 'top', 'bottom', 'tree', 'url', 'token']);
 
 test('SKILL.md: valid frontmatter, only commands and flags of the CLI contract, short enough', () => {
   const lines = SOURCE.split('\n');
@@ -285,6 +285,8 @@ test('SKILL.md: valid frontmatter, only commands and flags of the CLI contract, 
   for (const name of ['add', 'update', 'review', 'confirm', 'wait', 'work', 'list', 'show']) assert.ok(used.has(name), `uses ${name}`);
   const flags = new Set([...SOURCE.matchAll(/(?<![\w-])--([a-z][a-z-]*)/g)].map(found => found[1]));
   assert.deepEqual([...flags].filter(flag => !FLAGS.has(flag)), []);
+  for (const flag of ['link', 'label']) assert.ok(flags.has(flag), `documents --${flag}`);
+  assert.ok(SOURCE.includes("--link '' --label ''"), 'says how to remove a link');
   assert.ok(!/\b(?:done|cancel|rm|upsert|pair|plugins) <id>/.test(SOURCE), 'no command outside the contract');
   // The installer can put the path in, and nothing in the skill restarts T-Agent.
   assert.ok(SOURCE.includes(skill.CLI_TOKEN));

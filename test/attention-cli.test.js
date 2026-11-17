@@ -144,6 +144,7 @@ test('add, list, show, update, status verbs, upsert and rm send the contract req
     assert.equal(shown.code, 0);
     assert.match(shown.stdout, /^#1 Write the report\nTo do - just now\n\nPriority: high/);
     assert.match(shown.stdout, /History\n/);
+    assert.match(shown.stdout, /\nLink: {5}PR https:\/\/example\.com\n/, 'show prints the link with its label');
     const byRef = await run(['show', 'ref:ci:42', '--json'], { env });
     assert.equal(JSON.parse(byRef.stdout).item.id, 1);
     assert.equal(JSON.parse(byRef.stdout).events.length, 1);
@@ -156,6 +157,10 @@ test('add, list, show, update, status verbs, upsert and rm send the contract req
     assert.deepEqual(fake.requests.at(-1).body, { title: 'Write the summary', due_date: null, attention_reason: null });
     assert.equal(fake.requests.at(-1).method, 'PATCH');
     assert.equal(fake.requests.at(-1).path, '/api/attention/1');
+    assert.equal((await run(['update', '1', '--link', '/h5?task=1', '--label', 'Task page'], { env })).code, 0);
+    assert.deepEqual(fake.requests.at(-1).body, { link_url: '/h5?task=1', link_label: 'Task page' });
+    assert.equal((await run(['update', '1', '--link', '', '--label', ''], { env })).code, 0);
+    assert.deepEqual(fake.requests.at(-1).body, { link_url: null, link_label: null }, 'an empty value clears the link');
     assert.equal((await run(['update', '1'], { env })).code, 1, 'update without fields');
     assert.equal((await run(['update', '1', '--status', 'finished'], { env })).code, 1);
 

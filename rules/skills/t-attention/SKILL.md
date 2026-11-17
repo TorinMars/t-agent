@@ -43,11 +43,22 @@ Beside the status a task has:
 |-------|------|-----|
 | Custom status | `--custom-status` | A short free-text state shown next to the status, for example `Blocked` or `In testing; due Fri 18:00` |
 | Result | `--result` | The outcome in one sentence |
-| Notes | `--notes` | Lasting facts: deadlines, scope, links, what it waits for |
+| Notes | `--notes` | Lasting facts: deadlines, scope, what it waits for |
+| Link | `--link URL --label T` | The one page the user should open for this task (see "Links" below); the label is optional |
 | Parent | `--parent` | The task this one belongs to (an id or `ref:<ref>`) |
 | Timeline note | `--note` | A progress line on the task's timeline; it changes no field |
 
 An empty value (`--result ''`) clears a field.
+
+### Links
+
+Attach a link when the task has a page the user will want to open: a pull or merge request, a preview or deploy address, a doc or design page, a CI run, an issue. Give one link per task, the most useful one, with a short label. The user can tap it in the T-Agent page, the widget and the notifications.
+
+```bash
+"${TA_ATTENTION_CLI:-t-attention}" update <id> --link "https://github.com/acme/app/pull/12" --label "PR #12"
+```
+
+The link is an `http(s)` address without a user name or password, or a T-Agent page path starting with `/`. `add` takes the same flags. When a better link comes (the PR after the branch, the deploy after the PR), replace it; `--link '' --label ''` removes it.
 
 ## Rules
 

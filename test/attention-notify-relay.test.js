@@ -145,6 +145,10 @@ test('a device that is not the sender relays the delivery to the sender, which s
   assert.equal(sent.item.status, 'waiting_user');
   assert.equal(sent.item.context.pending.text, 'Approve the command');
   assert.equal(sent.item.context.excerpt, undefined, 'the excerpt never travels');
+  assert.equal(sent.item.link_url, '/h5?task=3', 'the task link travels');
+  assert.equal(relayItem({ id: 1, status: 'failed', link_url: `https://x.example.com/${'a'.repeat(3000)}`, link_label: 'L'.repeat(500) }).link_url.length, 2000, 'cut to the size the service allows');
+  assert.equal(relayItem({ id: 1, status: 'failed', link_url: 'https://x.example.com/', link_label: 'L'.repeat(500) }).link_label.length, 200);
+  assert.deepEqual(Object.keys(relayItem({ id: 1, status: 'failed', link_url: null, link_label: '' })).filter(key => key.startsWith('link')), [], 'no link: no field');
   const relayed = b.service.recent().find(entry => entry.outcome === 'relayed');
   assert.equal(relayed.via, 'A');
   assert.equal(relayed.detail, 'sent');
@@ -418,7 +422,8 @@ test('secrets never travel in a relay payload or reach a log', async t => {
   assert.equal(posts.length, 1);
   const payload = JSON.parse(posts[0].raw);
   assert.deepEqual(Object.keys(payload).sort(), ['item', 'link', 'mode', 'notifier', 'reason']);
-  assert.equal(payload.link, 'https://b.example.com/h5?task=1');
+  assert.equal(payload.link, 'https://b.example.com/', 'the page of the origin');
+  assert.equal(payload.item.link_url, '/h5?task=1', 'the task link travels with the item; the sender puts it under the page link');
   assert.deepEqual(Object.keys(payload.item.context).sort(), ['cwd', 'pending']);
   for (const entry of a.received) {
     for (const secret of [SESSION, API_HASH, 'ta-terminal-token', 'context-token', 'transcript']) assert.equal(entry.raw.includes(secret), false, `${secret} in ${entry.path}`);

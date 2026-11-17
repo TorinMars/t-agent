@@ -180,7 +180,7 @@ test('rules are stored encrypted per user and validated', () => {
   assert.equal(service.saveRules('owner', { publicUrl: '' }).publicUrl, '', 'clearing the address');
 });
 
-test('per status mode: off skips, call rings, and the link is made absolute with the public address', async () => {
+test('per status mode: off skips, call rings, and the link is the page under the public address, whatever the task links to', async () => {
   const { bus, fake, service } = setup();
   service.saveRules('owner', { modes: { fake: { waiting_user: 'call', review: 'off' } }, publicUrl: 'https://t.example.com' });
   bus.emit(change('created', item(1, 'waiting_user', { link_url: '/?attention=1' }), null));
@@ -188,9 +188,11 @@ test('per status mode: off skips, call rings, and the link is made absolute with
   bus.emit(change('created', item(3, 'failed', { link_url: 'https://github.com/x/y/pull/1' }), null));
   bus.emit(change('created', item(4, 'failed', { link_url: '//evil.example.com' }), null));
   await settle();
-  assert.deepEqual(fake.calls.map(call => [call.item.id, call.mode, call.link]), [
-    [1, 'call', 'https://t.example.com/?attention=1'], [3, 'message', 'https://github.com/x/y/pull/1'], [4, 'message', 'https://t.example.com/'],
+  // The task's own link (link_url) reaches the notifier with the item; the notifier shows it on its own line.
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.mode, call.link, call.item.link_url]), [
+    [1, 'call', 'https://t.example.com/', '/?attention=1'], [3, 'message', 'https://t.example.com/', 'https://github.com/x/y/pull/1'], [4, 'message', 'https://t.example.com/', '//evil.example.com'],
   ]);
+  assert.equal(notify.absoluteLink({ link_url: 'https://github.com/x/y/pull/1' }, ''), '', 'no public address: no page link');
 });
 
 test('the same item and status is not sent again within 10 minutes', async () => {
@@ -432,7 +434,7 @@ test('with a sender on another device, Telegram is relayed there and never sent 
   assert.equal(telegram.calls.length, 0);
   assert.equal(other.calls.length, 1, 'a notifier that is not relayed sends here as before');
   assert.equal(relay.sent.length, 1);
-  assert.deepEqual(relay.sent[0].payload, { notifier: 'telegram', mode: 'message', reason: 'status', item: { id: 1, title: 'Item 1', status: 'waiting_user', source: 'claude', attention_reason: null, context: { pending: { text: 'Approve' } } }, link: '' });
+  assert.deepEqual(relay.sent[0].payload, { notifier: 'telegram', mode: 'message', reason: 'status', item: { id: 1, title: 'Item 1', status: 'waiting_user', source: 'claude', attention_reason: null, link_url: '/h5', context: { pending: { text: 'Approve' } } }, link: '' });
   const entry = service.recent().find(row => row.notifier === 'telegram');
   assert.equal(entry.outcome, 'relayed');
   assert.equal(entry.via, 'A');

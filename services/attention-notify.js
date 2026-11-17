@@ -134,11 +134,9 @@ function inQuietHours(quiet, date) {
   return start < end ? now >= start && now < end : now >= start || now < end; // a range over midnight, e.g. 22:00-08:00
 }
 
-// The absolute page link for a message: an http(s) link as it is, a relative link under the public address, else the public address itself.
+// The page link of a message ("Open in T-Agent"): the public address with a trailing '/', or '' without one. The task's own link (link_url, an
+// http(s) address or a page path) is not this link: the notifiers show it on its own line and put a page path under this one.
 function absoluteLink(item, base) {
-  const link = item && typeof item.link_url === 'string' ? item.link_url : '';
-  if (/^https?:\/\//i.test(link)) return link;
-  if (base && link.startsWith('/') && !link.startsWith('//')) return base + link;
   return base ? `${base}/` : '';
 }
 

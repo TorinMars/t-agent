@@ -1724,6 +1724,8 @@ I18n.add({
   "Save failed: {1}": "保存失败：{1}",
   "Action failed: {1}": "操作失败：{1}",
   "T-Agent did not accept the widget token": "T-Agent 不接受悬浮窗的令牌",
+  "Open link": "打开链接",
+  "Open link: {1}": "打开链接：{1}",
 
   // ---- One Telegram sender for linked devices (NotifierSettings.jsx) ----
   "This device sends Telegram notifications for all linked devices": "这台设备为所有关联设备发送 Telegram 通知",

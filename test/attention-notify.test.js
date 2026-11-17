@@ -331,7 +331,7 @@ test('plugins are loaded from plugins/notifiers/<name>/ and broken ones are skip
   assert.equal(logs.length, 2);
   assert.deepEqual(notify.loadNotifiers(path.join(dir, 'missing')), []);
   const real = notify.loadNotifiers();
-  assert.deepEqual(real.map(plugin => plugin.name), ['email', 'telegram'], 'the bundled email and Telegram plugins load (without connecting)');
+  assert.deepEqual(real.map(plugin => plugin.name), ['email', 'telegram', 'widget'], 'the bundled email, Telegram and desktop window plugins load (without connecting)');
 });
 
 test('start() works without services/attention.js and with an injected bus', () => {

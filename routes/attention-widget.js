@@ -179,6 +179,7 @@ function createAttentionWidgetRoutes({
   stringList = () => readStringList(),
   readTimeoutMs = 4000,
   settleMs = 1500,
+  notices = require('../services/widget-notices').defaultNotices(),
   now = () => new Date(),
 } = {}) {
   if (!service) throw new Error('createAttentionWidgetRoutes needs the attention service');
@@ -350,6 +351,18 @@ function createAttentionWidgetRoutes({
     const strings = {};
     for (const text of stringList()) strings[text] = words && typeof words[text] === 'string' ? words[text] : text;
     res.json({ lang, strings });
+  }));
+
+  // The bubbles of the window (services/widget-notices.js): { seq, notices } with the notices after `after` (a seq), oldest first; without `after`
+  // the ones of the last 60 s.
+  api.get('/notices', handle(async (req, res) => {
+    const raw = req.query.after;
+    let after;
+    if (raw !== undefined) {
+      if (typeof raw !== 'string' || !/^(0|[1-9]\d{0,15})$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw invalid('after must be a whole number of at least 0');
+      after = Number(raw);
+    }
+    res.json(notices.list({ after }));
   }));
 
   api.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));

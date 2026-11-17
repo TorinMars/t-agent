@@ -30,6 +30,16 @@
       "author": "T-Agent",
       "homepage": "https://github.com/TorinMars/t-agent/tree/main/plugins/notifiers/email",
       "tags": ["email", "smtp", "gmail", "163", "messages"]
+    },
+    {
+      "name": "widget",
+      "kind": "notifier",
+      "builtIn": true,
+      "version": "1.0.0",
+      "description": "Shows T-Attention messages as a bubble beside the T-Attention desktop window on this Mac. Click the bubble to open its link.",
+      "author": "T-Agent",
+      "homepage": "https://github.com/TorinMars/t-agent/tree/main/plugins/notifiers/widget",
+      "tags": ["macos", "desktop", "widget", "bubble", "messages"]
     }
   ]
 }

@@ -355,6 +355,36 @@ test('strings: the list in widgets/macos/strings.json, in English or from the Ch
   extra.settings.save({ language: 'auto' });
 });
 
+test('notices: the window token is required; after filters by seq; without after the last 60 s; a bad after is 400', async () => {
+  const { createWidgetNotices } = require('../services/widget-notices');
+  const time = { now: Date.parse('2026-11-17T10:00:00Z') };
+  const notices = createWidgetNotices({ now: () => time.now });
+  const { base } = await widgetApp({ notices });
+  assert.equal((await call('GET', `${base}/notices`)).status, 401);
+  assert.equal((await call('GET', `${base}/notices?after=0`, undefined, { Authorization: 'Bearer wrong' })).status, 401);
+  assert.deepEqual((await call('GET', `${base}/notices`, undefined, AUTH)).body, { seq: 0, notices: [] });
+  notices.push({ kind: 'direct', title: 'Old', text: 'pushed two minutes ago' });
+  time.now += 120 * 1000;
+  notices.push({ kind: 'item', title: 'Fix login', text: 'Approve the command', status: 'waiting_user', key: 'local:12', target: 'http://127.0.0.1:3000/', seconds: 8 });
+  notices.push({ kind: 'test', title: 'Test message', text: 'Hello', target: 'javascript:alert(1)', seconds: 0 });
+  const fresh = await call('GET', `${base}/notices`, undefined, AUTH);
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.headers.get('cache-control'), 'no-store');
+  assert.equal(fresh.body.seq, 3);
+  assert.deepEqual(fresh.body.notices.map(notice => notice.seq), [2, 3], 'a window that has just started: the last 60 s, oldest first');
+  assert.deepEqual(fresh.body.notices[0], { seq: 2, at: '2026-11-17T10:02:00.000Z', kind: 'item', title: 'Fix login', text: 'Approve the command', from: null, status: 'waiting_user', key: 'local:12', target: 'http://127.0.0.1:3000/', seconds: 8 });
+  assert.equal(fresh.body.notices[1].target, null, 'never a javascript: target');
+  assert.deepEqual((await call('GET', `${base}/notices?after=0`, undefined, AUTH)).body.notices.map(notice => notice.seq), [1, 2, 3]);
+  assert.deepEqual((await call('GET', `${base}/notices?after=2`, undefined, AUTH)).body.notices.map(notice => notice.seq), [3]);
+  assert.deepEqual((await call('GET', `${base}/notices?after=3`, undefined, AUTH)).body, { seq: 3, notices: [] });
+  for (const bad of ['-1', '1.5', 'abc', '', '01', '99999999999999999', '1e3']) {
+    const answer = await call('GET', `${base}/notices?after=${encodeURIComponent(bad)}`, undefined, AUTH);
+    assert.equal(answer.status, 400, bad);
+    assert.equal(answer.body.error, 'VALIDATION_FAILED');
+  }
+  assert.equal((await call('GET', `${base}/notices?after=1&after=2`, undefined, AUTH)).status, 400, 'after given twice');
+});
+
 test('settings: echoed with the launcher status, validated, and the switch starts and stops the window', async () => {
   db.prepare("DELETE FROM system_state WHERE key LIKE 'attention_widget_%'").run();
   const launcher = fakeLauncher();

@@ -1811,4 +1811,11 @@ I18n.add({
   "STARTTLS (usually port 587)": "STARTTLS（通常是 587 端口）",
   "None (only for a server on this computer)": "不加密（仅限本机上的服务器）",
   "Empty: 465 for SSL/TLS, 587 for STARTTLS, 25 for none.": "留空时：SSL/TLS 用 465，STARTTLS 用 587，不加密用 25。",
+  "Show for": "显示时长",
+  "5 seconds": "5 秒",
+  "8 seconds": "8 秒",
+  "15 seconds": "15 秒",
+  "30 seconds": "30 秒",
+  "Until I close it": "直到我关闭",
+  "How long a bubble stays beside the window. A click on it opens its link.": "气泡在浮窗旁边停留多久。点击气泡会打开它的链接。",
 });

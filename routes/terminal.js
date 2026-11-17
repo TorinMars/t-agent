@@ -16,6 +16,7 @@ const { resolveTerminalUser, userCanEnter, terminalEnvFor } = require('../lib/te
 const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
 const { peerFsSettings } = require('../services/peer-fs-settings');
 const { createPresence } = require('../lib/terminal-presence');
+const { reap, reapSync } = require('../services/terminal-reaper');
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs name the implicit `default` terminal, which only older tasks have (lib/task-default-terminal.js).
 const sessions = new Map();
@@ -697,6 +698,9 @@ function controlSession(taskId, action, requestedTerminalId) {
 
     const activeWs = session.ws;
     session.ws = null;
+    // pty.kill() only sends SIGHUP to the shell, and Codex in the foreground ignores it and keeps its session lock, so end the
+    // foreground job first. reap() reads the process table synchronously, while the shell still runs; the rest goes on in the background.
+    try { reap([session.pty.pid]).catch(() => {}); } catch {}
     try { session.pty.kill(); } catch {}
     if (activeWs && activeWs.readyState === 1) activeWs.close(1000, `terminal ${action}`);
   }
@@ -999,4 +1003,15 @@ function closeTaskTerminals(taskId) {
   for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
 }
 
-module.exports = { terminalWorkDir, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot };
+// On server exit (signal, update restart): end every terminal's foreground job (see controlSession), then the shells. Synchronous, so it
+// works inside process.on('exit'); idempotent and never throws.
+function shutdownTerminals() {
+  try {
+    const live = [...sessions.values()];
+    sessions.clear();
+    reapSync(live.map(session => session.pty && session.pty.pid));
+    for (const session of live) { try { session.pty.kill(); } catch {} }
+  } catch {}
+}
+
+module.exports = { terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot };

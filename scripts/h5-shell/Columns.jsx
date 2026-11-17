@@ -7,6 +7,7 @@ import { alpha } from '@mui/material/styles';
 import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { DeviceTag } from './TaskDrawer.jsx';
+import { ColumnsUpdateButton } from './Update.jsx';
 import { SETTLE_MS } from './list-drag.jsx';
 import { useFlipX, useTabDrag } from './tab-drag.jsx';
 import {
@@ -429,6 +430,7 @@ export function ColumnStrip({ state, ui }) {
       <GlobalStyles styles={HIDE_PAGE} />
       <GlobalStyles styles={STRIP_SCROLLBAR} />
       <Box id="h5-columns-bar" sx={{ flex: '0 0 auto', minHeight: 36, display: 'flex', alignItems: 'center', gap: 0.5, px: 0.5, bgcolor: '#212121', borderBottom: 1, borderColor: 'divider' }}>
+        <ColumnsUpdateButton state={state} ui={ui} />
         <ColumnsToggle state={state} ui={ui} inBar />
         <ColumnTabs columns={columns} open={open} inView={viewed} ui={ui} hostRef={root} />
         <IconButton id="h5-columns-add" size="small" {...named(t('Add column'))} disabled={!canAdd(open)} onClick={() => ui.actions.addColumn()} sx={{ flex: '0 0 auto' }}>

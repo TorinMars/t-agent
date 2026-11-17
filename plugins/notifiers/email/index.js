@@ -55,6 +55,21 @@ const httpLink = value => {
     return /^https?:$/.test(url.protocol) && url.href.length <= LINK_MAX ? url.href : '';
   } catch { return ''; }
 };
+// The task's own link (item.link_url, services/attention.js linkUrl): an http(s) address without a user name or password as it is, or a page path of
+// the T-Agent app ('/...') put under `page`, the page link of the email (the public address with a trailing '/', attention-notify.js absoluteLink).
+// A page link that already ends with the path (an older device put the path there) is used as it is. No page link: a path is left out.
+function taskLinkOf(item, page) {
+  const raw = item && typeof item.link_url === 'string' ? item.link_url.trim() : '';
+  let address = raw;
+  if (raw.startsWith('/')) {
+    if (!page || raw.startsWith('//') || raw.includes('\\')) return '';
+    try { address = page.endsWith(raw) ? page : new URL(raw.slice(1), new URL('./', page)).href; } catch { return ''; }
+  }
+  try {
+    const url = new URL(address);
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password && url.href.length <= LINK_MAX ? url.href : '';
+  } catch { return ''; }
+}
 
 // ---- Addresses ----
 const ADDRESS = /^[^\s@<>()[\]\\,;:"\u0000-\u001f\u007f]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
@@ -173,10 +188,13 @@ function partsOf({ item, link, reason, error, origin }) {
   const summary = context.summary && typeof context.summary === 'object' ? lines(context.summary.text, 1500) : '';
   const lastReply = typeof context.last_reply === 'string' ? lines(context.last_reply.split(/\r?\n/).filter(line => line.trim()).slice(0, 6).join('\n'), 1000) : '';
   const fromName = origin && typeof origin === 'object' ? oneLine(origin.name, 60) : '';
+  const page = httpLink(link);
+  const taskHref = taskLinkOf(item, page);
   return {
     status: STATUS_LABELS[item.status] || oneLine(item.status, 30) || 'Update',
     title: oneLine(item.title, 200),
     from: fromName ? `From ${fromName}` : '',
+    link: taskHref ? { href: taskHref, label: oneLine(item.link_label, 200) } : null,
     needs,
     command: pending ? lines(pending.command, 1000) : '',
     reason: why && why !== needs ? why : '',
@@ -185,7 +203,7 @@ function partsOf({ item, link, reason, error, origin }) {
     files: changedFiles(context),
     note: reason === 'call_failed' ? `(A call was not possible: ${oneLine(error || 'unknown error', 200)})` : '',
     where: [oneLine(context.cwd, 200), oneLine(context.branch, 80), oneLine(context.host, 60), oneLine(item.source, 30)].filter(Boolean),
-    href: httpLink(link),
+    href: page && page !== taskHref ? page : '', // the page itself as the task's link ('/') is not repeated
   };
 }
 const STYLE = {
@@ -196,7 +214,7 @@ const STYLE = {
 };
 function itemText(parts) {
   const groups = [
-    [`${parts.status}${parts.title ? ` \u00b7 ${parts.title}` : ''}`, parts.from],
+    [`${parts.status}${parts.title ? ` \u00b7 ${parts.title}` : ''}`, parts.from, parts.link && `Link: ${parts.link.label ? `${parts.link.label} <${parts.link.href}>` : parts.link.href}`],
     [parts.needs && `Needs: ${parts.needs}`, parts.command, parts.reason && `Reason: ${parts.reason}`],
     [parts.asked && `You asked: ${parts.asked}`, parts.quote],
     parts.files ? [`Changed: ${parts.files.summary}`, ...parts.files.paths.map(path => `- ${path}`), parts.files.more] : [],
@@ -210,6 +228,7 @@ function itemHtml(parts) {
   const label = (name, value) => p(`<strong>${escapeHtml(name)}</strong> ${escapeHtml(value)}`);
   const out = [p(`<strong>${escapeHtml(parts.status)}</strong>${parts.title ? ` \u00b7 <strong>${escapeHtml(parts.title)}</strong>` : ''}`)];
   if (parts.from) out.push(p(escapeHtml(parts.from)));
+  if (parts.link) out.push(p(`<strong>Link:</strong> <a href="${escapeHtml(parts.link.href)}">${escapeHtml(parts.link.label || parts.link.href)}</a>`));
   if (parts.needs) out.push(label('Needs:', parts.needs));
   if (parts.command) out.push(`<pre style="${STYLE.pre}">${escapeHtml(parts.command)}</pre>`);
   if (parts.reason) out.push(label('Reason:', parts.reason));
@@ -251,6 +270,7 @@ function directMail({ message, link }) {
 // What the Test button sends: a short note and the real layout with sample data.
 const SAMPLE_ITEM = {
   status: 'waiting_user', title: 'Test message', attention_reason: 'This is a test from Settings; the details below are sample data', source: 'claude',
+  link_url: 'https://github.com/me/app/pull/12', link_label: 'PR #12',
   context: {
     pending: { kind: 'permission', text: 'Claude wants to run a command', tool: 'Bash', command: 'npm test -- --watch' },
     latest_prompt: 'Fix the failing login test', cwd: '/home/me/work/app', branch: 'fix/login', host: 'my-laptop',

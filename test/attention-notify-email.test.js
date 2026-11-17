@@ -90,7 +90,7 @@ test('ready and status: masked addresses, never the password, no network', () =>
 test('the item email: subject, text and escaped HTML with the context fields; no script, no remote image, no unsafe link', async () => {
   const fake = fakeTransports();
   const plugin = email.createEmailNotifier({ createTransport: fake.createTransport });
-  const result = await plugin.notify({ item: ITEM, reason: 'status', mode: 'message', config: { ...GMAIL, to: 'me@example.com' }, link: 'https://t.example.com/attention/7', origin: { name: 'Laptop' } });
+  const result = await plugin.notify({ item: ITEM, reason: 'status', mode: 'message', config: { ...GMAIL, to: 'me@example.com' }, link: 'https://t.example.com/', origin: { name: 'Laptop' } });
   assert.deepEqual(result, { outcome: 'sent' });
   assert.equal(fake.made.length, 1);
   assert.equal(fake.made[0].closed, true, 'the transport is closed after the send');
@@ -100,19 +100,21 @@ test('the item email: subject, text and escaped HTML with the context fields; no
   assert.equal(mail.subject, '[T-Attention] Needs you \u00b7 Fix <script>alert(1)</script> & "login"');
   assert.equal(mail.disableFileAccess, true);
   assert.equal(mail.disableUrlAccess, true);
-  for (const part of ['Needs you \u00b7 Fix', 'From Laptop', 'Needs: Claude wants to run a command', 'rm -rf "<dir>"', 'Reason: Approve the <b>command</b>', 'You asked: Make the', 'Doing: the login\nNeeds: approval', 'Changed: 2 files, +4 -1', '- src/a<b>.js', '/home/me/app \u00b7 fix/login \u00b7 mac \u00b7 claude', 'Open in T-Agent: https://t.example.com/attention/7']) {
+  for (const part of ['Needs you \u00b7 Fix', 'From Laptop', 'Needs: Claude wants to run a command', 'rm -rf "<dir>"', 'Reason: Approve the <b>command</b>', 'You asked: Make the', 'Doing: the login\nNeeds: approval', 'Changed: 2 files, +4 -1', '- src/a<b>.js', '/home/me/app \u00b7 fix/login \u00b7 mac \u00b7 claude', 'Link: https://t.example.com/attention/7', 'Open in T-Agent: https://t.example.com/']) {
     assert.ok(mail.text.includes(part), `text has ${part}`);
   }
   const html = mail.html;
-  // Only the plain tags of the layout, attributes only `style` and the one link; every value from the item is text.
+  // Only the plain tags of the layout, attributes only `style` and the two links (the task's page path under the page link, and the page); every
+  // value from the item is text.
   const tags = [...html.matchAll(/<([a-z0-9]+)([^>]*)>/gi)];
   assert.ok([...html.matchAll(/<\/([a-z0-9]+)>/gi)].every(tag => tags.some(open => open[1] === tag[1])));
   assert.deepEqual([...new Set(tags.map(tag => tag[1]))].sort(), ['a', 'blockquote', 'code', 'div', 'li', 'p', 'pre', 'strong', 'ul']);
-  for (const [, name, attributes] of tags) assert.match(attributes, name === 'a' ? /^ href="https:\/\/t\.example\.com\/attention\/7"$/ : /^( style="[^"<>]*")?$/);
+  for (const [, name, attributes] of tags) assert.match(attributes, name === 'a' ? /^ href="https:\/\/t\.example\.com\/(attention\/7)?"$/ : /^( style="[^"<>]*")?$/);
   assert.ok(html.includes('Fix &lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;login&quot;'));
   assert.ok(html.includes('rm -rf &quot;&lt;dir&gt;&quot; &amp;&amp; echo &#39;done&#39;'));
   assert.ok(html.includes('<code>src/a&lt;b&gt;.js</code>'));
-  assert.ok(html.includes('<a href="https://t.example.com/attention/7">Open in T-Agent</a>'));
+  assert.ok(html.includes('<a href="https://t.example.com/attention/7">https://t.example.com/attention/7</a>'));
+  assert.ok(html.includes('<a href="https://t.example.com/">Open in T-Agent</a>'));
   // A link that is not http(s) is left out; control characters and line breaks never reach the subject.
   await plugin.notify({ item: { ...ITEM, title: 'Line\r\nBcc: evil@example.com' }, reason: 'status', mode: 'message', config: GMAIL, link: 'javascript:alert(1)' });
   const second = fake.made[1].mails[0];
@@ -122,6 +124,30 @@ test('the item email: subject, text and escaped HTML with the context fields; no
   // A message after a failed call says why.
   await plugin.notify({ item: ITEM, reason: 'call_failed', mode: 'message', config: GMAIL, error: 'call limit reached' });
   assert.ok(fake.made[2].mails[0].text.includes('(A call was not possible: call limit reached)'));
+});
+
+test('the task link: a line under the header in both parts, with its label, escaped; a page path goes under the page link', () => {
+  const PR = 'https://github.com/me/app/pull/12';
+  const mail = (extra, link = 'https://t.example.com/') => email.itemMail({ item: { status: 'review', title: 'Fix', source: 'claude', ...extra }, link });
+  const labelled = mail({ link_url: PR, link_label: 'PR <12> & "draft"' });
+  assert.equal(labelled.text, `Review \u00b7 Fix\nLink: PR <12> & "draft" <${PR}>\n\nclaude\nOpen in T-Agent: https://t.example.com/`);
+  assert.ok(labelled.html.includes(`<p style="margin:0 0 10px"><strong>Link:</strong> <a href="${PR}">PR &lt;12&gt; &amp; &quot;draft&quot;</a></p>`));
+  assert.deepEqual([...labelled.html.matchAll(/<a href="([^"]*)">/g)].map(found => found[1]), [PR, 'https://t.example.com/'], 'the task link first, then the page');
+  // No label: the address; a page path goes under the page link (keeping a path of the public address); the page itself is not linked twice.
+  assert.equal(mail({ link_url: PR }).text.split('\n')[1], `Link: ${PR}`);
+  assert.ok(mail({ link_url: PR, link_label: '  ' }).html.includes(`<a href="${PR}">${PR}</a>`));
+  assert.equal(mail({ link_url: '/h5?task=3' }, 'https://t.example.com/tagent/').text.split('\n')[1], 'Link: https://t.example.com/tagent/h5?task=3');
+  assert.equal(mail({ link_url: '/h5?task=3' }, 'https://old.example.com/h5?task=3').text.split('\n')[1], 'Link: https://old.example.com/h5?task=3', 'an older device put the path in the page link');
+  const home = mail({ link_url: '/', link_label: 'Home' });
+  assert.equal(home.text, 'Review \u00b7 Fix\nLink: Home <https://t.example.com/>\n\nclaude');
+  assert.equal([...home.html.matchAll(/<a /g)].length, 1);
+  assert.equal(mail({ link_url: '/h5?task=3' }, '').text, 'Review \u00b7 Fix\n\nclaude', 'no page link: a path is left out');
+  // Never anything but http(s) without credentials.
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', 'https://user:pass@example.com/', 'https://user@example.com/', '//evil.example.com/', '/a\\b', 'nope', `https://example.com/${'a'.repeat(1000)}`, 7]) {
+    const out = mail({ link_url: bad, link_label: 'L' });
+    assert.equal(out.text, 'Review \u00b7 Fix\n\nclaude\nOpen in T-Agent: https://t.example.com/', String(bad));
+    assert.ok(!/javascript|pass@|user@|evil/i.test(out.html), String(bad));
+  }
 });
 
 test('email cannot ring: a call falls back to a message without sending anything', async () => {
@@ -188,6 +214,7 @@ test('the Settings test sends a short test email and names the masked recipients
   assert.equal(mail.subject, 'T-Agent test email');
   assert.ok(mail.text.startsWith('This is a test email from T-Agent.'));
   assert.ok(mail.text.includes('Open in T-Agent: https://t.example.com/'));
+  assert.ok(mail.text.includes('Link: PR #12 <https://github.com/me/app/pull/12>'), 'the sample has a task link');
   const workspace = await plugin.test({ ...GMAIL, address: 'ann@company.example', to: 'me@example.com' }, {});
   assert.equal(workspace.message, 'Test email sent to m***@example.com. The sender address is not a Gmail address; that is fine for a Google Workspace mailbox');
   const netease = await plugin.test({ ...GMAIL, provider: '163', address: 'ann@126.com' }, {});

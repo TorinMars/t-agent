@@ -72,13 +72,16 @@ function maskPhone(phone) {
 // fallback when Telegram refuses the entities). Values are cut before they are escaped, so an entity or a tag is never cut in half, and every value
 // from users or the agent is escaped, so '<b>', '&amp;' or Markdown marks in it stay literal text. Control and direction characters are removed.
 // MESSAGE_MAX is the visible length (Telegram allows 4096 UTF-16 units after parsing). It is shared out section by section: the header, the link, the
-// call-failed note and the footer are reserved first, so a long body can never push them out. Only http(s) links are used, and a link is never cut.
+// call-failed note and the footer are reserved first, so a long body can never push them out; the task's own link comes next, whole or not at all.
+// Only http(s) links are used, and a link is never cut.
 const MESSAGE_MAX = 2000;
 const LINK_MAX = 1000;
 const FILES_SHOWN = 3;
 const SECTION_MIN = 8; // less room than this: the section is left out rather than shown as a stub
 const GROUP_GAPS = 5; // the blank lines between the groups of the card
 const LINK_LABEL = 'Open in T-Agent';
+const TASK_LINK_EMOJI = '\u{1F517}';
+const TASK_LINK_SHOWN = 100; // a task link without a label shows at most this much of its address (the href stays whole)
 const STATUS_EMOJI = { waiting_user: '\u{1F64B}', review: '\u{1F440}', failed: '\u274c', working: '\u23f3', todo: '\u{1F4DD}', done: '\u2705', cancelled: '\u{1F6AB}' };
 const OTHER_STATUS_EMOJI = '\u{1F514}';
 const oneLine = (value, max) => cut(String(value || '').replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim(), max);
@@ -102,6 +105,21 @@ const httpLink = value => {
     return /^https?:$/.test(url.protocol) && url.href.length <= LINK_MAX ? url.href : '';
   } catch { return ''; }
 };
+// The task's own link (item.link_url, services/attention.js linkUrl): an http(s) address without a user name or password as it is, or a page path of
+// the T-Agent app ('/...') put under `page`, the page link of the notification (the public address with a trailing '/', attention-notify.js
+// absoluteLink). A page link that already ends with the path (an older device put the path there) is used as it is. No page link: a path is left out.
+function taskLinkOf(item, page) {
+  const raw = item && typeof item.link_url === 'string' ? item.link_url.trim() : '';
+  let address = raw;
+  if (raw.startsWith('/')) {
+    if (!page || raw.startsWith('//') || raw.includes('\\')) return '';
+    try { address = page.endsWith(raw) ? page : new URL(raw.slice(1), new URL('./', page)).href; } catch { return ''; }
+  }
+  try {
+    const url = new URL(address);
+    return /^https?:$/.test(url.protocol) && !url.username && !url.password && url.href.length <= LINK_MAX ? url.href : '';
+  } catch { return ''; }
+}
 const count = value => (Number.isFinite(value) ? value : 0);
 function changedFiles(context) {
   const files = (Array.isArray(context.files) ? context.files : []).filter(file => file && typeof file === 'object' && oneLine(file.path, 1));
@@ -127,7 +145,17 @@ function cardOf({ item, link, reason, error, origin }) {
   const note = reason === 'call_failed' ? `(A call was not possible: ${oneLine(error || 'unknown error', 200)})` : '';
   const fromName = origin && typeof origin === 'object' ? oneLine(origin.name, 60) : '';
   const from = fromName ? `From ${fromName}` : '';
-  let left = MESSAGE_MAX - GROUP_GAPS - (emoji.length + 1 + status.length + 3 + title.length) - (from ? from.length + 1 : 0) - (note ? note.length + 1 : 0) - (href ? LINK_LABEL.length + 2 + href.length + 1 : 0);
+  const pageNeed = href ? LINK_LABEL.length + 2 + href.length + 1 : 0;
+  let left = MESSAGE_MAX - GROUP_GAPS - (emoji.length + 1 + status.length + 3 + title.length) - (from ? from.length + 1 : 0) - (note ? note.length + 1 : 0) - pageNeed;
+  // The task's link, counted as its longest form, the plain one ('<emoji> <label>: <address>'), kept whole or left out. When it is the page link
+  // itself (a task link of '/'), it takes the place of the page link, so the same address is not shown twice.
+  const taskHref = taskLinkOf(item, href);
+  const samePage = Boolean(taskHref) && taskHref === href;
+  const label = taskHref ? oneLine(item.link_label, 200) : '';
+  const taskNeed = taskHref ? TASK_LINK_EMOJI.length + 1 + (label ? label.length + 2 : 0) + taskHref.length + 1 - (samePage ? pageNeed : 0) : 0;
+  const taskLink = taskHref && taskNeed <= left ? { href: taskHref, label } : null;
+  if (taskLink) left -= taskNeed;
+  const pageHref = taskLink && samePage ? '' : href;
   const fit = (value, extra = 0) => {
     if (!value) return '';
     const room = left - extra - 1;
@@ -150,13 +178,13 @@ function cardOf({ item, link, reason, error, origin }) {
   const changed = fit(files.changed, 9);
   const paths = changed ? files.paths.map(path => fit(path, 2)).filter(Boolean) : [];
   const more = changed ? fit(files.more) : '';
-  return { emoji, status, title, from, needs, command, reason: reasonText, asked, quote, changed, paths, more, note, where, href };
+  return { emoji, status, title, from, taskLink, needs, command, reason: reasonText, asked, quote, changed, paths, more, note, where, href: pageHref };
 }
 function renderCard(card, format) {
-  const { text: plain, bold, italic, pre, quote, code: mono, link } = format;
+  const { text: plain, bold, italic, pre, quote, code: mono, link, anchor } = format;
   const where = card.where.map(part => (part.kind === 'code' ? mono(part.value) : plain(part.value))).join(' \u00b7 ');
   const groups = [
-    [`${card.emoji} ${bold(card.status)}${card.title ? ` \u00b7 ${bold(card.title)}` : ''}`, card.from && plain(card.from)],
+    [`${card.emoji} ${bold(card.status)}${card.title ? ` \u00b7 ${bold(card.title)}` : ''}`, card.from && plain(card.from), card.taskLink && `${TASK_LINK_EMOJI} ${anchor(card.taskLink.href, card.taskLink.label)}`],
     [card.needs && `${bold('Needs:')} ${plain(card.needs)}`, card.command && pre(card.command), card.reason && `${bold('Reason:')} ${plain(card.reason)}`],
     [card.asked && `${bold('You asked:')} ${plain(card.asked)}`, card.quote && quote(card.quote)],
     [card.changed && `${bold('Changed:')} ${plain(card.changed)}`, ...card.paths.map(path => `\u2022 ${plain(path)}`), card.more && plain(card.more)],
@@ -174,9 +202,14 @@ const tag = name => value => `<${name}>${escapeHtml(value)}</${name}>`;
 const HTML_FORMAT = {
   text: escapeHtml, bold: tag('b'), italic: tag('i'), pre: tag('pre'), quote: tag('blockquote'), code: tag('code'),
   link: href => (READ_AS_MENTION.test(href) ? `${LINK_LABEL}: ${escapeHtml(href)}` : `<a href="${escapeAttribute(href)}">${LINK_LABEL}</a>`),
+  // The task's link: its label, else the start of its address, as the link text.
+  anchor: (href, label) => {
+    if (READ_AS_MENTION.test(href)) return label ? `${escapeHtml(label)}: ${escapeHtml(href)}` : escapeHtml(href);
+    return `<a href="${escapeAttribute(href)}">${escapeHtml(label || cut(href, TASK_LINK_SHOWN))}</a>`;
+  },
 };
 const same = value => value;
-const PLAIN_FORMAT = { text: same, bold: same, italic: same, pre: same, quote: same, code: same, link: href => `Open: ${href}` };
+const PLAIN_FORMAT = { text: same, bold: same, italic: same, pre: same, quote: same, code: same, link: href => `Open: ${href}`, anchor: (href, label) => (label ? `${label}: ${href}` : href) };
 // A direct message of an agent session (reason 'direct', `tcli notify`): no item, only { title, text, from }. The card is
 //   a megaphone and <b>title</b> (no title: "Message from an agent")
 //   the text, cleaned line by line (newlines kept, a run of empty lines folded to one) and cut to what is left of MESSAGE_MAX
@@ -211,6 +244,7 @@ const FORMAT_REFUSED = /^(ENTITY_|ENTITIES_|MESSAGE_EMPTY$|MESSAGE_TOO_LONG$)/;
 // What "Test message" in Settings sends: the real card with realistic content, so the format can be seen.
 const SAMPLE_ITEM = {
   status: 'waiting_user', title: 'Test message', attention_reason: 'This is a test from Settings; the details below are sample data', source: 'claude',
+  link_url: 'https://github.com/me/app/pull/12', link_label: 'PR #12',
   context: {
     pending: { kind: 'permission', text: 'Claude wants to run a command', tool: 'Bash', command: 'npm test -- --watch' },
     latest_prompt: 'Fix the failing login test', cwd: '/home/me/work/app', branch: 'fix/login', host: 'my-laptop',

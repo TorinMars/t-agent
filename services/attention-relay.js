@@ -71,6 +71,9 @@ function relayItem(item) {
     status: text(source.status, 30) || '',
     source: text(source.source, 60) || null,
     attention_reason: text(source.attention_reason, 2000) || null,
+    // The task's own link, when it has one (the sender's notifier checks it again: http(s) or a page path under the relayed page link).
+    ...(text(source.link_url, 2000) ? { link_url: text(source.link_url, 2000) } : {}),
+    ...(text(source.link_label, 200) ? { link_label: text(source.link_label, 200) } : {}),
     context: clean,
   };
 }

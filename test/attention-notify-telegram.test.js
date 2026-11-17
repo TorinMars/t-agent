@@ -230,6 +230,89 @@ test('a link gramjs would read as a mention is shown as text, because gramjs wou
   assert.equal(lookups.length, 1);
 });
 
+const TASK_LINK = '\u{1F517}';
+const PR = 'https://github.com/me/app/pull/12';
+test('the task link: under the header with its label, else its address; the plain card writes the address out', () => {
+  const item = extra => ({ status: 'review', title: 'Fix the build', source: 'claude', link_url: PR, link_label: 'PR #12', ...extra });
+  const html = messageHtml({ item: item(), link: 'https://t.example.com/' });
+  assert.equal(html, [`\u{1F440} <b>Review</b> \u00b7 <b>Fix the build</b>`, `${TASK_LINK} <a href="${PR}">PR #12</a>`, '', 'claude', '<a href="https://t.example.com/">Open in T-Agent</a>'].join('\n'));
+  const { text, entities } = parsed(html);
+  assert.deepEqual(entities.filter(entity => entity.type === 'TextUrl'), [{ type: 'TextUrl', text: 'PR #12', url: PR }, { type: 'TextUrl', text: 'Open in T-Agent', url: 'https://t.example.com/' }]);
+  assert.equal(text.split('\n')[1], `${TASK_LINK} PR #12`);
+  assert.equal(messageText({ item: item(), link: 'https://t.example.com/' }), `\u{1F440} Review \u00b7 Fix the build\n${TASK_LINK} PR #12: ${PR}\n\nclaude\nOpen: https://t.example.com/`);
+  // No label: the address is the link text; a long one is shortened in the text only, the href stays whole.
+  assert.equal(messageHtml({ item: item({ link_label: null }) }).split('\n')[1], `${TASK_LINK} <a href="${PR}">${PR}</a>`);
+  assert.equal(messageText({ item: item({ link_label: '' }) }).split('\n')[1], `${TASK_LINK} ${PR}`);
+  const long = `https://ci.example.com/run/${'1'.repeat(300)}`;
+  const shown = parsed(messageHtml({ item: item({ link_url: long, link_label: '' }) })).entities.find(entity => entity.type === 'TextUrl');
+  assert.equal(shown.url, long);
+  assert.ok(shown.text.length <= 100 && shown.text.endsWith('\u2026'), shown.text);
+  assert.equal(messageText({ item: item({ link_url: long, link_label: '' }) }).split('\n')[1], `${TASK_LINK} ${long}`);
+  // It sits under "From <device>" when relayed, and a card without a link keeps its old shape.
+  assert.deepEqual(messageText({ item: item(), origin: { name: 'K01' } }).split('\n').slice(0, 3), ['\u{1F440} Review \u00b7 Fix the build', 'From K01', `${TASK_LINK} PR #12: ${PR}`]);
+  assert.equal(messageText({ item: item({ link_url: null }) }), '\u{1F440} Review \u00b7 Fix the build\n\nclaude');
+});
+
+test('a page path of the task link is put under the page link of the notification; without one it is left out', () => {
+  const item = link_url => ({ status: 'failed', title: 'x', link_url, link_label: 'Task page' });
+  assert.equal(messageText({ item: item('/h5?task=3'), link: 'https://t.example.com/' }), `\u274c Failed \u00b7 x\n${TASK_LINK} Task page: https://t.example.com/h5?task=3\n\nOpen: https://t.example.com/`);
+  assert.equal(messageText({ item: item('/h5?task=3'), link: 'https://t.example.com/tagent/' }).split('\n')[1], `${TASK_LINK} Task page: https://t.example.com/tagent/h5?task=3`, 'a public address with a path keeps it');
+  assert.equal(messageText({ item: item('/h5?task=3'), link: 'https://old.example.com/h5?task=3' }).split('\n')[1], `${TASK_LINK} Task page: https://old.example.com/h5?task=3`, 'an older device already put the path in the page link');
+  assert.equal(messageText({ item: item('/'), link: 'https://t.example.com/' }), `\u274c Failed \u00b7 x\n${TASK_LINK} Task page: https://t.example.com/`, 'the page itself: one link, not two');
+  for (const link of ['', 'javascript:alert(1)', '/relative', undefined]) assert.equal(messageText({ item: item('/h5?task=3'), link }), '\u274c Failed \u00b7 x', String(link));
+});
+
+test('the task link: only http(s) without credentials, escaped, and a mention-like address is written as text', async () => {
+  const card = (link_url, link_label = 'L') => messageHtml({ item: { status: 'failed', title: 'x', link_url, link_label }, link: 'https://t.example.com/' });
+  for (const bad of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', 'tg://resolve?domain=x', 'https://user:pass@example.com/a', 'https://user@example.com/a', '//evil.example.com/a', '/a\\b', 'not a url', `https://example.com/${'a'.repeat(1000)}`, 5, {}]) {
+    const html = card(bad);
+    assert.equal(html, '\u274c <b>Failed</b> \u00b7 <b>x</b>\n\n<a href="https://t.example.com/">Open in T-Agent</a>', String(bad));
+    assert.ok(!html.includes('pass@') && !/javascript/i.test(html));
+  }
+  const tricky = 'https://example.com/a\'b?x=1&y="><script>';
+  const html = card(tricky, '<b>Deploy</b> & "go"');
+  assert.ok(!html.includes('<script>') && !html.includes('<b>Deploy'));
+  assert.ok(html.includes('&lt;b&gt;Deploy&lt;/b&gt; &amp; "go"</a>'));
+  const { entities } = parsed(html);
+  assert.deepEqual(entities[2], { type: 'TextUrl', text: '<b>Deploy</b> & "go"', url: new URL(tricky).href });
+  // An address with '+' would be read as a mention by gramjs and dropped: it is written out as text, and nothing is looked up.
+  const plus = 'https://example.com/a+b';
+  const lookups = [];
+  const client = { getInputEntity: async value => { lookups.push(value); throw new Error('no such user'); } };
+  const mention = card(plus, 'PR <1>');
+  assert.equal(mention.split('\n')[1], `${TASK_LINK} PR &lt;1&gt;: ${plus}`);
+  const [text] = await _parseMessageText(client, mention, 'html');
+  assert.equal(text.split('\n')[1], `${TASK_LINK} PR <1>: ${plus}`);
+  assert.deepEqual(lookups, []);
+});
+
+test('the task link counts in the length limit: kept whole when it fits, else left out', () => {
+  const long = 'z'.repeat(5000);
+  const full = { status: 'failed', title: long, attention_reason: long, context: { pending: { text: long, command: long }, latest_prompt: long, summary: { text: long }, cwd: long, branch: long, host: long } };
+  for (const [taskUrl, label] of [[PR, 'PR #12'], [`https://ci.example.com/${'r'.repeat(900)}`, 'L'.repeat(200)], [`https://ci.example.com/${'r'.repeat(970)}`, '']]) {
+    for (const link of [LINK, `https://t.example.com/${'a'.repeat(970)}`]) {
+      const input = { item: { ...full, link_url: taskUrl, link_label: label }, link, reason: 'call_failed', error: long };
+      const plain = messageText(input);
+      const { text, entities } = parsed(messageHtml(input));
+      assert.ok(plain.length <= MESSAGE_MAX, `plain ${plain.length}`);
+      assert.ok(text.length <= MESSAGE_MAX, `visible ${text.length}`);
+      assert.ok(plain.endsWith(`Open: ${link}`), 'the page link is still there');
+      const shown = plain.includes(`${TASK_LINK} `);
+      if (shown) assert.ok(plain.includes(label ? `${TASK_LINK} ${label}: ${taskUrl}` : `${TASK_LINK} ${taskUrl}`), 'whole, never cut');
+      assert.equal(entities.some(entity => entity.url === taskUrl), shown, 'the same choice in both formats');
+    }
+  }
+  // A short link always fits, even when everything else is as long as it can be.
+  assert.ok(messageText({ item: { ...full, link_url: PR, link_label: 'PR #12' }, link: LINK, reason: 'call_failed', error: long }).includes(`${TASK_LINK} PR #12: ${PR}`));
+  // The longest links together: the task link is left out rather than pushing the card over the limit.
+  const both = messageText({ item: { ...full, link_url: `https://ci.example.com/${'r'.repeat(970)}`, link_label: 'L'.repeat(200) }, link: `https://t.example.com/${'a'.repeat(970)}`, reason: 'call_failed', error: long });
+  assert.ok(!both.includes(TASK_LINK) && both.length <= MESSAGE_MAX);
+});
+
+test('a direct message card has no task link', () => {
+  assert.equal(messageText({ reason: 'direct', message: { text: 'x' }, item: { link_url: PR, link_label: 'PR' } }), '\u{1F4E3} Message from an agent\n\nx');
+});
+
 test('the file list shows at most 3 names with "and N more", and a long path keeps its end', () => {
   const files = n => Array.from({ length: n }, (_, index) => ({ path: `src/f${index}.js`, added: 1, deleted: 2 }));
   const card = list => parsed(messageHtml({ item: { status: 'review', title: 'x', context: { files: list } } })).text.split('\n').slice(2);
@@ -343,7 +426,8 @@ test('the test message from Settings uses the same card with realistic sample co
   assert.deepEqual(await plugin.test(savedConfig(), { kind: 'message', link: LINK }), { ok: true, outcome: 'sent' });
   assert.equal(state.messages[0].parseMode, 'html');
   const { text, entities } = parsed(state.messages[0].message);
-  assert.ok(text.startsWith(`${NEEDS_YOU} Needs you \u00b7 Test message\n\n`));
+  assert.ok(text.startsWith(`${NEEDS_YOU} Needs you \u00b7 Test message\n\u{1F517} PR #12\n\n`), 'the sample task link under the header');
+  assert.equal(entities.find(entity => entity.text === 'PR #12').url, 'https://github.com/me/app/pull/12');
   assert.match(text, /sample data/);
   assert.deepEqual([...new Set(entities.map(entity => entity.type))].sort(), ['Blockquote', 'Bold', 'Code', 'Pre', 'TextUrl']);
   assert.match(text, /\nand 1 more\n/);
@@ -930,7 +1014,7 @@ test('end to end through the service: a delivery relayed to the sender reaches T
   assert.deepEqual(await service.acceptRelay({ ...relayed, item: { ...relayed.item, id: 5 } }), { outcome: 'rate_limited' });
   const test = await service.relayTest({ notifier: 'telegram', kind: 'message', origin });
   assert.equal(test.ok, true);
-  assert.match(state.messages.at(-1).message, /^.+\nFrom K01\n\n/);
+  assert.match(state.messages.at(-1).message, /^.+\nFrom K01\n\u{1F517} .+\n\n/u, 'From <device>, then the sample task link');
   // Logged out: the sender says so, with no secret.
   db.prepare("DELETE FROM system_state WHERE key = 'attention-notify:telegram:owner'").run();
   assert.equal(service.localReady('telegram'), false);

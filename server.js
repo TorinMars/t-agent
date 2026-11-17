@@ -665,6 +665,6 @@ server.listen(config.port, config.host, () => {
   browserRecordings.startCleanup();
 });
 
-// Do not let frpc become an orphan process after the Client exits.
-process.on('exit', () => { browserBridge.closeAll(); attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
+// Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
+process.on('exit', () => { terminal.shutdownTerminals(); browserBridge.closeAll(); attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

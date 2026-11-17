@@ -136,6 +136,7 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 - The Client's built-in Engine: `routes/engine-v1.js` (`/v1`), service in `services/engine-tasks.js`. The Client proxy is in `routes/remote-servers.js` and stream forwarding in `services/remote-stream.js`.
 - The local `routes/tasks.js` and the Engine's equivalent endpoints stay consistent through shared modules: `lib/file-watch-sse.js` and `services/task-assets.js`.
 - New Engine capabilities (written to `capabilities` in `/v1/info`, `api_version` stays 1): `tasks:reorder`, `documents:create`, `documents:watch`, `files:assets`, `paths:validate`, `terminal:activity`. When an old Engine lacks them the frontend degrades automatically.
+- Terminal processes: closing, restarting or deleting a terminal and the server's exit end the shell's foreground job first (SIGTERM, then SIGKILL; `services/terminal-reaper.js`, `shutdownTerminals()` in `routes/terminal.js`), because Codex ignores the SIGHUP of `pty.kill()` and keeps its session lock. See "Ending terminal processes" in `DESIGN.md`.
 - `test/task-parity.test.js`: the same assertions run against the local routes, the Engine and the Client proxy; add to it when adding endpoints.
 
 ## Not verified yet / things for the next person to verify

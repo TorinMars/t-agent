@@ -13,6 +13,10 @@
 //   command, AI summary with refresh, goal, progress with files: a file of this machine opens with the any-path preview (/api/fs/content), one
 //   of a session on another machine (context.host) shows only its path),
 //   folder and branch, the timeline by day, "Open terminal" (the T-Agent terminal) and "Copy resume command".
+// - phone 390x844 (touch), links: the link button of a row (a real <a>: a web address in a new tab with noopener noreferrer, a page path in this
+//   tab; a tap never opens the edit view; none without a link; 44px; it fits at 320px), the Link and Link label fields of the edit view (filled
+//   from the task, PATCH of the changed ones, emptied ones cleared with null, the server's 400 message in the error line), and the web addresses
+//   inside the reason, the context card and the history drawn as links (never a javascript: one).
 // - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px; the
 //   Plugins rows fit the width with 44px buttons.
 // - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one at a time with the Docs sheet, Escape closes it, the edit view is a
@@ -72,14 +76,14 @@ const CONFIGS = () => ({ telegram: { enabled: true, values: { callSeconds: 45 },
 const configView = entry => ({ name: 'telegram', enabled: entry.enabled, schema: TELEGRAM_SCHEMA, test: true, customUi: 'telegram',
   values: { callSeconds: entry.values.callSeconds === undefined ? 30 : entry.values.callSeconds, botToken: { set: Boolean(entry.secret) } } });
 
-async function openPage(browser, { viewport, touch = true, notify = true }) {
+async function openPage(browser, { viewport, touch = true, notify = true, items = null }) {
   const scale = SHOTS && touch ? { deviceScaleFactor: 3 } : {};
   const context = await browser.newContext({ viewport, ...(touch ? { isMobile: true, hasTouch: true } : {}), ...scale });
   const page = await context.newPage();
   const errors = [];
   const calls = []; // { method, path, body } of every /api/attention request
   const fsReads = []; // the paths read with GET /api/fs/content
-  const db = { configs: CONFIGS(), items: ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }], claudeLocal: {}, pairingReads: 0 };
+  const db = { configs: CONFIGS(), items: items || ITEMS(), next: 100, summary: { enabled: false, provider: 'deepseek', model: '' }, tokens: [{ id: 1, name: 'laptop claude', created_at: AT, last_used_at: null, revoked_at: null }], claudeLocal: {}, pairingReads: 0 };
   const pluginsNow = () => { const all = PLUGINS(db.configs); const claude = all.listeners.find(entry => entry.name === 'claude'); claude.local = { ...claude.local, ...db.claudeLocal }; return all; };
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(({ notify: on }) => {
@@ -203,12 +207,17 @@ async function openPage(browser, { viewport, touch = true, notify = true }) {
             { id: 5, item_id: id, at: '2026-11-05T10:00:00Z', actor: 'claude', type: 'status', from_status: 'working', to_status: item.status, data: null },
             { id: 4, item_id: id, at: '2026-11-05T09:59:00Z', actor: 'claude', type: 'activity', data: { kind: 'permission', text: 'Bash: npm test' } },
             { id: 3, item_id: id, at: '2026-11-04T12:00:00Z', actor: 'claude', type: 'updated', data: { context: {} } },
-            { id: 2, item_id: id, at: '2026-11-04T11:00:00Z', actor: 'claude', type: 'activity', data: { kind: 'prompt', text: 'Add a login page' } },
+            { id: 2, item_id: id, at: '2026-11-04T11:00:00Z', actor: 'claude', type: 'activity', data: { kind: 'prompt', text: item.prompt_text || 'Add a login page' } },
             { id: 1, item_id: id, at: '2026-11-04T10:59:00Z', actor: 'claude', type: 'created', data: null },
           ];
           return json({ item, events });
         }
-        if (method === 'PATCH') { Object.assign(item, body, { updated_at: new Date().toISOString() }); return json(item); }
+        if (method === 'PATCH') {
+          // The server's link rule (services/attention.js linkUrl): an http(s) address or a page path starting with '/'.
+          if (typeof body.link_url === 'string' && !/^(https?:\/\/\S+|\/(?![/\\])\S*)$/i.test(body.link_url)) return json({ error: 'VALIDATION_FAILED', message: 'link_url must be an http(s) address or a page path starting with /' }, 400);
+          Object.assign(item, body, { updated_at: new Date().toISOString() });
+          return json(item);
+        }
         if (method === 'DELETE') { db.items = db.items.filter(entry => entry.id !== id); return route.fulfill({ status: 204, body: '' }); }
       }
       return json({ error: 'not mocked' }, 404);
@@ -708,6 +717,121 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await notice(page).filter({ hasText: 'Review: Write the release notes' }).waitFor();
       assert.deepEqual(await page.evaluate(() => [window.notes.length, window.tones]), before);
       assert.deepEqual(await page.evaluate(() => [window.notes.length, window.permissionAsks]), [0, 0], 'no system notification in the whole run');
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+
+    // ── Phone 390x844, touch: links on the rows, in the edit view and in its texts ──
+    {
+      const LINKED = [
+        { id: 1, title: 'Read the spec', status: 'todo', priority: 'none', source: 'user', link_url: 'https://example.test/spec', link_label: 'Spec', updated_at: AT, created_at: AT },
+        { id: 2, title: 'Open the chat about the release plan for the next version', status: 'todo', priority: 'none', source: 'user', link_url: '/?openChat=c1', updated_at: AT, created_at: AT },
+        { id: 3, title: 'No link here', status: 'todo', priority: 'none', source: 'user', updated_at: AT, created_at: AT },
+        { id: 4, title: 'Approve the deploy', status: 'waiting_user', priority: 'none', source: 'cli', attention_reason: 'Check https://example.test/run/7. Then javascript:alert(1)', prompt_text: 'Deploy https://example.test/build/3', updated_at: AT, created_at: AT },
+        { id: 5, title: 'Bad link', status: 'todo', priority: 'none', source: 'cli', link_url: 'javascript:alert(1)', updated_at: AT, created_at: AT },
+        { id: 6, title: 'Summarized', status: 'waiting_user', priority: 'none', source: 'claude', updated_at: AT, created_at: AT,
+          context: { pending: { kind: 'question', text: 'Which one? See https://example.test/a or https://example.test/b.' }, last_reply: 'Opened https://example.test/pr/9 for it.', summary: { text: 'Doing: https://example.test/doc', at: AT } } },
+      ];
+      const { context, page, errors, calls } = await openPage(browser, { viewport: { width: 390, height: 844 }, items: LINKED });
+      await page.locator('#h5-attention').tap();
+      await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
+      await settled(page, '#h5-attention-sheet .h5-attention-panel');
+      // The row link: a real link with the label (or "Open link") as its name.
+      const spec = row(page, 1).locator('a.h5-attention-row-link');
+      assert.equal(await spec.getAttribute('href'), 'https://example.test/spec');
+      assert.equal(await spec.getAttribute('target'), '_blank');
+      assert.equal(await spec.getAttribute('rel'), 'noopener noreferrer');
+      assert.equal(await spec.getAttribute('aria-label'), 'Spec');
+      assert.equal(await spec.getAttribute('title'), 'Spec');
+      const chat = row(page, 2).locator('a.h5-attention-row-link');
+      assert.equal(await chat.getAttribute('href'), '/?openChat=c1');
+      assert.equal(await chat.getAttribute('target'), null, 'a page path opens in this tab');
+      assert.equal(await chat.getAttribute('aria-label'), 'Open link');
+      assert.equal(await row(page, 3).locator('.h5-attention-row-link').count(), 0, 'no link, no button');
+      assert.equal(await row(page, 5).locator('.h5-attention-row-link').count(), 0, 'an unsafe link gets no button');
+      const linkBox = await spec.boundingBox();
+      assert.ok(linkBox.width >= 43.99 && linkBox.height >= 43.99, `a 44px target on touch: ${JSON.stringify(linkBox)}`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'att-link-row.png') });
+      // A tap opens the link in a new tab and never the edit view.
+      const [popup] = await Promise.all([context.waitForEvent('page'), spec.tap()]);
+      await popup.close();
+      await page.waitForTimeout(300);
+      assert.equal(await page.locator('#h5-attention-edit').count(), 0, 'the edit view stays closed');
+      // At 320px the row keeps room for its title and the link stays inside the row.
+      await page.setViewportSize({ width: 320, height: 640 });
+      const fit = await page.evaluate(() => { const r = document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="2"]'); const l = r.querySelector('.h5-attention-row-link').getBoundingClientRect(); const t = r.querySelector('.h5-attention-title').getBoundingClientRect(); const b = r.getBoundingClientRect(); return { right: l.right, rowRight: b.right, title: t.width, overlap: t.right > l.left + 0.5, wide: document.getElementById('h5-attention-body').scrollWidth > document.getElementById('h5-attention-body').clientWidth }; });
+      assert.ok(fit.right <= fit.rowRight + 0.5 && fit.title >= 150 && !fit.overlap && !fit.wide, `fits at 320px: ${JSON.stringify(fit)}`);
+      await page.setViewportSize({ width: 390, height: 844 });
+
+      // The edit view: the link fields come filled from the task.
+      const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-edit-link-url').inputValue(), 'https://example.test/spec');
+      assert.equal(await page.locator('#h5-attention-edit-link-label').inputValue(), 'Spec');
+      assert.equal(await page.locator('#h5-attention-edit-link-url').getAttribute('type'), 'url');
+      assert.equal(await page.locator('#h5-attention-edit-link-url').getAttribute('inputmode'), 'url');
+      assert.equal(await page.locator('#h5-attention-edit-link-url').getAttribute('maxlength'), '2000');
+      assert.equal(await page.locator('#h5-attention-edit-link-label').getAttribute('maxlength'), '200');
+      assert.equal(await page.locator('#h5-attention-edit-link').getAttribute('href'), 'https://example.test/spec', 'the saved link');
+      if (SHOTS) {
+        await page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-attention-edit .MuiDialog-container')).opacity === '1'); // the fade is over
+        await page.locator('#h5-attention-edit-link-url').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(SHOTS, 'att-link-edit.png') });
+      }
+      // A refused address: the server's message in the error line, the view stays open.
+      await page.locator('#h5-attention-edit-link-url').fill('ftp://example.test/x');
+      await page.locator('#h5-attention-edit-save').tap();
+      await page.locator('#h5-attention-edit-error').waitFor();
+      assert.equal(await page.locator('#h5-attention-edit-error').textContent(), 'Could not save: link_url must be an http(s) address or a page path starting with /');
+      assert.ok(await edit.isVisible());
+      // A changed address and label: only they are sent.
+      await page.locator('#h5-attention-edit-link-url').fill('https://example.test/spec/v2');
+      await page.locator('#h5-attention-edit-link-label').fill('Spec v2');
+      await page.locator('#h5-attention-edit-save').tap();
+      await edit.waitFor({ state: 'hidden' });
+      assert.deepEqual(calls.filter(call => call.method === 'PATCH').at(-1), { method: 'PATCH', path: '/api/attention/1', body: { link_url: 'https://example.test/spec/v2', link_label: 'Spec v2' } });
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"] .h5-attention-row-link').getAttribute('href') === 'https://example.test/spec/v2');
+      assert.equal(await spec.getAttribute('aria-label'), 'Spec v2');
+      // Emptied fields clear the link (null); the row loses its button.
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      await page.locator('#h5-attention-edit-link-url').fill('');
+      await page.locator('#h5-attention-edit-link-label').fill('');
+      await page.locator('#h5-attention-edit-save').tap();
+      await edit.waitFor({ state: 'hidden' });
+      assert.deepEqual(calls.filter(call => call.method === 'PATCH').at(-1).body, { link_url: null, link_label: null });
+      await page.waitForFunction(() => !document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"] .h5-attention-row-link'));
+      // A new link on a task without one.
+      await row(page, 3).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-edit-link-url').inputValue(), '');
+      assert.equal(await page.locator('#h5-attention-edit-link').count(), 0);
+      await page.locator('#h5-attention-edit-link-url').fill('/?openChat=c9');
+      await page.locator('#h5-attention-edit-save').tap();
+      await edit.waitFor({ state: 'hidden' });
+      assert.deepEqual(calls.filter(call => call.method === 'PATCH').at(-1).body, { link_url: '/?openChat=c9' });
+      await row(page, 3).locator('a.h5-attention-row-link[href="/?openChat=c9"]').waitFor();
+
+      // Web addresses in the read-only texts are links; javascript: text is not.
+      await row(page, 4).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      const reasonLinks = await page.$$eval('#h5-attention-edit-reason a', nodes => nodes.map(node => [node.getAttribute('href'), node.textContent, node.target, node.rel, node.getAttribute('translate')]));
+      assert.deepEqual(reasonLinks, [['https://example.test/run/7', 'https://example.test/run/7', '_blank', 'noopener noreferrer', 'no']]);
+      assert.equal(await page.locator('#h5-attention-edit-reason').textContent(), 'Check https://example.test/run/7. Then javascript:alert(1)', 'the text reads as before');
+      assert.equal(await page.locator('#h5-attention-edit a[href^="javascript:"]').count(), 0);
+      // The history: the activity text with an address.
+      await page.locator('#h5-attention-history .h5-attention-event').first().waitFor();
+      assert.deepEqual(await page.$$eval('#h5-attention-history a.h5-attention-text-link', nodes => nodes.map(node => [node.getAttribute('href'), node.target, node.rel])), [['https://example.test/build/3', '_blank', 'noopener noreferrer']]);
+      assert.equal(await page.locator('#h5-attention-edit-link-url').evaluate(node => node.tagName), 'INPUT', 'the inputs stay inputs');
+      await page.locator('#h5-attention-edit-close').tap();
+      await edit.waitFor({ state: 'hidden' });
+      await row(page, 6).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      const cardLinks = await page.$$eval('#h5-attention-context a.h5-attention-text-link', nodes => nodes.map(node => node.getAttribute('href')));
+      assert.deepEqual(cardLinks, ['https://example.test/a', 'https://example.test/b', 'https://example.test/doc', 'https://example.test/pr/9'], 'needs you, summary, progress');
+      await page.locator('#h5-attention-edit-close').tap();
+      await edit.waitFor({ state: 'hidden' });
       assert.deepEqual(errors, []);
       await context.close();
     }

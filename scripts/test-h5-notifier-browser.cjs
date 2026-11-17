@@ -13,6 +13,8 @@ const root = path.resolve(__dirname, '..');
 const WIDTH = Number(process.env.H5_TEST_WIDTH) || 390;
 const { checkManifest } = require(path.join(root, 'services/attention-notify.js'));
 const EMAIL_SCHEMA = checkManifest(JSON.parse(fs.readFileSync(path.join(root, 'plugins/notifiers/email/manifest.json'), 'utf8'))).config;
+const WIDGET_SCHEMA = checkManifest(JSON.parse(fs.readFileSync(path.join(root, 'plugins/notifiers/widget/manifest.json'), 'utf8'))).config;
+const WIDGET_OFF = require('../plugins/notifiers/widget').NOT_READY.off;
 const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
 
 (async () => {
@@ -24,8 +26,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.route('http://app.test/', route => route.fulfill({ contentType: 'text/html', body: html }));
     await page.goto('http://app.test/');
     await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/h5.css'), 'utf8') });
-    await page.evaluate(emailSchema => {
+    await page.evaluate(([emailSchema, widgetSchema, widgetOff]) => {
       window.calls = [];
+      window.widgetConfig = { name: 'widget', enabled: true, schema: widgetSchema, test: true, customUi: null, values: { seconds: '8' } };
+      window.widgetOff = widgetOff;
       window.emailConfig = { name: 'email', enabled: true, schema: emailSchema, test: true, customUi: null, values: { provider: 'gmail', fromName: 'T-Agent', security: 'ssl', password: { set: false } } };
       window.confirm = () => true;
       const rules = { statuses: ['waiting_user', 'failed', 'review'], modes: {}, messageDelayMinutes: 3, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '', agentMessages: true };
@@ -41,7 +45,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url.startsWith('/api/system/')) return reply({});
         // The rest of the Settings group "T-Attention" (the notifier settings are drawn in its slot) and the list for the row 2 badge.
         if (url === '/api/attention/tokens') return reply({ tokens: [] });
-        if (url === '/api/attention/plugins') return reply({ listeners: [], notifiers: [{ name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, enabled: true, configured: server.tg.loggedIn, summary: server.tg.loggedIn ? 'Logged in as Account One' : 'Not logged in', statuses: {}, settings: true, test: true, customUi: 'telegram' }, { name: 'email', version: '1.0.0', description: 'Email', loaded: true, error: null, enabled: true, configured: false, summary: 'Not set up', statuses: {}, settings: true, test: true, customUi: null }] });
+        if (url === '/api/attention/plugins') return reply({ listeners: [], notifiers: [{ name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, enabled: true, configured: server.tg.loggedIn, summary: server.tg.loggedIn ? 'Logged in as Account One' : 'Not logged in', statuses: {}, settings: true, test: true, customUi: 'telegram' }, { name: 'email', version: '1.0.0', description: 'Email', loaded: true, error: null, enabled: true, configured: false, summary: 'Not set up', statuses: {}, settings: true, test: true, customUi: null }, { name: 'widget', version: '1.0.0', description: 'Shows T-Attention messages as a bubble beside the T-Attention desktop window on this Mac.', loaded: true, error: null, enabled: true, configured: false, summary: widgetOff, statuses: {}, settings: true, test: true, customUi: null }] });
+        if (url === '/api/attention/plugins/widget/config' && method === 'GET') return reply(widgetConfig);
+        if (url === '/api/attention/plugins/widget/config' && method === 'PUT') { widgetConfig.values = { ...widgetConfig.values, ...(body.values || {}) }; return reply(widgetConfig); }
+        if (url === '/api/attention/plugins/widget/test') return reply({ ok: false, message: widgetOff });
         if (url === '/api/attention/plugins/email/config' && method === 'GET') return reply(emailConfig);
         if (url === '/api/attention/plugins/email/config' && method === 'PUT') { const { password, ...rest } = body.values || {}; emailConfig.values = { ...emailConfig.values, ...rest, password: { set: Boolean(password) || emailConfig.values.password.set } }; return reply(emailConfig); }
         if (url === '/api/attention/plugins/telegram/config') return reply({ name: 'telegram', enabled: true, schema: [], test: true, customUi: 'telegram', values: {} });
@@ -60,7 +67,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url === '/api/attention-notify/telegram/logout') { server.tg = { loggedIn: false, step: 'none', apiId: null, hasApiHash: false, phone: '', account: null, target: null, callSeconds: 30 }; return reply(server.tg); }
         throw new Error(`unexpected ${method} ${url}`);
       };
-    }, EMAIL_SCHEMA);
+    }, [EMAIL_SCHEMA, WIDGET_SCHEMA, WIDGET_OFF]);
     await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') });
     await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
@@ -275,6 +282,23 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.getAttribute('#h5-plugin-config-email-password', 'placeholder'), 'Saved; leave empty to keep it');
     const formBox = await emailForm.boundingBox();
     assert.ok(formBox.x >= 0 && formBox.x + formBox.width <= WIDTH, `the form fits the phone width: ${JSON.stringify(formBox)}`);
+    // The desktop window page: why it is not ready, the "Show for" choice and a test that says why it cannot send.
+    await back().tap();
+    await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
+    const widgetRow = page.locator('#h5-plugins .h5-plugin-notifier[data-name="widget"]');
+    assert.match(await widgetRow.textContent(), /Turn on the desktop window/);
+    await widgetRow.tap();
+    await page.locator('#h5-plugin-config-widget-seconds').waitFor({ state: 'visible' });
+    assert.equal(await page.inputValue('#h5-plugin-config-widget-seconds'), '8');
+    assert.deepEqual(await page.locator('#h5-plugin-config-widget-seconds option').evaluateAll(options => options.map(option => [option.value, option.textContent])), [['5', '5 seconds'], ['8', '8 seconds'], ['15', '15 seconds'], ['30', '30 seconds'], ['0', 'Until I close it']]);
+    await page.selectOption('#h5-plugin-config-widget-seconds', '0');
+    const widgetForm = page.locator('.h5-plugin-config[data-name="widget"]');
+    await widgetForm.locator('.h5-plugin-config-save').tap();
+    await page.locator('#h5-plugin-config-feedback-widget', { hasText: 'Saved' }).waitFor();
+    const widgetSave = (await page.evaluate(() => window.calls.filter(call => call.url === '/api/attention/plugins/widget/config' && call.method === 'PUT'))).at(-1).body.values;
+    assert.equal(widgetSave.seconds, '0');
+    await widgetForm.locator('.h5-plugin-config-test').tap();
+    await page.locator('#h5-plugin-config-feedback-widget', { hasText: 'Turn on the desktop window in Settings' }).waitFor();
     assert.deepEqual(errors, []);
     console.log('h5 notifier settings: ok');
   } finally {

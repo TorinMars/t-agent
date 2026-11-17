@@ -55,7 +55,7 @@ const change = (next, previous = null, actor = 'claude') => ({ kind: previous ? 
 
 // One device: its database, notify service with a fake telegram plugin, relay, and an HTTP server with /v1/info and the relay's Engine router.
 // older: a device of a version before the relay (no relay, no routes, no capability).
-async function makeDevice(t, name, { ready = false, older = false, capabilities = older ? ['attention:remote'] : [CAPABILITY], clock = { now: Date.parse('2026-11-12T12:00:00Z') }, isForeground } = {}) {
+async function makeDevice(t, name, { ready = false, older = false, capabilities = older ? ['attention:remote'] : [CAPABILITY], clock = { now: Date.parse('2026-11-12T12:00:00Z') }, isForeground, extraNotifiers = [], manifests } = {}) {
   const db = new Database(':memory:');
   db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
   const bus = fakeBus();
@@ -72,8 +72,8 @@ async function makeDevice(t, name, { ready = false, older = false, capabilities 
     async test(config, options) { tests.push(options); return { ok: true, outcome: 'sent' }; },
   };
   device.service = notify.createAttentionNotify({
-    db, sessionSecret: SECRET, onChange: bus.onChange, getOwner: () => 'owner', notifiers: [plugin], log, now: () => clock.now, timers,
-    ...(isForeground ? { isForeground } : {}),
+    db, sessionSecret: SECRET, onChange: bus.onChange, getOwner: () => 'owner', notifiers: [plugin, ...extraNotifiers], log, now: () => clock.now, timers,
+    ...(isForeground ? { isForeground } : {}), ...(manifests ? { manifests } : {}),
   });
   device.service.saveRules('owner', { messageDelayMinutes: 0 }); // these tests are about the relay: messages go at once
   // The service links of this device: peers() as services/service-links.js gives them, linkForToken() for the tokens this device issued.
@@ -463,6 +463,40 @@ test('without linked devices nothing changes: Telegram sends here, and the page 
   a.ready = false;
   assert.equal(a.relay.summary(), null, 'no device has Telegram: nothing to name');
   assert.equal(a.requests.length, 0, 'no request to anyone');
+});
+
+// ---- The desktop window bubble (plugins/notifiers/widget): local to each Mac, never relayed ----
+test('the widget notifier is never relayed: a device that relays Telegram still shows its own bubbles, and a relayed widget delivery is refused', async t => {
+  const { createWidgetNotifier } = require('../plugins/notifiers/widget');
+  const { createWidgetNotices } = require('../services/widget-notices');
+  const widgetManifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'notifiers', 'widget', 'manifest.json'), 'utf8'));
+  const on = { supported: true, blocked: false, enabled: true, running: true };
+  const queueA = createWidgetNotices();
+  const queueB = createWidgetNotices();
+  const a = await makeDevice(t, 'A', { ready: true, manifests: { widget: widgetManifest }, extraNotifiers: [createWidgetNotifier({ notices: queueA, widgetState: () => ({ ...on, url: 'http://127.0.0.1:3001' }) })] });
+  const b = await makeDevice(t, 'B', { manifests: { widget: widgetManifest }, extraNotifiers: [createWidgetNotifier({ notices: queueB, widgetState: () => ({ ...on, url: 'http://127.0.0.1:3002' }) })] });
+  link(a, b);
+  assert.equal(b.relay.handles('widget'), false);
+  const status = await b.service.directStatus('owner');
+  assert.deepEqual(status.notifiers.find(entry => entry.name === 'widget'), { name: 'widget', label: 'Desktop window (macOS)', enabled: true, ready: true });
+  // tcli notify --via widget: shown on B itself, nothing goes to A.
+  const direct = await b.service.sendDirect({ title: 'Build', text: 'The long build finished', from: 'Fix CI', via: ['widget'] });
+  assert.deepEqual(direct.results, [{ notifier: 'widget', outcome: 'sent' }]);
+  assert.equal(relayPosts(a).length, 0);
+  assert.deepEqual(queueB.list({ after: 0 }).notices.map(notice => [notice.kind, notice.title, notice.text, notice.from, notice.target]), [['direct', 'Build', 'The long build finished', 'Fix CI', 'http://127.0.0.1:3002/']]);
+  assert.equal(queueA.latestSeq(), 0);
+  // A status change on B: Telegram goes through A, the bubble stays on B.
+  b.bus.emit(change(item(9, 'waiting_user', { context: { pending: { text: 'Approve the command' } } }), item(9, 'working')));
+  await until(() => a.calls.length === 1 && b.service.recent().some(entry => entry.notifier === 'telegram' && entry.outcome === 'relayed'), 'Telegram relayed');
+  await until(() => queueB.latestSeq() === 2, 'the bubble on B');
+  const posted = relayPosts(a).map(entry => JSON.parse(entry.raw).notifier);
+  assert.deepEqual(posted, ['telegram'], 'only Telegram travels');
+  assert.equal(queueA.latestSeq(), 0, 'A shows no bubble for B');
+  assert.deepEqual(queueB.list({ after: 1 }).notices.map(notice => [notice.kind, notice.key, notice.status, notice.text]), [['item', 'local:9', 'waiting_user', 'Approve the command']]);
+  // The sender refuses a widget delivery that some other device sends anyway.
+  const linkB = a.links.find(entry => entry.name === 'B');
+  await assert.rejects(a.relay.accept(linkB, { notifier: 'widget', mode: 'message', reason: 'direct', message: { text: 'x' }, link: '' }), error => error.statusCode === 400);
+  assert.equal(queueA.latestSeq(), 0);
 });
 
 // ---- Direct messages (tcli notify) ----

@@ -1,0 +1,24 @@
+{
+  "name": "widget",
+  "version": "1.0.0",
+  "kind": "notifier",
+  "description": "Shows T-Attention messages as a bubble beside the T-Attention desktop window on this Mac. Click the bubble to open its link. Needs macOS and the desktop window turned on in Settings → T-Attention.",
+  "test": true,
+  "modes": ["message", "off"],
+  "config": [
+    {
+      "key": "seconds",
+      "label": "Show for",
+      "type": "select",
+      "default": "8",
+      "options": [
+        { "value": "5", "label": "5 seconds" },
+        { "value": "8", "label": "8 seconds" },
+        { "value": "15", "label": "15 seconds" },
+        { "value": "30", "label": "30 seconds" },
+        { "value": "0", "label": "Until I close it" }
+      ],
+      "help": "How long a bubble stays beside the window. A click on it opens its link."
+    }
+  ]
+}

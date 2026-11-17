@@ -13,7 +13,7 @@ const SEND_TIMEOUT_MS = 90_000; // a message relayed to the Telegram sender may 
 
 const HELP = `tcli notify: send the user a short message on
 the notifiers set up in T-Attention (Telegram,
-email ...)
+email, the Mac desktop window ...)
 
 Usage
   tcli notify <text...>    send the text
@@ -24,7 +24,8 @@ Options
   --file F                 read the text from F
   --title T                a short title (200)
   --via telegram,email     only these notifiers
-                           (default: all)
+                           (telegram, email,
+                           widget; default: all)
   --link URL               an http(s) link to add
                            (default: the T-Agent
                            page, when its address
@@ -123,7 +124,7 @@ function createNotifyGroup({ parseArgs, callJson, usage, EXIT }) {
     if (flags.help) { ctx.stdout.write(HELP); return EXIT.ok; }
     const fromStdin = positional.length === 1 && positional[0] === '-';
     const sources = [flags.file !== undefined, fromStdin, positional.length > 0 && !fromStdin].filter(Boolean).length;
-    if (sources === 0) throw usage('Usage: tcli notify <text...> | - | --file F [--title T] [--via telegram,email] [--link URL]');
+    if (sources === 0) throw usage('Usage: tcli notify <text...> | - | --file F [--title T] [--via telegram,email,widget] [--link URL]');
     if (sources > 1) throw usage('Give the text one way: as arguments, - for stdin, or --file F');
     let text;
     if (flags.file === '-' || fromStdin) text = await readStdin(ctx.stdin, usage);

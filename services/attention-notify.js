@@ -909,6 +909,12 @@ function createAttentionNotify(options) {
     writeSettings(plugin.name, owner, { enabled: body.enabled === undefined ? settings.enabled : body.enabled, values });
     return getPluginConfig(plugin.name, owner);
   }
+  // Why a plugin that is not ready cannot send: its optional whyNotReady(config) hook (the widget: not macOS, the window off ...), else the general line.
+  function notReadyMessage(plugin, config) {
+    let why = '';
+    try { why = typeof plugin.whyNotReady === 'function' ? String(plugin.whyNotReady(config) || '').trim().slice(0, 300) : ''; } catch { why = ''; }
+    return why || 'The plugin is not set up yet';
+  }
   // Runs the plugin's test(config, { kind: 'message', link, values, owner, log }) and answers { ok, message }. A failure is an answer too
   // (ok: false); the message never holds a stored secret.
   async function testPlugin(name, owner) {
@@ -922,7 +928,7 @@ function createAttentionNotify(options) {
     const config = store(plugin.name).read(owner);
     const secrets = secretsOf(plugin.name, owner);
     const clean = text => scrubSecrets(String(text).slice(0, 300), secrets);
-    if (typeof plugin.ready === 'function' && !plugin.ready(config)) return { ok: false, message: 'The plugin is not set up yet' };
+    if (typeof plugin.ready === 'function' && !plugin.ready(config)) return { ok: false, message: notReadyMessage(plugin, config) };
     const base = getRules(owner).publicUrl;
     const values = effectiveValues(schemaOf(plugin.name), settings.values);
     try {

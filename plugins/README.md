@@ -103,13 +103,26 @@ Called with the plugin's stored settings and the user. It returns an object for 
 - Test sends "T-Agent test email" and answers `Test email sent to s***@gmail.com`. `status()` gives `Gmail · s***@gmail.com → m***@example.com` (masked, no network).
 - Connecting, the greeting and an idle socket each time out after 20 s. Errors are short: "The email server refused the login: check the address and the app password / authorization code", "Cannot reach the email server <host>:<port>", and a few more; the password and its base64 forms never reach an error or a log. Proxies are not used.
 
+## widget
+
+`plugins/notifiers/widget/` shows T-Attention messages as a bubble beside the T-Attention desktop window on this Mac (`widgets/macos/TAttentionWidget.swift`). Nothing goes over the network: each message becomes a notice in the in-memory queue of `services/widget-notices.js`, which the window reads with `GET /api/attention/widget/notices?after=<seq>`; a click on the bubble opens the notice's `target`.
+
+| Setting | Meaning |
+| --- | --- |
+| Show for | `5`, `8` (default), `15` or `30` seconds, or `0` "Until I close it". |
+
+- Ready only on macOS, in a server that may start the window, with the window switched on (Settings -> T-Attention -> Desktop window (macOS)) and running. Otherwise it is skipped like a notifier that is not set up, and the Test button says why. It exports `whyNotReady()` for that.
+- Local to each Mac: never relayed to the Telegram sender of the linked devices.
+- `direct: true` (`tcli notify --via widget`), `modes: ["message", "off"]`; a call that still arrives falls back to a message.
+- Target of a click: the item's own `link_url` (a page path `/...` against the address the window talks to), else the notification link, else the T-Agent page on this Mac. Only http(s) without credentials. The notice shape is in "Floating window notices" in `DESIGN.md`.
+
 ## Publishing a plugin (marketplace)
 
 Anyone can publish a plugin in a Git repository; users install it from Settings -> T-Attention -> Plugins -> Marketplace, or with `t-attention plugins install <name|git-url>`. The server downloads it, shows what it contains and installs it only after the user confirms, pinned to that commit. Installed plugins live in `<data folder>/plugins/{listeners,notifiers}/<name>/` (`~/.tagent` by default); see "Plugin marketplace" in `DESIGN.md`.
 
 **Repository layout**: the plugin folder is the repository root, or a subfolder of it (users give it as `https://host/repo.git#<ref>:<subfolder>`, an index entry as `"path"`). It contains `manifest.json` and the files of the format above (a notifier: `index.js`; a listener: its `entry`). Rules:
 
-- `manifest.json` needs `name` (`^[a-z0-9][a-z0-9-]{0,40}$`, not the name of a built-in plugin: `claude`, `telegram`, `email`), `version`, `kind` (`listener` or `notifier`) and `description` (at most 500 characters); a notifier's `config` must be valid (see above).
+- `manifest.json` needs `name` (`^[a-z0-9][a-z0-9-]{0,40}$`, not the name of a built-in plugin: `claude`, `telegram`, `email`, `widget`), `version`, `kind` (`listener` or `notifier`) and `description` (at most 500 characters); a notifier's `config` must be valid (see above).
 - **No dependencies**: nothing is installed with npm. Use Node built-ins only, or put the dependencies you need inside the folder (a `node_modules` you commit). A `package.json` with dependencies and no `node_modules` shows the warning "needs dependencies; not supported".
 - At most 2000 files and 20 MiB. Symlinks must be relative and stay inside the plugin folder. Submodules, Git LFS files and Git hooks are not used.
 - Tag your releases. Users pin a commit; `t-attention plugins update` (or the Update button) installs the newer commit of the same ref, and the plugin's settings stay.

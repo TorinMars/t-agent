@@ -397,8 +397,8 @@ test('the index: cached for 10 minutes, the saved copy when a fetch fails, insta
   t.after(() => { s.market.stop(); s.notify.stop(); s.db.close(); });
 
   const first = await s.market.list();
-  assert.deepEqual(first.plugins.map(entry => [entry.name, entry.builtIn, entry.installed]), [['claude', true, true], ['telegram', true, true], ['email', true, true], ['chime', false, false]], 'invalid entries are left out');
-  assert.deepEqual(first.sources, [{ url: 'https://index.example/marketplace.json', official: true, ok: true, stale: false, fetchedAt: '2026-11-08T10:00:00.000Z', error: null, count: 4 }]);
+  assert.deepEqual(first.plugins.map(entry => [entry.name, entry.builtIn, entry.installed]), [['claude', true, true], ['telegram', true, true], ['email', true, true], ['widget', true, true], ['chime', false, false]], 'invalid entries are left out');
+  assert.deepEqual(first.sources, [{ url: 'https://index.example/marketplace.json', official: true, ok: true, stale: false, fetchedAt: '2026-11-08T10:00:00.000Z', error: null, count: 5 }]);
   await s.market.list({ q: 'chime' });
   assert.equal(calls, 1, 'cached');
   assert.deepEqual((await s.market.list({ q: 'SOUND' })).plugins.map(entry => entry.name), ['chime'], 'tags are searched, ignoring case');
@@ -418,14 +418,14 @@ test('the index: cached for 10 minutes, the saved copy when a fetch fails, insta
   online = false;
   const stale = await s.market.list();
   assert.equal(calls, 2);
-  assert.deepEqual(stale.plugins.map(entry => entry.name), ['claude', 'telegram', 'email', 'chime'], 'the saved copy is shown');
+  assert.deepEqual(stale.plugins.map(entry => entry.name), ['claude', 'telegram', 'email', 'widget', 'chime'], 'the saved copy is shown');
   assert.deepEqual([stale.sources[0].ok, stale.sources[0].stale, stale.sources[0].error, stale.sources[0].fetchedAt], [false, true, 'offline', '2026-11-08T10:00:00.000Z']);
 
   // A new market (a restart) reads the copy saved on disk when the index cannot be fetched.
   const again = market.createMarket({ dataDir: s.dataDir, allowFileUrls: true, env: GIT_ENV, officialIndexUrl: 'https://index.example/marketplace.json', log: () => {}, fetchIndex: async () => { throw new Error('down'); } });
   t.after(() => again.stop());
   const restarted = await again.list();
-  assert.deepEqual(restarted.plugins.map(entry => entry.name), ['claude', 'telegram', 'email', 'chime']);
+  assert.deepEqual(restarted.plugins.map(entry => entry.name), ['claude', 'telegram', 'email', 'widget', 'chime']);
   assert.equal(restarted.sources[0].stale, true);
 
   // The index moves to a new tag: the listing says an update is there, and the update follows the index ref.
@@ -472,9 +472,9 @@ test('extra index sources: https only, saved in the data folder, merged after th
 
 test('marketplace.json at the repository root lists the built-in plugins only', () => {
   const index = JSON.parse(fs.readFileSync(path.join(ROOT, 'marketplace.json'), 'utf8'));
-  assert.deepEqual(index.plugins.map(entry => [entry.name, entry.kind, entry.builtIn]), [['claude', 'listener', true], ['telegram', 'notifier', true], ['email', 'notifier', true]]);
+  assert.deepEqual(index.plugins.map(entry => [entry.name, entry.kind, entry.builtIn]), [['claude', 'listener', true], ['telegram', 'notifier', true], ['email', 'notifier', true], ['widget', 'notifier', true]]);
   const checked = market.checkIndex(index, 'https://x/marketplace.json');
-  assert.equal(checked.plugins.length, 3);
+  assert.equal(checked.plugins.length, 4);
   for (const entry of index.plugins) assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT, 'plugins', `${entry.kind}s`, entry.name, 'manifest.json'), 'utf8')).name, entry.name);
 });
 

@@ -122,6 +122,8 @@ app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 const attentionWidgetService = require('./services/attention-widget');
 const attentionWidgetSettings = attentionWidgetService.createWidgetSettings({ db });
 const attentionWidget = attentionWidgetService.createWidgetLauncher({ settings: attentionWidgetSettings, dataDir: attentionDataDir });
+// The widget notifier (plugins/notifiers/widget) shows bubbles only while this Mac's window can show them (services/widget-notices.js).
+require('./services/widget-notices').setWidgetState(() => attentionWidget.state());
 const attentionWidgetRoutes = require('./routes/attention-widget').createAttentionWidgetRoutes({ service: attentionService, launcher: attentionWidget, settings: attentionWidgetSettings, db });
 // The window switch of this Mac for a linked device's page (GET / PUT /v1/device-settings/attention/widget/settings, routes/device-settings.js).
 require('./routes/device-settings').registerWidgetSettings(attentionWidgetRoutes.peerSettings);

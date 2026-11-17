@@ -9,7 +9,7 @@ description: The tcli command of T-Agent. Use it to manage files in the user's o
 
 - `oss`: files in the object storage bucket that the user set up in T-Agent (Settings → Tasks and files → Image and file upload).
 - `browser`: the user's Chrome on this computer, through the T-Agent browser extension (Settings → Tasks and files → Browser extension). See "Browser" below.
-- `notify`: a short message to the user on the notifiers they set up in T-Attention (Telegram, email). See "Notify the user" below.
+- `notify`: a short message to the user on the notifiers they set up in T-Attention (Telegram, email, a bubble beside the Mac desktop window). See "Notify the user" below.
 
 More groups may come later; `tcli help` lists what this version has.
 
@@ -141,7 +141,7 @@ These rules are strict. "Confirmation" means the user said yes in this conversat
 
 ## Notify the user
 
-`tcli notify` sends the user a short message on every notifier they set up in T-Attention that takes messages (Telegram, email). T-Agent adds which task and terminal it came from, and a link to the page.
+`tcli notify` sends the user a short message on every notifier they set up in T-Attention that takes messages (Telegram, email, `widget`: a bubble beside the T-Attention desktop window on the user's Mac; a click on it opens the link). T-Agent adds which task and terminal it came from, and a link to the page.
 
 ```bash
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" notify "The release build finished: 412 tests pass. Nothing else needs you."
@@ -152,7 +152,7 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" notify status
 
 - When: a long task finished or failed while the user may be away, or you need a decision and cannot go on. Not for every step, and at most a few messages per task.
 - Keep it short (at most 3000 characters, title at most 200): say what happened and what you need from the user. `--link URL` adds a link, `-` reads the text from standard input.
-- Each notifier prints one line, such as `telegram  sent` or `telegram  relayed through T01 (sent)`.
+- Each notifier prints one line, such as `telegram  sent`, `telegram  relayed through T01 (sent)` or `widget  sent`. `--via` takes `telegram`, `email` and `widget`; the bubble is only shown while the desktop window runs on that Mac (else `widget  skipped: not set up`).
 - Never put secrets, tokens, passwords or private data in a message.
 - Quiet hours, the hourly limit and the switch "Let agent sessions send messages (tcli notify)" are the user's choice. When a message is skipped, do not try again, reword it or use another way to get around them; tell the user in the conversation instead.
 

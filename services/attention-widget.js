@@ -277,7 +277,15 @@ function createWidgetLauncher({
     return given.length === own.length && crypto.timingSafeEqual(given, own);
   }
 
-  return { start, ensure, setEnabled, status, verifyToken, stop: kill, paths: { folder, binary, stampFile, sourcePath }, rebuildReason, blocked: () => blocked, idle: () => pending || Promise.resolve() };
+  // What the widget notifier reads at every message (services/widget-notices.js setWidgetState): synchronous, no lookup. `url` is the address the
+  // window talks to (null before the server listens).
+  function state() {
+    let enabled = false;
+    try { enabled = settings.read().enabled === true; } catch { enabled = false; }
+    return { supported, blocked: Boolean(blocked), enabled, running: Boolean(child), url };
+  }
+
+  return { start, ensure, setEnabled, status, state, verifyToken, stop: kill, paths: { folder, binary, stampFile, sourcePath }, rebuildReason, blocked: () => blocked, idle: () => pending || Promise.resolve() };
 }
 
 // Settings sync across linked devices (services/settings-sync.js): only the language of the window ('en' | 'zh'; null is 'auto', the default).

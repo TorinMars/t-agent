@@ -15,7 +15,9 @@
 // and back after a reload; Escape; Ctrl+Alt+Shift+Left / Right from the top page and from inside a pane; 12 tabs scroll on one line; close from a tab.
 // A touch screen at 1280x800 (tap, a moving finger, a held finger). Reduced motion: moves are instant.
 // H5_SHOT_DIR=<dir> saves screenshots of the header switch, of the strip at 1920x1080, of 5 overflowing columns at 1440x900, of the tab row and of a
-// tab mid-drag (2x) there.
+// tab mid-drag (2x) there, and of the top bar with the Update button's red dot (columns-update-bar.png, 2x).
+// Update (1440x900): #h5-columns-update is the first button of the top bar, left of the switch, with the header updater's red dot; it opens the same
+// dialog above the strip and gets the focus back; opening the columns adds no second update-status poll; the header button still works.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -36,7 +38,9 @@ const pageErrors = [];
 
 // `tags`: the server knows the shared task order and names this machine, so the task list tags its rows with the device (and a pane tells its tab).
 // `tablet`: a touch screen at a wide size (touch events, no mouse hover).
-async function openPage(browser, { viewport, touch = false, tablet = false, tags = false, storage = REMEMBERED, url = '/h5', scale = 1, reducedMotion = 'no-preference' }) {
+// `update`: what /api/system/update-status (and check-update) answer, else they are not mocked; the returned `server` counts the reads and from which frames.
+async function openPage(browser, { viewport, touch = false, tablet = false, tags = false, storage = REMEMBERED, url = '/h5', scale = 1, reducedMotion = 'no-preference', update = null }) {
+  const server = { status: update, reads: 0, paneReads: 0, checks: 0 };
   const context = await browser.newContext({ viewport, deviceScaleFactor: scale, reducedMotion, ...(touch ? { isMobile: true, hasTouch: true } : tablet ? { hasTouch: true } : {}) });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -78,6 +82,15 @@ async function openPage(browser, { viewport, touch = false, tablet = false, tags
     if (address.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(address.pathname)) return route.fulfill({ contentType: TYPES[path.extname(address.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', address.pathname)) });
     if (address.pathname === '/api/remote-servers') return json([]);
+    if (server.status && address.pathname === '/api/system/update-status') {
+      server.reads += 1;
+      const frame = route.request().frame();
+      if (frame && frame.parentFrame()) server.paneReads += 1;
+      return json(server.status);
+    }
+    if (server.status && address.pathname === '/api/system/check-update') { server.checks += 1; return json(server.status); }
+    if (server.status && address.pathname === '/api/system/update-notified') return json({ success: true });
+    if (server.status && address.pathname === '/api/service-links') return json([]);
     if (tags && address.pathname === '/api/system/version') return json({ app_version: APP_VERSION, boot_id: 'b1', engine_name: 'MacBook', instance_id: 'mac-instance-1' });
     if (tags && address.pathname === '/api/task-order') return json({ order: [], updated_at: 1 });
     if (address.pathname === '/api/tasks' && method === 'GET') return json(TASKS);
@@ -91,7 +104,7 @@ async function openPage(browser, { viewport, touch = false, tablet = false, tags
     return json({ error: 'not mocked' }, 404);
   });
   await page.goto(`${ORIGIN}${url}`);
-  return { context, page };
+  return { context, page, server };
 }
 
 // The terminal sockets of the top page that are not closed (the columns have their own windows and sockets).
@@ -518,7 +531,7 @@ async function panesNamed(page, ids) {
       assert.equal(await page.locator('#h5-columns-tabs').getAttribute('aria-label'), 'Column tabs');
       assert.equal(await page.locator('#h5-columns-tabs').getAttribute('role'), 'list');
       const bar = await page.evaluate(() => [...document.getElementById('h5-columns-bar').children].map(el => el.id || el.className.split(' ')[0]));
-      assert.deepEqual([bar[0], bar[1], bar[2]], ['h5-columns-toggle', 'h5-columns-tabs', 'h5-columns-add'], `${label}: the switch, the tabs, then Add column (${bar})`);
+      assert.deepEqual(bar.slice(0, 4), ['h5-columns-update', 'h5-columns-toggle', 'h5-columns-tabs', 'h5-columns-add'], `${label}: Update, the switch, the tabs, then Add column (${bar})`);
       // The device tag (the pane's own title message, from its tagged task row) and "task · session".
       await panesNamed(page, ids4);
       const tab1 = await page.evaluate(sel => {
@@ -870,6 +883,106 @@ async function panesNamed(page, ids) {
       await waitFrames(page, 5);
       wide = await widthsBecome(page, 480);
       assert.ok(wide.widths.every(w => Math.abs(w - 480) <= 1) && wide.overflow, `${label}: five at 1920 are 480px each and scroll (${JSON.stringify(wide)})`);
+      await context.close();
+    }
+
+    // ── 1440x900: the Update button of the top bar (#h5-columns-update) and the one updater ──
+    {
+      const label = 'update';
+      const status = over => ({ status: 'available', local_version: '1.0.0', remote_version: '2.0.0', boot_id: 'b1', install_type: 'git', is_update_admin: true, log: [], ...over });
+      const { context, page, server } = await openPage(browser, { viewport: { width: 1440, height: 900 }, update: status(), scale: SHOTS ? 2 : 1 });
+      await shownTerminal(page, 'Terminal 1');
+      await page.locator('#h5-update[data-attention="true"]').waitFor({ timeout: 5000 });
+      assert.equal(await page.locator('#h5-columns-update').count(), 0, `${label}: no bar button in the normal view`);
+      const reads = server.reads;
+      assert.ok(reads >= 1, `${label}: the header updater read the state (${reads})`);
+      await page.locator('#h5-columns-open').click();
+      await waitFrames(page, 4);
+      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
+      const button = page.locator('#h5-columns-update');
+      await button.waitFor({ state: 'visible' });
+      const bar = await page.evaluate(() => {
+        const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, mid: (r.top + r.bottom) / 2, width: r.width, height: r.height }; };
+        const tabs = document.getElementById('h5-columns-tabs');
+        return {
+          first: document.getElementById('h5-columns-bar').firstElementChild.id, second: document.getElementById('h5-columns-bar').children[1].id,
+          bar: rect('h5-columns-bar'), update: rect('h5-columns-update'), toggle: rect('h5-columns-toggle'), tabs: rect('h5-columns-tabs'), add: rect('h5-columns-add'),
+          icon: (() => { const r = document.querySelector('#h5-columns-update svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
+          toggleIcon: (() => { const r = document.querySelector('#h5-columns-toggle svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
+          tabsScroll: tabs.scrollWidth, tabsClient: tabs.clientWidth,
+          dot: !document.getElementById('h5-columns-update-dot').querySelector('.MuiBadge-badge').classList.contains('MuiBadge-invisible'),
+        };
+      });
+      assert.equal(bar.first, 'h5-columns-update', `${label}: the Update button is the first in the bar`);
+      assert.equal(bar.second, 'h5-columns-toggle', `${label}: then the switch`);
+      assert.ok(bar.update.right <= bar.toggle.left + 0.5 && bar.update.left >= bar.bar.left, `${label}: left of the switch (${JSON.stringify(bar)})`);
+      assert.ok(Math.abs(bar.update.mid - bar.toggle.mid) <= 0.5 && Math.abs(bar.update.height - bar.toggle.height) <= 0.5, `${label}: as tall as the switch and on its line (${JSON.stringify(bar)})`);
+      assert.ok(Math.abs(bar.icon.width - bar.toggleIcon.width) <= 0.5 && Math.abs(bar.icon.width - 20) <= 0.5, `${label}: a 20px icon like the switch's (${JSON.stringify(bar.icon)})`);
+      assert.ok(bar.toggle.right <= bar.tabs.left + 0.5 && bar.tabs.right <= bar.add.left + 0.5 && bar.add.right <= bar.bar.right + 0.5, `${label}: the tabs and Add column still fit after it (${JSON.stringify(bar)})`);
+      assert.ok(bar.tabsScroll <= bar.tabsClient + 1, `${label}: four tabs fit without scrolling (${bar.tabsScroll} > ${bar.tabsClient})`);
+      assert.equal(await button.getAttribute('aria-label'), 'Update');
+      assert.equal(await button.getAttribute('title'), 'Update');
+      assert.equal(await button.getAttribute('aria-haspopup'), 'dialog');
+      assert.equal(await button.getAttribute('data-attention'), 'true', `${label}: an update is available: data-attention`);
+      assert.ok(bar.dot, `${label}: and the red dot`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-update-bar.png'), clip: { x: 0, y: 0, width: 1440, height: 60 } });
+      // One updater: the header's stays mounted under the strip (hidden), no second one is mounted and the panes read nothing.
+      await page.waitForTimeout(1500);
+      assert.equal(server.reads, reads, `${label}: opening the columns starts no second poll of update-status`);
+      assert.equal(server.paneReads, 0, `${label}: the panes do not read it`);
+      assert.equal(await page.locator('#h5-update').count(), 1, `${label}: one header updater`);
+      assert.equal(await page.locator('#h5-update').isVisible(), false, `${label}: hidden under the strip`);
+
+      // A click opens the header updater's dialog above the strip; Close gives the focus back to the bar's button.
+      const dialogOnTop = () => page.evaluate(() => {
+        const paper = document.querySelector('#h5-update-dialog .MuiDialog-paper');
+        const r = paper.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return Boolean(hit && hit.closest('#h5-update-dialog')) && Number(getComputedStyle(document.getElementById('h5-update-dialog')).zIndex) > Number(getComputedStyle(document.getElementById('h5-columns')).zIndex);
+      });
+      const checks = server.checks;
+      await button.click();
+      await page.locator('#h5-update-dialog').waitFor({ state: 'visible' });
+      await page.locator('#h5-update-now').waitFor({ state: 'visible' });
+      assert.equal(server.checks, checks + 1, `${label}: opening it checks for a new version`);
+      assert.ok(await dialogOnTop(), `${label}: the dialog is above the strip`);
+      assert.equal(await page.locator('#h5-update-latest').textContent(), '2.0.0');
+      await page.locator('#h5-update-dismiss').click();
+      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-columns-update', `${label}: Close gives the focus back to the bar's button`);
+      // From the keyboard, and closed with Escape.
+      await page.keyboard.press('Enter');
+      await page.locator('#h5-update-dialog').waitFor({ state: 'visible' });
+      await page.locator('#h5-update-now').waitFor({ state: 'visible' });
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-columns-update', `${label}: Escape gives it back too`);
+      // A browser that does not focus a clicked button (Safari): nothing for MUI to restore, the focus still comes back to the bar's button.
+      await page.evaluate(() => { document.activeElement.blur(); document.getElementById('h5-columns-update').click(); });
+      await page.locator('#h5-update-now').waitFor({ state: 'visible' });
+      await page.locator('#h5-update-dismiss').click();
+      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-columns-update', `${label}: also when the click focused nothing`);
+      // Up to date: the check the dialog makes clears the dot of the bar's button (the one state the header updater keeps).
+      server.status = status({ status: 'current', remote_version: '1.0.0' });
+      await button.click();
+      await page.locator('#h5-update-dialog #h5-update-state').filter({ hasText: 'Already up to date' }).waitFor({ timeout: 5000 });
+      await page.locator('#h5-update-dismiss').click();
+      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
+      assert.equal(await button.getAttribute('data-attention'), null, `${label}: up to date: no data-attention`);
+      assert.ok(await page.evaluate(() => document.querySelector('#h5-columns-update-dot .MuiBadge-badge').classList.contains('MuiBadge-invisible')), `${label}: and no dot`);
+      assert.equal(server.reads, reads, `${label}: still the one poll`);
+
+      // The normal view: the header button works as before (its dialog, its focus).
+      await page.locator('#h5-columns-toggle').click();
+      await page.locator('#h5-update').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-columns-update').count(), 0, `${label}: the bar's button goes with the strip`);
+      assert.equal(await page.locator('#h5-update').getAttribute('data-attention'), null, `${label}: the header button shares the state`);
+      await page.locator('#h5-update').click();
+      await page.locator('#h5-update-dialog #h5-update-state').filter({ hasText: 'Already up to date' }).waitFor({ timeout: 5000 });
+      await page.locator('#h5-update-dismiss').click();
+      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-update', `${label}: the header dialog gives the focus back to #h5-update`);
       await context.close();
     }
 

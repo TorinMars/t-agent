@@ -154,9 +154,26 @@ export function UpdateButton({ ui }) {
   const alive = useRef(true);
   const logNode = useRef(null);
   const manual = useRef(false); // the Update dialog is following an update (monitor): it does its own reload, and the silent one stands aside
+  const returnFocus = useRef(null); // the button that opened the dialog when it is not this one (the multi-column bar's): the focus goes back there
+  const showRef = useRef(null);
   const linked = useLinkedUpdates(); // "Also update": the connected services (LinkedUpdates.jsx)
   useEffect(() => () => { alive.current = false; clearInterval(timer.current); }, []);
   useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
+  // Other buttons open this same dialog (ColumnsUpdateButton): one updater, one poll, one silent reload.
+  useEffect(() => {
+    const open = returnTo => { if (showRef.current) showRef.current(returnTo); };
+    ui.actions.openUpdate = open;
+    return () => { if (ui.actions.openUpdate === open) delete ui.actions.openUpdate; };
+  }, [ui]);
+  // Closed after it was opened from another button: MUI gives the focus back to the element focused before the dialog (its FocusTrap restores it in an
+  // effect cleanup, which runs before this effect), and a browser that does not focus a clicked button (Safari) leaves nothing to restore. The focus
+  // goes to that button in both cases, never to this one hidden under the multi-column view.
+  useEffect(() => {
+    if (open) return;
+    const el = returnFocus.current;
+    returnFocus.current = null;
+    if (el && el.isConnected && document.activeElement !== el) el.focus();
+  }, [open]);
 
   // The red dot: read the state now and every minute; a state that was never checked (or whose last check failed) is checked once.
   // The same reads notice that the service restarted into an automatic update, and reload this page silently ("Automatic refresh after an update" in DESIGN.md).
@@ -331,7 +348,9 @@ export function UpdateButton({ ui }) {
   const busy = view.phase === 'checking' || view.phase === 'updating';
   // While the update runs the modal cannot be closed by accident (the service is about to restart).
   const close = () => { if (view.phase !== 'updating') { setOpen(false); clearInterval(timer.current); manual.current = false; } };
-  const show = () => { setOpened(true); setOpen(true); void check(); void linked.load(); };
+  // `returnTo`: the button that opened it, when it is not #h5-update (ui.actions.openUpdate).
+  const show = returnTo => { returnFocus.current = returnTo && typeof returnTo.focus === 'function' ? returnTo : null; setOpened(true); setOpen(true); void check(); void linked.load(); };
+  showRef.current = show;
   const shown = view.status || null;
   const notes = shown && shown.remote_manifest && shown.remote_manifest.release_url;
   const published = shown && shown.remote_manifest && shown.remote_manifest.published_at;
@@ -340,6 +359,8 @@ export function UpdateButton({ ui }) {
   const forcing = Boolean(force && view.forceOffered && !archive);
   const noRestart = shown && shown.restart_required === false;
   const dot = needsAttention(status);
+  // The dot for the other Update buttons (state.updateDot), written only when it changes.
+  useEffect(() => { if (Boolean(ui.get().updateDot) !== dot) ui.set({ updateDot: dot }); }, [dot, ui]);
   const autoAdmin = Boolean(status && status.is_update_admin);
   const autoWhy = !auto ? null : !auto.supported ? (AUTO_UNSUPPORTED[auto.unsupported_reason] || 'Not available on this service') : !autoAdmin ? 'Only the update administrator can run updates' : null;
   const autoLine = auto ? autoStateLine(auto) : null;
@@ -349,7 +370,7 @@ export function UpdateButton({ ui }) {
 
   return (
     <>
-      <IconButton id="h5-update" aria-label={t('Update')} title={t('Update')} aria-haspopup="dialog" data-attention={dot ? 'true' : undefined} onClick={show}>
+      <IconButton id="h5-update" aria-label={t('Update')} title={t('Update')} aria-haspopup="dialog" data-attention={dot ? 'true' : undefined} onClick={() => show()}>
         <Badge id="h5-update-dot" variant="dot" color="error" invisible={!dot} overlap="circular">
           <SystemUpdateAltIcon />
         </Badge>
@@ -445,5 +466,20 @@ export function UpdateButton({ ui }) {
         </DialogActions>
       </Dialog> : null}
     </>
+  );
+}
+
+// The Update button of the multi-column view's top bar (#h5-columns-update, first in #h5-columns-bar): the header (and its #h5-update) is hidden under the
+// strip, so this one opens the header updater's dialog (ui.actions.openUpdate) and shows its red dot (state.updateDot). It polls nothing itself.
+export function ColumnsUpdateButton({ state, ui }) {
+  if (state.pane) return null;
+  const dot = Boolean(state.updateDot);
+  return (
+    <IconButton id="h5-columns-update" size="small" aria-label={t('Update')} title={t('Update')} aria-haspopup="dialog" data-attention={dot ? 'true' : undefined}
+      sx={{ flex: '0 0 auto' }} onClick={event => { if (ui.actions.openUpdate) ui.actions.openUpdate(event.currentTarget); }}>
+      <Badge id="h5-columns-update-dot" variant="dot" color="error" invisible={!dot} overlap="circular">
+        <SystemUpdateAltIcon sx={{ fontSize: 20 }} />
+      </Badge>
+    </IconButton>
   );
 }

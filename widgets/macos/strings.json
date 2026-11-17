@@ -44,5 +44,8 @@
   "Action failed: {1}",
   "T-Agent did not accept the widget token",
   "Open link",
-  "Open link: {1}"
+  "Open link: {1}",
+  "Close",
+  "Open T-Agent",
+  "+{1} more"
 ]

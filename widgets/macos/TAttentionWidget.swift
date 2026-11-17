@@ -14,6 +14,8 @@
 //
 // Data: GET {TA_WIDGET_URL}/api/attention/widget/items with `Authorization: Bearer {TA_WIDGET_TOKEN}`. The token is
 // never printed or logged.
+// Notices: GET {TA_WIDGET_URL}/api/attention/widget/notices?after=<seq> on the same 5 s tick; each new one slides out in a
+// bubble beside the window, and a click opens its target.
 //
 // Text: every visible string is English in this file and goes through L(), which looks it up in the table loaded from
 // GET /api/attention/widget/strings (the English text itself when it is missing). S() only marks a string that is
@@ -194,6 +196,183 @@ func decodeItemList(_ data: Data) -> ItemList? {
         return looseText(entry)
     }
     return ItemList(items: items.compactMap { ($0 as? [String: Any]).flatMap(decodeItem) }, engines: engines, failed: failed)
+}
+
+// MARK: - Notices
+
+let noticeDefaultSeconds: Double = 8
+let noticeMaxSeconds: Double = 3600
+let noticeRetryDelay: TimeInterval = 300  // after a 404 (an older server), the next try
+let noticeMaxWaiting = 3  // more waiting than this: only the newest is shown, with "+N more"
+let noticeTextLimit = 600
+
+/// One notice of GET /api/attention/widget/notices, shown in the bubble beside the window.
+struct WidgetNotice: Equatable {
+    var seq: Int = 0  // 0 when the answer has none
+    var kind: String = "item"  // item, direct or test
+    var title: String = ""  // one line
+    var text: String = ""  // line breaks kept, blank lines dropped
+    var from: String = ""
+    var status: String = ""
+    var key: String = ""
+    var target: String = ""  // an http(s) address noticeTarget accepts, else empty
+    var seconds: Double = noticeDefaultSeconds  // 0: until it is closed
+}
+
+/// The address a notice may open: an absolute http(s) address with a host and without a user name or password
+/// (taskLink), never a page path or another scheme. Nil for anything else.
+func noticeTarget(_ value: String) -> String? {
+    guard let link = taskLink(value), !link.hasPrefix("/") else { return nil }
+    return link
+}
+
+/// How long a notice stays: `seconds` when it is a number from 0 (until closed) up to noticeMaxSeconds, the default
+/// for anything else.
+func noticeSeconds(_ value: Any?) -> Double {
+    guard let number = looseNumber(value), number.isFinite, number >= 0 else { return noticeDefaultSeconds }
+    return min(number, noticeMaxSeconds)
+}
+
+/// A notice of the answer; nil when it has neither a title nor a text. A text without a title becomes the title.
+func decodeNotice(_ object: [String: Any]) -> WidgetNotice? {
+    var title = (looseText(object["title"]) ?? "").oneLine
+    var text = (looseText(object["text"]) ?? "").components(separatedBy: .newlines).map { $0.trimmed }.filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    if title.isEmpty {
+        title = text.oneLine
+        text = ""
+    }
+    guard !title.isEmpty else { return nil }
+    let seq = looseNumber(object["seq"]).flatMap { $0.isFinite && $0 >= 0 && $0 < 1e15 ? Int($0) : nil } ?? 0
+    let kind = (looseText(object["kind"]) ?? "").trimmed.lowercased()
+    return WidgetNotice(seq: seq, kind: kind.isEmpty ? "item" : kind,
+                        title: String(title.prefix(noticeTextLimit)), text: String(text.prefix(noticeTextLimit)),
+                        from: (looseText(object["from"]) ?? "").oneLine,
+                        status: (looseText(object["status"]) ?? "").trimmed,
+                        key: (looseText(object["key"]) ?? "").trimmed,
+                        target: (object["target"] as? String).flatMap(noticeTarget) ?? "",
+                        seconds: noticeSeconds(object["seconds"]))
+}
+
+/// The answer of GET /notices: the latest seq of the server and its notices, oldest first; nil when it is not one.
+func decodeNotices(_ data: Data) -> (seq: Int?, notices: [WidgetNotice])? {
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let notices = object["notices"] as? [Any] else { return nil }
+    let seq = looseNumber(object["seq"]).flatMap { $0.isFinite && $0 >= 0 && $0 < 1e15 ? Int($0) : nil }
+    return (seq, notices.compactMap { ($0 as? [String: Any]).flatMap(decodeNotice) })
+}
+
+/// The colour of a notice's dot by its status; a direct or test message without a status is neutral.
+func noticeTone(_ notice: WidgetNotice) -> String {
+    switch notice.status {
+    case "waiting_user": return "orange"
+    case "review": return "blue"
+    case "done": return "green"
+    case "failed": return "red"
+    case "working": return "teal"
+    default: return "neutral"
+    }
+}
+
+func toneColor(_ tone: String) -> NSColor {
+    switch tone {
+    case "orange": return .systemOrange
+    case "blue": return .systemBlue
+    case "green": return .systemGreen
+    case "red": return .systemRed
+    case "teal": return .systemTeal
+    default: return .systemGray
+    }
+}
+
+/// The polling of GET /notices: the first call has no `after` (the server answers the last 60 s), every later one asks
+/// for what came after the last seq seen. One request at a time; a 404 (an older server) pauses it for
+/// noticeRetryDelay; any other failure is tried again on the next tick.
+struct NoticePoll {
+    var lastSeq: Int?
+    var pausedUntil: Date?
+    var inFlight = false
+
+    func due(_ now: Date) -> Bool { !inFlight && (pausedUntil.map { now >= $0 } ?? true) }
+
+    /// The notices of an answer that are new; updates the last seq. A seq lower than the last one means the server
+    /// started again (it then answers as for a first call): its notices are all new and polling goes on from its seq.
+    mutating func finished(code: Int, data: Data?, now: Date) -> [WidgetNotice] {
+        inFlight = false
+        if code == 404 {
+            pausedUntil = now.addingTimeInterval(noticeRetryDelay)
+            return []
+        }
+        guard (200..<300).contains(code), let data = data, let answer = decodeNotices(data) else { return [] }
+        pausedUntil = nil
+        if let last = lastSeq, let seq = answer.seq, seq < last {
+            lastSeq = seq
+            return answer.notices.filter { $0.seq <= seq }
+        }
+        let fresh = answer.notices.filter { notice in lastSeq.map { notice.seq == 0 || notice.seq > $0 } ?? true }
+        let highest = ([answer.seq ?? 0, lastSeq ?? 0] + fresh.map { $0.seq }).max() ?? 0
+        lastSeq = highest
+        return fresh
+    }
+}
+
+/// The notices of the bubble: one shown at a time, the others wait, oldest first. A new notice of a task that is
+/// already waiting replaces it. When more than noticeMaxWaiting wait as the next one is taken, only the newest is
+/// shown and the others are counted on it ("+N more").
+struct NoticeQueue {
+    private(set) var current: WidgetNotice?
+    private(set) var more = 0
+    private(set) var waiting: [WidgetNotice] = []
+
+    mutating func add(_ notices: [WidgetNotice]) {
+        for notice in notices {
+            if !notice.key.isEmpty { waiting.removeAll { $0.key == notice.key } }
+            waiting.append(notice)
+        }
+    }
+
+    /// Closes the current notice and takes the next one; nil when none is waiting.
+    @discardableResult
+    mutating func advance() -> WidgetNotice? {
+        current = nil
+        more = 0
+        guard !waiting.isEmpty else { return nil }
+        if waiting.count > noticeMaxWaiting {
+            more = waiting.count - 1
+            current = waiting.removeLast()
+            waiting = []
+        } else {
+            current = waiting.removeFirst()
+        }
+        return current
+    }
+
+    mutating func clear() {
+        current = nil
+        more = 0
+        waiting = []
+    }
+}
+
+let bubbleWidth: CGFloat = 280
+let bubbleSlide: CGFloat = 16  // how far the bubble slides out, toward the middle of the screen
+let bubbleAnimation: TimeInterval = 0.2
+
+/// Where the bubble goes: beside `anchor` (the window, or the window and its open panel), on the side toward the
+/// middle of the screen (left of a window in the right half, else right), its top level with the window's top, and
+/// inside `visible` with screenMargin to spare.
+func bubbleFrame(size: NSSize, pill: NSRect, anchor: NSRect, visible: NSRect) -> (frame: NSRect, toLeft: Bool) {
+    let toLeft = pill.midX > visible.midX
+    var x = toLeft ? anchor.minX - panelGap - size.width : anchor.maxX + panelGap
+    x = max(visible.minX + screenMargin, min(x, visible.maxX - screenMargin - size.width))
+    var y = pill.maxY - size.height
+    y = max(visible.minY + screenMargin, min(y, visible.maxY - screenMargin - size.height))
+    return (NSRect(x: x, y: y, width: size.width, height: size.height), toLeft)
+}
+
+/// Where the slide starts: bubbleSlide back toward the window; with reduced motion the bubble just appears in place.
+func bubbleStartFrame(_ frame: NSRect, toLeft: Bool, reduceMotion: Bool) -> NSRect {
+    reduceMotion ? frame : frame.offsetBy(dx: toLeft ? bubbleSlide : -bubbleSlide, dy: 0)
 }
 
 /// The sections of the panel, top to bottom; done is only a count line.
@@ -651,6 +830,11 @@ struct WidgetAPI {
     var itemsRequest: URLRequest { request("GET", "/api/attention/widget/items") }
     var stringsRequest: URLRequest { request("GET", "/api/attention/widget/strings") }
 
+    /// The notices after `after`; without it (the first call) those of the last 60 s.
+    func noticesRequest(after: Int?) -> URLRequest {
+        request("GET", "/api/attention/widget/notices" + (after.map { "?after=\($0)" } ?? ""))
+    }
+
     /// A new task is always made on this machine.
     func createRequest(_ draft: TaskDraft) -> URLRequest {
         var body: [String: Any] = ["engine": "local", "title": draft.title, "status": draft.status]
@@ -740,6 +924,7 @@ class HoverView: NSView {
 /// The collapsed window: a press and a move drags the window.
 final class DragView: HoverView {
     var onDragBegin: () -> Void = {}
+    var onDragMove: () -> Void = {}
     var onDragEnd: () -> Void = {}
     private var startMouse: NSPoint?
     private var startOrigin = NSPoint.zero
@@ -769,6 +954,7 @@ final class DragView: HoverView {
             onDragBegin()
         }
         window?.setFrameOrigin(NSPoint(x: startOrigin.x + dx, y: startOrigin.y + dy))
+        onDragMove()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -1209,6 +1395,195 @@ final class DeleteConfirmView: OverlayView {
     @objc private func cancelPressed() { onCancel() }
 }
 
+/// The × of the bubble: two strokes, a faint circle under the pointer.
+final class BubbleCloseButton: NSButton {
+    private var hovered = false { didSet { needsDisplay = true } }
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 18, height: 18))
+        title = ""
+        isBordered = false
+        refusesFirstResponder = true
+        focusRingType = .none
+        translatesAutoresizingMaskIntoConstraints = false
+        toolTip = L("Close")
+        setAccessibilityLabel(L("Close"))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if hovered || isHighlighted {
+            NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.18 : 0.1).setFill()
+            NSBezierPath(ovalIn: bounds).fill()
+        }
+        let inset: CGFloat = 5.5
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: inset, y: inset))
+        path.line(to: NSPoint(x: bounds.width - inset, y: bounds.height - inset))
+        path.move(to: NSPoint(x: inset, y: bounds.height - inset))
+        path.line(to: NSPoint(x: bounds.width - inset, y: inset))
+        path.lineWidth = 1.5
+        path.lineCapStyle = .round
+        NSColor.secondaryLabelColor.setStroke()
+        path.stroke()
+    }
+}
+
+/// The notice bubble: a dot in the colour of the status, the title (two lines at most), the text (three lines at most),
+/// the sender and "+N more" small and muted, and a × at the top right. A click anywhere but the × opens the notice.
+final class NoticeBubbleView: NSView {
+    let notice: WidgetNotice
+    let closeButton = BubbleCloseButton()
+    let titleField = NSTextField(wrappingLabelWithString: "")
+    let textField = NSTextField(wrappingLabelWithString: "")
+    let fromField = NSTextField(labelWithString: "")
+    let moreField = NSTextField(labelWithString: "")
+    let dot = NSView()
+    private(set) var preferredHeight: CGFloat = 60
+    var onClick: () -> Void = {}
+    var onClose: () -> Void = {}
+    var onEnter: () -> Void = {}
+    var onExit: () -> Void = {}
+    private var pressed = false
+    private var cursorPushed = false
+
+    static let padding: CGFloat = 12
+    static let column: CGFloat = 26  // where the text starts, right of the dot
+
+    init(notice: WidgetNotice, more: Int, tooltip: String) {
+        self.notice = notice
+        super.init(frame: NSRect(x: 0, y: 0, width: bubbleWidth, height: 60))
+        let background = makeBackground(radius: 12)
+        background.frame = bounds
+        addSubview(background)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+
+        let contentWidth = bubbleWidth - NoticeBubbleView.column - NoticeBubbleView.padding
+        func setUp(_ field: NSTextField, _ text: String, size: CGFloat, weight: NSFont.Weight, color: NSColor, lines: Int,
+                   width: CGFloat) {
+            field.stringValue = text
+            field.font = .systemFont(ofSize: size, weight: weight)
+            field.textColor = color
+            field.maximumNumberOfLines = lines
+            field.lineBreakMode = lines == 1 ? .byTruncatingTail : .byWordWrapping
+            field.cell?.truncatesLastVisibleLine = true
+            field.preferredMaxLayoutWidth = width
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        setUp(titleField, notice.title, size: 12, weight: .semibold, color: .labelColor, lines: 2, width: contentWidth - 18)
+        setUp(textField, notice.text, size: 11, weight: .regular, color: .labelColor, lines: 3, width: contentWidth)
+        setUp(fromField, notice.from, size: 10, weight: .regular, color: .secondaryLabelColor, lines: 1, width: contentWidth)
+        setUp(moreField, more > 0 ? L("+{1} more", String(more)) : "", size: 10, weight: .medium, color: .secondaryLabelColor,
+              lines: 1, width: contentWidth)
+
+        var views: [NSView] = [titleField]
+        if !notice.text.isEmpty { views.append(textField) }
+        if !notice.from.isEmpty { views.append(fromField) }
+        if more > 0 { views.append(moreField) }
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        stack.setCustomSpacing(3, after: titleField)
+        if notice.text.isEmpty && !notice.from.isEmpty { stack.setCustomSpacing(4, after: titleField) }
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = toneColor(noticeTone(notice)).cgColor
+        dot.layer?.cornerRadius = 4
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot)
+
+        closeButton.target = self
+        closeButton.action = #selector(closePressed)
+        addSubview(closeButton)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: NoticeBubbleView.column),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: NoticeBubbleView.padding),
+            dot.topAnchor.constraint(equalTo: titleField.topAnchor, constant: 4),
+            closeButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            closeButton.widthAnchor.constraint(equalToConstant: 18),
+            closeButton.heightAnchor.constraint(equalToConstant: 18),
+        ])
+        stack.layoutSubtreeIfNeeded()
+        preferredHeight = ceil(stack.fittingSize.height) + 10 + 11
+
+        toolTip = tooltip
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(notice.text.isEmpty ? notice.title : notice.title + ". " + notice.text.oneLine)
+        setAccessibilityHelp(tooltip)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // The labels must not take the click; the × takes its own.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard frame.contains(point) else { return nil }
+        let local = convert(point, from: superview)
+        return closeButton.frame.contains(local) ? closeButton : self
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if !cursorPushed {
+            NSCursor.pointingHand.push()
+            cursorPushed = true
+        }
+        onEnter()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if cursorPushed {
+            NSCursor.pop()
+            cursorPushed = false
+        }
+        onExit()
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil && cursorPushed {
+            NSCursor.pop()
+            cursorPushed = false
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) { pressed = true }
+
+    override func mouseUp(with event: NSEvent) {
+        guard pressed else { return }
+        pressed = false
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick() }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        onClick()
+        return true
+    }
+
+    @objc private func closePressed() { onClose() }
+}
+
 func makePanel(size: NSSize) -> FloatingPanel {
     let panel = FloatingPanel(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -1367,6 +1742,24 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Opens a task's link in the default browser; --self-test and --render-sample replace it so nothing is opened.
     var openURL: (URL) -> Void = { url in _ = NSWorkspace.shared.open(url) }
 
+    // The notice bubble beside the window.
+    private let bubble = makePanel(size: NSSize(width: bubbleWidth, height: 80))
+    private var bubbleView: NoticeBubbleView?  // set while a notice is shown
+    private var noticePoll = NoticePoll()
+    private var noticeQueue = NoticeQueue()
+    private var bubbleTimer: Timer?
+    private var bubbleSeconds: TimeInterval?  // the length of the running hide timer; nil when none runs
+    private var bubbleHovered = false
+    private var bubbleSlides = false  // whether the last bubble was shown with the slide
+    /// The clock of the notice polling; --self-test moves it.
+    var now: () -> Date = { Date() }
+    var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    /// Tells VoiceOver about a new notice; --self-test and --render-sample replace it.
+    var announce: (String) -> Void = { text in
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+
     init(api: WidgetAPI, parentPID: pid_t?, options: WidgetOptions) {
         self.api = api
         self.parentPID = parentPID
@@ -1386,15 +1779,24 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         widget.setFrameOrigin(initialOrigin())
         orderFront(widget)
         rebuildDetail()
-        addTimer(refreshInterval) { [weak self] in self?.refresh() }
+        addTimer(refreshInterval) { [weak self] in
+            self?.refresh()
+            self?.pollNotices()
+        }
         addTimer(tickInterval) { [weak self] in self?.tick() }
         loadStrings()
         refresh()
+        pollNotices()
     }
 
     func applicationDidChangeScreenParameters(_ notification: Notification) {
         widget.setFrame(keptOnScreen(widget.frame), display: true)
         if detail.isVisible { positionDetail() }
+        positionBubble()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        hideBubble()
     }
 
     private func addTimer(_ interval: TimeInterval, _ body: @escaping () -> Void) {
@@ -1425,6 +1827,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         root.onEnter = { [weak self] in self?.pointerEntered() }
         root.onExit = { [weak self] in self?.pointerExited() }
         root.onDragBegin = { [weak self] in self?.dragBegan() }
+        root.onDragMove = { [weak self] in self?.positionBubble() }  // the bubble follows the window
         root.onDragEnd = { [weak self] in self?.dragEnded() }
         root.menu = makeMenu([])
         widgetRoot = root
@@ -1496,6 +1899,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         frame.size = NSSize(width: width, height: widgetHeight)
         widget.setFrame(keptOnScreen(frame), display: !options.offscreen)
         if detail.isVisible { positionDetail() }
+        positionBubble()
     }
 
     private func initialOrigin() -> NSPoint {
@@ -1528,13 +1932,14 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func dragBegan() {
         dragging = true
         cancelHide()
-        if overlay == nil { detail.orderOut(nil) }  // a form stays up, with whatever has been typed
+        if overlay == nil { hideDetail() }  // a form stays up, with whatever has been typed
     }
 
     private func dragEnded() {
         dragging = false
         layoutCollapsed()  // a width change held back during the drag
         widget.setFrame(keptOnScreen(widget.frame), display: true)
+        positionBubble()
         if options.persistPosition {
             defaults.set(Double(widget.frame.origin.x), forKey: "x")
             defaults.set(Double(widget.frame.origin.y), forKey: "y")
@@ -1866,6 +2271,12 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         y = max(visible.minY + screenMargin, min(y, visible.maxY - screenMargin - height))
         detail.setFrame(NSRect(x: x, y: y, width: detailWidth, height: height), display: !options.offscreen)
         if !options.offscreen { detail.invalidateShadow() }
+        positionBubble()  // beside the panel now, so the two never overlap
+    }
+
+    private func hideDetail() {
+        detail.orderOut(nil)
+        positionBubble()  // back beside the window
     }
 
     private func showDetail() {
@@ -1889,7 +2300,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cancelHide()
         let timer = Timer(timeInterval: hideDelay, repeats: false) { [weak self] _ in
             self?.hideTimer = nil
-            self?.detail.orderOut(nil)
+            self?.hideDetail()
         }
         RunLoop.main.add(timer, forMode: .common)
         hideTimer = timer
@@ -2418,7 +2829,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if detail.isVisible, !holdsPanel, hideTimer == nil {
             let mouse = NSEvent.mouseLocation
             if !widget.frame.contains(mouse) && !detail.frame.contains(mouse) {
-                detail.orderOut(nil)
+                hideDetail()
             }
         }
     }
@@ -2491,6 +2902,127 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateCollapsed()
         rebuildDetail()
         if detail.isVisible { positionDetail() }
+    }
+
+    // MARK: Notice bubble
+
+    /// Asks for new notices; called with each refresh tick, apart from the item list.
+    func pollNotices() {
+        guard noticePoll.due(now()) else { return }
+        noticePoll.inFlight = true
+        perform(api.noticesRequest(after: noticePoll.lastSeq)) { [weak self] data, code, _ in
+            guard let self = self else { return }
+            let fresh = self.noticePoll.finished(code: code, data: data, now: self.now())
+            if !fresh.isEmpty { self.enqueue(fresh) }
+        }
+    }
+
+    private func enqueue(_ notices: [WidgetNotice]) {
+        noticeQueue.add(notices)
+        if noticeQueue.current == nil { showNextNotice() }
+    }
+
+    private func showNextNotice() {
+        guard let notice = noticeQueue.advance() else {
+            hideBubble()
+            return
+        }
+        let view = NoticeBubbleView(notice: notice, more: noticeQueue.more,
+                                    tooltip: notice.target.isEmpty ? L("Open T-Agent") : notice.target)
+        view.onClick = { [weak self] in self?.bubbleClicked() }
+        view.onClose = { [weak self] in self?.dismissNotice() }
+        view.onEnter = { [weak self] in self?.bubbleEntered() }
+        view.onExit = { [weak self] in self?.bubbleExited() }
+        view.frame = NSRect(x: 0, y: 0, width: bubbleWidth, height: view.preferredHeight)
+        bubbleView = view
+        bubbleHovered = false
+        bubble.contentView = view
+        let placed = placeBubble(NSSize(width: bubbleWidth, height: view.preferredHeight))
+        let start = bubbleStartFrame(placed.frame, toLeft: placed.toLeft, reduceMotion: reduceMotion())
+        bubbleSlides = start != placed.frame
+        if options.offscreen || !bubbleSlides {
+            bubble.setFrame(placed.frame, display: !options.offscreen)
+            bubble.alphaValue = 1
+            orderFront(bubble)
+        } else {
+            bubble.setFrame(start, display: false)
+            bubble.alphaValue = 0
+            orderFront(bubble)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = bubbleAnimation
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                bubble.animator().setFrame(placed.frame, display: true)
+                bubble.animator().alphaValue = 1
+            }
+        }
+        if !options.offscreen { bubble.invalidateShadow() }
+        announce(notice.text.isEmpty ? notice.title : notice.title + ". " + notice.text.oneLine)
+        startBubbleTimer()
+    }
+
+    /// Beside the window, or beside the window and its panel while the panel is open.
+    private func placeBubble(_ size: NSSize) -> (frame: NSRect, toLeft: Bool) {
+        let visible = (widget.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let anchor = detail.isVisible ? widget.frame.union(detail.frame) : widget.frame
+        return bubbleFrame(size: size, pill: widget.frame, anchor: anchor, visible: visible)
+    }
+
+    private func positionBubble() {
+        guard bubbleView != nil else { return }
+        bubble.setFrame(placeBubble(bubble.frame.size).frame, display: !options.offscreen)
+    }
+
+    private func startBubbleTimer() {
+        stopBubbleTimer()
+        guard let notice = noticeQueue.current, notice.seconds > 0, !bubbleHovered else { return }
+        bubbleSeconds = notice.seconds
+        let timer = Timer(timeInterval: notice.seconds, repeats: false) { [weak self] _ in self?.bubbleTimedOut() }
+        RunLoop.main.add(timer, forMode: .common)
+        bubbleTimer = timer
+    }
+
+    private func stopBubbleTimer() {
+        bubbleTimer?.invalidate()
+        bubbleTimer = nil
+        bubbleSeconds = nil
+    }
+
+    private func bubbleTimedOut() {
+        bubbleTimer = nil
+        bubbleSeconds = nil
+        dismissNotice()
+    }
+
+    /// The pointer over the bubble holds it; leaving starts the full time again.
+    private func bubbleEntered() {
+        bubbleHovered = true
+        stopBubbleTimer()
+    }
+
+    private func bubbleExited() {
+        bubbleHovered = false
+        startBubbleTimer()
+    }
+
+    /// Opens the notice's target, or the T-Agent page when it has none, and closes it.
+    private func bubbleClicked() {
+        guard let notice = noticeQueue.current else { return }
+        let url = notice.target.isEmpty ? URL(string: api.base + "/") : URL(string: notice.target)
+        dismissNotice()
+        if let url = url { openURL(url) }
+    }
+
+    /// Closes the shown notice; the next one waiting comes up.
+    private func dismissNotice() {
+        showNextNotice()
+    }
+
+    private func hideBubble() {
+        stopBubbleTimer()
+        bubbleHovered = false
+        bubbleView = nil
+        bubble.orderOut(nil)
+        bubble.contentView = nil
     }
 
     // MARK: Offscreen checks and renders
@@ -2641,7 +3173,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var testTooltip: String { widgetRoot?.toolTip ?? "" }
     var testWidgetWidth: CGFloat { widget.frame.width }
     var testWidgetHeight: CGFloat { widget.frame.height }
-    var testOnScreen: Bool { widget.isVisible || detail.isVisible }
+    var testOnScreen: Bool { widget.isVisible || detail.isVisible || bubble.isVisible }
     var testLines: [String] {
         stack.arrangedSubviews.compactMap { view in
             if let field = view as? NSTextField { return field.stringValue }
@@ -2678,6 +3210,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         widget.appearance = appearance
         detail.appearance = appearance
+        bubble.appearance = appearance
     }
 
     func testDragBegin(_ key: String, over step: DebugDrag) {
@@ -2686,6 +3219,96 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func testDragCancel() { cancelRowDrag() }
+
+    // The notice bubble, for --self-test and --render-sample.
+    func testShowNotices(_ notices: [WidgetNotice]) { enqueue(notices) }
+    func testClearNotices() {
+        noticeQueue.clear()
+        hideBubble()
+    }
+    var testBubbleView: NoticeBubbleView? { bubbleView }
+    var testBubbleTitle: String? { bubbleView?.notice.title }
+    var testBubbleMore: String { bubbleView.map { $0.moreField.superview == nil ? "" : $0.moreField.stringValue } ?? "" }
+    var testBubbleFrame: NSRect { bubble.frame }
+    var testBubbleSeconds: TimeInterval? { bubbleSeconds }
+    var testBubbleSlides: Bool { bubbleSlides }
+    var testBubbleCanBecomeKey: Bool { bubble.canBecomeKey }
+    var testNoticesWaiting: Int { noticeQueue.waiting.count }
+    var testLastSeq: Int? { noticePoll.lastSeq }
+    var testWidgetFrame: NSRect { widget.frame }
+    func testBubbleClick() { bubbleView?.onClick() }
+    func testBubbleClose() { bubbleView?.closeButton.performClick(nil) }
+    func testBubbleEnter() { bubbleView?.mouseEntered(with: mouseEvent(.mouseMoved, .zero)) }
+    func testBubbleExit() { bubbleView?.mouseExited(with: mouseEvent(.mouseMoved, .zero)) }
+    func testBubbleTimeout() { if bubbleSeconds != nil { bubbleTimedOut() } }
+    /// What a press at a point of the bubble (in its own coordinates) lands on.
+    func testBubbleHit(_ point: NSPoint) -> NSView? {
+        guard let view = bubbleView else { return nil }
+        return view.hitTest(view.convert(point, to: view.superview))
+    }
+    /// A mouse down and up at the middle of the bubble, through its hit test.
+    func testBubblePress() {
+        guard let view = bubbleView, let taken = testBubbleHit(NSPoint(x: 60, y: view.bounds.midY)) else { return }
+        let point = view.convert(NSPoint(x: 60, y: view.bounds.midY), to: nil)
+        taken.mouseDown(with: mouseEvent(.leftMouseDown, point))
+        taken.mouseUp(with: mouseEvent(.leftMouseUp, point))
+    }
+    /// Puts the window near the top-right (or top-left) corner of the main screen, as a drag would end.
+    func testPlaceWidget(right: Bool) {
+        let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let x = right ? visible.maxX - widget.frame.width - 16 : visible.minX + 16
+        widget.setFrameOrigin(NSPoint(x: x, y: visible.maxY - widgetHeight - 16))
+        positionBubble()
+    }
+    /// Moves the window the way a drag does, step by step through the drag view.
+    func testDragWidget(to origin: NSPoint) {
+        widget.setFrameOrigin(origin)
+        widgetRoot?.onDragMove()
+    }
+
+    /// The window and the bubble where they are on screen, on a desktop-like background, offscreen.
+    func renderBubbleScene(_ path: String, dark: Bool) -> Bool {
+        guard let pill = widget.contentView, let view = bubble.contentView else { return false }
+        let margin: CGFloat = 20
+        let union = widget.frame.union(bubble.frame)
+        let size = NSSize(width: ceil(union.width + margin * 2), height: ceil(union.height + margin * 2))
+        let scale: CGFloat = 2
+        guard let out = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: out) else { return false }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let transform = NSAffineTransform()
+        transform.scale(by: scale)
+        transform.concat()
+        (dark ? NSColor(white: 0.09, alpha: 1) : NSColor(white: 0.82, alpha: 1)).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        for (window, content, radius) in [(widget as NSWindow, pill, widgetHeight / 2), (bubble as NSWindow, view, CGFloat(12))] {
+            content.layoutSubtreeIfNeeded()
+            // The blur draws only a grey veil offscreen; the plain fill below stands in for it.
+            let blurs = content.subviews.filter { $0 is NSVisualEffectView }
+            blurs.forEach { $0.isHidden = true }
+            defer { blurs.forEach { $0.isHidden = false } }
+            guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { continue }
+            content.cacheDisplay(in: content.bounds, to: rep)
+            let rect = NSRect(x: window.frame.minX - union.minX + margin, y: window.frame.minY - union.minY + margin,
+                              width: window.frame.width, height: window.frame.height)
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(dark ? 0.6 : 0.25)
+            shadow.shadowBlurRadius = 10
+            shadow.shadowOffset = NSSize(width: 0, height: -3)
+            shadow.set()
+            (dark ? NSColor(white: 0.21, alpha: 1) : NSColor(white: 0.98, alpha: 1)).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let png = out.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+    }
 }
 
 // MARK: - Sample data
@@ -2719,6 +3342,25 @@ func sampleList() -> ItemList {
     ], failed: ["K02"])
 }
 
+/// The notices of the bubble renders: (name, window in the right half, notices).
+func sampleNotices() -> [(String, Bool, [WidgetNotice])] {
+    func notice(_ seq: Int, _ object: [String: Any]) -> WidgetNotice {
+        var full = object
+        full["seq"] = seq
+        return decodeNotice(full)!
+    }
+    let item = notice(12, ["kind": "item", "title": "Approve the deploy of the staging build", "status": "waiting_user",
+                           "text": "Which environment should it go to?\nStaging is ready; production needs a window.",
+                           "from": "T01 \u{00B7} SELF-TAGENT", "key": "local:12", "target": "http://127.0.0.1:3000/h5?attention=12"])
+    let direct = notice(13, ["kind": "direct", "title": "Build finished", "text": "All 312 tests passed in 58 s.",
+                             "from": "T03 \u{00B7} t-agent", "target": "http://127.0.0.1:3000/"])
+    let many = (1...5).map { index in
+        notice(20 + index, ["kind": "item", "title": "Review the change \(index)", "status": index == 5 ? "review" : "done",
+                            "text": "Ready for your review.", "from": "T0\(index) \u{00B7} SELF-TAGENT", "key": "local:\(30 + index)"])
+    }
+    return [("item", true, [item]), ("direct", false, [direct]), ("more", true, many)]
+}
+
 /// --render-sample DIR: renders the widget and the panel in several states offscreen and exits.
 func renderSample(_ dir: String) -> Never {
     let app = NSApplication.shared
@@ -2731,6 +3373,7 @@ func renderSample(_ dir: String) -> Never {
     controller.requestHook = { _, _ in }  // never the network
     controller.moveHook = { _, _, _ in }
     controller.openURL = { _ in }  // never the browser
+    controller.announce = { _ in }  // never VoiceOver
     var written: [String] = []
     func save(_ name: String, _ ok: Bool) {
         let path = (dir as NSString).appendingPathComponent(name)
@@ -2744,6 +3387,20 @@ func renderSample(_ dir: String) -> Never {
         save("widget-\(suffix).png", controller.renderWidget((dir as NSString).appendingPathComponent("widget-\(suffix).png"), dark: dark))
         save("panel-\(suffix).png", controller.renderPanel((dir as NSString).appendingPathComponent("panel-\(suffix).png"), dark: dark))
     }
+    // The notice bubble beside the window: a task that needs you (window at the right, bubble on its left), a direct
+    // message (window at the left, bubble on its right), and five notices at once (the newest with "+4 more").
+    for (name, right, notices) in sampleNotices() {
+        for dark in [false, true] {
+            let file = "bubble-\(name)-\(dark ? "dark" : "light").png"
+            controller.setAppearance(dark: dark)
+            controller.loadForTest(sampleList())
+            controller.testClearNotices()
+            controller.testPlaceWidget(right: right)
+            controller.testShowNotices(notices)
+            save(file, controller.renderBubbleScene((dir as NSString).appendingPathComponent(file), dark: dark))
+        }
+    }
+    controller.testClearNotices()
     let dark = false
     controller.setAppearance(dark: dark)
     controller.loadForTest(sampleList())
@@ -3503,7 +4160,197 @@ func runSelfTest() -> Never {
         check("delete: a 204 closes the question and refreshes", false)
     }
 
-    check("no window was put on screen", !mouse.testOnScreen && !crud.testOnScreen && !empty.testOnScreen && !links.testOnScreen)
+    // Notices: reading the answer, polling, the bubble's place, clicks, timing, the queue.
+    let noticeJSON = """
+    {"seq":14,"notices":[
+    {"seq":12,"at":"2026-11-17T08:00:00.000Z","kind":"item","title":" Approve the deploy ","text":"Which environment?\\n\\n  (may be multi-line) ",
+     "from":"T01 \u{00B7} SELF-TAGENT","status":"waiting_user","key":"local:12","target":"https://example.com/h5?attention=12","seconds":5},
+    {"seq":13,"title":"Bare"},
+    {"seq":"14","kind":"DIRECT","text":"Only a text\\nsecond line","from":null,"status":null,"key":null,"target":null,"seconds":0},
+    {"seq":15,"title":"","text":"  "}, {"seq":16}, 7, "x"]}
+    """
+    let noticeAnswer = decodeNotices(Data(noticeJSON.utf8))
+    let first = noticeAnswer?.notices.first
+    check("notices: the answer is read, notices without words are left out", noticeAnswer?.seq == 14 && noticeAnswer?.notices.count == 3)
+    check("notices: every field of a full notice", first == WidgetNotice(seq: 12, kind: "item", title: "Approve the deploy",
+          text: "Which environment?\n(may be multi-line)", from: "T01 \u{00B7} SELF-TAGENT", status: "waiting_user", key: "local:12",
+          target: "https://example.com/h5?attention=12", seconds: 5))
+    check("notices: missing fields get their defaults", noticeAnswer?.notices[1] == WidgetNotice(seq: 13, title: "Bare"))
+    check("notices: a text without a title becomes the title", noticeAnswer?.notices[2].title == "Only a text second line"
+          && noticeAnswer?.notices[2].text == "" && noticeAnswer?.notices[2].kind == "direct" && noticeAnswer?.notices[2].seq == 14
+          && noticeAnswer?.notices[2].seconds == 0 && noticeAnswer?.notices[2].target == "")
+    check("notices: only http(s) targets with a host", ["javascript:alert(1)", "ftp://example.com/x", "/h5?attention=1", "file:///etc/hosts",
+          "http://user:pw@example.com/", "https://", "http://exa mple.com"].allSatisfy { decodeNotice(["title": "t", "target": $0])?.target == "" }
+          && decodeNotice(["title": "t", "target": "http://127.0.0.1:3000/"])?.target == "http://127.0.0.1:3000/"
+          && decodeNotice(["title": "t", "target": 5])?.target == "")
+    check("notices: seconds default to 8, 0 stays, the rest is capped", noticeSeconds(nil) == 8 && noticeSeconds("abc") == 8
+          && noticeSeconds(-1) == 8 && noticeSeconds(Double.nan) == 8 && noticeSeconds(true) == 8 && noticeSeconds(0) == 0
+          && noticeSeconds("12") == 12 && noticeSeconds(99999) == 3600)
+    check("notices: a broken answer is refused", decodeNotices(Data("[1]".utf8)) == nil && decodeNotices(Data("{\"seq\":1}".utf8)) == nil
+          && decodeNotices(Data("nope".utf8)) == nil)
+    check("notices: the dot colour follows the status", [("waiting_user", "orange"), ("review", "blue"), ("done", "green"),
+          ("failed", "red"), ("working", "teal"), ("", "neutral"), ("odd", "neutral")].allSatisfy { noticeTone(WidgetNotice(status: $0.0)) == $0.1 }
+          && noticeTone(WidgetNotice(kind: "direct", title: "x")) == "neutral")
+    check("request: notices, first without after, then after the last seq",
+          describe(api.noticesRequest(after: nil)) == "GET \(base)/notices \(authGet) -"
+          && describe(api.noticesRequest(after: 12)) == "GET \(base)/notices?after=12 \(authGet) -")
+
+    let bubbles = WidgetController(api: WidgetAPI(base: "http://127.0.0.1:3999", token: "t"), parentPID: nil, options: options)
+    var noticeRequests: [String] = []
+    var noticeAnswers: [(Data?, Int) -> Void] = []
+    var bubbleOpened: [String] = []
+    var announced: [String] = []
+    var clock = Date(timeIntervalSince1970: 1_000_000)
+    var motionReduced = false
+    bubbles.requestHook = { request, answer in
+        noticeRequests.append(request.url.map { $0.path + ($0.query.map { "?" + $0 } ?? "") } ?? "")
+        noticeAnswers.append(answer)
+    }
+    bubbles.openURL = { bubbleOpened.append($0.absoluteString) }
+    bubbles.announce = { announced.append($0) }
+    bubbles.now = { clock }
+    bubbles.reduceMotion = { motionReduced }
+    bubbles.loadForTest(listOf([it("local:1", "waiting_user")]))
+    func answerNotices(_ body: String, _ code: Int = 200) {
+        guard !noticeAnswers.isEmpty else { return }
+        noticeAnswers.removeFirst()(Data(body.utf8), code)
+    }
+    func noticeBody(_ seq: Int, _ notices: [[String: Any]]) -> String {
+        String(data: try! JSONSerialization.data(withJSONObject: ["seq": seq, "notices": notices] as [String: Any]), encoding: .utf8)!
+    }
+    bubbles.pollNotices()
+    check("poll: the first call has no after", noticeRequests == ["/api/attention/widget/notices"])
+    bubbles.pollNotices()
+    check("poll: one request at a time", noticeRequests.count == 1)
+    answerNotices(noticeBody(5, [["seq": 5, "title": "Approve", "text": "Which one?", "status": "waiting_user", "key": "local:5",
+                                  "target": "https://example.com/t/5", "seconds": 8, "from": "T01"]]))
+    check("poll: a notice shows the bubble", bubbles.testBubbleTitle == "Approve" && bubbles.testLastSeq == 5)
+    check("bubble: announced to VoiceOver with its title and text", announced == ["Approve. Which one?"])
+    check("bubble: the panel never takes the keyboard", !bubbles.testBubbleCanBecomeKey)
+    check("bubble: the x has its label and tooltip", bubbles.testBubbleView?.closeButton.accessibilityLabel() == "Close"
+          && bubbles.testBubbleView?.closeButton.toolTip == "Close")
+    check("bubble: the tooltip is the target", bubbles.testBubbleView?.toolTip == "https://example.com/t/5")
+    check("bubble: it slides in", bubbles.testBubbleSlides)
+    bubbles.pollNotices()
+    check("poll: later calls ask after the last seq", noticeRequests.last == "/api/attention/widget/notices?after=5")
+    answerNotices("{}", 500)
+    bubbles.pollNotices()
+    check("poll: a failure keeps the seq and tries again on the next tick", noticeRequests.count == 3
+          && noticeRequests.last == "/api/attention/widget/notices?after=5" && bubbles.testLastSeq == 5)
+    answerNotices(noticeBody(5, [["seq": 4, "title": "Old"], ["seq": 5, "title": "Seen"]]))
+    check("poll: notices already seen are not shown again", bubbles.testNoticesWaiting == 0 && bubbles.testBubbleTitle == "Approve")
+
+    // The place: toward the middle of the screen, top level with the window, inside the visible frame.
+    let screen = NSRect(x: 0, y: 0, width: 1440, height: 875)
+    let bubbleSize = NSSize(width: bubbleWidth, height: 90)
+    let rightPill = NSRect(x: 1386, y: 833, width: 38, height: 26)
+    let leftPill = NSRect(x: 16, y: 833, width: 38, height: 26)
+    let atRight = bubbleFrame(size: bubbleSize, pill: rightPill, anchor: rightPill, visible: screen)
+    let atLeft = bubbleFrame(size: bubbleSize, pill: leftPill, anchor: leftPill, visible: screen)
+    check("place: a window in the right half gets the bubble on its left", atRight.toLeft && atRight.frame.maxX == rightPill.minX - panelGap
+          && atRight.frame.maxY == rightPill.maxY)
+    check("place: a window in the left half gets it on its right", !atLeft.toLeft && atLeft.frame.minX == leftPill.maxX + panelGap
+          && atLeft.frame.maxY == leftPill.maxY)
+    let lowPill = NSRect(x: 16, y: 10, width: 38, height: 26)
+    let low = bubbleFrame(size: bubbleSize, pill: lowPill, anchor: lowPill, visible: screen)
+    let narrow = bubbleFrame(size: bubbleSize, pill: NSRect(x: 250, y: 500, width: 38, height: 26),
+                             anchor: NSRect(x: 250, y: 500, width: 38, height: 26), visible: NSRect(x: 0, y: 0, width: 400, height: 875))
+    check("place: kept inside the visible frame", low.frame.minY == screen.minY + screenMargin && narrow.toLeft
+          && narrow.frame.minX == screenMargin)
+    let withPanel = bubbleFrame(size: bubbleSize, pill: NSRect(x: 900, y: 833, width: 38, height: 26),
+                                anchor: NSRect(x: 900, y: 600, width: 334, height: 259), visible: screen)
+    check("place: beside the open panel, never over it", withPanel.toLeft && withPanel.frame.maxX == 900 - panelGap)
+    let shown = NSRect(x: 100, y: 100, width: 280, height: 90)
+    check("place: the slide starts toward the window", bubbleStartFrame(shown, toLeft: true, reduceMotion: false).minX == 100 + bubbleSlide
+          && bubbleStartFrame(shown, toLeft: false, reduceMotion: false).minX == 100 - bubbleSlide)
+    check("place: reduced motion has no slide", bubbleStartFrame(shown, toLeft: true, reduceMotion: true) == shown)
+    bubbles.testPlaceWidget(right: true)
+    check("place: the bubble sits left of a window at the right", bubbles.testBubbleFrame.maxX <= bubbles.testWidgetFrame.minX
+          && abs(bubbles.testBubbleFrame.maxY - bubbles.testWidgetFrame.maxY) < 0.5)
+    let leftOrigin = NSPoint(x: (NSScreen.main?.visibleFrame.minX ?? 0) + 40, y: bubbles.testWidgetFrame.minY - 100)
+    bubbles.testDragWidget(to: leftOrigin)
+    check("place: the bubble follows a drag to the other side", bubbles.testBubbleFrame.minX >= bubbles.testWidgetFrame.maxX
+          && abs(bubbles.testBubbleFrame.maxY - bubbles.testWidgetFrame.maxY) < 0.5)
+
+    // Clicks.
+    check("hit: a press on the text goes to the bubble, the x takes its own", bubbles.testBubbleHit(NSPoint(x: 60, y: 20)) is NoticeBubbleView
+          && bubbles.testBubbleHit(NSPoint(x: bubbleWidth - 17, y: (bubbles.testBubbleView?.bounds.height ?? 0) - 17)) is BubbleCloseButton
+          && bubbles.testBubbleView?.acceptsFirstMouse(for: nil) == true)
+    let requestsBeforeClick = noticeRequests.count
+    bubbles.testBubblePress()
+    check("click: opens the target and closes the bubble", bubbleOpened == ["https://example.com/t/5"] && bubbles.testBubbleTitle == nil
+          && noticeRequests.count == requestsBeforeClick)
+    bubbles.testShowNotices([WidgetNotice(seq: 6, kind: "test", title: "Test notice")])
+    check("bubble: without a target the tooltip offers T-Agent", bubbles.testBubbleView?.toolTip == "Open T-Agent")
+    bubbles.testBubbleClick()
+    check("click: without a target opens the T-Agent page", bubbleOpened.last == "http://127.0.0.1:3999/" && bubbles.testBubbleTitle == nil)
+    bubbles.testShowNotices([WidgetNotice(seq: 7, title: "Close me", target: "https://example.com/x")])
+    bubbles.testBubbleClose()
+    check("click: the x closes without opening anything", bubbles.testBubbleTitle == nil && bubbleOpened.count == 2)
+
+    // Timing.
+    bubbles.testShowNotices([WidgetNotice(seq: 8, title: "Timed", seconds: 8), WidgetNotice(seq: 9, title: "Sticky", seconds: 0)])
+    check("timer: runs for the notice's seconds", bubbles.testBubbleTitle == "Timed" && bubbles.testBubbleSeconds == 8)
+    bubbles.testBubbleEnter()
+    check("timer: the pointer over the bubble pauses it", bubbles.testBubbleSeconds == nil)
+    bubbles.testBubbleTimeout()
+    check("timer: a paused bubble stays", bubbles.testBubbleTitle == "Timed")
+    bubbles.testBubbleExit()
+    check("timer: leaving starts the full time again", bubbles.testBubbleSeconds == 8)
+    bubbles.testBubbleTimeout()
+    check("timer: when it runs out the next notice comes", bubbles.testBubbleTitle == "Sticky")
+    check("timer: 0 seconds stays until closed", bubbles.testBubbleSeconds == nil)
+    bubbles.testBubbleClose()
+    check("queue: closing the last notice hides the bubble", bubbles.testBubbleView == nil)
+
+    // The queue.
+    var queue = NoticeQueue()
+    queue.add([WidgetNotice(seq: 1, title: "a", key: "local:1"), WidgetNotice(seq: 2, title: "b", key: "local:2"),
+               WidgetNotice(seq: 3, title: "a2", key: "local:1")])
+    check("queue: a newer notice of the same task replaces the waiting one", queue.waiting.map { $0.title } == ["b", "a2"])
+    check("queue: oldest first, one at a time", queue.advance()?.title == "b" && queue.more == 0 && queue.advance()?.title == "a2"
+          && queue.advance() == nil && queue.current == nil)
+    queue.add((1...3).map { WidgetNotice(seq: $0, title: "n\($0)") })
+    check("queue: up to three wait their turn", queue.advance()?.title == "n1" && queue.more == 0 && queue.waiting.count == 2)
+    queue.clear()
+    queue.add((1...4).map { WidgetNotice(seq: $0, title: "n\($0)") })
+    check("queue: more than three collapse to the newest", queue.advance()?.title == "n4" && queue.more == 3 && queue.waiting.isEmpty)
+    bubbles.pollNotices()
+    answerNotices(noticeBody(25, (20...25).map { ["seq": $0, "title": "Notice \($0)"] }))
+    check("queue: the bubble shows the newest with +N more", bubbles.testBubbleTitle == "Notice 25" && bubbles.testBubbleMore == "+5 more"
+          && bubbles.testLastSeq == 25)
+    bubbles.testBubbleClose()
+    stringTable = ["+{1} more": "M{1}", "Close": "X"]
+    bubbles.testShowNotices((30...34).map { WidgetNotice(seq: $0, title: "N\($0)") })
+    check("strings: the bubble's words come from the table", bubbles.testBubbleMore == "M4"
+          && bubbles.testBubbleView?.closeButton.accessibilityLabel() == "X")
+    stringTable = [:]
+    bubbles.testBubbleClose()
+
+    // A restarted server, a 404 and reduced motion.
+    bubbles.pollNotices()
+    answerNotices(noticeBody(2, [["seq": 1, "title": "After restart"], ["seq": 2, "title": "After restart 2"]]))
+    check("poll: a lower seq (server restarted) starts again from it", bubbles.testLastSeq == 2 && bubbles.testBubbleTitle == "After restart")
+    bubbles.testClearNotices()
+    bubbles.pollNotices()
+    check("poll: then asks after the new seq", noticeRequests.last == "/api/attention/widget/notices?after=2")
+    answerNotices("{\"error\":\"NOT_FOUND\"}", 404)
+    let countAt404 = noticeRequests.count
+    bubbles.pollNotices()
+    clock = clock.addingTimeInterval(noticeRetryDelay - 1)
+    bubbles.pollNotices()
+    check("poll: a 404 stops polling quietly", noticeRequests.count == countAt404 && bubbles.testBubbleView == nil)
+    clock = clock.addingTimeInterval(2)
+    bubbles.pollNotices()
+    check("poll: and tries again after a few minutes", noticeRequests.count == countAt404 + 1
+          && noticeRequests.last == "/api/attention/widget/notices?after=2")
+    motionReduced = true
+    answerNotices(noticeBody(3, [["seq": 3, "title": "Calm"]]))
+    check("bubble: with reduced motion it appears without sliding", bubbles.testBubbleTitle == "Calm" && !bubbles.testBubbleSlides)
+    bubbles.testClearNotices()
+
+    check("no window was put on screen", !mouse.testOnScreen && !crud.testOnScreen && !empty.testOnScreen && !links.testOnScreen
+          && !bubbles.testOnScreen)
     print("\(passes) passed, \(failures) failed")
     exit(failures == 0 ? 0 : 1)
 }

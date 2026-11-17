@@ -1973,3 +1973,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.127.0 The terminal's Upload image or file button, a paste on the terminal and the Paste sheet take up to 9 files at once; they go up one after another and all links are typed in one paste.
 > v2.127.1 The terminal copy bar hides by itself after 10 seconds, with a countdown line; a mouse over it or the keyboard focus inside it holds it.
 > v2.128.0 The multi-column view's top bar has an Update button at its left end; it opens the header's Update dialog and shows the same red dot.
+> v2.129.0 T-Attention tasks take a link in the page's edit dialog and open it with one click from the list, the desktop window, Telegram and email; a new Desktop window (macOS) notifier shows messages as a bubble beside the floating window, and a click opens the task's link or T-Agent.

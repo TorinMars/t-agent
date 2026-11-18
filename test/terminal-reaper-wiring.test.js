@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const childProcess = require('node:child_process');
+const { execFileSync } = childProcess;
 const { EventEmitter } = require('node:events');
 
 const skip = process.platform === 'win32' ? 'POSIX terminals only' : false;
@@ -51,14 +52,17 @@ function alive(pid) {
 const stubborn = marker => `${JSON.stringify(process.execPath)} -e "process.on('SIGHUP',()=>{});process.on('SIGTERM',()=>{});`
   + `console.log('${marker.slice(0, 2)}'+'${marker.slice(2)}:'+process.pid);setInterval(()=>{},1000)"`;
 
-async function openShell() {
+async function openShell(id = 'default') {
   const ws = new Socket();
-  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=default&clientId=reaper` }, { login: 'owner' });
+  terminal.handleWs(ws, { url: `/terminal/ws?taskId=${task.id}&terminalId=${id}&clientId=reaper` }, { login: 'owner' });
   assert.equal(ws.readyState, 1, 'terminal did not open');
   return ws;
 }
+let jobCount = 0;
+// The runs of the reaper's process table (`ps -axo pid=,ppid=,pgid=,tpgid=`) among the calls of a spy on child_process.execFile / spawnSync.
+const tableRuns = spy => spy.mock.calls.filter(call => call.arguments[0] === 'ps' && String(call.arguments[1]).includes('pid=,ppid=,pgid=,tpgid=')).length;
 async function startJobs(ws) {
-  const pidFile = path.join(root, `bg-${Date.now()}.pid`);
+  const pidFile = path.join(root, `bg-${Date.now()}-${jobCount += 1}.pid`);
   // A background job of the same shell: it is not the foreground group, so it must survive. Node resets the SIGHUP that nohup ignores,
   // so the job ignores it itself; it keeps the default SIGTERM, so a SIGTERM sent to the wrong group would end it and fail the test.
   ws.emit('message', `nohup ${JSON.stringify(process.execPath)} -e "process.on('SIGHUP',()=>{});require('fs').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1000)" ${JSON.stringify(pidFile)} >/dev/null 2>&1 &\r`);
@@ -79,12 +83,34 @@ test.after(() => {
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 10 }); // the shells may still write their history
 });
 
-test('closing a terminal ends its foreground job but leaves background jobs alone', { skip, timeout: 30000 }, async () => {
+test('closing a terminal ends its foreground job but leaves background jobs alone', { skip, timeout: 30000 }, async t => {
   const ws = await openShell();
   const { foreground, background } = await startJobs(ws);
+  const blocking = t.mock.method(childProcess, 'spawnSync');
+  const inBackground = t.mock.method(childProcess, 'execFile');
   terminal.controlSession(task.id, 'close', 'default');
+  assert.equal(blocking.mock.callCount(), 0, 'the close does not block the server on the process table (before: one spawnSync of ps)');
+  assert.deepEqual(terminal.liveTerminalIds(task.id), [], 'the terminal has no shell from this moment');
+  assert.equal(ws.code, 1000, 'and its socket is closed at once');
   await until(() => !alive(foreground), 8000, 'the foreground job to end after close');
+  assert.equal(tableRuns(inBackground), 1);
   assert.equal(alive(background), true, 'a background job must survive the close');
+});
+
+test('closing a task with several terminals reads one process table, in the background, and ends every foreground job', { skip, timeout: 60000 }, async t => {
+  const ids = ['default', terminal.createTerminal(task.id).terminal_id, terminal.createTerminal(task.id).terminal_id];
+  const jobs = [];
+  for (const id of ids) jobs.push(await startJobs(await openShell(id)));
+  assert.equal(terminal.liveTerminalIds(task.id).length, 3);
+  const blocking = t.mock.method(childProcess, 'spawnSync');
+  const inBackground = t.mock.method(childProcess, 'execFile');
+  terminal.closeTaskTerminals(task.id);
+  assert.deepEqual(terminal.liveTerminalIds(task.id), [], 'every terminal is without a shell at once');
+  assert.equal(blocking.mock.callCount(), 0, 'nothing blocks (before: three spawnSync of ps, one per terminal)');
+  for (const job of jobs) await until(() => !alive(job.foreground), 8000, 'every foreground job to end after the task was closed');
+  assert.equal(tableRuns(inBackground), 1, 'one table for the three terminals');
+  for (const job of jobs) assert.equal(alive(job.background), true, 'the background jobs survive');
+  for (const id of ids.slice(1)) terminal.controlSession(task.id, 'delete', id);
 });
 
 test('shutdownTerminals ends every foreground job synchronously and is idempotent', { skip, timeout: 30000 }, async () => {

@@ -57,5 +57,10 @@
   "{1} waiting for you",
   "{1}s",
   "{1}m",
-  "{1}h {2}m"
+  "{1}h {2}m",
+  "Open session",
+  "Reply",
+  "Send",
+  "Reply to the agent",
+  "Reply failed: {1}"
 ]

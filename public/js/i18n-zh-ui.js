@@ -1735,6 +1735,10 @@ I18n.add({
   "{1} waiting for you": "{1} 个等你处理",
   "{1}m": "{1} 分钟",
   "{1}h {2}m": "{1} 小时 {2} 分",
+  "Open session": "打开会话",
+  "Reply": "回复",
+  "Reply to the agent": "回复智能体",
+  "Reply failed: {1}": "回复失败：{1}",
 
   // ---- One Telegram sender for linked devices (NotifierSettings.jsx) ----
   "This device sends Telegram notifications for all linked devices": "这台设备为所有关联设备发送 Telegram 通知",

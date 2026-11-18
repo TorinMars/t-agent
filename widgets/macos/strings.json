@@ -47,5 +47,10 @@
   "Open link: {1}",
   "Close",
   "Open T-Agent",
-  "+{1} more"
+  "+{1} more",
+  "Open session",
+  "Reply",
+  "Send",
+  "Reply to the agent",
+  "Reply failed: {1}"
 ]

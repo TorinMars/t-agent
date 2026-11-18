@@ -1727,6 +1727,10 @@ I18n.add({
   "Open link: {1}": "打开链接：{1}",
   "Open T-Agent": "打开 T-Agent",
   "+{1} more": "还有 {1} 条",
+  "Open session": "打开会话",
+  "Reply": "回复",
+  "Reply to the agent": "回复智能体",
+  "Reply failed: {1}": "回复失败：{1}",
 
   // ---- One Telegram sender for linked devices (NotifierSettings.jsx) ----
   "This device sends Telegram notifications for all linked devices": "这台设备为所有关联设备发送 Telegram 通知",

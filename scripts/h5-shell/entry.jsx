@@ -103,6 +103,8 @@ const back = paneId ? null : createBackLayers({
     if (s.wide && s.attention && s.attention.open) layers.push({ close: () => ui.actions.closeAttention() });
     // The mind map view (view -> editor -> dialog): a back press goes from the editor to the list before it leaves the view. It lies over everything else.
     for (const close of s.mindmapLayers || []) layers.push({ close });
+    // Settings on a computer is a page beside the rail, not a modal (Settings.jsx); on a phone it is a modal and found by itself.
+    if (s.wide && s.settingsOpen) layers.push({ close: () => ui.actions.closeSettings() });
     return layers;
   },
 });

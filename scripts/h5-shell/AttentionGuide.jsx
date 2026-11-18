@@ -29,11 +29,11 @@ function openTelegramSetup(ui, place) {
   const openPage = () => openAttentionPluginPage({ kind: 'notifier', name: 'telegram' });
   if (place === 'settings') { openPage(); return; }
   if (!ui.get().wide && ui.actions.closeAttention) ui.actions.closeAttention();
-  ui.actions.openSettings('attention'); // opens the sheet with the T-Attention group unfolded (settings-target.mjs)
+  ui.actions.openSettings('attention'); // opens Settings on the T-Attention group (settings-target.mjs)
   let tries = 0;
   const step = () => {
     tries += 1;
-    if (document.querySelector('#h5-set-attention .MuiCollapse-entered') && openPage()) return;
+    if (document.querySelector('#h5-set-attention:not([hidden])') && openPage()) return; // the group is shown (Settings.jsx)
     if (tries < 40) setTimeout(step, 75);
   };
   setTimeout(step, 0);
@@ -46,7 +46,7 @@ function StepHead({ step, index, open, onToggle }) {
       sx={{ width: '100%', justifyContent: 'flex-start', gap: 1, minHeight: 36, px: 0.5, borderRadius: 1, textAlign: 'left', [TOUCH]: { minHeight: 44 } }}
     >
       <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: step.done ? 'success.main' : 'text.secondary' }}><Icon name={step.done ? 'attentionDone' : 'attentionOpen'} size={20} /></Box>
-      <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, fontSize: 14, fontWeight: open ? 600 : 500 }}>
+      <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, typography: 'body2', fontWeight: open ? 500 : 400 }}>
         {`${index + 1}. ${t(step.title)}`}
         <Box component="span" className="h5-guide-step-state" sx={{ position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}>{` (${t(step.done ? 'Done' : 'Not done')})`}</Box>
       </Box>
@@ -168,10 +168,10 @@ export function AttentionGuide({ ui, place = 'panel', active }) {
   return (
     <Paper
       id={place === 'settings' ? 'h5-guide-settings' : 'h5-guide'} className="h5-guide" data-place={place} variant="outlined" component="section" aria-labelledby={`h5-guide-title-${place}`}
-      sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: { xs: 1.25, sm: 1.5 }, m: place === 'panel' ? { xs: 1, sm: 1.5 } : 0, mt: place === 'settings' ? 1 : undefined, backgroundImage: 'none' }}
+      sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 2, m: place === 'panel' ? 2 : 0, mt: place === 'settings' ? 1 : undefined, backgroundImage: 'none' }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Typography id={`h5-guide-title-${place}`} variant="subtitle2" component="h3" sx={{ fontWeight: 700, flex: '1 1 auto', minWidth: 0 }}>{t('Set up T-Attention')}</Typography>
+        <Typography id={`h5-guide-title-${place}`} variant="subtitle2" component="h3" sx={{ flex: '1 1 auto', minWidth: 0 }}>{t('Set up T-Attention')}</Typography>
         <Typography variant="caption" color="text.secondary" className="h5-guide-count" translate="no">{`${state.doneCount}/${state.total}`}</Typography>
         <IconButton id={`h5-guide-close-${place}`} className="h5-guide-close" size="small" onClick={() => void hide()} {...named(t('Hide setup guide'))} sx={SMALL}><Icon name="close" size={20} /></IconButton>
       </Box>

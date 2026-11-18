@@ -5,6 +5,7 @@
 // sideways. The server is a fake fetch. H5_SHOT_DIR=<dir> saves screenshots there.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
 const { settled } = require('./browser-test-wait.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -66,7 +67,7 @@ async function openPage(browser, { wide = false, zh = false, state }) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const press = locator => (wide ? locator.click() : locator.tap());
-  await press(page.locator('#h5-set-attention .MuiAccordionSummary-root'));
+  await openSettingsGroup(page, 'attention');
   const row = page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]');
   await row.waitFor({ state: 'visible' });
   await settled(page); // the group is still unfolding: a press on a moving row is lost

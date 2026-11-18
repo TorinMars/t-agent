@@ -130,7 +130,7 @@ function helpers(page, wide) {
     // The old group id still opens its part, now in Settings → Devices (h5.js openSettings, settings-target.mjs).
     await page.evaluate(() => window.H5UI.actions.openSettings('rule-sync'));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices > .MuiCollapse-entered')));
+    await page.waitForFunction(() => { const group = document.getElementById('h5-set-devices'); const pageNode = document.getElementById('h5-settings-page'); return group && !group.hidden && (!pageNode || !pageNode.contains(group) || !pageNode.classList.contains('MuiModal-hidden')); });
     await page.locator('#h5-rule-sync-role').waitFor();
     await page.locator('#h5-sec-rule-sync').scrollIntoViewIfNeeded();
     await settled();
@@ -485,7 +485,7 @@ async function testChinese(browser) {
     await other.page.waitForFunction(() => window.H5UI && window.H5UI.get().sources.length > 0);
     await helpers(other.page, false).open();
     await other.page.locator('#h5-claude-settings').waitFor();
-    const text = await other.page.locator('#h5-claude-settings').innerText();
+    const text = await other.page.locator('#h5-claude-settings').textContent(); // the small heading is an overline (upper case on screen)
     assert.match(text, /Claude \u8bbe\u7f6e/, 'the heading is translated');
     if (view.role === 'source') assert.match(text, /\u4e0d\u4f1a\u4fee\u6539\u90a3\u4e9b\u8bbe\u5907\u81ea\u5df1\u7684 settings\.json/);
     else assert.match(text, /\u4fdd\u7559\u8fd9\u53f0\u8bbe\u5907\u81ea\u5df1\u7684\u503c/);

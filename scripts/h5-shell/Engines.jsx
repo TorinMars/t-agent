@@ -8,13 +8,17 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import IconButton from '@mui/material/IconButton';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Switch from '@mui/material/Switch';
 import Collapse from '@mui/material/Collapse';
 import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { DeviceName, Pill, api, deviceText, errorText, t } from './common.jsx';
-import { EngineDialog, Feedback, Field, Group, Hint, Section, SubHeading, failure, useFeedback } from './Form.jsx';
+import { DeviceName, Pill, api, deviceText, errorText, named, t } from './common.jsx';
+import { Actions, EngineDialog, Feedback, Field, Group, Hint, INPUT_INSIDE, Section, SubHeading, SwitchRow, failure, useFeedback } from './Form.jsx';
+import { Icon } from './Icons.jsx';
 import { ServiceLinksSection, UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 import { RestartButton, restartInfo } from './Restart.jsx';
 import { PeerFsSwitch } from './PeerFs.jsx';
@@ -123,7 +127,7 @@ function RenameDialog({ target, onClose, onDone }) {
   return (
     <Dialog id="h5-engine-rename" open={Boolean(target)} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-engine-rename-title">
       <Box component="form" autoComplete="off" noValidate onSubmit={save}>
-        <DialogTitle id="h5-engine-rename-title" sx={{ fontSize: 18 }}>{t('Rename engine')}</DialogTitle>
+        <DialogTitle id="h5-engine-rename-title">{t('Rename engine')}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
           <Typography variant="body2" color="text.secondary" component="div">
             {t('Current name')}
@@ -143,8 +147,8 @@ function RenameDialog({ target, onClose, onDone }) {
           {error ? <Typography id="h5-engine-rename-error" role="alert" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>{error}</Typography> : null}
         </DialogContent>
         <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-          {resettable ? <Button id="h5-engine-rename-reset" color="inherit" disabled={resetDisabled} onClick={() => void send('')} sx={{ mr: 'auto' }}>{t('Reset to default')}</Button> : null}
-          <Button id="h5-engine-rename-cancel" color="inherit" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
+          {resettable ? <Button id="h5-engine-rename-reset" disabled={resetDisabled} onClick={() => void send('')} sx={{ mr: 'auto' }}>{t('Reset to default')}</Button> : null}
+          <Button id="h5-engine-rename-cancel" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
           <Button id="h5-engine-rename-save" type="submit" variant="contained" disabled={busy}>{t('Save')}</Button>
         </DialogActions>
       </Box>
@@ -175,7 +179,7 @@ function ConnectDialog({ state, open, onClose, onDone }) {
     <EngineDialog
       state={state} id="h5-engine-connect" title={t('Connect remote service')} open={open} onClose={onClose}
       actions={<>
-        <Button id="h5-engine-connect-cancel" color="inherit" onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-engine-connect-cancel" onClick={onClose}>{t('Cancel')}</Button>
         <Button id="h5-engine-connect-test" disabled={busy} onClick={() => void test()}>{t('Test connection')}</Button>
         <Button id="h5-engine-connect-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Connect')}</Button>
       </>}
@@ -220,7 +224,7 @@ function EditDialog({ state, server, onClose, onDone }) {
     <EngineDialog
       state={state} id="h5-engine-edit" title={t('Edit remote connection')} open={Boolean(server)} onClose={onClose}
       actions={<>
-        <Button id="h5-engine-edit-cancel" color="inherit" onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-engine-edit-cancel" onClick={onClose}>{t('Cancel')}</Button>
         <Button id="h5-engine-edit-test" disabled={busy} onClick={() => void test()}>{t('Test connection')}</Button>
         <Button id="h5-engine-edit-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       </>}
@@ -235,7 +239,7 @@ function EditDialog({ state, server, onClose, onDone }) {
 }
 
 const Row = ({ label, children, id }) => (
-  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, fontSize: 14 }}>
+  <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
     <Typography variant="body2" color="text.secondary" component="span">{t(label)}</Typography>
     <Typography variant="body2" component="span" id={id} sx={{ textAlign: 'right', overflowWrap: 'anywhere' }}>{children}</Typography>
   </Box>
@@ -306,11 +310,11 @@ function UpdateDialog({ state, server, onClose, onUpdated }) {
     <EngineDialog
       state={state} id="h5-engine-update" title={title} open={Boolean(server)} onClose={onClose} locked={locked}
       actions={<>
-        {view.phase === 'confirm' ? <Button id="h5-engine-update-cancel" color="inherit" onClick={() => setView({ phase: 'result', status })}>{t('Cancel')}</Button>
-          : <Button id="h5-engine-update-close" color="inherit" disabled={locked} onClick={onClose}>{t('Close')}</Button>}
+        {view.phase === 'confirm' ? <Button id="h5-engine-update-cancel" onClick={() => setView({ phase: 'result', status })}>{t('Cancel')}</Button>
+          : <Button id="h5-engine-update-close" disabled={locked} onClick={onClose}>{t('Close')}</Button>}
         {['result', 'error', 'failed', 'timeout'].includes(view.phase) ? <Button id="h5-engine-update-check" onClick={() => void check()}>{t('Check again')}</Button> : null}
-        {view.phase === 'result' && canApply ? <Button id="h5-engine-update-apply" variant="contained" onClick={() => setView({ phase: 'confirm', status })}>{t('Update now')}</Button> : null}
-        {view.phase === 'confirm' ? <Button id="h5-engine-update-confirm" variant="contained" onClick={() => void apply()}>{t('Confirm update')}</Button> : null}
+        {view.phase === 'result' && canApply ? <Button id="h5-engine-update-apply" onClick={() => setView({ phase: 'confirm', status })}>{t('Update now')}</Button> : null}
+        {view.phase === 'confirm' ? <Button id="h5-engine-update-confirm" onClick={() => void apply()}>{t('Confirm update')}</Button> : null}
       </>}
     >
       {view.phase === 'checking' ? (
@@ -343,95 +347,134 @@ function UpdateDialog({ state, server, onClose, onUpdated }) {
         </Box>
       ) : null}
       {view.error ? <Typography id="h5-engine-update-error" variant="body2" color="error">{t(view.error)}</Typography> : null}
-      {log ? <Paper id="h5-engine-update-log" component="pre" variant="outlined" aria-label={t('Update log')} sx={{ m: 0, p: 1, maxHeight: '30vh', overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{log}</Paper> : null}
+      {log ? <Paper id="h5-engine-update-log" component="pre" variant="outlined" aria-label={t('Update log')} sx={{ m: 0, p: 1, maxHeight: '30vh', overflow: 'auto', typography: 'caption', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{log}</Paper> : null}
     </EngineDialog>
   );
 }
 
-// "Show in task list" of one device. The last visible device cannot be hidden: its switch is disabled.
+// "Show in task list" of one device, on its row: the label and the switch (the whole label toggles it). The last visible device cannot be hidden: its
+// switch is disabled.
 function ShowInList({ device, hidden, last, onChange }) {
   const label = t('Show in task list');
   return (
     <FormControlLabel
-      className="h5-engine-visible" data-device={device} sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={<Typography variant="body2" component="span">{label}</Typography>}
-      control={<Switch size="small" checked={!hidden} disabled={last} onChange={event => onChange(device, event.target.checked)} slotProps={{ input: { className: 'h5-engine-visible-input', 'aria-label': label } }} />}
+      className="h5-engine-visible" data-device={device} labelPlacement="start" sx={{ m: 0, gap: 0.5, flexShrink: 0 }} label={<Typography variant="body2" component="span" color="text.secondary">{label}</Typography>}
+      control={<Switch checked={!hidden} disabled={last} onChange={event => onChange(device, event.target.checked)} slotProps={{ input: { className: 'h5-engine-visible-input', 'aria-label': label, style: INPUT_INSIDE } }} />}
     />
   );
 }
 
-// "Show in task list" in the Shared tab: the name of each device and its switch, one row each (the device list itself is in the device tabs).
-function ShownDevices({ servers, localName, showProps }) {
+// "Show in task list" in the Shared tab: the name of each device and its switch, one switch row each (the device list itself is in the device tabs).
+function ShownDevices({ servers, localName, showProps, children }) {
   const rows = [{ key: 'local', source: { key: 'local', name: localName ? localName.name : '' } }, ...servers.map(server => ({ key: `remote:${server.id}`, source: { key: `remote:${server.id}`, label: server.name } }))];
   return (
     <Section id="task-list-devices" title="Show in task list" aside={<ScopeLabel id="task-list-devices" scope="shared" />}>
       <Hint>{t('Which devices the task list shows. One choice for all linked devices.')}</Hint>
-      <Box id="h5-shown-devices" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+      <Box id="h5-shown-devices" sx={{ display: 'flex', flexDirection: 'column' }}>
         {rows.map(({ key, source }) => {
           const show = showProps(key);
           return (
-            <Box key={key} component="label" className="h5-shown-device h5-engine-visible" data-device={key} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minHeight: 44, minWidth: 0, cursor: 'pointer' }}>
-              <Box component="strong" sx={NAME}><DeviceName source={source} className="h5-engine-name" /></Box>
-              <Switch
-                size="small" checked={!show.hidden} disabled={show.last} onChange={event => show.onChange(key, event.target.checked)}
-                slotProps={{ input: { className: 'h5-engine-visible-input', 'aria-label': t(`Show ${deviceText(source)} in task list`), style: { left: 0, width: '100%' } } }}
-              />
-            </Box>
+            <SwitchRow
+              key={key} className="h5-shown-device h5-engine-visible" data-device={key} inputClassName="h5-engine-visible-input" checked={!show.hidden} disabled={show.last}
+              label={<Box component="span" sx={NAME}><DeviceName source={source} className="h5-engine-name" /></Box>} inputLabel={t(`Show ${deviceText(source)} in task list`)}
+              onChange={on => show.onChange(key, on)}
+            />
           );
         })}
       </Box>
+      {children}
     </Section>
   );
 }
 
-// The buttons of a row (44px on a touch screen, from the theme), and the line of its name (a long name is cut, `DeviceName`).
-const ACTIONS = { display: 'flex', flexWrap: 'wrap', gap: 0.5 };
-const NAME = { flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75, fontWeight: 700, fontSize: '0.9375rem' };
+// The line of a device's name (a long name is cut, `DeviceName`): subtitle1 in medium weight, as the title of a list row.
+const NAME = { flex: '0 1 auto', minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 0.75, typography: 'subtitle1', fontWeight: 500 };
+
+// The "more" button of a device row and its menu: every action of the row but the "Show in task list" switch. `actions`: [{ key, className, label,
+// onClick, disabled, danger }]; each menu item keeps the class the action's button had (`.h5-engine-rename`, `.h5-engine-check`, ...). The menu is
+// `#h5-engine-menu-<engine>`; it closes before the action runs, so a dialog the action opens takes the focus.
+function RowMenu({ engine, name, actions }) {
+  const [anchor, setAnchor] = useState(null);
+  if (!actions.length) return <Box component="span" aria-hidden="true" sx={{ width: 40, flexShrink: 0 }} />; // keeps the switches of all rows in one column
+  const menuId = `h5-engine-menu-${engine}`;
+  return (
+    <>
+      <IconButton
+        className="h5-engine-more" aria-haspopup="menu" aria-controls={anchor ? menuId : undefined} aria-expanded={anchor ? 'true' : 'false'} edge="end"
+        onClick={event => setAnchor(event.currentTarget)} {...named(t(`More actions for ${name}`))}
+      ><Icon name="taskMore" size={20} /></IconButton>
+      <Menu id={menuId} className="h5-engine-menu" data-engine={engine} anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        {actions.map(action => (
+          <MenuItem key={action.key} className={action.className} disabled={action.disabled} onClick={() => { setAnchor(null); action.onClick(); }} sx={action.danger ? { color: 'error.main' } : undefined}>{action.label}</MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+}
+
+// One row of the device list (MD2 two-line list item): the name with its status, the address and version under it, then at the right "Show in task
+// list" (when it is shown) and the "more" button. `children`: drawn under the text (Restart on this machine's row).
+function DeviceRow({ engine, title, meta, show, menu, children }) {
+  return (
+    <Box component="li" className="h5-engine-row" data-engine={engine} sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 2, rowGap: 0.5, py: 1.5, minWidth: 0, listStyle: 'none' }}>
+      <Box sx={{ flex: '1 1 12rem', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, minWidth: 0 }}>{title}</Box>
+        {meta}
+        {children}
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', flexShrink: 0 }}>
+        {show ? <ShowInList {...show} /> : null}
+        {menu}
+      </Box>
+    </Box>
+  );
+}
 
 // `link`: this Engine is a linked service (ServiceLinks.jsx). Its address and token belong to the link, so they cannot be edited, and removing it ends the link.
 // `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
 // `onRename`: null when this row cannot be renamed (an older server).
 function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
+  const actions = [
+    ...(onRename ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: onRename }] : []),
+    { key: 'check', className: 'h5-engine-check', label: t('Check'), onClick: onCheck, disabled: busy },
+    { key: 'update', className: 'h5-engine-update', label: t('Check for updates'), onClick: onUpdate },
+    ...(link ? [] : [{ key: 'edit', className: 'h5-engine-edit', label: t('Edit connection'), onClick: onEdit }]),
+    { key: 'remove', className: 'h5-engine-remove', label: t(!link ? 'Remove connection' : link.state === 'revoked' ? 'Remove' : 'Unlink'), onClick: onRemove, danger: true },
+  ];
   return (
-    <Paper variant="outlined" className="h5-engine-row" data-engine={server.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+    <DeviceRow
+      engine={server.id} show={show} menu={<RowMenu engine={server.id} name={server.name} actions={actions} />}
+      title={<>
         <Box component="strong" sx={NAME}><DeviceName source={{ key: `remote:${server.id}`, label: server.name }} className="h5-engine-name" /></Box>
         {link ? <Typography className="h5-engine-linked" variant="caption" color="text.secondary" sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{t('Linked')}</Typography> : null}
         <Pill className="h5-engine-status" tone={statusColor(server.status)} label={t(statusLabel(server.status))} />
-      </Box>
-      <Typography className="h5-engine-meta" variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+      </>}
+      meta={<Typography className="h5-engine-meta" variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
         {[link ? link.peer_url : server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
-      </Typography>
-      {server.last_error && server.status !== 'online' ? <Typography className="h5-engine-error" variant="caption" color="error">{t(errorLabel(server.last_error))}</Typography> : null}
-      {show ? <ShowInList {...show} /> : null}
-      <Box sx={ACTIONS}>
-        {onRename ? <Button size="small" variant="outlined" className="h5-engine-rename" onClick={onRename}>{t('Rename')}</Button> : null}
-        <Button size="small" variant="outlined" className="h5-engine-check" disabled={busy} onClick={onCheck}>{t('Check')}</Button>
-        <Button size="small" variant="outlined" className="h5-engine-update" onClick={onUpdate}>{t('Check for updates')}</Button>
-        {link ? null : <Button size="small" variant="outlined" className="h5-engine-edit" onClick={onEdit}>{t('Edit connection')}</Button>}
-        <Button size="small" variant="outlined" color="error" className="h5-engine-remove" onClick={onRemove}>{t(!link ? 'Remove connection' : link.state === 'revoked' ? 'Remove' : 'Unlink')}</Button>
-      </Box>
+      </Typography>}
+    >
+      {server.last_error && server.status !== 'online' ? <Typography className="h5-engine-error" variant="body2" color="error">{t(errorLabel(server.last_error))}</Typography> : null}
       <Feedback feedback={feedback} />
-    </Paper>
+    </DeviceRow>
   );
 }
 
-// The folded "Advanced" part of the Devices group. Its content stays mounted while it is folded; `onToggle` reports a new state.
-// The toggle is a 44px row right under the divider; the unfolded content is set in from the left behind a thin rule, so its parts (level 4, no
-// dividers of their own) read as the inside of Advanced and not as more parts of Devices.
+// The folded "Advanced" card of the Devices group. Its content stays mounted while it is folded; `onToggle` reports a new state.
+// The toggle is the card's 48px title row; the unfolded content holds parts inside the card (level 4).
 function Advanced({ open, onToggle, children }) {
   return (
-    <Section id="advanced" sx={{ gap: 0, '* + &': { pt: 1 } }}>
+    <Section id="advanced" sx={{ py: 0.5, gap: 0 }}>
       <SubHeading>
         <ButtonBase
           id="h5-devices-advanced-toggle" aria-expanded={open ? 'true' : 'false'} aria-controls="h5-devices-advanced" onClick={() => onToggle(!open)}
-          sx={{ width: '100%', minHeight: 44, justifyContent: 'space-between', gap: 1, borderRadius: 1, font: 'inherit', textAlign: 'left' }}
+          sx={{ width: '100%', minHeight: 48, justifyContent: 'space-between', gap: 1, font: 'inherit', textAlign: 'left' }}
         >
           <Box component="span" sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 1, rowGap: 0.5, minWidth: 0 }}><span>{t('Advanced')}</span><ScopeLabel /></Box>
           <ExpandMoreIcon aria-hidden="true" sx={{ color: 'text.secondary', transition: 'transform 150ms', transform: open ? 'rotate(180deg)' : 'none' }} />
         </ButtonBase>
       </SubHeading>
       <Collapse in={open} id="h5-devices-advanced" unmountOnExit={false}>
-        <Box className="h5-devices-advanced-body" sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1, mb: 0.5, ml: 0.25, pl: 1.75, borderLeft: 2, borderColor: 'divider' }}>{children}</Box>
+        <Box className="h5-devices-advanced-body" sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1, pb: 1.5 }}>{children}</Box>
       </Collapse>
     </Section>
   );
@@ -534,48 +577,48 @@ export function DevicesGroup({ state, ui, request = null }) {
   // In the Shared tab the switches are a list of their own; in a device tab the rows have none.
   const rowSwitches = switches && tabScope === null;
   const listShown = tabScope !== 'shared';
+  const status = <><Feedback id="h5-engines-feedback" feedback={feedback} /><SyncNote id="h5-engines-sync" note={shownSynced} /></>;
+  const shownList = tabScope === 'shared' && switches;
   return (
     <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setOpened(count => count + 1); }}>
       <InTab part="settings-sync"><SettingsSyncStatus opened={opened} /></InTab>
-      {tabScope === 'shared' && switches ? <ShownDevices servers={servers} localName={localName} showProps={showProps} /> : null}
+      {shownList ? <ShownDevices servers={servers} localName={localName} showProps={showProps}>{status}</ShownDevices> : null}
       {listShown ? (
         <>
-          <Hint>{t('The machines whose tasks and terminals this page shows, this one first. To add one, link it below.')}</Hint>
-          {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
-          <ScopeLabel id="engine-name" subject="Device names" follow={false} />
-          {rowSwitches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
-          <Box id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <Paper variant="outlined" className="h5-engine-row" data-engine="local" sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-                <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
-                <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
-              </Box>
-              <Typography className="h5-engine-meta" variant="caption" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>
-              {rowSwitches ? <ShowInList {...showProps('local')} /> : null}
-              {localName || restartHere ? (
-                <Box sx={ACTIONS}>
-                  {localName ? <Button size="small" variant="outlined" className="h5-engine-rename" onClick={() => setRenaming({ kind: 'local', current: localName })}>{t('Rename')}</Button> : null}
-                  {restartHere ? <RestartButton restart={localRestart} bootId={localRestart.bootId} /> : null}
-                </Box>
-              ) : null}
-            </Paper>
-            {servers.map(server => (
-              <EngineRow
-                key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={rowSwitches ? showProps(`remote:${server.id}`) : null} feedback={rowFeedback[server.id] || { message: '', error: false }}
-                onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
-                onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
-              />
-            ))}
+          {/* The device list: one card, one row per device (this machine first), each with its "more" menu. */}
+          <Section id="engine-name">
+            <Hint>{t('The machines whose tasks and terminals this page shows, this one first. To add one, link it below.')}</Hint>
+            {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, '&:empty': { display: 'none' } }}>
+              <ScopeLabel id="engine-name" subject="Device names" follow={false} />
+              {rowSwitches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
+            </Box>
+            <Box component="ul" id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', m: 0, p: 0, '& > li + li': { borderTop: 1, borderColor: 'divider' } }}>
+              <DeviceRow
+                engine="local" show={rowSwitches ? showProps('local') : null}
+                menu={<RowMenu engine="local" name={localName ? localName.name : t('This machine')} actions={localName ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: () => setRenaming({ kind: 'local', current: localName }) }] : []} />}
+                title={<>
+                  <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
+                  <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
+                </>}
+                meta={<Typography className="h5-engine-meta" variant="body2" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>}
+              >
+                {/* Restart keeps its own button and confirmation dialog (Restart.jsx), under the version line of this machine. */}
+                {restartHere ? <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.5 }}><RestartButton restart={localRestart} bootId={localRestart.bootId} /></Box> : null}
+              </DeviceRow>
+              {servers.map(server => (
+                <EngineRow
+                  key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={rowSwitches ? showProps(`remote:${server.id}`) : null} feedback={rowFeedback[server.id] || { message: '', error: false }}
+                  onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
+                  onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
+                />
+              ))}
+            </Box>
             {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
-          </Box>
+            {status}
+          </Section>
           {/* The T-Agent macOS app on this Mac and the web addresses of this service (read only; only on a macOS server). */}
           <MacAppSection opened={opened} />
-        </>
-      ) : null}
-      <Feedback id="h5-engines-feedback" feedback={feedback} />
-      <SyncNote id="h5-engines-sync" note={shownSynced} />
-      {listShown ? (
-        <>
           <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
           <PeerFsSwitch opened={opened} />
           <RuleSyncSection state={state} opened={opened} />
@@ -584,13 +627,14 @@ export function DevicesGroup({ state, ui, request = null }) {
               <Hint id="h5-devices-advanced-hint">{t('One-way connections, for a device that should not see this one or runs an older version. Linking above is the recommended way.')}</Hint>
               <Section id="connect" title="Connect a remote engine" level={4}>
                 <Hint>{t('Enter the other client’s address and a pairing code made there under “Let other clients connect to this one”. Only this side sees the other.')}</Hint>
-                <Button id="h5-engine-connect-open" variant="outlined" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button>
+                <Actions><Button id="h5-engine-connect-open" onClick={() => setConnecting(true)}>{t('Connect remote service')}</Button></Actions>
               </Section>
               <RemoteAccessSection opened={remoteOpened} />
             </LocalOnly>
           </Advanced>
         </>
       ) : null}
+      {!shownList && !listShown ? status : null}
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />
       <UnlinkDialog link={unlinking} onClose={() => setUnlinking(null)} onDone={async link => { setUnlinking(null); onLinksChanged(); if (ui.actions.enginesChanged) await ui.actions.enginesChanged(linkEngineKey(link)); say('Unlinked'); }} />

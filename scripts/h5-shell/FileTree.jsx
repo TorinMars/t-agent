@@ -10,7 +10,7 @@ import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { api, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
-import { SheetHandle, TOP_SHEET_PAPER, useSwipeUp } from './Design.jsx';
+import { SHEET_HEADER_SX, SheetHandle, TOP_SHEET_PAPER, useSwipeUp } from './Design.jsx';
 import { ROOT_ID, loadPage, noteId } from './file-tree.mjs';
 
 // The read-only file tree of the task's working directory ("Files" in row 2). Browse and preview only: nothing is created, renamed, deleted or written.
@@ -124,9 +124,9 @@ export function FileTreeSheet({ state, ui }) {
   const dir = (files && files.dir) || '';
   const contents = (
     <>
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pb: 1, pt: 1, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={SHEET_HEADER_SX}>
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-          <Typography id="h5-files-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3 }}>{t('Files')}</Typography>
+          <Typography id="h5-files-title" variant="h6" component="h2" noWrap sx={{ lineHeight: 1.3 }}>{t('Files')}</Typography>
           <Typography id="h5-files-path" variant="caption" component="div" color="text.secondary" translate="no" title={dir}
             sx={{ fontFamily: 'ui-monospace, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left', minHeight: '1.66em' }}
           ><bdi>{dir}</bdi></Typography>

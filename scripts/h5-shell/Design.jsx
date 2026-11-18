@@ -18,6 +18,7 @@ import { formatJson } from './file-formats.mjs';
 import { CsvTable, HtmlPreview, ImageView, MediaView, PdfView } from './FileViewers.jsx';
 import { buildOutline, currentIndex } from './outline.mjs';
 import { ImageViewer } from './ImageViewer.jsx';
+import { DIALOG_RADIUS } from './theme.mjs';
 
 // The Markdown renderer the app ships (the /share/:token pages use the same files). They are loaded the first time the sheet shows a
 // document, from this server; mermaid (about 5 MB) only when the document has a diagram. Keep the versions in step with scripts/vendor-libs.json.
@@ -150,9 +151,13 @@ const localImageFailed = event => {
 // are modals, so the page behind (sidebar, terminal, bottom bar) is dimmed and not resized. On a phone a sheet is the full width of the window. On a wide
 // screen it has the left edge and the width of the terminal area, as measured by terminal-box.mjs (the 900px is the breakpoint of h5.css and `wideQuery`).
 export const TOP_SHEET_PAPER = {
-  height: '88dvh', maxWidth: 1200, width: '100%', mx: 'auto', borderRadius: '0 0 16px 16px', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)',
+  height: '88dvh', maxWidth: 1200, width: '100%', mx: 'auto', borderRadius: `0 0 ${DIALOG_RADIUS}px ${DIALOG_RADIUS}px`, backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)',
   '@media (min-width: 900px)': { left: 'var(--h5-terminal-left, 0px)', right: 'auto', width: 'var(--h5-terminal-width, 100%)', maxWidth: 'none', mx: 0 },
 };
+
+// The header of a sheet or side panel (the file sheets here and in FileTree.jsx; T-Attention draws the same): 56px high, the title in h6 with a caption
+// line under it, the icon buttons at the end ("One dialog pattern" in docs/design/page-dialogs.md).
+export const SHEET_HEADER_SX = { flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 56, boxSizing: 'border-box', pl: 2, pr: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' };
 
 // The grip at the bottom edge of a top sheet (phone only: a computer has the Close button, Escape and a click beside the sheet).
 export function SheetHandle() {
@@ -470,7 +475,7 @@ export function DesignSheet({ state, ui }) {
     <Box id="h5-file-toolbar" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 0.75, borderBottom: 1, borderColor: 'divider' }}>
       {modes ? (
         <ToggleButtonGroup id="h5-file-modes" size="small" exclusive value={mode} aria-label={t('View')} onChange={(event, value) => { if (value) setPicked({ token: fileToken, mode: value }); }}>
-          {modes.map(([value, label]) => <ToggleButton key={value} value={value} data-mode={value} sx={{ px: 1.5, py: 0.25, fontSize: 13 }}>{t(label)}</ToggleButton>)}
+          {modes.map(([value, label]) => <ToggleButton key={value} value={value} data-mode={value} sx={{ px: 1.5, py: 0.25 }}>{t(label)}</ToggleButton>)}
         </ToggleButtonGroup>
       ) : null}
       {kind === 'pdf' && src ? <Button id="h5-file-open-tab" size="small" variant="outlined" component="a" href={src} target="_blank" rel="noopener noreferrer">{t('Open in new tab')}</Button> : null}
@@ -479,10 +484,10 @@ export function DesignSheet({ state, ui }) {
 
   const contents = (
     <>
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: fromTree ? 0.5 : 2, pr: 1, pb: 1, pt: 1, borderBottom: 1, borderColor: 'divider' }}>
+      <Box sx={{ ...SHEET_HEADER_SX, pl: fromTree ? 0.5 : 2 }}>
         {fromTree ? <IconButton id="h5-design-back" {...named(t('Back to files'))} onClick={close}><Icon name="back" size={22} /></IconButton> : null}
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-          <Typography id="h5-design-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} translate={fromLink ? 'no' : undefined}>{fromLink ? name : t('Design document')}</Typography>
+          <Typography id="h5-design-title" variant="h6" component="h2" noWrap sx={{ lineHeight: 1.3 }} translate={fromLink ? 'no' : undefined}>{fromLink ? name : t('Design document')}</Typography>
           <Typography id="h5-design-path" variant="caption" component="div" color="text.secondary" translate="no" title={filePath}
             sx={{ fontFamily: 'ui-monospace, Menlo, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}
           ><bdi>{filePath}</bdi></Typography>
@@ -520,8 +525,8 @@ export function DesignSheet({ state, ui }) {
           anchor="right" open={listOpen} onClose={() => setListOpen(false)} transitionDuration={reduced ? 0 : undefined} ModalProps={{ disableScrollLock: true }}
           slotProps={{ paper: { id: 'h5-design-outline-panel', role: 'dialog', 'aria-labelledby': 'h5-design-outline-title', sx: { width: 'min(86vw, 360px)', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)', pb: 'env(safe-area-inset-bottom)' } } }}
         >
-          <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
-            <Typography id="h5-design-outline-title" variant="subtitle1" component="h2" sx={{ flex: '1 1 auto', fontWeight: 600 }}>{t('Outline')}</Typography>
+          <Box sx={SHEET_HEADER_SX}>
+            <Typography id="h5-design-outline-title" variant="h6" component="h2" noWrap sx={{ flex: '1 1 auto' }}>{t('Outline')}</Typography>
             <IconButton id="h5-design-outline-close" {...named(t('Close outline'))} onClick={() => setListOpen(false)}><Icon name="close" size={22} /></IconButton>
           </Box>
           <OutlineList outline={outline} current={current} onPick={jump} sx={{ flex: '1 1 auto', minHeight: 0 }} />

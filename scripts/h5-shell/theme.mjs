@@ -23,9 +23,34 @@ const TEXT_COLORS = [
   ...['primary', 'secondary', 'error', 'warning', 'info', 'success'].flatMap(hue => ['main', 'light', 'dark'].map(shade => ({ props: { color: `${hue}.${shade}` }, style: { color: base.palette[hue][shade] } }))),
 ];
 
+// Dialogs (the dialogs part of the single-view redesign; "One dialog pattern" in docs/design/page-dialogs.md). Every MUI Dialog of the page:
+// the title in h6 (MUI's default) with 24px at the sides, the content in body1 / body2 with 24px at the sides, the actions at the bottom right 8px apart
+// (MUI's defaults), an 8px corner radius (a theming choice, like the buttons; MD2's default is 4px), and on a phone (under 600px) 16px margins instead of
+// 32px, so a centred dialog keeps most of the width. A full-screen dialog keeps no margin and no radius. The kinds and the order of the buttons are set
+// where each dialog is drawn: text buttons, the dismissive one first, a contained primary one only to create or save, a destructive one in the error colour.
+const PHONE = '@media (max-width: 599.95px)';
+const PHONE_WIDTH = { [PHONE]: { maxWidth: 'calc(100% - 32px)' } };
+export const DIALOG_RADIUS = 8;
+const DIALOGS = {
+  MuiDialog: {
+    styleOverrides: {
+      paper: { borderRadius: DIALOG_RADIUS, [PHONE]: { margin: 16 } },
+      paperScrollPaper: { [PHONE]: { maxHeight: 'calc(100% - 32px)' } },
+      paperWidthXs: PHONE_WIDTH,
+      paperWidthSm: PHONE_WIDTH,
+      paperWidthMd: PHONE_WIDTH,
+      paperFullWidth: { [PHONE]: { width: 'calc(100% - 32px)' } },
+      paperFullScreen: { margin: 0, width: '100%', maxWidth: '100%', maxHeight: 'none', borderRadius: 0, [PHONE]: { margin: 0, width: '100%', maxWidth: '100%', maxHeight: 'none' } },
+    },
+  },
+  MuiDialogTitle: { styleOverrides: { root: { overflowWrap: 'anywhere' } } },
+  MuiDialogContentText: { styleOverrides: { root: { overflowWrap: 'anywhere' } } },
+};
+
 export const theme = createTheme({
   palette,
   components: {
+    ...DIALOGS,
     MuiTypography: { variants: TEXT_COLORS },
     MuiButton: { defaultProps: { disableElevation: true }, styleOverrides: { root: { textTransform: 'none', borderRadius: 8, fontWeight: 500, letterSpacing: 0, [TOUCH]: { minHeight: 44 } } } },
     MuiIconButton: { styleOverrides: { root: FINGER } },
@@ -33,5 +58,7 @@ export const theme = createTheme({
     MuiListItemButton: { styleOverrides: { root: { [TOUCH]: { minHeight: 44 } } } },
     MuiCheckbox: { styleOverrides: { root: { [TOUCH]: { padding: 10 } } } },
     MuiOutlinedInput: { styleOverrides: { root: { borderRadius: 8, [TOUCH]: { minHeight: 44 } } } },
+    // Settings (the settings part, Form.jsx): the cards of a group have the same 8px corners as the buttons and inputs.
+    MuiCard: { styleOverrides: { root: { borderRadius: 8 } } },
   },
 });

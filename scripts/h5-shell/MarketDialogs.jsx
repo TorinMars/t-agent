@@ -95,7 +95,7 @@ export function ConfirmInstallDialog({ request, onClose, onInstalled }) {
   const title = updating ? t('Update plugin') : t('Install plugin');
   return (
     <Dialog id="h5-market-confirm" open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="sm" aria-labelledby="h5-market-confirm-title">
-      <DialogTitle id="h5-market-confirm-title" sx={{ fontSize: 18 }}>{title}</DialogTitle>
+      <DialogTitle id="h5-market-confirm-title" >{title}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {!model && busy ? <Hint id="h5-market-preparing">{t('Fetching the plugin and checking it… Nothing is installed yet.')}</Hint> : null}
         <ErrorLine id="h5-market-confirm-error" text={error} />
@@ -133,7 +133,7 @@ export function ConfirmInstallDialog({ request, onClose, onInstalled }) {
       <DialogActions sx={{ flexWrap: 'wrap', gap: 1 }}>
         <Button id="h5-market-confirm-cancel" disabled={busy && Boolean(model)} onClick={onClose}>{t('Cancel')}</Button>
         {stale || (error && !model) ? <Button id="h5-market-prepare-again" disabled={busy} onClick={() => void prepare()}>{t('Prepare again')}</Button> : null}
-        <Button id="h5-market-confirm-install" variant="contained" disabled={!model || stale || busy} onClick={() => void install()}>{updating ? t('Update') : t('Install')}</Button>
+        <Button id="h5-market-confirm-install" disabled={!model || stale || busy} onClick={() => void install()}>{updating ? t('Update') : t('Install')}</Button>
       </DialogActions>
     </Dialog>
   );
@@ -151,7 +151,7 @@ export function GitUrlDialog({ open, onClose, onContinue }) {
   };
   return (
     <Dialog id="h5-market-git" open={open} onClose={onClose} fullWidth maxWidth="xs" aria-labelledby="h5-market-git-title">
-      <DialogTitle id="h5-market-git-title" sx={{ fontSize: 18 }}>{t('Install from Git URL')}</DialogTitle>
+      <DialogTitle id="h5-market-git-title" >{t('Install from Git URL')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, pt: '8px !important' }}>
         <Field id="h5-market-git-url" label="Git URL" value={text} placeholder={GIT_EXAMPLE} onChange={event => { setText(event.target.value); setError(''); }}
           onKeyDown={event => { if (event.key === 'Enter') next(); }} htmlInput={{ inputMode: 'url' }} />
@@ -189,7 +189,7 @@ export function LinkDialog({ open, onClose, onLinked }) {
   };
   return (
     <Dialog id="h5-market-link" open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-market-link-title">
-      <DialogTitle id="h5-market-link-title" sx={{ fontSize: 18 }}>{t('Link local folder')}</DialogTitle>
+      <DialogTitle id="h5-market-link-title" >{t('Link local folder')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, pt: '8px !important' }}>
         <Hint>{t('For plugin development: T-Agent runs the plugin straight from a folder on the machine that runs this Client. The folder needs a manifest.json.')}</Hint>
         <Field id="h5-market-link-path" label="Folder" value={path} placeholder={FOLDER_EXAMPLE} onChange={event => { setPath(event.target.value); setError(''); }}
@@ -231,7 +231,7 @@ export function SourcesDialog({ open, onClose }) {
   const close = () => onClose(changed.current);
   return (
     <Dialog id="h5-market-sources" open={open} onClose={busy ? undefined : close} fullWidth maxWidth="sm" aria-labelledby="h5-market-sources-title">
-      <DialogTitle id="h5-market-sources-title" sx={{ fontSize: 18 }}>{t('Plugin sources')}</DialogTitle>
+      <DialogTitle id="h5-market-sources-title" >{t('Plugin sources')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
         <Hint>{t('Indexes are marketplace.json lists of plugins. The official one comes with T-Agent; you can add your own (https only).')}</Hint>
         {!sources && !error ? <Hint>{t('Loading…')}</Hint> : null}
@@ -255,7 +255,7 @@ export function SourcesDialog({ open, onClose }) {
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
             <Field id="h5-market-source-url" label="Index URL" value={text} placeholder={INDEX_EXAMPLE} onChange={event => { setText(event.target.value); setError(''); }}
               onKeyDown={event => { if (event.key === 'Enter') void add(); }} htmlInput={{ inputMode: 'url' }} />
-            <Button id="h5-market-source-add" variant="outlined" disabled={busy || !text.trim()} onClick={() => void add()} sx={{ flex: '0 0 auto', minHeight: 40 }}>{t('Add')}</Button>
+            <Button id="h5-market-source-add" disabled={busy || !text.trim()} onClick={() => void add()} sx={{ flex: '0 0 auto', minHeight: 40 }}>{t('Add')}</Button>
           </Box>
         ) : null}
         <ErrorLine id="h5-market-sources-error" text={error} />
@@ -284,7 +284,7 @@ export function RemoveDialog({ entry, onClose, onRemoved }) {
   };
   return (
     <Dialog id="h5-market-remove" open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-market-remove-title">
-      <DialogTitle id="h5-market-remove-title" sx={{ fontSize: 18 }}>{entry && entry.dev ? t('Unlink plugin') : t('Remove plugin')}</DialogTitle>
+      <DialogTitle id="h5-market-remove-title" >{entry && entry.dev ? t('Unlink plugin') : t('Remove plugin')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Typography variant="body1" translate="no" component="strong" sx={{ overflowWrap: 'anywhere' }}>{entry ? entry.name : ''}</Typography>
         {entry && entry.dev
@@ -299,7 +299,7 @@ export function RemoveDialog({ entry, onClose, onRemoved }) {
       </DialogContent>
       <DialogActions>
         <Button disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
-        <Button id="h5-market-remove-confirm" variant="contained" color="error" disabled={busy} onClick={() => void remove()}>{entry && entry.dev ? t('Unlink') : t('Remove')}</Button>
+        <Button id="h5-market-remove-confirm" color="error" disabled={busy} onClick={() => void remove()}>{entry && entry.dev ? t('Unlink') : t('Remove')}</Button>
       </DialogActions>
     </Dialog>
   );

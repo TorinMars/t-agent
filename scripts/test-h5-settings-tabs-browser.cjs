@@ -15,6 +15,7 @@
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of the sheet in each tab.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, listedGroups } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -123,6 +124,7 @@ async function openSheet(page, target = null) {
   await settled(page);
 }
 async function chooseTab(page, value) {
+  await backToList(page); // the device tabs are on the group list
   const tab = page.locator(`#h5-settings-tab-${value}`);
   await tab.scrollIntoViewIfNeeded();
   await tab.tap();
@@ -130,22 +132,16 @@ async function chooseTab(page, value) {
   await settled(page);
 }
 const chosenTab = page => page.evaluate(() => document.querySelector('#h5-settings-tabs [role="tab"][aria-selected="true"]').dataset.tab);
-async function openGroup(page, id) {
-  const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-  if (await summary.getAttribute('aria-expanded') === 'true') return;
-  await summary.scrollIntoViewIfNeeded();
-  await summary.tap();
-  await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} > .MuiCollapse-entered`)), id);
-  await settled(page);
-}
-const shownGroups = page => page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-setting-group')].filter(group => !group.hidden && group.getBoundingClientRect().height > 0).map(group => group.id.replace('h5-set-', '')));
-const openGroups = page => page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-setting-group')].filter(group => group.querySelector('.MuiAccordionSummary-root').getAttribute('aria-expanded') === 'true').map(group => group.id.replace('h5-set-', '')));
+const openGroup = (page, id) => openSettingsGroup(page, id);
+// The groups of the group list (a group with nothing in the tab is left out), and the group shown now ([] on the phone's list).
+const shownGroups = page => listedGroups(page);
+const openGroups = page => page.evaluate(() => [...document.querySelectorAll('.h5-setting-group')].filter(group => !group.hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')).map(group => group.id.replace('h5-set-', '')));
 
 // The parts a group shows, by marker: the part headings (h3, in page order) of the group, and of T-Attention the plugin lists and the window controls.
 const partsOf = (page, id) => page.evaluate(groupId => {
   const group = document.getElementById(`h5-set-${groupId}`);
   const seen = el => el.getBoundingClientRect().height > 0;
-  const headings = [...group.querySelectorAll('.MuiAccordionDetails-root h3')].filter(seen).map(el => el.textContent.trim());
+  const headings = [...group.querySelectorAll('h3')].filter(seen).map(el => el.textContent.trim());
   const marks = ['#h5-engine-list', '#h5-shown-devices', '#h5-settings-sync', '#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market',
     '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound']
     .filter(selector => { const el = group.querySelector(selector); return el && (seen(el) || el.type === 'checkbox'); });
@@ -179,21 +175,21 @@ const EXPECTED = {
   local: {
     'tasks-files': { headings: ['Working directory', 'Agent skills', 'Browser extension'], marks: [] },
     devices: { headings: ['Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
-    attention: { headings: ['Reminders on this device', 'Plugins', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
+    attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
     account: { headings: ['Access mode', 'Authenticator'], marks: [] },
   },
 };
 // K01: the same parts, read on K01 or replaced by the note; the marketplace and the token form are this device's and are left out.
 EXPECTED['2'] = {
   ...EXPECTED.local,
-  attention: { headings: ['Reminders on this device', 'Plugins', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-attention-widget-enabled', '#h5-skill-pointer', '#h5-attention-sound'] },
+  attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-attention-widget-enabled', '#h5-skill-pointer', '#h5-attention-sound'] },
 };
 
 // Nothing in the sheet is wider than the screen (a tab scrolled out of the tab row is clipped by its scroller), and every visible button, tab and
 // group header is at least 44px high.
 async function assertFits(page, label) {
   const result = await page.evaluate(() => {
-    const sheet = document.querySelector('#h5-settings .h5-sheet-panel');
+    const sheet = document.querySelector('#h5-settings-page:not(.MuiModal-hidden) .MuiDialog-paper') || document.querySelector('#h5-settings .MuiDialog-paper');
     const inner = document.documentElement.clientWidth;
     const visible = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).opacity !== '0'; };
     const clipped = el => Boolean(el.parentElement && el.parentElement.closest('.MuiTabs-scroller'));
@@ -220,10 +216,10 @@ async function testTabs(browser) {
   assert.equal(await page.locator('#h5-settings-tabs [role="tablist"]').getAttribute('aria-label'), 'Settings for');
   assert.equal(await page.getAttribute('#h5-settings-tab-3', 'title'), 'Old Mac is too old to be changed from here. Update Old Mac first.');
   assert.equal(await chosenTab(page), 'shared');
-  // The tab row sits under the title, above Language; Language and Log out are in every tab.
+  // The tab row sits under the title, above the groups and Language; Language and Log out are in every tab.
   const order = await page.evaluate(() => {
     const top = selector => document.querySelector(selector).getBoundingClientRect().top;
-    return [top('#h5-settings-title'), top('#h5-settings-tabs'), top('.h5-settings-body .h5-setting-row')];
+    return [top('#h5-settings-title'), top('#h5-settings-tabs'), top('#h5-settings .h5-setting-row')];
   });
   assert.ok(order[0] < order[1] && order[1] < order[2], `title, tabs, Language: ${order}`);
 
@@ -231,11 +227,12 @@ async function testTabs(browser) {
     if (await chosenTab(page) !== value) await chooseTab(page, value);
     const groups = Object.keys(EXPECTED[value]);
     assert.deepEqual(await shownGroups(page), groups, `${value}: the groups that have parts in the tab`);
+    await backToList(page);
     assert.equal(await page.locator('#h5-lang').isVisible(), true, `${value}: Language`);
     assert.equal(await page.locator('#h5-logout').count(), 1, `${value}: Log out`);
     assert.deepEqual(await partsOfTab(page), EXPECTED[value], `${value}: exactly its parts`);
     await assertFits(page, `390 ${value}`);
-    if (SHOTS) { await page.evaluate(() => { document.querySelector('#h5-settings .h5-settings-body').scrollTop = 0; }); await shot(page, `settings-tabs-${value}-390`); }
+    if (SHOTS) { await backToList(page); await shot(page, `settings-tabs-${value}-390`); }
   }
   // K01: its own values, and the notes for what is changed on its own page.
   assert.equal(await page.locator('#h5-workdir').inputValue(), '/k01/work');
@@ -250,7 +247,8 @@ async function testTabs(browser) {
   await openGroup(page, 'devices');
   await page.waitForFunction(() => /offline/i.test((document.getElementById('h5-peer-fs-feedback') || {}).textContent || '') || !document.getElementById('h5-peer-fs-enabled'));
 
-  // The arrow keys move between the tabs, Enter chooses one.
+  // The arrow keys move between the tabs, Enter chooses one (the tabs are on the group list).
+  await backToList(page);
   await page.locator('#h5-settings-tab-5').focus();
   await page.keyboard.press('ArrowLeft');
   assert.equal(await page.evaluate(() => document.activeElement.dataset.tab), '2', 'disabled tabs are skipped');
@@ -274,24 +272,24 @@ async function testOpenSettings(browser) {
   // A per-device part from code: this device's tab, even with K01 remembered; the group opens on the part.
   await openSheet(page, { id: 'workdir', seq: 1 });
   await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true');
-  await page.waitForFunction(() => document.querySelector('#h5-set-tasks-files > .MuiCollapse-entered') && document.getElementById('h5-workdir').value === '/home/t/tasks');
+  await page.waitForFunction(() => (!document.getElementById('h5-set-tasks-files').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')) && document.getElementById('h5-workdir').value === '/home/t/tasks');
   assert.deepEqual(await openGroups(page), ['tasks-files']);
   // A shared part: Shared.
   await page.evaluate(() => window.H5UI.actions.openSettings('translate'));
   await page.waitForFunction(() => document.getElementById('h5-settings-tab-shared').getAttribute('aria-selected') === 'true');
-  await page.waitForFunction(() => document.querySelector('#h5-set-voice-translate > .MuiCollapse-entered'));
+  await page.waitForFunction(() => (!document.getElementById('h5-set-voice-translate').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
   await page.waitForFunction(() => document.getElementById('h5-sec-translate').getBoundingClientRect().top < 400);
   // An old alias of a per-device part: this device's tab, with Link a device.
   await page.evaluate(() => window.H5UI.actions.openSettings('service-links'));
-  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && document.querySelector('#h5-set-devices > .MuiCollapse-entered') && document.getElementById('h5-sec-link'));
+  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-devices').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')) && document.getElementById('h5-sec-link'));
   // A whole group stays on the chosen tab when it has parts there; Account has none in Shared.
   await chooseTab(page, '2');
   await page.evaluate(() => window.H5UI.actions.openSettings('attention'));
-  await page.waitForFunction(() => document.querySelector('#h5-set-attention > .MuiCollapse-entered'));
+  await page.waitForFunction(() => (!document.getElementById('h5-set-attention').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
   assert.equal(await chosenTab(page), '2');
   await chooseTab(page, 'shared');
   await page.evaluate(() => window.H5UI.actions.openSettings('account'));
-  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && document.querySelector('#h5-set-account > .MuiCollapse-entered'));
+  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-account').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
   // Once placed, a request does not hold the tab: the person can move on.
   await chooseTab(page, 'shared');
   await page.waitForTimeout(300);
@@ -305,8 +303,8 @@ const ALL_LOCAL = {
   'tasks-files': { headings: ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library'], marks: [] },
   'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
   devices: { headings: ['Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
-  // The desktop window is one part again, its switch the heading (as without tabs).
-  attention: { headings: ['Reminders on this device', 'Plugins', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
+  // The desktop window is one card again, with its switch and its language (as without tabs).
+  attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
   account: { headings: ['Access mode', 'Authenticator'], marks: [] },
 };
 async function testSyncOff(browser) {
@@ -323,7 +321,7 @@ async function testSyncOff(browser) {
   assert.deepEqual(await shownGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account']);
   assert.deepEqual(await partsOfTab(page), ALL_LOCAL);
   assert.equal(await page.locator('#h5-sec-settings-sync').count(), 0, 'no "Settings sync" status line');
-  assert.equal(await page.locator('#h5-settings .h5-scope').count(), 0, 'no pill says a change is copied');
+  assert.equal(await page.locator('.h5-scope').count(), 0, 'no pill says a change is copied');
   assert.equal(await page.locator('.h5-engine-visible-input').count() > 0, true, 'the "Show in task list" switches are on the device rows');
   await assertFits(page, '390 sync off local');
   await shot(page, 'settings-tabs-sync-off-local-390');
@@ -334,12 +332,12 @@ async function testSyncOff(browser) {
   assert.equal(await page.locator('#h5-workdir').inputValue(), '/k01/work');
   assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'These settings are read and saved on K01');
   assert.ok((await page.evaluate(() => window.calls.map(call => call.url))).includes('/api/device-settings/2/auth/me'), 'K01 is read through the link');
-  assert.equal(await page.locator('#h5-settings .h5-scope').count(), 0);
+  assert.equal(await page.locator('.h5-scope').count(), 0);
   await assertFits(page, '390 sync off K01');
   await shot(page, 'settings-tabs-sync-off-k01-390');
   // A shared part opened from code stays on this device: there is no Shared tab to move to.
   await page.evaluate(() => window.H5UI.actions.openSettings('translate'));
-  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && document.querySelector('#h5-set-voice-translate > .MuiCollapse-entered'));
+  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-voice-translate').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
   assert.equal(await page.locator('#h5-settings-tab-shared').count(), 0);
   assert.deepEqual(errors, []);
   await context.close();

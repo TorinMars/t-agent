@@ -4,7 +4,7 @@ import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
-import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
+import { Actions, Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
 
 // "Let other clients connect to this one", in Settings → Devices → Advanced (Engines.jsx; until the sheet was tidied up the group "Remote service"):
 // this machine's connect address, the pairing codes (POST /api/remote-tokens/pairing, valid for 10 minutes, single use) and the engine tokens made
@@ -56,18 +56,18 @@ export function RemoteAccessSection({ opened }) {
         {tokens.length ? tokens.map(token => (
           <Paper key={token.id} variant="outlined" className="h5-token-row" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
             <Box sx={{ minWidth: 0 }}>
-              <Box component="strong" sx={{ fontSize: '0.875rem', fontWeight: 600, overflowWrap: 'anywhere' }}>{token.name}</Box>
+              <Typography component="strong" variant="body2" sx={{ display: 'block', fontWeight: 500, overflowWrap: 'anywhere' }}>{token.name}</Typography>
               <Typography variant="caption" component="small" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>{`${token.token_prefix}… · ${token.scopes}`}</Typography>
             </Box>
             <Button size="small" onClick={() => void revoke(token)}>{t('Revoke')}</Button>
           </Paper>
         )) : <Hint>{t('No tokens created yet')}</Hint>}
       </Box>
-      <Button id="h5-token-create" variant="outlined" disabled={busy} onClick={() => void create()}>{t('Generate pairing code')}</Button>
+      <Actions><Button id="h5-token-create" disabled={busy} onClick={() => void create()}>{t('Generate pairing code')}</Button></Actions>
       {code ? (
         <Paper id="h5-token-created" variant="outlined" className="h5-token-created" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
-          <code id="h5-token-code" ref={codeNode} style={{ fontSize: 18, letterSpacing: 1, overflowWrap: 'anywhere', userSelect: 'all' }}>{code}</code>
-          <Button id="h5-token-copy" size="small" variant="outlined" onClick={() => void copy()}>{t(copyLabel)}</Button>
+          <Typography component="code" variant="h6" id="h5-token-code" ref={codeNode} sx={{ fontFamily: 'monospace', letterSpacing: 1, overflowWrap: 'anywhere', userSelect: 'all' }}>{code}</Typography>
+          <Button id="h5-token-copy" size="small" onClick={() => void copy()}>{t(copyLabel)}</Button>
         </Paper>
       ) : <span id="h5-token-created" hidden />}
       <Feedback id="h5-remote-feedback" feedback={feedback} />

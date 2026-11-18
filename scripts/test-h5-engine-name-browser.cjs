@@ -4,6 +4,7 @@
 // (with a note), and a linked row; validation, busy and server errors; long Chinese names at 320px; and an older server that keeps today's labels.
 // H5_SHOT_DIR=<dir> saves 390px screenshots of the list with its device tags and of the Engines group.
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup, engineAction, engineActions } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -124,10 +125,7 @@ function tools(page) {
   });
   const group = async part => {
     const id = { engines: 'devices', 'service-links': 'devices' }[part] || part; // both are in Devices since the settings sheet was tidied up
-    const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-    await summary.scrollIntoViewIfNeeded();
-    if (await summary.getAttribute('aria-expanded') !== 'true') await summary.tap();
-    await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
+    await openSettingsGroup(page, id);
   };
   const openEngines = async () => {
     await page.evaluate(() => window.H5UI.actions.openSettings());
@@ -135,12 +133,12 @@ function tools(page) {
     await group('engines');
     await page.locator('.h5-engine-row[data-engine="9"]').waitFor();
   };
-  const closeSettings = async () => { await page.evaluate(() => window.H5UI.actions.closeSettings()); await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' }); };
+  const closeSettings = async () => { await page.evaluate(() => window.H5UI.actions.closeSettings()); await page.locator('#h5-settings').waitFor({ state: 'hidden' }); };
   const engineRow = key => page.locator(`.h5-engine-row[data-engine="${key}"]`);
   const engineName = key => engineRow(key).locator('.h5-engine-name').textContent();
   const dialog = page.locator('#h5-engine-rename [role="dialog"]');
   const openRename = async key => {
-    await engineRow(key).locator('.h5-engine-rename').tap();
+    await engineAction(page, key, 'h5-engine-rename');
     await dialog.waitFor({ state: 'visible' });
     await settle();
   };
@@ -192,15 +190,15 @@ async function testNamesShown(browser) {
   assert.equal(await t.engineRow('local').locator('.h5-engine-hint').textContent(), '\u00B7 This machine', 'Engines: the hint');
   assert.equal(await page.locator('#h5-engine-local-version').textContent(), 'v2.99.0', 'Engines: the version stays');
   assert.deepEqual(await page.locator('.h5-engine-row .h5-engine-name').allTextContents(), ['MacBook', 'VPS', 'Old box', 'Peer'], 'Engines: the names');
-  assert.equal(await page.locator('.h5-engine-row .h5-engine-rename').count(), 4, 'Engines: Rename on every row, this machine and the linked one too');
-  assert.equal(await t.engineRow(9).locator('.h5-engine-edit').count(), 0, 'Engines: a linked row still cannot edit its connection');
+  for (const key of ['local', 7, 8, 9]) assert.ok((await engineActions(page, key)).includes('h5-engine-rename'), `Engines: Rename on every row, this machine and the linked one too (${key})`);
+  assert.equal((await engineActions(page, 9)).includes('h5-engine-edit'), false, 'Engines: a linked row still cannot edit its connection');
   assert.equal(await page.locator('.h5-engine-row .h5-engine-visible').count(), 4, 'Engines: "Show in task list" on every row');
-  const box = await t.engineRow('local').locator('.h5-engine-rename').boundingBox();
-  assert.ok(box.height >= 44, `Engines: Rename is a 44px target (${box.height})`);
+  const box = await t.engineRow('local').locator('.h5-engine-more').boundingBox();
+  assert.ok(box.height >= 44 && box.width >= 44, `Engines: the "more" button is a 44px target (${box.height})`);
   if (SHOTS) await page.locator('#h5-set-devices').screenshot({ path: path.join(SHOTS, 'engine-name-engines-390.png') });
 
   // "Edit connection" of a row that can be renamed has no name field any more: the name has one way to change.
-  await t.engineRow(7).locator('.h5-engine-edit').tap();
+  await engineAction(page, 7, 'h5-engine-edit');
   await page.locator('#h5-engine-edit [role="dialog"]').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#h5-engine-edit-name').count(), 0, 'Edit connection: no name field with Rename');
   await page.locator('#h5-engine-edit-cancel').tap();
@@ -436,8 +434,9 @@ async function testOlderServer(browser) {
   await t.openEngines();
   await page.waitForFunction(() => Boolean(document.getElementById('h5-engine-local-version')) && document.getElementById('h5-engine-local-version').textContent === 'v2.99.0');
   assert.equal(await t.engineName('local'), 'This machine', 'older: the label as today');
-  assert.equal(await page.locator('.h5-engine-row .h5-engine-rename').count(), 0, 'older: no Rename anywhere');
-  await t.engineRow(7).locator('.h5-engine-edit').tap();
+  for (const key of [7, 8]) assert.equal((await engineActions(page, key)).includes('h5-engine-rename'), false, `older: no Rename anywhere (${key})`);
+  assert.equal(await t.engineRow('local').locator('.h5-engine-more').count(), 0, 'older: this machine has no menu');
+  await engineAction(page, 7, 'h5-engine-edit');
   await page.locator('#h5-engine-edit [role="dialog"]').waitFor({ state: 'visible' });
   assert.equal(await page.inputValue('#h5-engine-edit-name'), 'VPS', 'older: the name is edited with the connection, as today');
   await page.locator('#h5-engine-edit-cancel').tap();

@@ -171,11 +171,45 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       assert.ok(Math.abs(settings.bottom - top) <= 1 && settings.top >= 0, `Settings ends at the bar (${JSON.stringify(settings)})`);
       assert.equal(await page.locator('#h5-mindmap').isVisible(), false);
       assert.equal(await view(page), 'settings');
+      // Over the Settings modal the bar stays usable: not hidden from assistive technology, and a focus that comes into it stays there.
+      assert.equal(await nav.getAttribute('aria-hidden'), null, 'the bar is not aria-hidden over Settings');
+      await page.locator('#h5-bnav-maps').focus();
+      await page.waitForTimeout(300);
+      assert.equal(await activeId(page), 'h5-bnav-maps', 'the modal does not take the focus back from the bar');
+      await page.keyboard.press('ArrowLeft');
+      assert.equal(await activeId(page), 'h5-attention', 'the arrow keys move along the bar over Settings');
+      await page.locator('#h5-settings-group-tasks-files').focus();
+      // A group's page (#h5-settings-page) ends at the bar too; back returns to the group list, then to Sessions.
+      await page.locator('#h5-settings-group-tasks-files').tap();
+      await page.locator('#h5-settings-page .MuiDialog-paper').waitFor({ state: 'visible' });
+      await page.waitForTimeout(500);
+      const group = await page.locator('#h5-settings-page .MuiDialog-paper').evaluate(el => { const r = el.getBoundingClientRect(); return { bottom: Math.round(r.bottom), top: Math.round(r.top), left: Math.round(r.left) }; });
+      assert.ok(Math.abs(group.bottom - top) <= 1 && group.top >= 0 && group.left === 0, `a group's page ends at the bar (${JSON.stringify(group)})`);
+      assert.equal(await shown(page), true, 'the bar stays over a group page');
+      await page.waitForTimeout(300);
+      await page.evaluate(() => history.back());
+      await page.waitForFunction(() => document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden'));
+      assert.equal(await page.evaluate(() => window.H5UI.get().settingsOpen), true, 'back from a group page returns to the group list');
+      await page.waitForTimeout(300);
+      await page.evaluate(() => history.back());
+      await page.waitForFunction(() => !window.H5UI.get().settingsOpen);
+      assert.equal(await view(page), 'sessions', 'back from the group list returns to Sessions');
+      await page.locator('#h5-bnav-settings').tap();
+      await page.waitForFunction(() => window.H5UI.get().settingsOpen);
+      await page.waitForTimeout(400);
       // Sessions closes it.
       await page.locator('#h5-bnav-sessions').tap();
       await page.waitForFunction(() => !window.H5UI.get().settingsOpen);
       await page.locator('#h5-settings').waitFor({ state: 'hidden' });
       assert.equal(await view(page), 'sessions');
+      // T-Attention's back arrow returns to Sessions.
+      await page.locator('#h5-attention').tap();
+      await page.locator('#h5-attention-close').waitFor({ state: 'visible' });
+      await page.waitForTimeout(400);
+      await page.locator('#h5-attention-close').tap();
+      await page.waitForFunction(() => !window.H5UI.get().attention.open);
+      await page.waitForFunction(() => document.querySelector('#h5-bnav [aria-current="page"]')?.dataset.view === 'sessions');
+      await page.waitForTimeout(400);
       // Back on a destination returns to Sessions.
       for (const [id, isOpen] of [['#h5-attention', () => window.H5UI.get().attention.open], ['#h5-bnav-settings', () => window.H5UI.get().settingsOpen], ['#h5-bnav-maps', () => window.H5UI.get().mindmapOpen]]) {
         await page.locator(id).tap();

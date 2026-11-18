@@ -3,6 +3,7 @@
 // again each time the group opens, an older server (404) shows nothing, and the Chinese page shows the dictionary text.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -45,13 +46,12 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const peerCalls = () => page.evaluate(() => window.calls.filter(call => call.url === '/api/peer-fs/settings'));
+  // Leaves Devices when it is shown (back to the list on a phone, another group on a computer), else shows it.
   const toggleGroup = async () => {
-    await page.locator('#h5-set-devices .MuiAccordionSummary-root').tap();
+    if (!(await groupShown(page, 'devices'))) { await openSettingsGroup(page, 'devices'); return; }
+    if (await wideLayout(page)) await openSettingsGroup(page, 'account'); else await backToList(page);
   };
-  const openGroup = async () => {
-    await toggleGroup();
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
-  };
+  const openGroup = () => openSettingsGroup(page, 'devices');
   return { page, errors, peerCalls, openGroup, toggleGroup };
 }
 
@@ -92,7 +92,7 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
       await page.evaluate(() => { window.peer.enabled = false; });
       const before = (await peerCalls()).filter(call => call.method === 'GET').length;
       await toggleGroup();
-      await page.waitForFunction(() => !document.querySelector('#h5-set-devices .Mui-expanded'));
+      assert.equal(await groupShown(page, 'devices'), false);
       await openGroup();
       await page.waitForFunction(count => window.calls.filter(call => call.url === '/api/peer-fs/settings' && call.method === 'GET').length > count, before);
       await page.waitForFunction(() => !document.getElementById('h5-peer-fs-enabled').checked);

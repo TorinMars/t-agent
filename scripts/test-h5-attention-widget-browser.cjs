@@ -9,6 +9,7 @@
 // - phone 390x844 in Chinese: the texts are translated.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup, backToList } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -69,18 +70,9 @@ async function openPage(browser, { wide = false, chinese = false, model }) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   await settled();
-  const openGroup = async () => {
-    const summary = page.locator('#h5-set-attention .MuiAccordionSummary-root');
-    await summary.scrollIntoViewIfNeeded();
-    await press(summary);
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention > .MuiCollapse-entered')));
-    await settled();
-  };
-  const closeGroup = async () => {
-    await press(page.locator('#h5-set-attention .MuiAccordionSummary-root'));
-    await page.waitForFunction(() => !document.querySelector('#h5-set-attention > .MuiCollapse-entered'));
-    await settled();
-  };
+  const openGroup = () => openSettingsGroup(page, 'attention');
+  // Leaves the group: back to the list on a phone, another group on a computer (its data is read again when it is shown again).
+  const closeGroup = async () => { if (wide) await openSettingsGroup(page, 'account'); else await backToList(page); };
   const status = () => page.locator('#h5-attention-widget-status').innerText();
   const shot = async name => { if (SHOTS) { await page.locator('#h5-attention-widget').scrollIntoViewIfNeeded(); await settled(); await page.screenshot({ path: path.join(SHOTS, `attention-widget-${name}.png`) }); } };
   return { context, page, errors, openGroup, closeGroup, press, status, shot, settled };

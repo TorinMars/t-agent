@@ -197,7 +197,7 @@ async function waitFor(condition, what) {
       // The screens that open on demand: Settings and the T-Attention panel come from their chunks.
       page = await open('/h5');
       await page.evaluate(() => window.H5UI.actions.openSettings());
-      await page.locator('#h5-settings .h5-setting-group').first().waitFor();
+      await page.locator('#h5-settings .h5-settings-group-item').first().waitFor();
       await page.evaluate(() => window.H5UI.actions.closeSettings());
       await page.locator('#h5-attention').tap();
       await page.locator('#h5-attention-sheet').waitFor();

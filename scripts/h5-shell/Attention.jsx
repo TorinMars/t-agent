@@ -3,6 +3,10 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
 import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
@@ -12,7 +16,7 @@ import OutlinedInput from '@mui/material/OutlinedInput';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { alpha } from '@mui/material/styles';
-import { Pill, deviceParts, deviceText, errorText, named, t } from './common.jsx';
+import { DialogError, Pill, deviceParts, deviceText, errorText, named, t } from './common.jsx';
 import { DeviceTag } from './TaskDrawer.jsx';
 import { shortName } from './task-order.mjs';
 import { Field } from './Form.jsx';
@@ -23,24 +27,24 @@ import { AttentionGuide } from './AttentionGuide.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import {
   MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
-  groupOf, hasTree, homeDetail, homeGroups, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, pendingLine, readCollapsed, rollbackItems,
+  groupOf, hasTree, homeDetail, homeGroups, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, readCollapsed, rollbackItems,
   linkParts, safeLink, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
 } from './attention-model.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
-// ("Attention" in row 2). Phone: a full-screen sheet; wide: the right side panel. The list and the live
+// ("Attention" in row 2). One design on both layouts ("One design on both layouts" in docs/design/page-attention.md): the same header, the same Home
+// view sections and rows, the same empty state and the same edit view; only the container differs (wide: the right side panel with a close button;
+// phone: a full-screen page with a back arrow, and the edit view full screen). The list and the live
 // updates are in attention-feed.mjs (`state.attention`); this file only draws them and calls `ui.actions.attention*`. A tap on the circle marks a
 // task done (from any status; on a done task it opens it again); a tap on the row opens the edit view (a dialog: title, notes, status, priority,
 // due date, link and its label, history, delete). A task with a link has a link button at the right of its row (a real <a>: a web address opens in
 // a new tab, a page path of this app in this one; it never opens the edit view); web addresses inside the read-only texts of the edit view (the
 // reason, the context card, the history) are links too (`Linked`, `linkParts` of attention-model.mjs).
-// Phone: the "Home view" of the t-attention skill (`homeGroups`, the grouping of `t-attention list --tree`, lib/attention-home.js): the sections Needs
-// you (waiting_user, then review), Working and To do, each heading with a coloured dot (red, green, yellow; an empty section says "None"), whole trees
+// Both layouts: the "Home view" of the t-attention skill (`homeGroups`, the grouping of `t-attention list --tree`, lib/attention-home.js): the sections Needs
+// you (waiting_user, then review), Working and To do, each heading with a coloured dot (red, green, yellow) and its count (an empty section says "None"), whole trees
 // (a tree is in the section of its most urgent open task, a sub-task always under its parent), each row with its own status pill, the section's
 // detail line (Needs you: what you need to do; Working: custom status · notes; To do: nothing) and the time of its last change (MM-DD HH:MM). Then
-// "Done: N" (grey dot): finished tasks are only counted; a tap unfolds them (the closed group of the wide panel), so they can be opened again.
-// Wide: the groups Needs you, Review, Working, To do, Done & failed (folded); inside a group a sub-task is drawn under its parent (`buildTree`), one
-// whose parent is in another group in its own group with a "↳ parent" hint; a row shows its custom status and result.
+// "Done: N" (grey dot): finished tasks are only counted; a tap unfolds them (the closed group of `groupItems`), so they can be opened again.
 // A server with sub-tasks (`hasTree`): parents collapse, Review rows have Confirm / Reject and Needs you rows Handled, and a held row is dragged to
 // reorder it among its siblings of the same status group (the server's order is per status) or dropped on another section's title to change its
 // status (Needs you gives waiting_user, Done gives done; `POST /api/attention/:id/move`, useListDrag of list-drag.jsx). Every such change is drawn at
@@ -56,11 +60,11 @@ const PRIORITY_COLOR = { high: 'error.light', medium: 'warning.light', low: 'tex
 const INDENT_PX = 16; // one level of sub-tasks
 const CIRCLE_X = 26; // the middle of the circle from the left edge of a row (its 44px button after 4px)
 const ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
-const ACTION_SX = { minWidth: 0, px: 1.25, py: 0.25, fontSize: 13, lineHeight: 1.3, minHeight: 32 };
-// The phone: the dot of a section heading (theme colours) and the tone of a status pill.
+const ACTION_SX = { minWidth: 0, px: 1, py: 0.25, minHeight: 32 };
+// The dot of a section heading (theme colours) and the tone of a status pill.
 const SECTION_DOT = { needs_you: 'error.main', working: 'success.main', todo: 'warning.main', closed: 'text.disabled' };
 const STATUS_TONE = { waiting_user: 'warning', review: 'info', working: 'success', done: 'success', failed: 'error' };
-const PILL_SX = { height: 20, fontSize: 12, px: 1, flex: '0 0 auto' };
+const PILL_SX = { height: 20, typography: 'caption', px: 1, flex: '0 0 auto' };
 const DETAIL_COLOR = { reason: null, confirm: 'info.light', progress: 'text.secondary' };
 function Dot({ section }) {
   return <Box component="span" className="h5-attention-dot" data-section={section} aria-hidden="true" sx={{ flex: '0 0 auto', width: 8, height: 8, borderRadius: '50%', bgcolor: SECTION_DOT[section] || 'text.disabled' }} />;
@@ -89,23 +93,15 @@ function RowLink({ item }) {
   );
 }
 
-// The second line of a row: the result of a task in Review or Done (when it has one), else what is pending (Needs you, Review, Failed).
-function secondLine(item, fields) {
-  if (fields && ['review', 'done'].includes(item.status) && item.result) return { kind: 'result', text: String(item.result) };
-  if (REMIND_STATUSES.includes(item.status)) { const text = pendingLine(item); if (text) return { kind: 'reason', text }; }
-  return null;
-}
-
 // One row. `node` (the tree, buildTree) gives its indent and, for a sub-task of a task in another group, that parent (`node.parent`, the "↳" hint);
 // `fold` is the collapse button of a parent; `act` runs a row button (Confirm, Reject, Handled); `hold` are the drag props (useListDrag) or null.
-// `section` (the phone): the key of the Home view section it is drawn in ('closed' in the unfolded Done list); the row then has its status pill, the
-// section's detail line and its time.
+// `section`: the key of the Home view section it is drawn in ('closed' in the unfolded Done list); the row has its status pill, the section's detail
+// line and its time. An MD2 list item: the circle, the title in body1, the detail and result lines in body2, the meta line in caption, the row buttons.
 function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section }) {
   const done = item.status === 'done';
-  const home = Boolean(section);
-  const detail = home ? homeDetail(item, section) : null;
-  const second = home ? (fields && ['review', 'done'].includes(item.status) && item.result ? { kind: 'result', text: String(item.result) } : null) : secondLine(item, fields);
-  const updated = home ? shortTime(item.updated_at) : '';
+  const detail = homeDetail(item, section);
+  const second = fields && ['review', 'done'].includes(item.status) && item.result ? { kind: 'result', text: String(item.result) } : null;
+  const updated = shortTime(item.updated_at);
   const late = overdue(item);
   const toggle = async () => {
     try { await ui.actions.attentionUpdate(keyOf(item), { status: done ? 'todo' : 'done' }); }
@@ -114,7 +110,6 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
   const mark = done ? 'Mark as not done' : 'Mark as done';
   const indent = node ? node.indent : 0;
   const actions = item.status === 'review' ? ['Confirm', 'Reject'] : item.status === 'waiting_user' ? ['Handled'] : [];
-  const custom = fields && item.custom_status && !home ? String(item.custom_status) : '';
   const linked = Boolean(safeLink(item.link_url));
   return (
     <Box
@@ -127,34 +122,31 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
       <Box sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <ListItemButton className="h5-attention-open" onClick={() => onOpen(keyOf(item))} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold || linked ? 0.5 : 2 }}>
           {node && node.parent ? (
-            <Box className="h5-attention-parent-hint" sx={{ fontSize: 12, lineHeight: 1.35, color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Box className="h5-attention-parent-hint" sx={{ typography: 'caption', color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {'↳ '}{node.parent.title}
             </Box>
           ) : null}
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, minWidth: 0 }}>
             {tag ? <Box component="span" className="h5-attention-engine" sx={{ flex: '0 0 auto', display: 'inline-flex', mt: '0.5px' }}><DeviceTag device={tag} /></Box> : null}
-            <Box className="h5-attention-title" sx={{ flex: '1 1 auto', minWidth: 0, fontSize: 15, lineHeight: 1.35, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: done || item.status === 'cancelled' ? 'text.secondary' : 'text.primary', textDecoration: done ? 'line-through' : 'none' }}>{item.title}</Box>
-            {custom ? <Pill className="h5-attention-custom" label={custom} title={custom} tone="info" sx={{ flex: '0 1 auto', maxWidth: '45%', height: 20, mt: '1px', fontSize: 12, px: 1, display: 'inline-block', lineHeight: '18px', overflow: 'hidden', textOverflow: 'ellipsis' }} /> : null}
+            <Box className="h5-attention-title" sx={{ flex: '1 1 auto', minWidth: 0, typography: 'body1', lineHeight: 1.4, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', color: done || item.status === 'cancelled' ? 'text.secondary' : 'text.primary', textDecoration: done ? 'line-through' : 'none' }}>{item.title}</Box>
           </Box>
           {detail ? (
-            <Box className={detail.kind === 'progress' ? 'h5-attention-progress' : 'h5-attention-reason'} data-kind={detail.kind} sx={{ mt: 0.25, fontSize: 13, lineHeight: 1.35, color: DETAIL_COLOR[detail.kind] || REASON_COLOR[item.status], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Box className={detail.kind === 'progress' ? 'h5-attention-progress' : 'h5-attention-reason'} data-kind={detail.kind} sx={{ mt: 0.25, typography: 'body2', color: DETAIL_COLOR[detail.kind] || REASON_COLOR[item.status], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {detail.kind === 'confirm' ? t(detail.text) : detail.text}
             </Box>
           ) : null}
-          {second ? <Box className={second.kind === 'result' ? 'h5-attention-result' : 'h5-attention-reason'} sx={{ mt: 0.25, fontSize: 13, lineHeight: 1.35, color: second.kind === 'result' ? 'text.secondary' : REASON_COLOR[item.status], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{second.text}</Box> : null}
-          {home || (item.source && item.source !== 'user') || (item.priority && item.priority !== 'none') || item.due_date || item.status === 'failed' || item.status === 'cancelled' ? (
-            <Box className={home ? 'h5-attention-meta' : undefined} sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 0.75, rowGap: 0.5, fontSize: 12, color: 'text.secondary' }}>
-              {home ? <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} /> : null}
-              {home && updated ? <Box component="span" className="h5-attention-updated" title={when(item.updated_at)} sx={{ fontVariantNumeric: 'tabular-nums' }}>{updated}</Box> : null}
-              {item.source && item.source !== 'user' ? <Pill className="h5-attention-source" label={item.source} translate="no" sx={{ height: 20, fontSize: 12, px: 1 }} /> : null}
-              {!home && (item.status === 'failed' || item.status === 'cancelled') ? <Box component="span" sx={{ color: item.status === 'failed' ? 'error.light' : 'text.secondary' }}>{t(STATUS_LABELS[item.status])}</Box> : null}
+          {second ? <Box className="h5-attention-result" sx={{ mt: 0.25, typography: 'body2', color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{second.text}</Box> : null}
+          {/* The meta line: the status pill, the time of the last change, the source, the priority and the due date. */}
+          <Box className="h5-attention-meta" sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 0.75, rowGap: 0.5, typography: 'caption', color: 'text.secondary' }}>
+              <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} />
+              {updated ? <Box component="span" className="h5-attention-updated" title={when(item.updated_at)} sx={{ fontVariantNumeric: 'tabular-nums' }}>{updated}</Box> : null}
+              {item.source && item.source !== 'user' ? <Pill className="h5-attention-source" label={item.source} translate="no" sx={{ height: 20, typography: 'caption', px: 1 }} /> : null}
               {item.priority && item.priority !== 'none' ? <Box component="span" className="h5-attention-priority" sx={{ color: PRIORITY_COLOR[item.priority] }}>{t(PRIORITY_LABELS[item.priority])}</Box> : null}
               {item.due_date ? <Box component="span" className="h5-attention-due" data-late={late || undefined} sx={{ color: late ? 'error.light' : 'text.secondary' }}>{`${t('Due')} ${item.due_date}`}</Box> : null}
-            </Box>
-          ) : null}
+          </Box>
         </ListItemButton>
         {actions.length && act ? (
-          <Box className="h5-attention-actions" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, pl: 0.25, pb: 0.75, mt: -0.5 }}>
+          <Box className="h5-attention-actions" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, pb: 1, mt: -0.5 }}>
             {actions.map(name => (
               <Button
                 key={name} className="h5-attention-action" data-action={name.toLowerCase()} size="small" variant="text" disabled={busy}
@@ -174,7 +166,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
 function Fold({ id, open, count, onToggle }) {
   const label = t(open ? 'Collapse sub-tasks' : 'Expand sub-tasks');
   return (
-    <IconButton className="h5-attention-fold" data-id={id} {...named(label)} aria-expanded={open} onClick={() => onToggle(id)} sx={{ flex: '0 0 auto', mt: 0.25, mr: 0.5, color: 'text.secondary', gap: 0.25, fontSize: 12 }}>
+    <IconButton className="h5-attention-fold" data-id={id} {...named(label)} aria-expanded={open} onClick={() => onToggle(id)} sx={{ flex: '0 0 auto', mt: 0.25, mr: 0.5, color: 'text.secondary', gap: 0.25, typography: 'caption' }}>
       {open ? null : <Box component="span" className="h5-attention-fold-count" aria-hidden="true">{count}</Box>}
       <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 120ms', '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><Icon name="treeChevron" size={14} /></Box>
     </IconButton>
@@ -192,7 +184,7 @@ function Node({ node, group, ctx }) {
   const movable = ctx.hold && ctx.movable(engine);
   return (
     <Box className="h5-attention-node" data-id={item.id} data-key={keyOf(item)} data-engine={engine} data-group={group} data-status={item.status} data-sgroup={groupOf(item)} data-movable={movable ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
-      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null} tag={ctx.tagOf(engine)} section={ctx.home ? group : undefined} />
+      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null} tag={ctx.tagOf(engine)} section={group} />
       {count && open ? (
         <Box
           className="h5-attention-level" data-level={`${group}:${collapseId(item)}`} role="list" aria-label={item.title}
@@ -205,20 +197,23 @@ function Node({ node, group, ctx }) {
   );
 }
 
-// Reject (a task in Review): an optional reason, then back to Working with a note "Rejected: <reason>".
+// Reject (a task in Review): an optional reason, then back to Working with a note "Rejected: <reason>". A small form in the one dialog pattern: Enter
+// rejects, Escape and Cancel keep the task as it is.
 function RejectDialog({ item, onCancel, onReject }) {
   const [reason, setReason] = useState('');
   return (
-    <Dialog open onClose={onCancel} aria-labelledby="h5-attention-reject-title" id="h5-attention-reject" slotProps={{ paper: { sx: { backgroundImage: 'none', m: 2, width: 'calc(100% - 32px)', maxWidth: 420 } } }}>
-      <Box component="form" onSubmit={event => { event.preventDefault(); onReject(reason.trim()); }} sx={{ p: 2.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-        <Typography id="h5-attention-reject-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600 }}>{t('Reject this result?')}</Typography>
-        <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{item.title}</Typography>
-        <Typography variant="body2" color="text.secondary">{t('The task goes back to Working.')}</Typography>
-        <Field id="h5-attention-reject-reason" label="Reason (optional)" value={reason} onChange={event => setReason(event.target.value)} autoFocus htmlInput={{ maxLength: 400 }} />
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-          <Button id="h5-attention-reject-cancel" color="inherit" onClick={onCancel}>{t('Cancel')}</Button>
-          <Button id="h5-attention-reject-confirm" type="submit" variant="contained" color="warning">{t('Reject')}</Button>
-        </Box>
+    <Dialog open onClose={onCancel} fullWidth maxWidth="xs" aria-labelledby="h5-attention-reject-title" id="h5-attention-reject">
+      <Box component="form" onSubmit={event => { event.preventDefault(); onReject(reason.trim()); }}>
+        <DialogTitle id="h5-attention-reject-title">{t('Reject this result?')}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <DialogContentText variant="body2" sx={{ color: 'text.primary' }}>{item.title}</DialogContentText>
+          <DialogContentText variant="body2">{t('The task goes back to Working.')}</DialogContentText>
+          <Box sx={{ mt: 1 }}><Field id="h5-attention-reject-reason" label="Reason (optional)" value={reason} onChange={event => setReason(event.target.value)} autoFocus htmlInput={{ maxLength: 400 }} /></Box>
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-attention-reject-cancel" onClick={onCancel}>{t('Cancel')}</Button>
+          <Button id="h5-attention-reject-confirm" type="submit">{t('Reject')}</Button>
+        </DialogActions>
       </Box>
     </Dialog>
   );
@@ -245,16 +240,16 @@ function QuickAdd({ ui, engines }) {
     finally { setBusy(false); }
   };
   return (
-    <Box component="form" id="h5-attention-add-form" onSubmit={event => void submit(event)} sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
+    <Box component="form" id="h5-attention-add-form" onSubmit={event => void submit(event)} sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, py: 1, borderBottom: 1, borderColor: 'divider' }}>
       <OutlinedInput
         id="h5-attention-add-input" size="small" fullWidth value={title} onChange={event => setTitle(event.target.value)} placeholder={t('Add a task')} disabled={busy}
-        inputProps={{ 'aria-label': t('Add a task'), maxLength: 300, enterKeyHint: 'done' }} sx={{ flex: '1 1 auto', fontSize: 15, minWidth: 0 }}
+        inputProps={{ 'aria-label': t('Add a task'), maxLength: 300, enterKeyHint: 'done' }} sx={{ flex: '1 1 auto', minWidth: 0 }}
       />
       {engines.length > 1 ? (
         <NativeSelect
           value={engine} onChange={event => choose(event.target.value)} disabled={busy} disableUnderline
           inputProps={{ id: 'h5-attention-add-on', 'aria-label': t('Add on'), title: deviceText(picked) }}
-          sx={{ flex: '0 0 auto', maxWidth: 120, fontSize: 13, color: 'text.secondary', '& select': { py: 0, minHeight: 44, boxSizing: 'border-box', display: 'flex', alignItems: 'center', textOverflow: 'ellipsis' } }}
+          sx={{ flex: '0 0 auto', maxWidth: 120, typography: 'body2', color: 'text.secondary', '& select': { py: 0, minHeight: 44, boxSizing: 'border-box', display: 'flex', alignItems: 'center', textOverflow: 'ellipsis' } }}
         >
           {engines.map(entry => <option key={entry.key} value={entry.key}>{`${t('on')} ${entry.local && !entry.name ? deviceParts(entry).name : shortName(deviceParts(entry).name, 12)}`}</option>)}
         </NativeSelect>
@@ -267,8 +262,10 @@ function QuickAdd({ ui, engines }) {
 const when = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleString() : ''; };
 const clock = value => { const at = Date.parse(value || ''); return Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''; };
 const dayLabel = day => { const at = Date.parse(`${day}T12:00:00`); return Number.isFinite(at) ? new Date(at).toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }) : day; };
-const CODE = { m: 0, p: 1, borderRadius: 1, bgcolor: 'action.hover', fontFamily: MONO, fontSize: 12.5, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' };
-const HEAD = { fontSize: 12, fontWeight: 600, color: 'text.secondary', textTransform: 'none', mb: 0.25 };
+const CODE = { m: 0, p: 1, borderRadius: 1, bgcolor: 'action.hover', typography: 'caption', fontFamily: MONO, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' };
+const HEAD = { typography: 'caption', fontWeight: 500, color: 'text.secondary', mb: 0.25 };
+const BODY = { typography: 'body2', overflowWrap: 'anywhere' };
+const SMALL = { typography: 'caption', color: 'text.secondary' };
 
 // THE place that opens a file named by a task's context (a file of this machine: the card checks context.host first). With the preview of any
 // path (h5.js `ui.actions.openAnyPath`: GET /api/fs/content of the local Engine) every absolute path opens; without it a file opens in the file
@@ -312,11 +309,11 @@ function ContextCard({ item, state, ui, onLeave }) {
     ui.notify(t((await copyText(jump.command)) ? 'Resume command copied' : 'Could not copy. Select the text and copy it by hand'), 'success');
   };
   return (
-    <Box id="h5-attention-context" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, p: 1.5, borderRadius: 2, border: 1, borderColor: 'divider', bgcolor: 'rgba(255,255,255,.02)' }}>
+    <Box id="h5-attention-context" sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 2, borderRadius: 1, border: 1, borderColor: 'divider' }}>
       {pending ? (
         <Box id="h5-attention-context-pending" sx={{ color: REASON_COLOR.waiting_user }}>
           <Box sx={{ ...HEAD, color: 'warning.light' }}>{t('Needs you')}</Box>
-          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', color: 'text.primary' }}><Linked text={pending.text} /></Box>
+          <Box sx={{ ...BODY, whiteSpace: 'pre-wrap', color: 'text.primary' }}><Linked text={pending.text} /></Box>
           {pending.command ? <Box component="pre" id="h5-attention-context-command" translate="no" sx={{ ...CODE, mt: 0.75 }}>{pending.command}</Box> : null}
         </Box>
       ) : null}
@@ -326,25 +323,25 @@ function ContextCard({ item, state, ui, onLeave }) {
             <Box sx={{ ...HEAD, flex: '1 1 auto', mb: 0 }}>{t('AI summary')}</Box>
             <Button id="h5-attention-summary-refresh" size="small" disabled={asking} onClick={() => void refresh()}>{t('Refresh')}</Button>
           </Box>
-          <Box sx={{ fontSize: 14, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}><Linked text={summary.text} /></Box>
-          <Box sx={{ fontSize: 12, color: 'text.secondary' }}>{when(summary.at)}{summary.model ? ' \u00b7 ' : ''}<span translate="no">{summary.model || ''}</span></Box>
+          <Box sx={{ ...BODY, whiteSpace: 'pre-line' }}><Linked text={summary.text} /></Box>
+          <Box sx={SMALL}>{when(summary.at)}{summary.model ? ' \u00b7 ' : ''}<span translate="no">{summary.model || ''}</span></Box>
         </Box>
       ) : null}
       {context.goal ? (
         <Box id="h5-attention-context-goal">
           <Box sx={HEAD}>{t('Goal')}</Box>
-          <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}><Linked text={context.goal} /></Box>
+          <Box sx={{ ...BODY, whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}><Linked text={context.goal} /></Box>
         </Box>
       ) : null}
       {reply || files.length || turns ? (
         <Box id="h5-attention-context-progress">
           <Box sx={HEAD}>{t('Progress')}</Box>
-          {reply ? <Box sx={{ fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}><Linked text={reply} /></Box> : null}
-          <Box sx={{ fontSize: 12, color: 'text.secondary', mt: 0.25 }}>
+          {reply ? <Box sx={{ ...BODY, whiteSpace: 'pre-wrap', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}><Linked text={reply} /></Box> : null}
+          <Box sx={{ ...SMALL, mt: 0.25 }}>
             {[when(context.turn_started_at || item.updated_at), turns ? `${t('Turns')}: ${turns}` : ''].filter(Boolean).join(' \u00b7 ')}
           </Box>
           {files.length && !here ? (
-            <Box id="h5-attention-context-elsewhere" sx={{ fontSize: 12, color: 'text.secondary', mt: 0.75, overflowWrap: 'anywhere' }}>{t(`These files are on ${context.host}; only their paths are shown here`)}</Box>
+            <Box id="h5-attention-context-elsewhere" sx={{ ...SMALL, mt: 0.75, overflowWrap: 'anywhere' }}>{t(`These files are on ${context.host}; only their paths are shown here`)}</Box>
           ) : null}
           {files.length ? (
             <Box component="ul" id="h5-attention-context-files" aria-label={t('Changed files')} sx={{ listStyle: 'none', m: 0, mt: 0.75, p: 0 }}>
@@ -352,12 +349,12 @@ function ContextCard({ item, state, ui, onLeave }) {
                 const absolute = contextFilePath(context, file);
                 const open = here ? contextFileAction(ui, absolute, engine) : null;
                 const counts = (
-                  <Box component="span" sx={{ flex: '0 0 auto', fontFamily: MONO, fontSize: 12 }}>
+                  <Box component="span" sx={{ flex: '0 0 auto', typography: 'caption', fontFamily: MONO }}>
                     <Box component="span" sx={{ color: 'success.light' }}>{`+${Number(file.added) || 0}`}</Box>{' '}
                     <Box component="span" sx={{ color: 'error.light' }}>{`\u2212${Number(file.deleted) || 0}`}</Box>
                   </Box>
                 );
-                const name = <Box component="span" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, fontFamily: MONO, fontSize: 12.5, color: open ? 'primary.light' : 'text.secondary', textDecoration: open ? 'underline' : 'none', textUnderlineOffset: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}><bdi>{file.path}</bdi></Box>;
+                const name = <Box component="span" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, typography: 'caption', fontFamily: MONO, color: open ? 'primary.light' : 'text.secondary', textDecoration: open ? 'underline' : 'none', textUnderlineOffset: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}><bdi>{file.path}</bdi></Box>;
                 return (
                   <Box component="li" key={file.path} className="h5-attention-file" data-path={file.path} data-open={open ? 'true' : undefined}>
                     {open ? (
@@ -373,7 +370,7 @@ function ContextCard({ item, state, ui, onLeave }) {
         </Box>
       ) : null}
       {place.length ? (
-        <Box id="h5-attention-context-place" translate="no" sx={{ fontFamily: MONO, fontSize: 12, color: 'text.secondary', overflowWrap: 'anywhere' }}>
+        <Box id="h5-attention-context-place" translate="no" sx={{ ...SMALL, fontFamily: MONO, overflowWrap: 'anywhere' }}>
           {context.cwd || ''}{context.branch ? `${context.cwd ? ' \u00b7 ' : ''}${context.branch}` : ''}{context.host ? ` \u00b7 ${context.host}` : ''}
         </Box>
       ) : null}
@@ -395,10 +392,10 @@ function Timeline({ events, titleOf }) {
     <Box id="h5-attention-history">
       {days.map(day => (
         <Box key={day.day || 'none'} className="h5-attention-day" data-day={day.day}>
-          <Box sx={{ fontSize: 12, fontWeight: 600, color: 'text.secondary', pt: 1, pb: 0.25 }}>{day.day ? dayLabel(day.day) : ''}</Box>
+          <Box sx={{ ...HEAD, pt: 1 }}>{day.day ? dayLabel(day.day) : ''}</Box>
           <Box component="ol" sx={{ listStyle: 'none', m: 0, p: 0 }}>
             {day.items.map(entry => (
-              <Box component="li" key={entry.id} className="h5-attention-event" data-kind={entry.kind} sx={{ display: 'flex', gap: 1, py: 0.5, borderBottom: 1, borderColor: 'divider', fontSize: 13 }}>
+              <Box component="li" key={entry.id} className="h5-attention-event" data-kind={entry.kind} sx={{ display: 'flex', gap: 1, py: 0.5, borderBottom: 1, borderColor: 'divider', typography: 'body2' }}>
                 <Box component="span" sx={{ flex: '0 0 auto', color: 'text.secondary', fontVariantNumeric: 'tabular-nums', minWidth: 44 }}>{clock(entry.at)}</Box>
                 <Box component="span" className="h5-attention-sentence" sx={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
                   {entry.joined ? t(`${entry.key} ${entry.text}`) : entry.text ? <>{`${t(entry.key)}: `}<Linked text={entry.text} /></> : t(entry.key)}
@@ -431,7 +428,9 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
     return () => { live = false; };
   }, [key, item.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
-  const save = async () => {
+  const save = async event => {
+    if (event) event.preventDefault();
+    if (busy) return;
     const body = patchFor(item, form);
     if (!body) { onClose(); return; }
     if (body.title !== undefined && !body.title) { setError(t('The title cannot be empty')); return; }
@@ -458,20 +457,22 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
   const titleOf = id => { const found = items.find(entry => entry.id === id && engineOf(entry) === engineOf(item)); return found ? found.title : ''; };
   const steps = movable ? [['up', 'Move up'], ['down', 'Move down'], ['top', 'Move to top']].map(([step, label]) => ({ step, label, move: stepMove(items, key, step) })) : [];
   return (
+    // The same edit view on both layouts, in the one dialog pattern: a centred "sm" dialog on a wide screen, full screen on a phone. A form: Enter in a
+    // one-line field saves, Escape closes; the title row has the close button, the actions row Delete (error colour, at the start), Cancel and Save.
     <Dialog
       open onClose={onClose} fullScreen={!wide} fullWidth maxWidth="sm" aria-labelledby="h5-attention-edit-title" id="h5-attention-edit"
-      slotProps={{ paper: { sx: { backgroundImage: 'none', ...(wide ? {} : { pt: 'env(safe-area-inset-top)', pb: 'env(safe-area-inset-bottom)' }) } } }}
+      slotProps={{ paper: { component: 'form', noValidate: true, onSubmit: event => void save(event), sx: wide ? null : { pt: 'env(safe-area-inset-top)', pb: 'env(safe-area-inset-bottom)' } } }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography id="h5-attention-edit-title" variant="subtitle1" component="h2" sx={{ flex: '0 1 auto', fontWeight: 600 }}>{t('Edit task')}</Typography>
+      <DialogTitle component="div" sx={{ display: 'flex', alignItems: 'center', gap: 1, pr: 1, py: 1 }}>
+        <Typography id="h5-attention-edit-title" variant="h6" component="h2" sx={{ flex: '0 1 auto' }}>{t('Edit task')}</Typography>
         {tag ? <Box id="h5-attention-edit-engine" sx={{ display: 'inline-flex', minWidth: 0 }}><DeviceTag device={tag} /></Box> : null}
         <Box sx={{ flex: '1 1 auto' }} />
         <IconButton id="h5-attention-edit-close" {...named(t('Close'))} onClick={onClose}><Icon name="close" size={22} /></IconButton>
-      </Box>
-      <Box sx={{ flex: '1 1 auto', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2, px: 2, pt: 2.5, pb: 2 }}>
+      </DialogTitle>
+      <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 3 }}>
         <ContextCard item={item} state={state} ui={ui} onLeave={onLeave} />
         {REMIND_STATUSES.includes(item.status) && item.attention_reason && !(contextOf(item).pending && contextOf(item).pending.text) ? (
-          <Box id="h5-attention-edit-reason" sx={{ p: 1.5, borderRadius: 2, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], fontSize: 14, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}><Linked text={item.attention_reason} /></Box>
+          <Box id="h5-attention-edit-reason" sx={{ p: 2, borderRadius: 1, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], ...BODY, whiteSpace: 'pre-wrap' }}><Linked text={item.attention_reason} /></Box>
         ) : null}
         <Field id="h5-attention-edit-name" label="Title" value={form.title} onChange={set('title')} htmlInput={{ maxLength: 300 }} />
         <Field id="h5-attention-edit-notes" label="Notes" value={form.notes} onChange={set('notes')} multiline minRows={3} maxRows={12} htmlInput={{ maxLength: 20000 }} />
@@ -521,9 +522,9 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
             <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>
               {children.map(child => (
                 <Box component="li" key={keyOf(child)}>
-                  <ButtonBase className="h5-attention-child" data-id={child.id} onClick={() => onOpen(keyOf(child))} sx={{ width: '100%', justifyContent: 'flex-start', gap: 1, minHeight: 36, px: 0.5, borderRadius: 1, fontSize: 14, color: 'primary.light', textAlign: 'left', 'html[data-input="touch"] &': { minHeight: 44 } }}>
+                  <ButtonBase className="h5-attention-child" data-id={child.id} onClick={() => onOpen(keyOf(child))} sx={{ width: '100%', justifyContent: 'flex-start', gap: 1, minHeight: 36, px: 0.5, borderRadius: 1, typography: 'body2', color: 'primary.light', textAlign: 'left', 'html[data-input="touch"] &': { minHeight: 44 } }}>
                     <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{child.title}</Box>
-                    <Box component="span" sx={{ flex: '0 0 auto', fontSize: 12, color: 'text.secondary' }}>{t(STATUS_LABELS[child.status] || 'To do')}</Box>
+                    <Box component="span" sx={{ flex: '0 0 auto', ...SMALL }}>{t(STATUS_LABELS[child.status] || 'To do')}</Box>
                   </ButtonBase>
                 </Box>
               ))}
@@ -533,26 +534,27 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
         <Typography variant="caption" color="text.secondary" component="div" id="h5-attention-edit-meta" sx={{ overflowWrap: 'anywhere' }}>
           {`${t('Source')}: `}<span translate="no">{item.source || 'user'}</span>{tag ? <>{' · '}<span translate="no">{deviceText(tag)}</span></> : null}{item.created_at ? ` · ${t('Created')} ${when(item.created_at)}` : ''}{item.updated_at ? ` · ${t('Updated')} ${when(item.updated_at)}` : ''}
         </Typography>
-        {error ? <Typography id="h5-attention-edit-error" role="alert" variant="body2" color="error">{error}</Typography> : null}
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          <Button id="h5-attention-edit-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
-          <Button id="h5-attention-edit-delete" variant="outlined" color="error" disabled={busy} onClick={() => setConfirming(true)}>{t('Delete')}</Button>
-        </Box>
         <Box component="section" aria-labelledby="h5-attention-history-title">
           <Typography id="h5-attention-history-title" variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>{t('History')}</Typography>
           <Timeline events={events} titleOf={titleOf} />
         </Box>
-      </Box>
-      <Dialog open={confirming} onClose={() => setConfirming(false)} aria-labelledby="h5-attention-delete-title" id="h5-attention-delete" slotProps={{ paper: { sx: { backgroundImage: 'none', m: 2 } } }}>
-        <Box sx={{ p: 2.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-          <Typography id="h5-attention-delete-title" variant="subtitle1" component="h2" sx={{ fontWeight: 600 }}>{t('Delete this task?')}</Typography>
-          <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>{item.title}</Typography>
-          <Typography variant="body2" color="text.secondary">{t('The task and its history are deleted for good.')}</Typography>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-            <Button id="h5-attention-delete-cancel" color="inherit" onClick={() => setConfirming(false)}>{t('Cancel')}</Button>
-            <Button id="h5-attention-delete-confirm" variant="contained" color="error" disabled={busy} onClick={() => void remove()}>{t('Delete')}</Button>
-          </Box>
-        </Box>
+        {error ? <DialogError id="h5-attention-edit-error" sx={{ mt: 0 }}>{error}</DialogError> : null}
+      </DialogContent>
+      <DialogActions>
+        <Button id="h5-attention-edit-delete" color="error" disabled={busy} onClick={() => setConfirming(true)} sx={{ mr: 'auto' }}>{t('Delete')}</Button>
+        <Button id="h5-attention-edit-cancel" onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-attention-edit-save" type="submit" variant="contained" disabled={busy}>{t('Save')}</Button>
+      </DialogActions>
+      <Dialog open={confirming} onClose={() => setConfirming(false)} fullWidth maxWidth="xs" aria-labelledby="h5-attention-delete-title" aria-describedby="h5-attention-delete-text" id="h5-attention-delete">
+        <DialogTitle id="h5-attention-delete-title">{t('Delete this task?')}</DialogTitle>
+        <DialogContent>
+          <DialogContentText variant="body2" sx={{ color: 'text.primary', mb: 1 }}>{item.title}</DialogContentText>
+          <DialogContentText id="h5-attention-delete-text" variant="body2">{t('The task and its history are deleted for good.')}</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-attention-delete-cancel" onClick={() => setConfirming(false)}>{t('Cancel')}</Button>
+          <Button id="h5-attention-delete-confirm" color="error" disabled={busy} onClick={() => void remove()}>{t('Delete')}</Button>
+        </DialogActions>
       </Dialog>
     </Dialog>
   );
@@ -602,12 +604,13 @@ const DROP_SX = theme => ({
   '& .h5-attention-drop[data-drop-over] .h5-attention-drop-hint': { display: 'inline' },
 });
 
-// The phone list (the Home view): the sections with their dotted headings (each a drop target; empty: "None"), then "Done: N", which unfolds the
-// finished tasks (`closed`, the closed group of `groupItems`) but the ones already drawn in a section (a finished parent kept above an open sub-task),
-// so no task is drawn twice. `home` is `homeGroups`.
+// The list (the Home view, on both layouts): the sections with their dotted headings (MD2 list subheaders with the section's count; each a drop target;
+// empty: "None"), then "Done: N", which unfolds the finished tasks (`closed`, the closed group of `groupItems`) but the ones already drawn in a section
+// (a finished parent kept above an open sub-task), so no task is drawn twice. `home` is `homeGroups`.
+const HEAD_SX = { px: 2, gap: 1, minHeight: 44, pt: 1, boxSizing: 'border-box', display: 'flex', alignItems: 'center', typography: 'overline', fontWeight: 500, lineHeight: 1.5, color: 'text.secondary' };
+const sizeOf = nodes => nodes.reduce((count, node) => count + 1 + sizeOf(node.children), 0);
 function HomeSections({ home, closed, items, movable, showClosed, setShowClosed, ctx }) {
-  const hintOf = key => (movable ? <Box component="span" className="h5-attention-drop-hint" aria-hidden="true" sx={{ ml: 'auto', pl: 1 }}>{`\u2192 ${t(STATUS_LABELS[statusOfGroup(key)])}`}</Box> : null);
-  const head = { px: 2, gap: 1, minHeight: 44, boxSizing: 'border-box', display: 'flex', alignItems: 'center', fontSize: 13, fontWeight: 600, borderBottom: 1, borderColor: 'divider' };
+  const hintOf = key => (movable ? <Box component="span" className="h5-attention-drop-hint" aria-hidden="true" sx={{ ml: 'auto', pl: 1, textTransform: 'none' }}>{`→ ${t(STATUS_LABELS[statusOfGroup(key)])}`}</Box> : null);
   const drawn = new Set();
   const walk = nodes => nodes.forEach(node => { drawn.add(keyOf(node.item)); walk(node.children); });
   home.sections.forEach(section => walk(section.nodes));
@@ -618,9 +621,10 @@ function HomeSections({ home, closed, items, movable, showClosed, setShowClosed,
     <>
       {home.sections.map(section => (
         <Box component="section" key={section.key} className="h5-attention-group" data-group={section.key} data-empty={section.nodes.length ? undefined : 'true'} aria-label={t(section.label)}>
-          <Box className={movable ? 'h5-attention-group-title h5-attention-drop' : 'h5-attention-group-title'} data-group={section.key} sx={{ ...head, pt: 1, color: 'text.primary' }}>
+          <Box className={movable ? 'h5-attention-group-title h5-attention-drop' : 'h5-attention-group-title'} data-group={section.key} sx={HEAD_SX}>
             <Dot section={section.key} />
-            <Box component="span" className="h5-attention-group-label" sx={{ minWidth: 0 }}>{t(section.label)}</Box>
+            <Box component="span" className="h5-attention-group-label" sx={{ minWidth: 0, color: 'text.primary' }}>{t(section.label)}</Box>
+            <Box component="span" className="h5-attention-group-count" sx={{ fontVariantNumeric: 'tabular-nums' }}>{sizeOf(section.nodes)}</Box>
             {hintOf(section.key)}
           </Box>
           {section.nodes.length ? (
@@ -628,12 +632,12 @@ function HomeSections({ home, closed, items, movable, showClosed, setShowClosed,
               {section.nodes.map(node => <Node key={keyOf(node.item)} node={node} group={section.key} ctx={ctx} />)}
             </Box>
           ) : (
-            <Box className="h5-attention-none" sx={{ px: 2, py: 1.25, fontSize: 13, color: 'text.secondary', borderBottom: 1, borderColor: 'divider' }}>{t('None')}</Box>
+            <Box className="h5-attention-none" sx={{ px: 2, pb: 1.5, typography: 'body2', color: 'text.secondary', borderBottom: 1, borderColor: 'divider' }}>{t('None')}</Box>
           )}
         </Box>
       ))}
       <Box component="section" className="h5-attention-group" data-group="closed" data-empty={count ? undefined : 'true'} aria-label={t('Done & failed')}>
-        <ButtonBase id="h5-attention-closed-toggle" className={movable ? 'h5-attention-drop' : undefined} data-group="closed" aria-expanded={showClosed} disabled={!count && !movable} onClick={() => setShowClosed(value => !value)} sx={{ ...head, width: '100%', justifyContent: 'flex-start', color: 'text.secondary' }}>
+        <ButtonBase id="h5-attention-closed-toggle" className={movable ? 'h5-attention-drop' : undefined} data-group="closed" aria-expanded={showClosed} disabled={!count && !movable} onClick={() => setShowClosed(value => !value)} sx={{ ...HEAD_SX, pt: 0, width: '100%', justifyContent: 'flex-start', borderBottom: 1, borderColor: 'divider' }}>
           <Dot section="closed" />
           <span className="h5-attention-group-title">{t(`Done: ${home.done}`)}</span>
           {count ? <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', transform: showClosed ? 'rotate(90deg)' : 'none', transition: 'transform 120ms', '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }}><Icon name="treeChevron" size={14} /></Box> : null}
@@ -649,9 +653,20 @@ function HomeSections({ home, closed, items, movable, showClosed, setShowClosed,
   );
 }
 
-// The scrolling list of the groups. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there. `home` (the
-// phone): the Home view sections (`homeGroups`) instead of the groups.
-function GroupList({ ui, attention, groups, home, items, fields, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
+// The empty and the error state of the list: an MD2 empty state (an icon, a line in subtitle1, a hint in body2, and a button for the error).
+function ListState({ id, icon, title, hint, children }) {
+  return (
+    <Box id={id} role="status" sx={{ px: 3, py: 6, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+      <Box aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.disabled', mb: 1 }}><Icon name={icon} size={48} /></Box>
+      <Typography variant="subtitle1" component="p">{title}</Typography>
+      {hint ? <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 320 }}>{hint}</Typography> : null}
+      {children}
+    </Box>
+  );
+}
+
+// The scrolling list of the sections. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there.
+function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
   const listRef = useRef(null);
   const hostRef = useRef(null);
   const liveRef = useRef(null);
@@ -659,7 +674,7 @@ function GroupList({ ui, attention, groups, home, items, fields, fieldsOf, movab
   moveRef.current = move;
   const spec = useMemo(() => attentionDrag(moveRef), []);
   const drag = useListDrag(listRef, hostRef, liveRef, ui, spec);
-  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, home: Boolean(home) };
+  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null };
   const failed = attention.status === 'ready' && Array.isArray(attention.failed) ? attention.failed : [];
   return (
     <Box sx={theme => ({ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', ...DRAG_SX(theme), ...DROP_SX(theme) })}>
@@ -667,48 +682,22 @@ function GroupList({ ui, attention, groups, home, items, fields, fieldsOf, movab
         {/* The first-run guide (AttentionGuide.jsx): shown until its steps are done or it is closed; read each time the panel opens. */}
         <AttentionGuide ui={ui} place="panel" active={open} />
         {attention.status === 'error' ? (
-          <Box id="h5-attention-error" role="status" sx={{ p: 3, textAlign: 'center', color: 'text.secondary', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
-            <span>{t('Could not read the tasks')}</span>
-            <Button id="h5-attention-retry" variant="outlined" onClick={() => ui.actions.attentionReload()}>{t('Try again')}</Button>
-          </Box>
+          <ListState id="h5-attention-error" icon="attentionOpen" title={t('Could not read the tasks')}>
+            <Button id="h5-attention-retry" variant="outlined" sx={{ mt: 1 }} onClick={() => ui.actions.attentionReload()}>{t('Try again')}</Button>
+          </ListState>
         ) : null}
         {/* An engine whose list could not be read (the others go on); it is read again as its stream reconnects. */}
         {failed.map(entry => (
-          <Box key={entry.key} className="h5-attention-failed" data-engine={entry.key} role="status" sx={{ px: 2, py: 0.75, fontSize: 12, lineHeight: 1.4, color: 'text.secondary', borderBottom: 1, borderColor: 'divider', overflowWrap: 'anywhere' }}>
+          <Box key={entry.key} className="h5-attention-failed" data-engine={entry.key} role="status" sx={{ px: 2, py: 1, typography: 'caption', color: 'text.secondary', borderBottom: 1, borderColor: 'divider', overflowWrap: 'anywhere' }}>
             {t(`Could not load ${entry.name}`)}
           </Box>
         ))}
-        {attention.status === 'ready' && !items.length ? <Box id="h5-attention-empty" role="status" sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>{t('No tasks yet')}</Box> : null}
-        {items.length && home ? (
+        {attention.status === 'ready' && !items.length ? (
+          <ListState id="h5-attention-empty" icon="attentionDone" title={t('No tasks yet')} hint={t('Tasks that agents report, and the ones you add above, show up here.')} />
+        ) : null}
+        {items.length ? (
           <HomeSections home={home} closed={groups.find(group => group.key === 'closed')} items={items} movable={movable} showClosed={showClosed} setShowClosed={setShowClosed} ctx={ctx} />
         ) : null}
-        {items.length && !home ? groups.map(group => {
-          const folded = group.folded && !showClosed;
-          const head = `${t(group.label)} (${group.items.length})`;
-          const status = statusOfGroup(group.key);
-          const hint = movable ? <Box component="span" className="h5-attention-drop-hint" aria-hidden="true" sx={{ ml: 'auto', pl: 1 }}>{`\u2192 ${t(STATUS_LABELS[status])}`}</Box> : null;
-          const tree = folded ? [] : buildTree(group.items, items);
-          return (
-            <Box component="section" key={group.key} className="h5-attention-group" data-group={group.key} data-empty={group.items.length ? undefined : 'true'} aria-label={t(group.label)}>
-              {group.folded ? (
-                <ButtonBase id="h5-attention-closed-toggle" className={movable ? 'h5-attention-drop' : undefined} data-group={group.key} aria-expanded={!folded} onClick={() => setShowClosed(value => !value)} sx={{ width: '100%', justifyContent: 'flex-start', gap: 1, px: 2, minHeight: 44, fontSize: 13, fontWeight: 600, color: 'text.secondary', borderBottom: 1, borderColor: 'divider' }}>
-                  <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', transform: folded ? 'none' : 'rotate(90deg)', transition: 'transform 120ms' }}><Icon name="treeChevron" size={14} /></Box>
-                  <span className="h5-attention-group-title">{head}</span>
-                  {hint}
-                </ButtonBase>
-              ) : (
-                <Box className={movable ? 'h5-attention-group-title h5-attention-drop' : 'h5-attention-group-title'} data-group={group.key} sx={{ px: 2, pt: 1.5, pb: 0.5, minHeight: movable ? 44 : undefined, boxSizing: 'border-box', display: 'flex', alignItems: 'flex-end', fontSize: 13, fontWeight: 600, color: group.key === 'needs' ? 'warning.light' : 'text.secondary', borderBottom: 1, borderColor: 'divider', opacity: group.items.length ? 1 : 0.7 }}>
-                  <span>{head}</span>{hint}
-                </Box>
-              )}
-              {folded || !tree.length ? null : (
-                <Box className="h5-attention-level" data-level={`${group.key}:root`} role="list">
-                  {tree.map(node => <Node key={keyOf(node.item)} node={node} group={group.key} ctx={ctx} />)}
-                </Box>
-              )}
-            </Box>
-          );
-        }) : null}
       </Box>
       {/* The floating copy of a dragged row goes in here (useListDrag); a move is announced in the live region. */}
       <Box ref={hostRef} />
@@ -743,8 +732,11 @@ export function AttentionPanel({ state, ui }) {
   const movable = engines.some(engine => movableOf(engine.key));
   const order = useMemo(() => engines.map(engine => engine.key), [engines]);
   const groups = useMemo(() => groupItems(items, { keepEmpty: fields, engines: order }), [items, fields, order]);
-  // The phone: the Home view of the t-attention skill (the same grouping as `t-attention list --tree`).
-  const home = useMemo(() => (side ? null : homeGroups(items, { engines: order })), [side, items, order]);
+  // Both layouts: the Home view of the t-attention skill (the same grouping as `t-attention list --tree`).
+  const home = useMemo(() => homeGroups(items, { engines: order }), [items, order]);
+  // The counts of the header: the tasks that need the person (Needs you and Review) and the open ones.
+  const needCount = items.filter(entry => entry.status === 'waiting_user' || entry.status === 'review').length;
+  const openCount = items.filter(entry => !['done', 'failed', 'cancelled'].includes(entry.status)).length;
   const close = () => { setEditing(null); ui.actions.closeAttention(); };
   // The item a key names, or a bare id (an older caller: a task of this machine).
   const find = ref => {
@@ -818,22 +810,28 @@ export function AttentionPanel({ state, ui }) {
   };
   const rejectItem = rejecting == null ? null : items.find(entry => keyOf(entry) === rejecting);
 
+  // The header, the same on both layouts: the title in h6 and a body2 line with the counts (and "Not live" while the stream reconnects). Only the way out
+  // differs with the container: a back arrow at the start on a phone (a full-screen page), a close button at the end of the side panel.
+  const live = attention.status !== 'ready' || attention.live;
+  const counts = attention.status === 'ready' && items.length ? t(`Needs you: ${needCount} · Open: ${openCount}`) : '';
   const contents = (
     <>
-      <Box sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, py: 0.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-          <Typography id="h5-attention-title" variant="subtitle1" component="h2" translate="no" sx={{ fontWeight: 600, lineHeight: 1.3 }}>T-Attention</Typography>
-          <Typography id="h5-attention-state" variant="caption" component="div" color="text.secondary" sx={{ lineHeight: 1.3, minHeight: '1.3em' }}>
-            {attention.status === 'ready' && !attention.live ? t('Not live: reconnecting…') : ' '}
+      <Box component="header" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 56, pl: side ? 2 : 0.5, pr: side ? 1 : 2, borderBottom: 1, borderColor: 'divider' }}>
+        {side ? null : <IconButton id="h5-attention-close" {...named(t('Back'))} onClick={close}><Icon name="back" size={22} /></IconButton>}
+        <Box sx={{ flex: '1 1 auto', minWidth: 0, pl: side ? 0 : 0.5 }}>
+          <Typography id="h5-attention-title" variant="h6" component="h2" translate="no" noWrap sx={{ lineHeight: 1.3 }}>T-Attention</Typography>
+          <Typography variant="body2" component="div" color="text.secondary" noWrap sx={{ display: counts || !live ? 'block' : 'none' }}>
+            <span id="h5-attention-counts">{counts}</span>
+            <Box component="span" id="h5-attention-state" sx={{ color: 'warning.light' }}>{live ? '' : `${counts ? ' · ' : ''}${t('Not live: reconnecting…')}`}</Box>
           </Typography>
         </Box>
-        <IconButton id="h5-attention-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton>
+        {side ? <IconButton id="h5-attention-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton> : null}
       </Box>
       {/* A new task can go to this machine and to every engine whose list was read. */}
       <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       <GroupList
-        ui={ui} attention={attention} groups={groups} home={home} items={items} fields={fields} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
+        ui={ui} attention={attention} groups={groups} home={home} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
       />
       {rejectItem ? <RejectDialog key={keyOf(rejectItem)} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}
@@ -858,10 +856,11 @@ export function AttentionPanel({ state, ui }) {
       </Drawer>
     );
   }
-  // A phone: a full-screen sheet from the bottom. It is a modal: Escape, the Android back button (back.mjs) close it, the edit view first.
+  // A phone: a full-screen page that comes in from the right, with a back arrow. It is a modal: Escape, the Android back button (back.mjs) close it, the
+  // edit view first.
   return (
     <Drawer
-      anchor="bottom" id="h5-attention-sheet" open={open} onClose={close} transitionDuration={reduced ? 0 : undefined}
+      anchor="right" id="h5-attention-sheet" open={open} onClose={close} transitionDuration={reduced ? 0 : undefined}
       ModalProps={{ disableScrollLock: true }}
       slotProps={{ paper: { className: 'h5-attention-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-attention-title', sx: { height: '100dvh', width: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', pt: 'env(safe-area-inset-top)', pb: 'env(safe-area-inset-bottom)' } } }}
     >

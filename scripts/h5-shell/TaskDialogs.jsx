@@ -10,7 +10,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
-import { t } from './common.jsx';
+import { DialogError, t } from './common.jsx';
 import { folderFollowsTitle, folderNameProblem, folderParts, joinFolder, titleToSlug } from './task-rename.mjs';
 
 // The Rename dialog of the task "⋯" menu (h5.js `askTaskRename`): the title and, where the task's service can (`folderSupported`), "Also rename the folder"
@@ -36,7 +36,7 @@ function RenameTaskDialog({ dialog, ui, service, close }) {
   const blocked = dialog.blocked;
   const count = blocked ? blocked.terminals.length : 0;
   return (
-    <Dialog id="h5-task-dialog" open onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
+    <Dialog id="h5-task-dialog" open onClose={close} fullWidth maxWidth="sm" aria-labelledby="h5-task-dialog-title">
       <Box component="form" autoComplete="off" onSubmit={submit}>
         <DialogTitle id="h5-task-dialog-title">{t('Rename task')}</DialogTitle>
         <DialogContent>
@@ -68,7 +68,7 @@ function RenameTaskDialog({ dialog, ui, service, close }) {
           ) : null}
           {blocked ? (
             <Box id="h5-task-rename-busy" role="alert" sx={{ mt: 1.5 }}>
-              <Typography variant="body2" color="warning.main" sx={{ fontWeight: 700 }}>
+              <Typography variant="body2" color="warning.main" sx={{ fontWeight: 500 }}>
                 {blocked.chat ? t('A chat turn of this task is running. Stop it, then try again.')
                   : count === 1 ? t('1 terminal of this task is open. It must be closed before the folder can be renamed.')
                     : t(`${count} terminals of this task are open. They must be closed before the folder can be renamed.`)}
@@ -80,10 +80,10 @@ function RenameTaskDialog({ dialog, ui, service, close }) {
               ) : null}
             </Box>
           ) : null}
-          {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+          {dialog.error ? <DialogError id="h5-task-dialog-error">{dialog.error}</DialogError> : null}
         </DialogContent>
         <DialogActions>
-          <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          <Button id="h5-task-dialog-cancel" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
           <Button id="h5-task-dialog-ok" type="submit" variant="contained" disabled={dialog.busy || Boolean(problem) || !title.trim()}>{t('Save')}</Button>
         </DialogActions>
       </Box>
@@ -106,9 +106,9 @@ export function TaskDialog({ state, ui }) {
   if (dialog && dialog.kind === 'rename') return <RenameTaskDialog key={key} dialog={dialog} ui={ui} service={service} close={close} />;
   if (dialog && dialog.kind === 'workdir') {
     return (
-      <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
+      <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="sm" aria-labelledby="h5-task-dialog-title">
         <Box component="form" autoComplete="off" onSubmit={event => { event.preventDefault(); void ui.actions.taskWorkdirSave(dir); }}>
-          <DialogTitle id="h5-task-dialog-title" sx={{ overflowWrap: 'anywhere' }}>{t('Edit working directory')}</DialogTitle>
+          <DialogTitle id="h5-task-dialog-title">{t('Edit working directory')}</DialogTitle>
           <DialogContent>
             {service}
             <DialogContentText variant="body2" sx={{ mb: 1.5, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
@@ -124,7 +124,7 @@ export function TaskDialog({ state, ui }) {
             ) : null}
           </DialogContent>
           <DialogActions>
-            <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+            <Button id="h5-task-dialog-cancel" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
             <Button id="h5-task-dialog-ok" type="submit" variant="contained" disabled={dialog.busy}>{t('Save')}</Button>
           </DialogActions>
         </Box>
@@ -139,17 +139,17 @@ export function TaskDialog({ state, ui }) {
           {service}
           <DialogContentText id="h5-task-archive-name" translate="no" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
           {dialog.running > 0 ? (
-            <Typography id="h5-task-archive-running" role="alert" variant="body2" color="warning.main" sx={{ mb: 1, fontWeight: 700 }}>
+            <Typography id="h5-task-archive-running" role="alert" variant="body2" color="warning.main" sx={{ mb: 1, fontWeight: 500 }}>
               {dialog.running === 1 ? t('1 terminal is still running and will be stopped') : t(`${dialog.running} terminals are still running and will be stopped`)}
             </Typography>
           ) : null}
           <Typography id="h5-task-archive-text" variant="body2" color="text.secondary">{t('Files, documents and terminal records are kept. Its terminals will be closed.')}</Typography>
           {dialog.checking ? <Typography id="h5-task-archive-checking" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('Checking for running terminals…')}</Typography> : null}
-          {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+          {dialog.error ? <DialogError id="h5-task-dialog-error">{dialog.error}</DialogError> : null}
         </DialogContent>
         <DialogActions>
-          <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
-          <Button id="h5-task-dialog-ok" variant="contained" disabled={dialog.busy || dialog.checking} onClick={() => void ui.actions.taskArchive()}>{t('Archive')}</Button>
+          <Button id="h5-task-dialog-cancel" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          <Button id="h5-task-dialog-ok" disabled={dialog.busy || dialog.checking} onClick={() => void ui.actions.taskArchive()}>{t('Archive')}</Button>
         </DialogActions>
       </Dialog>
     );
@@ -158,7 +158,7 @@ export function TaskDialog({ state, ui }) {
     const ready = dialog.status === 'ready';
     const devices = ready ? dialog.devices : [];
     return (
-      <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title">
+      <Dialog id="h5-task-dialog" open={open} onClose={close} fullWidth maxWidth="sm" aria-labelledby="h5-task-dialog-title">
         <DialogTitle id="h5-task-dialog-title">{t('Visible to')}</DialogTitle>
         <DialogContent>
           <DialogContentText id="h5-task-visibility-name" translate="no" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{dialog.title}</DialogContentText>
@@ -179,10 +179,10 @@ export function TaskDialog({ state, ui }) {
           ))}
           {devices.some(device => !device.allowed) ? <Typography id="h5-task-visibility-denied" variant="body2" sx={{ mt: 1 }}>{t('Unchecked machines cannot open this task or see its sessions.')}</Typography> : null}
           {devices.length ? <Typography id="h5-task-visibility-honest" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('Linked machines still have full control of this computer, so this hides the task but is not a security boundary.')}</Typography> : null}
-          {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+          {dialog.error ? <DialogError id="h5-task-dialog-error">{dialog.error}</DialogError> : null}
         </DialogContent>
         <DialogActions>
-          <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          <Button id="h5-task-dialog-cancel" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
           {devices.length ? <Button id="h5-task-dialog-ok" variant="contained" disabled={dialog.busy} onClick={() => void ui.actions.taskVisibilitySave()}>{t('Save')}</Button> : null}
         </DialogActions>
       </Dialog>
@@ -206,11 +206,11 @@ export function TaskDialog({ state, ui }) {
                 ) : null}
               </>
             ) : <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t('This task has no working directory, so no directory will be deleted.')}</Typography>}
-            {dialog.error ? <Typography id="h5-task-dialog-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{dialog.error}</Typography> : null}
+            {dialog.error ? <DialogError id="h5-task-dialog-error">{dialog.error}</DialogError> : null}
           </DialogContent>
           <DialogActions>
-            <Button id="h5-task-dialog-cancel" color="inherit" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
-            <Button id="h5-task-dialog-ok" variant="contained" color="error" disabled={dialog.busy} onClick={() => void ui.actions.taskDelete(alsoDir)}>{t('Delete')}</Button>
+            <Button id="h5-task-dialog-cancel" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+            <Button id="h5-task-dialog-ok" color="error" disabled={dialog.busy} onClick={() => void ui.actions.taskDelete(alsoDir)}>{t('Delete')}</Button>
           </DialogActions>
         </>
       ) : null}

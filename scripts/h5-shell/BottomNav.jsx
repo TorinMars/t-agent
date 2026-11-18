@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
@@ -78,6 +79,22 @@ export function BottomNav({ ui }) {
     if (ui.actions.fitAboveBottomNav) ui.actions.fitAboveBottomNav();
     return () => { root.removeAttribute('data-bnav'); root.removeAttribute('data-bnav-room'); };
   }, [shown, room, ui]);
+  // Over T-Attention and Settings (MUI modals that end above the bar), the bar stays usable: it is a child of <body> of its own (a portal), so it
+  // can be kept out of what the open modal hides from assistive technology (MUI sets `aria-hidden` on the other children of <body>), and a focus
+  // that comes into it is not pulled back into the modal (the modal's focus trap listens for `focusin` on the document).
+  const nav = useRef(null);
+  const exposed = shown && !state.under && state.view !== 'sessions';
+  useEffect(() => {
+    const el = nav.current;
+    if (!el || !exposed) return undefined;
+    const expose = () => { if (el.getAttribute('aria-hidden') === 'true') el.removeAttribute('aria-hidden'); };
+    expose();
+    const watch = new MutationObserver(expose);
+    watch.observe(el, { attributes: true, attributeFilter: ['aria-hidden'] });
+    const keep = event => event.stopPropagation();
+    el.addEventListener('focusin', keep);
+    return () => { watch.disconnect(); el.removeEventListener('focusin', keep); };
+  }, [exposed]);
   if (state.pane) return null;
   const onKeyDown = event => {
     const buttons = [...event.currentTarget.querySelectorAll('.h5-bnav-item')];
@@ -88,8 +105,8 @@ export function BottomNav({ ui }) {
     event.preventDefault();
     buttons[next].focus();
   };
-  return (
-    <Box component="nav" id="h5-bnav" aria-label={t('Views')} onKeyDown={onKeyDown} inert={state.under || undefined} data-under={state.under ? '' : undefined}
+  return createPortal(
+    <Box component="nav" id="h5-bnav" ref={nav} aria-label={t('Views')} onKeyDown={onKeyDown} inert={state.under || undefined} data-under={state.under ? '' : undefined}
       sx={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 1150, display: shown ? 'flex' : 'none', justifyContent: 'center',
         boxSizing: 'border-box', height: 'calc(56px + env(safe-area-inset-bottom))', pb: 'env(safe-area-inset-bottom)', px: 'env(safe-area-inset-left)',
         bgcolor: 'background.paper', backgroundImage: overlay(1), borderTop: 1, borderColor: 'divider' }}>
@@ -112,6 +129,7 @@ export function BottomNav({ ui }) {
           </ButtonBase>
         );
       })}
-    </Box>
+    </Box>,
+    document.body,
   );
 }

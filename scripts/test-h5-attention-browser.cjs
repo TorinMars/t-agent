@@ -23,6 +23,7 @@
 //   normal dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -248,13 +249,42 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
 async function openPluginSettings(page, how) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  await page.locator('#h5-set-attention .MuiAccordionSummary-root')[how]();
-  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
+  await openGroup(page, 'attention');
   await page.locator('#h5-plugins .h5-plugin').first().waitFor();
 }
 // The Plugins rows stay inside the sheet: no row is wider than its box and nothing reaches past the viewport.
-const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, .h5-plugin-page .MuiDrawer-paper, .h5-plugin-page-body > *, .h5-plugin-page code')]
+const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, .h5-plugin-page .MuiDialog-paper, .h5-plugin-page-body > *, .h5-plugin-page code')]
   .filter(node => node.scrollWidth > node.clientWidth + 1 || node.getBoundingClientRect().right > innerWidth + 0.5).map(node => node.className || node.id));
+
+// One design on both layouts: what the panel shows (header, sections, rows, row buttons) and the edit view, read the same way on a phone and a computer.
+const panelLayout = page => page.evaluate(() => {
+  const panel = document.querySelector('#h5-attention-sheet .h5-attention-panel');
+  const text = el => (el ? el.textContent.trim() : null);
+  return {
+    title: text(panel.querySelector('#h5-attention-title')),
+    titleH6: panel.querySelector('#h5-attention-title').classList.contains('MuiTypography-h6'),
+    counts: text(panel.querySelector('#h5-attention-counts')),
+    add: Boolean(panel.querySelector('#h5-attention-add-input')),
+    sections: [...panel.querySelectorAll('.h5-attention-group')].map(group => ({
+      group: group.dataset.group, label: text(group.querySelector('.h5-attention-group-label') || group.querySelector('span.h5-attention-group-title')), count: text(group.querySelector('.h5-attention-group-count')),
+    })),
+    rows: [...panel.querySelectorAll('.h5-attention-row')].map(node => ({
+      id: node.dataset.id, status: text(node.querySelector('.h5-attention-status')), detail: text(node.querySelector('.h5-attention-reason, .h5-attention-progress')),
+      actions: [...node.querySelectorAll('.h5-attention-action')].map(text), link: Boolean(node.querySelector('.h5-attention-row-link')),
+      titleSize: getComputedStyle(node.querySelector('.h5-attention-title')).fontSize,
+    })),
+  };
+});
+let phoneLayout = null;
+let phoneEdit = null;
+const editLayout = page => page.evaluate(() => {
+  const paper = document.querySelector('#h5-attention-edit .MuiDialog-paper');
+  return {
+    titleH6: paper.querySelector('#h5-attention-edit-title').classList.contains('MuiTypography-h6'),
+    fields: [...paper.querySelectorAll('[id^="h5-attention-edit-"]')].map(node => node.id).filter(id => !/-label$|-helper-text$/.test(id)),
+    actions: [...paper.querySelectorAll('.MuiDialogActions-root button')].map(node => node.id),
+  };
+});
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
@@ -301,6 +331,17 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await row(page, 7).locator('.h5-attention-reason').count(), 0, 'the finished tasks are folded');
       assert.equal(await row(page, 3).locator('.h5-attention-reason').count(), 0, 'a working task shows no reason');
       assert.equal(await row(page, 4).locator('.h5-attention-source').count(), 0, 'no badge for the user\'s own task');
+      // The header of the full-screen page: a back arrow first, the title in h6, the counts.
+      phoneLayout = await panelLayout(page);
+      assert.equal(phoneLayout.counts, 'Needs you: 2 · Open: 6', 'the header counts what needs the person and what is open');
+      assert.equal(await page.locator('#h5-attention-close').getAttribute('aria-label'), 'Back', 'a back arrow on a phone');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-attention-panel header').firstElementChild.id), 'h5-attention-close', 'the back arrow comes first');
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await page.locator('#h5-attention-edit .MuiDialog-paper').waitFor({ state: 'visible' });
+      phoneEdit = await editLayout(page);
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-attention-edit').waitFor({ state: 'detached' });
+      assert.deepEqual(phoneEdit.actions, ['h5-attention-edit-delete', 'h5-attention-edit-cancel', 'h5-attention-edit-save'], 'Delete, then Cancel and Save');
       await page.locator('#h5-attention-closed-toggle').tap();
       assert.deepEqual((await idsIn(page, 'closed')).sort(), [6, 7]);
       // 44px targets.
@@ -512,8 +553,7 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       // Settings "T-Attention": tokens (shown once, revoke), sound, system notifications.
       await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
-      await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
-      await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
+      await openGroup(page, 'attention');
       await page.locator('#h5-attention-tokens .h5-attention-token').first().waitFor();
       // AI summary: off by default; provider and model; the privacy note.
       assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), false);
@@ -561,9 +601,9 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length - calls.filter(call => call.method === 'GET' && call.path === '/api/attention/settings/guide').length;
       assert.equal(pluginReads(), 1, 'read once when the group opened');
       // Back keeps the scroll position; the Android back button and the browser's back work like the other sheets (one history entry for the page).
-      const scrollTop = () => page.evaluate(() => document.querySelector('#h5-settings .h5-settings-body').scrollTop);
+      const scrollTop = () => page.evaluate(() => document.querySelector('#h5-settings-page .h5-settings-body').scrollTop);
       await listRow('notifier', 'broken').scrollIntoViewIfNeeded();
-      await page.evaluate(() => { document.querySelector('#h5-settings .h5-settings-body').scrollTop = Math.min(document.querySelector('#h5-settings .h5-settings-body').scrollHeight, document.querySelector('#h5-plugins').offsetTop); });
+      await page.evaluate(() => { const body = document.querySelector('#h5-settings-page .h5-settings-body'); body.scrollTop = Math.min(body.scrollHeight, document.querySelector('#h5-plugins').getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop); });
       const depthOnList = await layerDepth(page);
       await openDetail('notifier', 'broken'); // Playwright scrolls the row into view for the tap: the position to keep is the one the page was opened at
       const scrolled = await scrollTop();
@@ -574,7 +614,7 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.waitForFunction(depth => history.state && history.state.h5Layer === depth, depthOnList + 1);
       await page.goBack();
       await detail('broken').waitFor({ state: 'detached' });
-      assert.ok(await page.locator('#h5-settings').isVisible(), 'back closes the page, not the sheet');
+      assert.ok(await page.locator('#h5-settings-page .h5-settings-body').isVisible(), 'back closes the plugin page, not the group page');
       await page.waitForFunction(depth => history.state && history.state.h5Layer === depth, depthOnList);
       assert.equal(await scrollTop(), scrolled, 'the scroll position is kept');
       await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
@@ -904,12 +944,17 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.waitForFunction(() => { const p = document.querySelector('.h5-attention-panel'); return document.documentElement.hasAttribute('data-side-panel') && p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; });
       assert.equal(await page.locator('#h5-attention-sheet .MuiBackdrop-root').count(), 0, 'not a modal: the page stays usable');
       await page.locator('#h5-attention-sheet .h5-attention-row').first().waitFor();
+      // The same panel as the phone: header, sections with their counts, rows, statuses, detail lines and row buttons; only the way out differs.
+      assert.deepEqual(await panelLayout(page), phoneLayout, 'the side panel shows what the phone shows');
+      assert.equal(await page.locator('#h5-attention-close').getAttribute('aria-label'), 'Close', 'a close button on the side panel');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-attention-panel header').lastElementChild.id), 'h5-attention-close', 'the close button comes last');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention.png') });
       // The edit view is a normal dialog; Escape closes it first, then the panel.
       await row(page, 1).locator('.h5-attention-open').click();
       const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
       await edit.waitFor({ state: 'visible' });
       assert.ok((await edit.boundingBox()).width < 700, 'a normal dialog on a wide screen');
+      assert.deepEqual(await editLayout(page), phoneEdit, 'the same edit view as on the phone');
       assert.equal(await page.locator('#h5-attention-context-command').textContent(), 'npm test -- --watch=false', 'the context card on a wide screen too');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-edit.png') });
       await page.keyboard.press('Escape');
@@ -958,12 +1003,11 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await openPluginSettings(page, 'click');
       assert.deepEqual(await pluginsFit(page), []);
       assert.equal(await page.locator('#h5-plugins .h5-plugin').count(), 4);
-      // On a computer the page has the size and place of the sheet, and the rows and Back work with the mouse.
-      const sheetBox = await page.locator('#h5-settings .h5-sheet-panel').boundingBox();
+      // On a computer the plugin's page is a dialog over the Settings page (not full screen), and the rows and Back work with the mouse.
       await page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]').click();
       await page.locator('.h5-plugin-page[data-name="telegram"] #h5-plugin-config-telegram-callSeconds').waitFor();
       const pageBox = await page.locator('.h5-plugin-page .h5-sheet-panel').boundingBox();
-      assert.deepEqual([Math.round(pageBox.x), Math.round(pageBox.width), Math.round(pageBox.height)], [Math.round(sheetBox.x), Math.round(sheetBox.width), Math.round(sheetBox.height)], 'the page covers the sheet');
+      assert.ok(pageBox.width <= 600 && pageBox.x > 72, `a dialog, not the whole window: ${JSON.stringify(pageBox)}`);
       assert.deepEqual(await pluginsFit(page), []);
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-plugin-detail.png') });
       await page.locator('.h5-plugin-page-back').click();

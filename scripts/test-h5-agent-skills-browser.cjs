@@ -9,6 +9,7 @@
 // - phone 390x844 in Chinese: the texts of the part, the descriptions and the switch are translated.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -84,13 +85,7 @@ async function openPage(browser, { width = 390, height = 844, wide = false, chin
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   await settled();
-  const openGroup = async id => {
-    const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-    await summary.scrollIntoViewIfNeeded();
-    await press(summary);
-    await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} > .MuiCollapse-entered`)), id);
-    await settled();
-  };
+  const openGroup = id => openSettingsGroup(page, id);
   const tap = async selector => { const target = page.locator(selector); await target.scrollIntoViewIfNeeded(); await settled(); await press(target); };
   const shot = async (name, selector = '#h5-sec-agent-skills') => { if (SHOTS) { await page.locator(selector).scrollIntoViewIfNeeded(); await settled(); await page.screenshot({ path: path.join(SHOTS, `agent-skills-${name}.png`) }); } };
   return { context, page, errors, tap, shot, openGroup, settled };
@@ -215,11 +210,12 @@ async function assertFits(page, label) {
       assert.equal(await page.locator('[data-slot="skill"]').innerText().then(text => text.replace(/\s+/g, ' ').trim()), 'Agent skill: Settings → Tasks and files → Agent skills Open');
       assert.equal(await page.locator('[data-slot="skill"] .h5-agent-skill').count(), 0, 'no card in T-Attention any more');
       await tap('#h5-skill-open');
-      await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-tasks-files > .MuiCollapse-entered')));
+      await page.waitForFunction(() => !document.getElementById('h5-set-tasks-files').hidden);
+      await page.waitForTimeout(450); // the second look of the reveal (Form.jsx Group)
       await settled();
       await page.locator('#h5-agent-skills .h5-agent-skill').first().waitFor();
       const shown = await page.evaluate(() => {
-        const body = document.querySelector('#h5-settings .h5-settings-body').getBoundingClientRect();
+        const body = [...document.querySelectorAll('.h5-settings-body')].find(el => el.getBoundingClientRect().height > 0).getBoundingClientRect();
         const box = document.getElementById('h5-sec-agent-skills').getBoundingClientRect();
         return box.top >= body.top - 1 && box.top < body.bottom - 20;
       });
@@ -239,7 +235,8 @@ async function assertFits(page, label) {
       assert.equal(await page.locator('#h5-oss-agent-enabled').count(), 0);
       assert.equal(await page.locator('#h5-oss-agent').isHidden(), true);
       assert.ok(await page.locator('#h5-oss-save').isVisible());
-      assert.deepEqual(model.calls.filter(call => call.includes('agent-access')), ['GET /api/oss/agent-access']);
+      // A computer shows Tasks and files when Settings opens and again from the pointer: each showing reads it, nothing is saved.
+      assert.deepEqual(model.calls.filter(call => call.includes('agent-access')), ['GET /api/oss/agent-access', 'GET /api/oss/agent-access']);
       assert.deepEqual(errors, []);
       await context.close();
     }

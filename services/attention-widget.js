@@ -21,6 +21,7 @@ const childProcess = require('node:child_process');
 const nodeFs = require('node:fs');
 const path = require('node:path');
 const syncStore = require('./settings-sync-store');
+const { findSwiftToolchain, firstLine } = require('../lib/swift-toolchain');
 
 const SETTINGS_KEY = 'attention_widget_settings_v1';
 const PAGE_LANGUAGE_KEY = 'attention_widget_page_language_v1';
@@ -160,7 +161,6 @@ function createWidgetLauncher({
       execFile(file, args, { windowsHide: true, maxBuffer: 4 * 1024 * 1024, ...options }, (error, stdout, stderr) => resolve({ error, stdout: String(stdout || ''), stderr: String(stderr || '') }));
     } catch (error) { resolve({ error, stdout: '', stderr: '' }); }
   });
-  const firstLine = text => String(text || '').split('\n').map(line => line.trim()).find(Boolean) || '';
 
   // The path of swiftc, or null. Never runs /usr/bin/swiftc itself: on a Mac without the command line tools that stub opens the install dialog.
   async function findSwiftc() {
@@ -169,17 +169,11 @@ function createWidgetLauncher({
     if (swiftc === null && now() - swiftcCheckedAt < MISSING_TOOLS_MS) return null;
     swiftcCheckedAt = now();
     swiftc = null;
-    const developer = await run('/usr/bin/xcode-select', ['-p'], { timeout: LOOKUP_TIMEOUT_MS });
-    if (developer.error || !firstLine(developer.stdout)) return null;
-    const found = await run('/usr/bin/xcrun', ['--find', 'swiftc'], { timeout: LOOKUP_TIMEOUT_MS });
-    const file = firstLine(found.stdout);
-    if (found.error || !path.isAbsolute(file)) return null;
-    // swiftc run by its own path (not through the xcrun shim) does not know where the macOS SDK is and fails with "unable to load standard
-    // library for target ..."; xcrun tells it through SDKROOT, so the build passes the SDK path the same way.
-    const sdk = await run('/usr/bin/xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { timeout: LOOKUP_TIMEOUT_MS });
-    const sdkPath = firstLine(sdk.stdout);
-    sdkRoot = !sdk.error && path.isAbsolute(sdkPath) ? sdkPath : null;
-    swiftc = file;
+    // lib/swift-toolchain.js: xcode-select -p, xcrun --find swiftc, and the SDK path the build passes as SDKROOT.
+    const toolchain = await findSwiftToolchain(run, { timeout: LOOKUP_TIMEOUT_MS });
+    if (!toolchain) return null;
+    sdkRoot = toolchain.sdkRoot;
+    swiftc = toolchain.swiftc;
     return swiftc;
   }
 

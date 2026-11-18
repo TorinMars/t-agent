@@ -327,6 +327,18 @@ A remote upgrade is a host administration operation and every connection has tha
 
 Mind maps are saved as one JSON file each in `<data folder>/mindmaps/` (`~/.tagent/mindmaps/` by default), through `/api/mindmaps` behind the normal login. They are independent of tasks, terminals and agent chat. A map stays on the service that made it: the mind map list also shows the maps of each connected service (a remote Engine or a service link, in the order of the task list, without the devices turned off in "Show in task list"), and such a map is opened and edited in place, through `/api/remote-servers/:id/mindmaps` on this side and `/v1/mindmaps` (capability `mindmaps`) on the owner; nothing is copied. A service too old for this (`MINDMAPS_UNSUPPORTED`) is left out of the list, and an offline one shows "Offline". Deleted maps go to `mindmaps/trash/`, and moving a file back to `mindmaps/<id>.json` restores it. The database backups taken before an update do not include these files. See "Mind maps" in `docs/design/mind-maps.md`.
 
+## Mac app
+
+On a Mac, T-Agent can also run as a native app, `T-Agent.app`: a window with the T-Agent page, a menu bar item that starts, restarts and stops the service, and `t-agent://` links. It needs the Xcode command line tools (`xcode-select --install`), not Xcode. In the install directory:
+
+```bash
+npm run build:mac-app               # builds dist/T-Agent.app (universal, ad-hoc signed)
+npm run build:mac-app -- --install  # builds it and copies it to ~/Applications/T-Agent.app
+open ~/Applications/T-Agent.app
+```
+
+The app is only a front end: the web service is the same Node server as before. It keeps running when the app quits, and browsers, phones and linked devices can still reach it at the same addresses. Run the install command again after an update to get the app of the new version. See `docs/design/mac-app.md`.
+
 ## T-Attention from the command line (`t-attention`)
 
 `t-attention` creates and updates T-Attention tasks (the "Needs you" list) from any terminal, script or agent. It needs Node.js and this checkout; run `npm link` in the install directory (or call `node scripts/t-attention.js`). Create a token in Settings -> T-Attention -> CLI tokens, then log in once:

@@ -5,9 +5,10 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
 import Typography from '@mui/material/Typography';
-import { api, errorText, t } from './common.jsx';
+import { DialogError, api, errorText, t } from './common.jsx';
 import { watchRestart } from './restart-wait.mjs';
 
 // "Restart T-Agent" on the "This machine" row of Settings → Devices (Engines.jsx). `restart` is the `restart` field of `GET /api/system/version`
@@ -63,7 +64,7 @@ export function RestartButton({ restart, bootId }) {
         <DialogTitle id="h5-restart-title">{t('Restart T-Agent')}</DialogTitle>
         <DialogContent id="h5-restart-body" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           {view.phase === 'confirm' || view.phase === 'error' ? (
-            <Typography id="h5-restart-question">{t('Restart T-Agent on this computer? Every terminal is closed and its screen is cleared. The page reloads when the service is back.')}</Typography>
+            <DialogContentText id="h5-restart-question">{t('Restart T-Agent on this computer? Every terminal is closed and its screen is cleared. The page reloads when the service is back.')}</DialogContentText>
           ) : null}
           {view.phase === 'sending' || view.phase === 'restarting' || view.phase === 'back' ? (
             <Box id="h5-restart-state" role="status" sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -77,11 +78,12 @@ export function RestartButton({ restart, bootId }) {
               <Button size="small" id="h5-restart-refresh" onClick={() => location.reload()}>{t('Refresh now')}</Button>
             </Typography>
           ) : null}
-          {view.phase === 'error' ? <Typography id="h5-restart-error" role="alert" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>{view.message}</Typography> : null}
+          {view.phase === 'error' ? <DialogError id="h5-restart-error" sx={{ mt: 1 }}>{view.message}</DialogError> : null}
         </DialogContent>
         <DialogActions>
-          <Button id="h5-restart-cancel" color="inherit" disabled={locked} onClick={close}>{t(view.phase === 'error' ? 'Close' : 'Cancel')}</Button>
-          {view.phase === 'confirm' || view.phase === 'error' ? <Button id="h5-restart-confirm" variant="contained" color="warning" onClick={() => void send()}>{t('Restart')}</Button> : null}
+          {/* A destructive confirmation (every terminal is closed): a text button in the error colour, after Cancel. */}
+          <Button id="h5-restart-cancel" disabled={locked} onClick={close}>{t(view.phase === 'error' ? 'Close' : 'Cancel')}</Button>
+          {view.phase === 'confirm' || view.phase === 'error' ? <Button id="h5-restart-confirm" color="error" onClick={() => void send()}>{t('Restart')}</Button> : null}
         </DialogActions>
       </Dialog>
     </>

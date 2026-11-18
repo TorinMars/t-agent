@@ -9,7 +9,7 @@
 //   parent (never itself or a sub-task), sub-task links, Move up / down / to top, the timeline sentences, Delete of a parent answered 409
 //   HAS_CHILDREN.
 // - phone 320x640 (touch): the rows fit the width; every control is 44px.
-// - computer 1440x900 (mouse; the side panel keeps the groups and the "\u21b3 <parent>" hint): a move of 4px picks a row up, a click still opens
+// - computer 1440x900 (mouse; the side panel shows the same Home view sections as the phone): a move of 4px picks a row up, a click still opens
 //   it, a drop on a title; a server without /move (404) loses the drag.
 // - an older server (no parent_id): no drag, no fold, no new fields; Chinese: the row buttons and the edit fields are translated.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
@@ -469,20 +469,23 @@ async function testComputer(browser) {
   await page.keyboard.press('Escape');
   await page.locator('#h5-attention-edit .MuiDialog-paper').waitFor({ state: 'hidden' });
   assert.deepEqual(moves(calls), []);
-  // A mouse moved 4px picks the row up: Pay invoice above Release 2.0.
+  // The side panel shows the same Home view as the phone: Release 2.0 (with a working sub-task) is in Working, To do holds Pay invoice and Clean up.
+  assert.deepEqual(await idsIn(page, 'todo'), [14, 15]);
+  assert.equal(await page.locator('#h5-attention-closed-toggle .h5-attention-group-title').textContent(), 'Done: 1');
+  // A mouse moved 4px picks the row up: Clean up above Pay invoice.
+  const cleanUp = await box(row(page, 15));
   const pay = await box(row(page, 14));
-  const release = await box(row(page, 10));
-  await page.mouse.move(pay.x + 120, pay.y + pay.height / 2);
+  await page.mouse.move(cleanUp.x + 120, cleanUp.y + cleanUp.height / 2);
   await page.mouse.down();
-  await page.mouse.move(pay.x + 120, pay.y + pay.height / 2 - 6, { steps: 2 });
+  await page.mouse.move(cleanUp.x + 120, cleanUp.y + cleanUp.height / 2 - 6, { steps: 2 });
   await page.waitForSelector('.h5-attention-float');
-  await page.mouse.move(release.x + 120, release.y + 4, { steps: 12 });
+  await page.mouse.move(pay.x + 120, pay.y + 4, { steps: 12 });
   await page.mouse.up();
   await settledDrag(page);
-  assert.deepEqual(moves(calls), [[14, { before: 10 }]]);
-  assert.deepEqual(await idsIn(page, 'todo'), [14, 10, 11, 13, 12, 15]);
+  assert.deepEqual(moves(calls), [[15, { before: 14 }]]);
+  assert.deepEqual(await idsIn(page, 'todo'), [15, 14]);
   assert.equal(await page.locator('#h5-attention-edit').count(), 0, 'the click after a drag opens nothing');
-  // A drop on the folded Done & failed title: done.
+  // A drop on the folded "Done: N" title: done.
   const closed = await box(page.locator('#h5-attention-closed-toggle'));
   const clean = await box(row(page, 15));
   await page.mouse.move(clean.x + 120, clean.y + clean.height / 2);
@@ -497,8 +500,8 @@ async function testComputer(browser) {
   assert.equal(await page.locator('#h5-attention-closed-toggle').getAttribute('aria-expanded'), 'false', 'a drop does not unfold it');
   // A server without /move: the first move fails, and the rows can no longer be dragged.
   db.noMove = true;
-  const tag = await box(row(page, 12));
-  const top = await box(row(page, 14));
+  const tag = await box(row(page, 12)); // Tag the release, a To do sub-task of Release 2.0 in Working: dragged above its sibling Changelog
+  const top = await box(row(page, 11));
   await page.mouse.move(tag.x + 120, tag.y + tag.height / 2);
   await page.mouse.down();
   await page.mouse.move(tag.x + 120, tag.y + tag.height / 2 - 6, { steps: 2 });

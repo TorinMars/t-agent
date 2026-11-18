@@ -52,9 +52,9 @@ export function CopyDialog({ state, ui }) {
         </Box>
         {/* Fit mode on a narrow screen: programs such as Claude Code wrap their own lines at the PTY width, which the copy view cannot join. */}
         {state.terminalWidth && state.terminalWidth.mode !== 'wide' && state.terminalWidth.current > 0 && state.terminalWidth.current < 100 ? (
-          <Box id="h5-copy-wrap-hint" sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, pb: 1, fontSize: 13, color: 'text.secondary' }}>
+          <Box id="h5-copy-wrap-hint" sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, pb: 1, typography: 'body2', color: 'text.secondary' }}>
             <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0 }}>{t(`Lines are wrapped at ${state.terminalWidth.current} columns`)}</Box>
-            <Button id="h5-copy-widen" size="small" variant="outlined" color="inherit" sx={{ flex: '0 0 auto', minHeight: 36 }} onClick={() => ui.actions.setTerminalWidth({ mode: 'wide' })}>{t('Widen terminal')}</Button>
+            <Button id="h5-copy-widen" size="small" sx={{ flex: '0 0 auto', minHeight: 36 }} onClick={() => ui.actions.setTerminalWidth({ mode: 'wide' })}>{t('Widen terminal')}</Button>
           </Box>
         ) : null}
         {state.copyStale ? (
@@ -89,6 +89,7 @@ export function UploadDialog({ state }) {
 // The Paste sheet: the browser refused to read the clipboard (iOS asks for each read, and a dismissed "Paste" callout is a refusal), so the user pastes
 // with the system's own paste into this box. A paste of text into the empty box is sent at once; text typed or pasted next to other text waits for Send.
 // Pasted images or files go to the upload, all of them in order. It sits at the top of the screen, so the on-screen keyboard does not cover it; h5.js returns the focus on close.
+// A form: Send submits (a text button: it sends, it does not create or save), Cancel and Escape close; Enter in the box is a new line.
 export function PasteDialog({ state, ui }) {
   const open = Boolean(state.pasteSheet && state.pasteSheet.open);
   const [text, setText] = useState('');
@@ -106,37 +107,38 @@ export function PasteDialog({ state, ui }) {
   };
   return (
     <Dialog
-      id="h5-paste" open={open} onClose={() => ui.actions.pasteSheetClose()} aria-labelledby="h5-paste-title" fullWidth maxWidth="xs" transitionDuration={0}
+      id="h5-paste" open={open} onClose={() => ui.actions.pasteSheetClose()} aria-labelledby="h5-paste-title" fullWidth maxWidth="sm" transitionDuration={0}
       sx={{ '& .MuiDialog-container': { alignItems: 'flex-start' } }}
-      slotProps={{ paper: { sx: { m: 2, mt: 'max(16px, env(safe-area-inset-top))', width: 'calc(100% - 32px)', maxWidth: 420 } } }}
+      slotProps={{ paper: { component: 'form', onSubmit: event => { event.preventDefault(); if (text) ui.actions.pasteSheetSend(text); }, sx: { mt: 'max(16px, env(safe-area-inset-top))' } } }}
     >
-      <DialogTitle id="h5-paste-title" sx={{ fontSize: 17, pb: 1 }}>{t('Paste')}</DialogTitle>
-      <DialogContent sx={{ pb: 1 }}>
+      <DialogTitle id="h5-paste-title">{t('Paste')}</DialogTitle>
+      <DialogContent>
         <TextField
           id="h5-paste-text" fullWidth multiline minRows={3} maxRows={8} autoFocus value={text} onChange={event => setText(event.target.value)}
           placeholder={t('Long-press here and choose Paste')}
           slotProps={{ htmlInput: { 'aria-label': t('Long-press here and choose Paste'), onPaste, autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false, translate: 'no' } }}
-          sx={{ '& textarea': { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 16 } }}
+          sx={{ '& textarea': { typography: 'body1', fontFamily: 'ui-monospace, Menlo, monospace' } }}
         />
-        <DialogContentText id="h5-paste-hint" sx={{ mt: 1, fontSize: 13 }}>{t('The browser did not let the page read the clipboard. Long-press the box and choose Paste.')}</DialogContentText>
+        <DialogContentText id="h5-paste-hint" variant="body2" sx={{ mt: 1 }}>{t('The browser did not let the page read the clipboard. Long-press the box and choose Paste.')}</DialogContentText>
       </DialogContent>
       <DialogActions>
-        <Button id="h5-paste-cancel" color="inherit" onClick={() => ui.actions.pasteSheetClose()}>{t('Cancel')}</Button>
-        <Button id="h5-paste-send" variant="contained" disabled={!text} onClick={() => ui.actions.pasteSheetSend(text)}>{t('Send')}</Button>
+        <Button id="h5-paste-cancel" onClick={() => ui.actions.pasteSheetClose()}>{t('Cancel')}</Button>
+        <Button id="h5-paste-send" type="submit" disabled={!text}>{t('Send')}</Button>
       </DialogActions>
     </Dialog>
   );
 }
 
 // The link of an image or file that was uploaded when its terminal was already gone; several uploaded files give their links joined with spaces,
-// shown in a box that wraps so every link can be seen.
+// shown in a box that wraps so every link can be seen. A short title, the reason as the body text, Close.
 export function RetainDialog({ state, ui }) {
   const url = state.retainUrl;
   const several = Boolean(url && url.includes(' '));
   return (
-    <Dialog className="h5-upload-overlay" open={url !== null} onClose={() => ui.actions.retainClose()} fullWidth maxWidth="xs" transitionDuration={0}>
-      <DialogTitle sx={{ fontSize: 16 }}>{t(several ? 'Uploaded; the original terminal was switched or disconnected. Copy the links manually:' : 'Uploaded; the original terminal was switched or disconnected. Copy the link manually:')}</DialogTitle>
+    <Dialog className="h5-upload-overlay" open={url !== null} onClose={() => ui.actions.retainClose()} fullWidth maxWidth="xs" transitionDuration={0} aria-labelledby="h5-retain-title" aria-describedby="h5-retain-text">
+      <DialogTitle id="h5-retain-title">{t(several ? 'Uploaded links' : 'Uploaded link')}</DialogTitle>
       <DialogContent>
+        <DialogContentText id="h5-retain-text" variant="body2" sx={{ mb: 2 }}>{t(several ? 'Uploaded; the original terminal was switched or disconnected. Copy the links manually:' : 'Uploaded; the original terminal was switched or disconnected. Copy the link manually:')}</DialogContentText>
         <TextField fullWidth size="small" multiline={several} maxRows={several ? 6 : undefined} value={url || ''} slotProps={{ htmlInput: { readOnly: true, 'aria-label': t(several ? 'Uploaded links' : 'Uploaded link'), onClick: event => event.target.select() } }} />
       </DialogContent>
       <DialogActions><Button onClick={() => ui.actions.retainClose()}>{t('Close')}</Button></DialogActions>
@@ -150,7 +152,7 @@ const DURATIONS = { info: 3500, success: 2500, error: 6000 };
 // The button is outside the role="status" box, so a screen reader reads the message without the button's name, and the text is cut by CSS only.
 // Open, the button shrinks to the icon: it keeps its element (and the keyboard focus) and closes the message again. It never takes the focus from the terminal.
 const CHIP = {
-  minHeight: 28, py: 0, px: 1.25, alignItems: 'center', fontSize: 13, lineHeight: 1.4, borderRadius: 14,
+  minHeight: 28, py: 0, px: 1.25, alignItems: 'center', typography: 'body2', borderRadius: 14,
   '& .MuiAlert-icon': { p: 0, mr: 0.75, fontSize: 16 },
   '& .MuiAlert-message': { p: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 };
@@ -164,7 +166,7 @@ function InfoNotice({ message, expanded, onToggle, onClose, ref, ...transition }
       <Box
         component="button" type="button" aria-expanded={expanded} aria-label={label} title={label}
         onMouseDown={event => event.preventDefault()} onClick={onToggle}
-        sx={{ position: 'absolute', zIndex: 1, p: 0, border: 0, borderRadius: '14px', background: 'transparent', '&:hover, &:active, &:focus': { background: 'transparent' }, WebkitTapHighlightColor: 'transparent', cursor: 'pointer', '&:focus-visible': { outline: '2px solid #fff', outlineOffset: -2 }, ...area }}
+        sx={{ position: 'absolute', zIndex: 1, p: 0, border: 0, borderRadius: '14px', background: 'transparent', '&:hover, &:active, &:focus': { background: 'transparent' }, WebkitTapHighlightColor: 'transparent', cursor: 'pointer', '&:focus-visible': { outline: '2px solid', outlineColor: 'common.white', outlineOffset: -2 }, ...area }}
       />
       <Alert
         severity="info" variant="filled" role="status" onClose={expanded ? onClose : undefined}
@@ -175,6 +177,8 @@ function InfoNotice({ message, expanded, onToggle, onClose, ref, ...transition }
 }
 
 // The floating notice (what Toast did): the last message, which goes by itself. Only a blue notice that is opened stays until it is closed or replaced.
+// It stays at the top centre, not at the bottom where MD2 puts a snackbar: the bottom of the terminal is its prompt and cursor, the place most tapped,
+// and a notice there would take those taps ("Floating notices" in docs/design/toast.md).
 export function Notice({ state }) {
   const notice = state.notice;
   const [shown, setShown] = useState(null);
@@ -190,7 +194,7 @@ export function Notice({ state }) {
     >
       {type === 'info'
         ? <InfoNotice message={shown ? shown.message : ''} expanded={expanded} onToggle={() => setExpandedId(expanded ? null : shown.id)} onClose={() => setShown(null)} />
-        : <Alert severity={type} variant="filled" onClose={() => setShown(null)} role="status" sx={{ width: '100%', overflowWrap: 'anywhere' }}>{shown ? shown.message : ''}</Alert>}
+        : <Alert severity={type} variant="filled" onClose={() => setShown(null)} role="status" sx={{ width: '100%', maxWidth: 672, alignItems: 'center', overflowWrap: 'anywhere' }}>{shown ? shown.message : ''}</Alert>}
     </Snackbar>
   );
 }

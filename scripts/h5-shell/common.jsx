@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
 
@@ -57,6 +58,11 @@ export function DeviceName({ source, className, hintClassName }) {
 
 // The name props of an icon button: the aria-label and the same native title (the browser's own tooltip on a computer; no MUI Tooltip, which
 // would add about 31 KB and on a touch screen open on a long press, in the way of hold-to-talk).
+// The error of a dialog ("One dialog pattern" in docs/design/page-dialogs.md): an inline MUI Alert under the fields, read out at once, never a notice only.
+export function DialogError({ id, children, sx }) {
+  return <Alert id={id} severity="error" role="alert" sx={{ mt: 2, overflowWrap: 'anywhere', ...sx }}>{children}</Alert>;
+}
+
 export const named = label => ({ 'aria-label': label, title: label });
 
 // A small rounded label (what MUI's Chip drew here, without its 8 KB): `onClick` makes it a button (ButtonBase: ripple, focus ring).

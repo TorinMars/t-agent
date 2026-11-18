@@ -256,6 +256,36 @@ async function openPluginSettings(page, how) {
 const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, .h5-plugin-page .MuiDrawer-paper, .h5-plugin-page-body > *, .h5-plugin-page code')]
   .filter(node => node.scrollWidth > node.clientWidth + 1 || node.getBoundingClientRect().right > innerWidth + 0.5).map(node => node.className || node.id));
 
+// One design on both layouts: what the panel shows (header, sections, rows, row buttons) and the edit view, read the same way on a phone and a computer.
+const panelLayout = page => page.evaluate(() => {
+  const panel = document.querySelector('#h5-attention-sheet .h5-attention-panel');
+  const text = el => (el ? el.textContent.trim() : null);
+  return {
+    title: text(panel.querySelector('#h5-attention-title')),
+    titleH6: panel.querySelector('#h5-attention-title').classList.contains('MuiTypography-h6'),
+    counts: text(panel.querySelector('#h5-attention-counts')),
+    add: Boolean(panel.querySelector('#h5-attention-add-input')),
+    sections: [...panel.querySelectorAll('.h5-attention-group')].map(group => ({
+      group: group.dataset.group, label: text(group.querySelector('.h5-attention-group-label') || group.querySelector('span.h5-attention-group-title')), count: text(group.querySelector('.h5-attention-group-count')),
+    })),
+    rows: [...panel.querySelectorAll('.h5-attention-row')].map(node => ({
+      id: node.dataset.id, status: text(node.querySelector('.h5-attention-status')), detail: text(node.querySelector('.h5-attention-reason, .h5-attention-progress')),
+      actions: [...node.querySelectorAll('.h5-attention-action')].map(text), link: Boolean(node.querySelector('.h5-attention-row-link')),
+      titleSize: getComputedStyle(node.querySelector('.h5-attention-title')).fontSize,
+    })),
+  };
+});
+let phoneLayout = null;
+let phoneEdit = null;
+const editLayout = page => page.evaluate(() => {
+  const paper = document.querySelector('#h5-attention-edit .MuiDialog-paper');
+  return {
+    titleH6: paper.querySelector('#h5-attention-edit-title').classList.contains('MuiTypography-h6'),
+    fields: [...paper.querySelectorAll('[id^="h5-attention-edit-"]')].map(node => node.id).filter(id => !/-label$|-helper-text$/.test(id)),
+    actions: [...paper.querySelectorAll('.MuiDialogActions-root button')].map(node => node.id),
+  };
+});
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
@@ -298,6 +328,17 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await row(page, 7).locator('.h5-attention-reason').count(), 0, 'the finished tasks are folded');
       assert.equal(await row(page, 3).locator('.h5-attention-reason').count(), 0, 'a working task shows no reason');
       assert.equal(await row(page, 4).locator('.h5-attention-source').count(), 0, 'no badge for the user\'s own task');
+      // The header of the full-screen page: a back arrow first, the title in h6, the counts.
+      phoneLayout = await panelLayout(page);
+      assert.equal(phoneLayout.counts, 'Needs you: 2 · Open: 6', 'the header counts what needs the person and what is open');
+      assert.equal(await page.locator('#h5-attention-close').getAttribute('aria-label'), 'Back', 'a back arrow on a phone');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-attention-panel header').firstElementChild.id), 'h5-attention-close', 'the back arrow comes first');
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await page.locator('#h5-attention-edit .MuiDialog-paper').waitFor({ state: 'visible' });
+      phoneEdit = await editLayout(page);
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-attention-edit').waitFor({ state: 'detached' });
+      assert.deepEqual(phoneEdit.actions, ['h5-attention-edit-delete', 'h5-attention-edit-cancel', 'h5-attention-edit-save'], 'Delete, then Cancel and Save');
       await page.locator('#h5-attention-closed-toggle').tap();
       assert.deepEqual((await idsIn(page, 'closed')).sort(), [6, 7]);
       // 44px targets.
@@ -899,12 +940,17 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.waitForFunction(() => { const p = document.querySelector('.h5-attention-panel'); return document.documentElement.hasAttribute('data-side-panel') && p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; });
       assert.equal(await page.locator('#h5-attention-sheet .MuiBackdrop-root').count(), 0, 'not a modal: the page stays usable');
       await page.locator('#h5-attention-sheet .h5-attention-row').first().waitFor();
+      // The same panel as the phone: header, sections with their counts, rows, statuses, detail lines and row buttons; only the way out differs.
+      assert.deepEqual(await panelLayout(page), phoneLayout, 'the side panel shows what the phone shows');
+      assert.equal(await page.locator('#h5-attention-close').getAttribute('aria-label'), 'Close', 'a close button on the side panel');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-attention-panel header').lastElementChild.id), 'h5-attention-close', 'the close button comes last');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention.png') });
       // The edit view is a normal dialog; Escape closes it first, then the panel.
       await row(page, 1).locator('.h5-attention-open').click();
       const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
       await edit.waitFor({ state: 'visible' });
       assert.ok((await edit.boundingBox()).width < 700, 'a normal dialog on a wide screen');
+      assert.deepEqual(await editLayout(page), phoneEdit, 'the same edit view as on the phone');
       assert.equal(await page.locator('#h5-attention-context-command').textContent(), 'npm test -- --watch=false', 'the context card on a wide screen too');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-edit.png') });
       await page.keyboard.press('Escape');

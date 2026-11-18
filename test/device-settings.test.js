@@ -73,6 +73,7 @@ test('the allowlist takes the per-device page routes only, written exactly', () 
 test('a body is cut down to the fields of its entry', () => {
   const widget = allowedRoute('PUT', '/attention/widget/settings');
   assert.deepEqual(bodyFor(widget, { enabled: false, language: 'zh', extra: 1 }), { enabled: false }, 'the shared language is not taken from a peer');
+  assert.deepEqual(bodyFor(widget, { hotkeys: false, dim_when_idle: true, show_activity: false }), { hotkeys: false, dim_when_idle: true, show_activity: false }, 'the window preferences are per device');
   assert.deepEqual(bodyFor(allowedRoute('PUT', '/auth/settings'), { work_dir: '/x', username: 'root' }), { work_dir: '/x' });
   assert.deepEqual(bodyFor(allowedRoute('POST', '/rule-sync/push'), { anything: true }), {});
   assert.equal(bodyFor(allowedRoute('GET', '/rule-sync'), { a: 1 }), undefined, 'a read sends no body');
@@ -183,7 +184,7 @@ test('/v1/device-settings: only a live link token, only the allowlist; bodies ar
   assert.equal(memory.prepare('SELECT COUNT(*) AS n FROM system_state WHERE key = ?').get(require('../services/attention-widget').PAGE_LANGUAGE_KEY).n, 0);
   const switched = await call(url, 'PUT', '/v1/device-settings/attention/widget/settings', { enabled: false, language: 'zh' }, auth(1));
   assert.deepEqual([switched.status, switched.body.enabled, switched.body.language], [200, false, 'auto']);
-  assert.deepEqual(widgetSettings.read(), { enabled: false, language: 'auto' });
+  assert.deepEqual(widgetSettings.read(), { enabled: false, language: 'auto', hotkeys: true, dim_when_idle: true, show_activity: true });
   assert.deepEqual(seen.widget, [false]);
 });
 

@@ -32,7 +32,6 @@
   "New task",
   "Nothing needs you",
   "None",
-  "Done: {1}",
   "Could not load {1}",
   "Move failed: {1}",
   "Quit",
@@ -62,5 +61,8 @@
   "Reply",
   "Send",
   "Reply to the agent",
-  "Reply failed: {1}"
+  "Reply failed: {1}",
+  "Search",
+  "No matches",
+  "Finished ({1})"
 ]

@@ -11,13 +11,19 @@ import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 import { useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 
 // The "Desktop window (macOS)" part of the Settings group "T-Attention": the switch of the native floating window (services/attention-widget.js), the
-// language it shows and a status line. GET / PUT /api/attention/widget/settings { enabled, language, platform_supported, swiftc, running, building,
-// last_error }. Read each time the group opens (`opened` goes up), saved at once without Save. An older server answers 404: nothing is drawn.
+// language it shows, the window's preferences (global shortcuts, fading when idle, the working agents section) and a status line. GET / PUT
+// /api/attention/widget/settings { enabled, language, hotkeys, dim_when_idle, show_activity, platform_supported, swiftc, running, building, last_error }. Read each time the group opens (`opened` goes up), saved at once without Save. An older server answers 404: nothing is drawn.
 // See "T-Attention desktop window (macOS)" in DESIGN.md.
 const SETTINGS_URL = '/api/attention/widget/settings';
 const INPUT_INSIDE = { left: 0, width: '100%' }; // MUI's hidden input of the switch stays on the thumb (see PeerFs.jsx)
 const LANGUAGES = [['auto', 'Same as this page'], ['en', 'English'], ['zh', 'Chinese']];
 const POLL_MS = 3000; // while a build runs, the status is read again
+// The window's preferences (per device, like the switch). A server that does not answer them (an older linked device) shows none.
+const PREFS = [
+  ['hotkeys', 'Global shortcuts (Ctrl+Option+T panel, Ctrl+Option+N new task)'],
+  ['dim_when_idle', 'Fade when idle'],
+  ['show_activity', 'Show working agents'],
+];
 
 // The status line: what is true now, in the order a person needs it.
 export function widgetStatus(setting) {
@@ -44,7 +50,7 @@ function WidgetPart({ opened, call, remote, name }) {
   const [feedback, say] = useFeedback();
   const [synced, track] = useSyncAfterSave('widget-language');
   const timer = useRef(null);
-  const show = data => setSetting({ enabled: data.enabled !== false, language: data.language || 'auto', platform_supported: Boolean(data.platform_supported), swiftc: Boolean(data.swiftc), running: Boolean(data.running), building: Boolean(data.building), last_error: data.last_error || null });
+  const show = data => setSetting({ enabled: data.enabled !== false, language: data.language || 'auto', platform_supported: Boolean(data.platform_supported), swiftc: Boolean(data.swiftc), running: Boolean(data.running), building: Boolean(data.building), last_error: data.last_error || null, ...Object.fromEntries(PREFS.map(([name]) => [name, typeof data[name] === 'boolean' ? data[name] : null])) });
   const load = async () => {
     try { show(await call('GET', SETTINGS_URL)); }
     catch (error) {
@@ -92,6 +98,13 @@ function WidgetPart({ opened, call, remote, name }) {
           {/* The switch is this Mac's own; the language of the window is one setting for all linked devices. */}
           <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
           <Hint>{remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
+          {PREFS.filter(([name]) => setting[name] !== null).map(([name, text]) => (
+            <FormControlLabel
+              key={name} sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={t(text)}
+              control={<Switch size="small" checked={setting[name]} disabled={busy || !usable} onChange={event => void save({ [name]: event.target.checked })} slotProps={{ input: { id: `h5-attention-widget-${name.replace(/_/g, '-')}`, 'aria-label': t(text), style: INPUT_INSIDE } }} />}
+            />
+          ))}
+          <Hint id="h5-attention-widget-login">{t('The window opens with T-Agent. To start T-Agent when you log in, run pm2 startup and pm2 save.')}</Hint>
         </>
       ) : <SubHeading id="h5-attention-widget-title">{label}</SubHeading>}
       {languageShown ? (

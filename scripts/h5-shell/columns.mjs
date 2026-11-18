@@ -95,10 +95,11 @@ export function mountOrder(mounted, ids) {
 }
 
 // A message from a pane: { type: 't-agent-pane', paneId, event: 'ready' | 'focus' | 'title' | 'scroll-x' | 'step' | 'move' | 'maximize' | 'peek',
-// title?, session?, device?, map?, target?, agent?, dx?, step?, lines? }. 'title': the task and session shown, and the device of that task when the
-// pane's list tags it (`device`: { name, instanceId, local, offline }, kept only with a name or as this machine), the mind map the pane shows (`map`:
-// { title, screen: 'list' | 'editor' }, see "mind map columns" below), the terminal it shows (`target`: { sourceKey, taskId, terminalId }, for the
-// state of its tile in the rail) and that terminal's agent ('claude', 'codex' or none); 'scroll-x': a sideways wheel or trackpad swipe inside the pane
+// title?, session?, device?, map?, target?, agent?, sheet?, width?, dx?, step?, lines? }. 'title': the task and session shown, and the device of that
+// task when the pane's list tags it (`device`: { name, instanceId, local, offline }, kept only with a name or as this machine), the mind map the pane
+// shows (`map`: { title, screen: 'list' | 'editor' }, see "mind map columns" below), the terminal it shows (`target`: { sourceKey, taskId, terminalId },
+// for the state of its column), that terminal's agent ('claude', 'codex' or none), whether its task sheet is shown (`sheet`: true, else left out) and
+// its terminal width (`width`: { mode: 'fit' | 'wide', cols }, left out without a terminal): the column's header draws them; 'scroll-x': a sideways wheel or trackpad swipe inside the pane
 // that nothing in it scrolls (dx in px, nonzero, at most 10000 either way); 'step': Ctrl+Alt+Left / Right pressed inside the pane, 'move':
 // Ctrl+Alt+Shift+Left / Right (step -1 or 1); 'maximize': Cmd/Ctrl+Shift+Enter (or the mind map's Maximize button) in the pane, to maximize its
 // column or to restore the columns (a toggle);
@@ -118,6 +119,9 @@ export function readPaneMessage(data) {
     const target = readTarget(data.target);
     if (target) message.target = target;
     if (AGENTS.has(data.agent)) message.agent = data.agent;
+    if (data.sheet === true) message.sheet = true;
+    const width = readWidth(data.width);
+    if (width) message.width = width;
   }
   if (data.event === 'peek') message.lines = readLines(data.lines);
   if (data.event === 'scroll-x') {
@@ -131,7 +135,14 @@ export function readPaneMessage(data) {
   return message;
 }
 
-// The device of a pane's task as its tab shows it (the same engine tag as the task list): a name (this machine may have none: an older server), the
+// The terminal width a pane reports ({ mode: 'fit' | 'wide', cols: 20 to 1000 }), or null.
+export function readWidth(value) {
+  if (!value || typeof value !== 'object' || (value.mode !== 'fit' && value.mode !== 'wide')) return null;
+  const cols = Number(value.cols);
+  return { mode: value.mode, cols: Number.isInteger(cols) && cols >= 20 && cols <= 1000 ? cols : 0 };
+}
+
+// The device of a pane's task as its column's header shows it (the same engine tag as the task list): a name (this machine may have none: an older server), the
 // instance id that gives the tag its colour, and whether it is this machine or offline. Anything unusable is null.
 export function readDevice(value) {
   if (!value || typeof value !== 'object') return null;
@@ -187,6 +198,34 @@ export function hiddenEdges({ scrollLeft, scrollWidth, clientWidth }) {
   return { left: scrollLeft > 1, right: scrollLeft + clientWidth < scrollWidth - 1 };
 }
 export const forgetMessage = () => ({ type: MESSAGE_TYPE, event: 'forget' });
+// The actions of a column's header that work inside its pane (the header is the top page's, the page it acts on is the pane's): { type, event, ... }.
+// 'tasks': show the task sheet (`toggle`: close it when it is shown, the header's "Project · session" button); 'width': the terminal width (`mode`
+// 'fit' or 'wide' with `cols`, or nothing: switch Fit <-> Wide, as the normal header's button); 'rename' and 'restart': the session shown, as its row's
+// menu does (restart asks first); 'reload': the pane's page loaded again (the normal header's Refresh). null for anything else.
+export const PARENT_ACTIONS = new Set(['tasks', 'width', 'rename', 'restart', 'reload']);
+export function actionMessage(event, options = {}) {
+  if (!PARENT_ACTIONS.has(event)) return null;
+  const message = { type: MESSAGE_TYPE, event };
+  if (event === 'tasks' && options.toggle === true) message.toggle = true;
+  if (event === 'width' && (options.mode === 'fit' || options.mode === 'wide')) {
+    message.mode = options.mode;
+    const cols = Number(options.cols);
+    if (Number.isInteger(cols) && cols > 0) message.cols = cols;
+  }
+  return message;
+}
+// What a pane reads from such a message (pane.mjs): { event, toggle?, mode?, cols? }, or null when it is not one.
+export function readAction(data) {
+  if (!data || typeof data !== 'object' || data.type !== MESSAGE_TYPE || !PARENT_ACTIONS.has(data.event)) return null;
+  const action = { event: data.event };
+  if (data.event === 'tasks') action.toggle = data.toggle === true;
+  if (data.event === 'width' && (data.mode === 'fit' || data.mode === 'wide')) {
+    action.mode = data.mode;
+    const cols = Number(data.cols);
+    if (Number.isInteger(cols) && cols > 0) action.cols = cols;
+  }
+  return action;
+}
 // What the top page asks a column to show when something in the top page would select a session while the strip is shown (a notification click,
 // a ?openChat= link): { type, event: 'open', sourceKey ('local', 'remote:3' ...), taskId, terminalId? (when known), conversationId? (a chat) }.
 // null when the target is not usable.
@@ -318,4 +357,34 @@ export function columnName(info) {
   if (!info) return '';
   if (info.map) return info.map.title || 'Mind maps';
   return info.title || '';
+}
+
+// ── The header of a column and the column list of the bar ──
+// The words of a column's state in the column list ("focused" wins over the others) and in the header's label.
+export const LIST_WORDS = { focused: 'focused', running: 'running', waiting: 'needs you', idle: 'idle' };
+export const listState = (status, focused) => (focused ? 'focused' : status.state);
+// The name a column's header shows: { title, session } (the map's name and no session for a map column; 'Mind maps' on its list), both '' before
+// the pane said them.
+export function headerName(info) {
+  if (!info) return { title: '', session: '' };
+  if (info.map) return { title: info.map.title || 'Mind maps', session: '' };
+  return { title: info.title || '', session: info.title ? info.session || '' : '' };
+}
+// The accessible name of a column's header: "<task>, <session>, <state>" (e.g. "SELF-TAGENT, main dev, needs you"); `name` is the shown title when the
+// pane said none ("Column 2", "Choose a task"). The words are English; the page translates the parts it knows.
+export function headerLabel(info, words, fallback) {
+  const { title, session } = headerName(info);
+  return [title || fallback, session, words].filter(Boolean).join(', ');
+}
+// The summary of the bar: how many open columns run and how many need the person, and the first of those (in the order shown), or null.
+export function summarize(ids, statusOf) {
+  let running = 0;
+  let waiting = 0;
+  let first = null;
+  for (const id of ids) {
+    const state = statusOf(id).state;
+    if (state === 'running') running += 1;
+    if (state === 'waiting') { waiting += 1; if (!first) first = id; }
+  }
+  return { running, waiting, first };
 }

@@ -86,7 +86,7 @@ async function open(browser, w, { at = '/h5', width = 390 } = {}) {
 }
 // Opens Settings → Devices in `frame` (the page, or a pane's frame) and waits for the row of this machine.
 async function openEngines(frame) {
-  await frame.locator('#h5-open-tasks').waitFor();
+  await frame.locator('#h5-app').waitFor();
   await frame.evaluate(() => window.H5UI.actions.openSettings());
   await frame.locator('#h5-settings').waitFor({ state: 'visible' });
   const summary = frame.locator('#h5-set-devices .MuiAccordionSummary-root');

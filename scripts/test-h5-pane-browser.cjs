@@ -3,7 +3,9 @@
 // keeps its own; a new pane starts at the task list with nothing selected; a pane opens no terminal activity stream and no T-Attention stream and polls
 // the activity instead; a loading pane takes no focus, a click does; `open` from the parent shows that task and terminal; no notice, sound or system notification (the page makes none at all now) and no attention or update reads in a pane; no Update or Attention button; phone layout
 // with desktop input (Enter translates and sends, a click focuses the terminal, no on-screen keyboard buttons), the height of the iframe; no history
-// entries for the top page; the messages to the parent (ready, title, focus) on this origin only; `forget` from the parent clears only that pane's keys,
+// entries for the top page; no page header of its own (the column's header is the top page's); the header's actions from the parent (task sheet,
+// terminal width, rename with its field focused, restart asking first), only from the parent; the messages to the parent (ready, title with the sheet
+// and the width, focus) on this origin only; `forget` from the parent clears only that pane's keys,
 // and the same message from anywhere else is ignored; a top-level `/h5?pane=` is the normal page (streams, reminders, Update and Attention buttons).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -187,8 +189,9 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
       assert.equal(await frame.evaluate(() => window.notes.length + window.tones), 0, 'no notification or sound in a pane');
       assert.equal(await frame.locator('.MuiSnackbar-root').count(), 0, 'no notice in a pane');
     }
-    // The header keeps its own buttons.
-    for (const id of ['#h5-open-tasks', '#h5-task-name', '#h5-session-name', '#h5-term-width', '#h5-refresh']) assert.equal(await a.locator(id).count(), 1, `${id} in the pane header`);
+    // No page header in a pane: the top page draws the column's header and acts on the pane by messages (below).
+    for (const id of ['.h5-header', '#h5-open-tasks', '#h5-task-name', '#h5-session-name', '#h5-term-width', '#h5-refresh']) assert.equal(await a.locator(id).count(), 0, `no ${id} in a pane`);
+    assert.ok(await a.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect().top < 20), 'the terminal starts at the top of the pane');
 
     // ── Phone layout with desktop input, at the iframe's size ──
     const layout = await a.evaluate(() => ({
@@ -205,7 +208,7 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     await until(() => fromPane('a', entry => entry.path === '/api/translate').length === 1, 'Enter translates and sends');
     await a.waitForFunction(() => window.sockets[0].sent.some(item => item.includes('Translated text')));
     // ── No history entries for the top page (the task sheet of pane b and the menus are modals) ──
-    await b.locator('#h5-open-tasks').click();
+    await page.evaluate(() => { document.getElementById('pane-b').focus(); window.frames[1].postMessage({ type: 't-agent-pane', event: 'tasks' }, location.origin); });
     await b.waitForFunction(() => window.H5UI.get().tasksOpen === true);
     await b.waitForTimeout(100);
     assert.equal(await page.evaluate(() => history.length - window.startLength), 0, 'panes push no history entries');
@@ -213,21 +216,60 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     await b.waitForFunction(() => window.H5UI.get().tasksOpen === false);
 
     // ── Messages to the parent ──
+    await until(async () => { const list = (await page.evaluate(() => window.messages)).filter(m => m.frame === 1 && m.data.event === 'title'); return list.length && !list.at(-1).data.sheet; }, 'pane b says its sheet closed');
     const messages = await page.evaluate(() => window.messages);
     const of = (frame, event) => messages.filter(m => m.frame === frame && m.data && m.data.type === 't-agent-pane' && m.data.event === event);
     assert.ok(messages.every(m => m.origin === ORIGIN), 'every message comes from this origin');
     assert.deepEqual(of(0, 'ready').map(m => m.data), [{ type: 't-agent-pane', paneId: 'a', event: 'ready' }]);
     assert.deepEqual(of(1, 'ready').map(m => m.data), [{ type: 't-agent-pane', paneId: 'b', event: 'ready' }]);
     // `target`: the terminal shown, for the state of the column's tile in the rail of a maximized column.
-    assert.deepEqual(of(0, 'title').at(-1).data, { type: 't-agent-pane', paneId: 'a', event: 'title', title: 'Alpha', session: 'Term 1', target: { sourceKey: 'local', taskId: 1, terminalId: 't1' } });
+    // `width`: the terminal width, for the header's width button; `sheet`: only while the task sheet is shown.
+    const alpha = of(0, 'title').at(-1).data;
+    assert.deepEqual({ ...alpha, width: undefined }, { type: 't-agent-pane', paneId: 'a', event: 'title', title: 'Alpha', session: 'Term 1', target: { sourceKey: 'local', taskId: 1, terminalId: 't1' }, width: undefined });
+    assert.equal(alpha.width.mode, 'fit');
+    assert.ok(of(1, 'title').some(m => m.data.sheet === true), 'pane b said its task sheet was shown');
     const beta = of(1, 'title').at(-1).data;
-    assert.deepEqual({ ...beta, target: undefined }, { type: 't-agent-pane', paneId: 'b', event: 'title', title: 'Beta', session: 'Term 3', target: undefined });
+    assert.deepEqual({ ...beta, target: undefined, width: undefined }, { type: 't-agent-pane', paneId: 'b', event: 'title', title: 'Beta', session: 'Term 3', target: undefined, width: undefined });
     assert.equal(beta.target && beta.target.sourceKey, 'local');
     assert.ok(of(0, 'focus').length >= 1 && of(1, 'focus').length >= 1, 'a press in a pane says focus');
     const focusBefore = of(1, 'focus').length;
-    await b.locator('#h5-task-name').click();
+    await b.locator('.h5-xterm:not([hidden]) .xterm-screen').click();
     await until(async () => (await page.evaluate(() => window.messages)).filter(m => m.frame === 1 && m.data.event === 'focus').length > focusBefore, 'focus on a press');
+
+    // ── The column header's actions, from the parent only: task sheet, terminal width, rename, restart ──
+    const act = (data, target = 1) => page.evaluate(([message, index]) => window.frames[index].postMessage({ type: 't-agent-pane', ...message }, location.origin), [data, target]);
+    await a.evaluate(() => window.parent.frames[1].postMessage({ type: 't-agent-pane', event: 'tasks' }, location.origin)); // another pane
+    await page.evaluate(() => window.frames[1].postMessage({ type: 't-agent-pane', event: 'tasks', paneId: 'a' }, location.origin)); // meant for another pane
+    await page.waitForTimeout(200);
+    assert.equal(await b.evaluate(() => window.H5UI.get().tasksOpen), false, 'a header action from anywhere but the parent is ignored');
+    await act({ event: 'tasks', toggle: true });
+    await b.waitForFunction(() => window.H5UI.get().tasksOpen === true);
+    await act({ event: 'tasks', toggle: true });
+    await b.waitForFunction(() => window.H5UI.get().tasksOpen === false);
+    await act({ event: 'width' });
+    await b.waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide');
+    await act({ event: 'width', mode: 'wide', cols: 200 });
+    await b.waitForFunction(() => window.H5UI.get().terminalWidth.cols === 200);
+    await until(async () => (await page.evaluate(() => window.messages)).some(m => m.frame === 1 && m.data.event === 'title' && m.data.width && m.data.width.mode === 'wide' && m.data.width.cols === 200), 'the pane tells its new width');
+    await act({ event: 'width', mode: 'fit' });
+    await b.waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'fit');
+    assert.equal(await page.evaluate(() => localStorage.getItem('h5-terminal-width')), null, 'the width is kept per pane, not for the normal view');
+    // Rename: the task sheet with the name field of the session shown, focused; Enter saves through the same request as the row's menu.
+    await page.evaluate(() => document.getElementById('pane-b').focus());
+    await act({ event: 'rename' });
+    await b.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-term-rename-input' && document.activeElement.value === 'Term 3');
     await page.keyboard.press('Escape');
+    await b.waitForFunction(() => !document.getElementById('h5-term-rename-input'));
+    // Restart: asks first; answered with Cancel nothing is sent.
+    const asked = [];
+    const onDialog = dialog => { asked.push(dialog.message()); void dialog.dismiss(); };
+    page.on('dialog', onDialog);
+    await act({ event: 'restart' });
+    await until(() => asked.length === 1, 'restart asks first');
+    page.off('dialog', onDialog);
+    assert.match(asked[0], /This ends the terminal/);
+    assert.equal(fromPane('b', entry => entry.path.endsWith('/terminal/control')).length, 0, 'nothing restarted after Cancel');
+    if (await b.evaluate(() => window.H5UI.get().tasksOpen)) { await page.keyboard.press('Escape'); await b.waitForFunction(() => window.H5UI.get().tasksOpen === false); }
 
     // ── open: the parent asks a pane to show a task and terminal, or a chat (a `?openChat=` link the top page handles while its columns are shown) ──
     const openIn = (frame, request) => frame.evaluate(data => window.frames[1].postMessage({ type: 't-agent-pane', event: 'open', ...data }, location.origin), request);
@@ -252,7 +294,10 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     await openIn(page, { sourceKey: 'local', taskId: 2, conversationId: 'beta-chat' });
     await b.locator('#h5-agent .ac-bubble', { hasText: 'hello agent' }).waitFor();
     assert.equal(await b.evaluate(() => window.H5UI.get().taskName), 'Beta');
-    assert.equal(await b.locator('#h5-session-name').textContent(), 'Beta chat', 'the header names the chat');
+    assert.equal(await b.evaluate(() => window.H5UI.get().sessionName), 'Beta chat', 'the column header is told the chat');
+    await until(async () => (await page.evaluate(() => window.messages)).some(m => m.frame === 1 && m.data.event === 'title' && m.data.session === 'Beta chat' && !m.data.target), 'the title names the chat, with no terminal');
+    assert.ok(await b.evaluate(() => document.getElementById('h5-agent').getBoundingClientRect().top < 1), 'the chat starts at the top of the pane (no page header above it)');
+    assert.equal(await b.evaluate(() => window.H5UI.actions.paneRename()), false, 'rename is for a terminal, not a chat');
     assert.equal(await b.evaluate(() => window.streams.length), 1, 'the shown chat keeps its event stream');
     assert.equal(await a.evaluate(() => window.H5UI.get().taskName), 'Alpha', 'pane a is not moved');
 

@@ -224,3 +224,39 @@ test('a pane without a stored map opens nothing and stores nothing', async () =>
   assert.equal(calls, 0);
   assert.equal(win.localStorage.getItem('pane:b:h5-mindmap'), null);
 });
+
+test('the column header acts inside the pane: task sheet, terminal width, rename, restart and reload, only from the parent', async () => {
+  const { startPane } = await load();
+  const win = fakeWindow({ search: '?pane=a' });
+  const doc = fakeDoc();
+  const ui = fakeUi({ taskName: 'Fix', sessionName: 'T1', wide: false, tasksOpen: true, terminalWidth: { mode: 'fit', cols: 160, current: 45 }, sourceLabel: 'K01' });
+  const calls = [];
+  for (const name of ['paneTasks', 'setTerminalWidth', 'toggleTerminalWidth', 'paneRename', 'paneRestart', 'refresh']) ui.actions[name] = (...args) => { calls.push([name, ...args]); };
+  const pane = startPane(ui, 'a', { win, doc });
+  doc.fire('DOMContentLoaded');
+  // The title tells the header whether the task sheet is shown, the terminal width, and a remote service without a tag as a device.
+  assert.deepEqual(win.posted.find(entry => entry.message.event === 'title').message, {
+    type: 't-agent-pane', paneId: 'a', event: 'title', title: 'Fix', session: 'T1', device: { name: 'K01', instanceId: '', local: false, offline: false }, sheet: true, width: { mode: 'fit', cols: 160 },
+  });
+  ui.set({ wide: true, sidebarCollapsed: true, terminalWidth: null });
+  assert.deepEqual(win.posted.at(-1).message, { type: 't-agent-pane', paneId: 'a', event: 'title', title: 'Fix', session: 'T1', device: { name: 'K01', instanceId: '', local: false, offline: false } }, 'a folded sidebar is no sheet; no terminal, no width');
+  const send = (data, from = win.parent, origin = 'http://h5.test') => win.fire('message', { source: from, origin, data: { type: 't-agent-pane', ...data } });
+  send({ event: 'tasks', toggle: true }, {});
+  send({ event: 'rename' }, win.parent, 'http://evil.test');
+  send({ event: 'restart', paneId: 'b' });
+  assert.deepEqual(calls, [], 'from elsewhere, another origin or for another pane: nothing');
+  assert.equal(pane.engaged(), false);
+  send({ event: 'tasks', toggle: true });
+  assert.equal(pane.engaged(), true, 'a header action is the person using this column (the sheet may take the focus)');
+  send({ event: 'tasks' });
+  send({ event: 'width' });
+  send({ event: 'width', mode: 'wide', cols: 200 });
+  send({ event: 'rename' });
+  send({ event: 'restart' });
+  send({ event: 'reload' });
+  send({ event: 'delete' });
+  assert.deepEqual(calls, [
+    ['paneTasks', { toggle: true }], ['paneTasks', { toggle: false }], ['toggleTerminalWidth'], ['setTerminalWidth', { mode: 'wide', cols: 200 }],
+    ['paneRename'], ['paneRestart'], ['refresh'],
+  ]);
+});

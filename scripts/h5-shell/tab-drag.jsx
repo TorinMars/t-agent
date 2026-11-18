@@ -1,20 +1,16 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { DRAG_MOVE_PX, HOLD_MS, HOLD_SLOP_PX, SETTLE_MS, SHIFT_MS, reducedMotion } from './list-drag.jsx';
 
-// Sorting a row of tabs by dragging them sideways (`useTabDrag`, the column tabs of the multi-column view, Columns.jsx), and sliding a row of boxes to
-// their new places after an order change (`useFlipX`, the tabs and the columns themselves). The feel is the one of the vertical lists (list-drag.jsx):
-// a finger held still for HOLD_MS picks a tab up (a short vibration), a finger that moves more than HOLD_SLOP_PX before that scrolls the tab row and a
-// short tap is a tap; a mouse picks it up after HOLD_MS or a move of DRAG_MOVE_PX. While dragging, a lifted copy of the tab follows the pointer along the
-// row, the tab's place is an empty dashed slot of the same width and the other tabs slide out of the way (transforms only: the tabs are measured once when
-// the drag starts). Near an edge of the row it scrolls. The drop calls `drop(id, index)`; Escape puts the tab back; the click after a drag is swallowed.
-// `prefers-reduced-motion: reduce` makes every move instant.
+// Sorting the columns of the multi-column view by dragging their headers sideways (`useTabDrag`, Columns.jsx), and sliding a row of boxes to their new
+// places after an order change (`useFlipX`, the columns themselves). The feel is the one of the vertical lists (list-drag.jsx): a finger held still for
+// HOLD_MS picks a header up (a short vibration), a finger that moves more than HOLD_SLOP_PX before that scrolls the strip and a short tap is a tap; a
+// mouse picks it up after HOLD_MS or a move of DRAG_MOVE_PX. While dragging, a lifted copy of the header follows the pointer along the strip, the
+// column's place is dimmed with a dashed outline and a primary line shows where it would land; the columns themselves do not move until the drop (an
+// iframe is never moved, so nothing reloads), and then slide to their new places (useFlipX). Near an edge of the strip it scrolls. The drop calls
+// `drop(id, index)`; Escape puts the column back; the click after a drag is swallowed. `prefers-reduced-motion: reduce` makes every move instant.
 const EDGE_PX = 32;
 const MAX_SCROLL_PX = 12;
 
-const slide = (node, x, ms) => {
-  node.style.transition = ms ? `transform ${ms}ms ease-out` : 'none';
-  node.style.transform = x ? `translate3d(${x}px, 0, 0)` : '';
-};
 const unslide = node => { node.style.transition = ''; node.style.transform = ''; };
 // The slide after an order change (FLIP) is a Web Animation, as in list-drag.jsx: React may move a tab's element in the DOM, which would cancel a CSS
 // transition on it, while an animation goes on. A change that comes while the last one slides starts each box from where it is seen (`slidBy`).
@@ -69,68 +65,61 @@ export function useFlipX(ref, spec) {
   });
 }
 
-// The drag of one tab of `rowRef` (the scrolling tab row, the tabs' offsetParent; each tab is `.h5-column-tab[data-pane-id]`). The lifted copy is put in
-// `hostRef`. `drop(id, index)`: the tab was dropped at `index` (a new place); `say(text)`: the live region. Returns the props of a tab and, for useFlipX,
-// `takeDropped` and `busy`.
-export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-tab-close' }) {
+// The drag of one column of `rowRef` (the scrolling strip, the columns' offsetParent; each column is `.h5-column[data-pane-id]` and its header
+// `.h5-column-head`). The lifted copy of the header is put in `hostRef`, the insertion line in the strip. `drop(id, index)`: the column was dropped at
+// `index` (a new place); `say(text)`: the live region. Returns the props of a header (`hold()`) and `busy` (a drag is going on), for useFlipX.
+export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-act' }) {
   const live = useRef(null);
-  const dropped = useRef(null);
   useEffect(() => () => { if (live.current) live.current.abort(); }, []);
-  // A tab held until it was picked up keeps the finger: the row must not scroll under it.
+  // A header held until it was picked up keeps the finger: the strip must not scroll under it.
   useEffect(() => {
     const row = rowRef.current;
     if (!row) return undefined;
     const keep = event => { if (live.current && live.current.picked && event.cancelable) event.preventDefault(); };
     row.addEventListener('touchmove', keep, { passive: false });
     return () => row.removeEventListener('touchmove', keep);
-  }, [rowRef]);
+  });
 
-  const begin = (tab, pointer) => {
+  const begin = (head, pointer) => {
     if (live.current) live.current.abort();
     const row = rowRef.current;
     const host = hostRef.current;
-    if (!row || !host) return;
-    const id = tab.dataset.paneId;
-    const s = { id, picked: false, frame: 0, timer: 0, tabs: [], from: 0, index: 0, x: pointer.x, motion: !reducedMotion() };
+    const column = head.closest('.h5-column');
+    if (!row || !host || !column) return;
+    const id = column.dataset.paneId;
+    const s = { id, picked: false, frame: 0, timer: 0, cols: [], from: 0, index: 0, x: pointer.x, motion: !reducedMotion() };
     live.current = s;
     const place = (left, animate) => {
       s.float.style.transition = animate && s.motion ? `transform ${SETTLE_MS}ms ease-out` : 'none';
       s.float.style.transform = `translate3d(${left - s.originX}px, ${s.top}px, 0)`;
     };
-    function set(item, shift) {
-      if (item.shift === shift) return;
-      item.shift = shift;
-      slide(item.el, shift, s.motion ? SHIFT_MS : 0);
-    }
-    // The slot moves to `s.index` (the number of the other tabs before it); the tabs it passed slide by its width and the gap.
-    const arrange = () => {
-      const moved = s.tabs[s.from].width + s.gap;
-      let slot = 0;
-      s.tabs.forEach((item, j) => {
-        if (j === s.from) return;
-        let shift = 0;
-        if (j < s.from && j >= s.index) { shift = moved; slot -= item.width + s.gap; }
-        if (j > s.from && j <= s.index) { shift = -moved; slot += item.width + s.gap; }
-        set(item, shift);
-      });
-      set(s.tabs[s.from], slot);
+    // Where the column would start (in the strip's content) at `index`, and where the line goes: before the column it takes the place of, or after it.
+    const landing = index => {
+      const cols = s.cols;
+      if (index === s.from) return { left: cols[s.from].left, line: null };
+      if (index < s.from) return { left: cols[index].left, line: cols[index].left };
+      return { left: cols[index].left + cols[index].width - cols[s.from].width, line: cols[index].left + cols[index].width };
     };
-    const slotLeft = () => { const slot = s.tabs[s.from]; return s.box.left + row.clientLeft + slot.left + slot.shift - row.scrollLeft; };
-    // The copy follows the pointer inside the row; the slot goes where the copy's left edge passed the middle of a tab before it, or its right edge the
-    // middle of a tab after it.
+    const showLine = () => {
+      const { line } = landing(s.index);
+      s.line.hidden = line === null;
+      if (line !== null) s.line.style.transform = `translate3d(${Math.round(line - 1.5)}px, 0, 0)`;
+    };
+    // The copy follows the pointer inside the strip; the column lands where the copy's left edge passed the middle of a column before it, or its right
+    // edge the middle of a column after it.
     const aim = () => {
       const left = Math.min(Math.max(s.x - s.grab, s.box.left - s.width / 2), s.box.right - s.width / 2);
       place(left, false);
       const start = left - s.box.left - row.clientLeft + row.scrollLeft;
       const end = start + s.width;
       let index = 0;
-      s.tabs.forEach((item, j) => {
+      s.cols.forEach((item, j) => {
         const middle = item.left + item.width / 2;
         if ((j < s.from && start >= middle) || (j > s.from && end > middle)) index += 1;
       });
-      if (index !== s.index) { s.index = index; arrange(); }
+      if (index !== s.index) { s.index = index; showLine(); }
     };
-    // Near an edge of the row it scrolls, faster the closer the pointer is.
+    // Near an edge of the strip it scrolls, faster the closer the pointer is.
     const scroll = () => {
       s.frame = 0;
       if (!s.picked) return;
@@ -144,28 +133,27 @@ export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-ta
       s.frame = requestAnimationFrame(scroll);
     };
     const pick = () => {
-      s.tabs = [...row.querySelectorAll('.h5-column-tab[data-pane-id]')].map(el => ({ el, id: el.dataset.paneId, left: el.offsetLeft, width: el.offsetWidth, shift: 0 }));
-      for (const item of s.tabs) unflip(item.el);
-      s.from = s.index = s.tabs.findIndex(item => item.el === tab);
-      if (s.from < 0) { stop(); live.current = null; return; }
+      s.cols = [...row.querySelectorAll(':scope > .h5-column[data-pane-id]')].filter(el => el.offsetParent && !el.hasAttribute('data-railed'))
+        .map(el => ({ el, id: el.dataset.paneId, left: el.offsetLeft, width: el.offsetWidth })).sort((a, b) => a.left - b.left);
+      for (const item of s.cols) unflip(item.el);
+      s.from = s.index = s.cols.findIndex(item => item.el === column);
+      if (s.from < 0 || s.cols.length < 2) { stop(); live.current = null; return; }
       s.picked = true;
-      s.gap = s.tabs.length > 1 ? Math.max(0, s.tabs[1].left - s.tabs[0].left - s.tabs[0].width) : 0;
       s.box = row.getBoundingClientRect();
-      const box = tab.getBoundingClientRect();
+      const box = head.getBoundingClientRect();
       s.width = box.width;
       s.grab = s.x - box.left;
       // The lifted copy: `position: fixed`, where its (0, 0) really is gets measured (an ancestor may make a containing block).
       const float = document.createElement('div');
-      float.className = 'h5-column-tab-float';
+      float.className = 'h5-column-head-float';
       float.setAttribute('aria-hidden', 'true');
       float.inert = true;
       const body = document.createElement('div');
-      body.className = 'h5-column-tab-float-body';
-      const copy = tab.cloneNode(true);
-      copy.removeAttribute('data-drag-slot');
+      body.className = 'h5-column-head-float-body';
+      const copy = head.cloneNode(true);
       for (const node of copy.querySelectorAll('.MuiTouchRipple-root')) node.remove();
       for (const node of copy.querySelectorAll('.Mui-focusVisible')) node.classList.remove('Mui-focusVisible');
-      for (const node of copy.querySelectorAll('[id]')) node.removeAttribute('id');
+      for (const node of [copy, ...copy.querySelectorAll('[id]')]) node.removeAttribute('id');
       body.appendChild(copy);
       float.appendChild(body);
       float.style.width = `${box.width}px`;
@@ -176,12 +164,18 @@ export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-ta
       s.top = box.top - origin.top;
       s.float = float;
       s.body = body;
+      const line = document.createElement('div');
+      line.className = 'h5-column-drop-line';
+      line.setAttribute('aria-hidden', 'true');
+      line.hidden = true;
+      row.appendChild(line);
+      s.line = line;
       place(box.left, false);
-      tab.setAttribute('data-drag-slot', 'true');
+      column.setAttribute('data-drag-slot', 'true');
       row.setAttribute('data-dragging', 'true');
       document.documentElement.setAttribute('data-column-drag', '');
       void body.offsetWidth;
-      body.classList.add('h5-column-tab-float-lifted');
+      body.classList.add('h5-column-head-float-lifted');
     };
     const stop = () => {
       if (s.frame) cancelAnimationFrame(s.frame);
@@ -195,32 +189,29 @@ export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-ta
       window.removeEventListener('contextmenu', onMenu, true);
       row.removeAttribute('data-dragging');
       document.documentElement.removeAttribute('data-column-drag');
+      if (s.line) { s.line.remove(); s.line = null; }
     };
-    // The end of the settle: the copy goes, the tab shows again in its place.
+    // The end of the settle: the copy goes, the column shows again in full.
     const clear = () => {
       if (s.float) s.float.remove();
-      tab.removeAttribute('data-drag-slot');
-      if (dropped.current && dropped.current.owner === s) { // no commit moved the tabs (nothing changed): their slides end here
-        for (const node of dropped.current.nodes) unslide(node);
-        dropped.current = null;
-      }
+      column.removeAttribute('data-drag-slot');
       if (live.current === s) live.current = null;
     };
-    // Drop (`save`) or put back: the copy settles into the slot, the order is saved at once, and the commit that moves the tabs clears their slides from
-    // where they are shown (useFlipX), so nothing jumps.
+    // Drop (`save`) or put back: the copy settles where the column lands, the order is saved at once and the columns slide there (useFlipX).
     const end = save => {
+      if (!s.picked) { stop(); if (live.current === s) live.current = null; return; }
+      if (!save) s.index = s.from;
+      const target = landing(s.index).left;
+      const left = s.box.left + row.clientLeft + target - row.scrollLeft;
       stop();
-      if (!s.picked) { if (live.current === s) live.current = null; return; }
-      if (!save && s.index !== s.from) { s.index = s.from; arrange(); }
       s.picked = false;
-      place(slotLeft(), true);
-      s.body.classList.remove('h5-column-tab-float-lifted');
-      dropped.current = { owner: s, nodes: s.tabs.map(item => item.el), at: new Map(s.tabs.map(item => [item.id, item.left + item.shift])) };
+      place(left, true);
+      s.body.classList.remove('h5-column-head-float-lifted');
       if (save && s.index !== s.from) drop(id, s.index);
       setTimeout(clear, s.motion ? SETTLE_MS + 20 : 0);
     };
-    s.abort = () => { stop(); if (s.picked) { s.picked = false; for (const item of s.tabs) unslide(item.el); } clear(); };
-    // The click after a drag (a mouse, or the release of a held finger) lands on the tab: it is swallowed once.
+    s.abort = () => { stop(); s.picked = false; clear(); };
+    // The click after a drag (a mouse, or the release of a held finger) lands on the header: it is swallowed once.
     const swallowClick = () => {
       const eat = event => { event.preventDefault(); event.stopPropagation(); };
       const done = () => { window.removeEventListener('click', eat, { capture: true }); window.removeEventListener('pointerdown', done, { capture: true }); };
@@ -233,7 +224,7 @@ export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-ta
       s.x = event.clientX;
       if (!s.picked) {
         const far = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y);
-        if (!pointer.mouse) { if (far > HOLD_SLOP_PX) { stop(); live.current = null; } return; } // the finger scrolls the row
+        if (!pointer.mouse) { if (far > HOLD_SLOP_PX) { stop(); live.current = null; } return; } // the finger scrolls the strip
         if (far <= DRAG_MOVE_PX) return;
         pick();
         if (!s.picked) return;
@@ -270,7 +261,7 @@ export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-ta
     }, HOLD_MS);
   };
   const primary = event => event.isPrimary && !(event.pointerType === 'mouse' && event.button !== 0);
-  // The props of a tab: the whole tab is held, except its close button.
+  // The props of a header: the whole header is held, except its action buttons (fit, maximize, "⋯", close).
   const hold = () => ({
     onPointerDown: event => {
       if (!primary(event) || (event.target.closest && event.target.closest(ignore))) return;
@@ -278,11 +269,5 @@ export function useTabDrag(rowRef, hostRef, { drop, say, ignore = '.h5-column-ta
     },
     onContextMenu: event => { if (live.current) event.preventDefault(); },
   });
-  const takeDropped = () => {
-    const value = dropped.current;
-    if (!value) return null;
-    dropped.current = null;
-    return value;
-  };
-  return { hold, takeDropped, busy: () => Boolean(live.current && live.current.picked) };
+  return { hold, busy: () => Boolean(live.current && live.current.picked) };
 }

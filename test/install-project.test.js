@@ -15,7 +15,8 @@ let nextPort = 43000 + Math.floor(Math.random() * 15000);
 const freePort = () => String(nextPort++);
 
 // Put the real install.sh into a temporary project directory and replace npm / pm2 / launchctl with stubs.
-function sandbox({ withPm2 = true, npmInstallsPm2 = true } = {}) {
+// The pm2 stub knows one module, pm2-logrotate: `logrotate` is 'missing' (pm2 install adds it), 'installed' (already there) or 'fails' (pm2 install fails).
+function sandbox({ withPm2 = true, npmInstallsPm2 = true, logrotate = 'missing' } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'install-project-')));
   const app = path.join(root, 'proj');
   const home = path.join(root, 'home');
@@ -30,10 +31,15 @@ function sandbox({ withPm2 = true, npmInstallsPm2 = true } = {}) {
   const stub = (name, body) => fs.writeFileSync(path.join(stubs, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   const pm2Body = `echo "pm2 $*" >> "${calls}"
 case "$1" in
-  describe) [ -f "${root}/pm2-running" ] && exit 0 || exit 1 ;;
+  describe)
+    if [ "$2" = "pm2-logrotate" ]; then [ -f "${root}/pm2-logrotate" ] && exit 0 || exit 1; fi
+    [ -f "${root}/pm2-running" ] && exit 0 || exit 1 ;;
   start) touch "${root}/pm2-running" ;;
+  install) [ -f "${root}/pm2-install-fails" ] && exit 1; touch "${root}/pm2-logrotate" ;;
 esac
 exit 0`;
+  if (logrotate === 'installed') fs.writeFileSync(path.join(root, 'pm2-logrotate'), '');
+  if (logrotate === 'fails') fs.writeFileSync(path.join(root, 'pm2-install-fails'), '');
   stub('npm', `echo "npm $*" >> "${calls}"
 [ "$1 $2 $3" = "config get prefix" ] && echo "${root}/npm-prefix"
 ${npmInstallsPm2 ? `if [ "$1 $2" = "install -g" ]; then printf '#!/bin/sh\\n${pm2Body.replace(/\n/g, '\\n').replace(/'/g, "'\\''")}\\n' > "${stubs}/pm2"; chmod +x "${stubs}/pm2"; fi` : '[ "$1 $2" = "install -g" ] && exit 1'}
@@ -66,6 +72,61 @@ test('A fresh install is managed by PM2: it starts and saves with the project di
     assert.match(again.stdout, /Keeping the existing/);
     assert.ok(box.log().includes('pm2 restart t-agent --update-env'), 'The second run restarts instead of starting again');
     assert.equal(box.log().split('pm2 start').length - 1, 1);
+  } finally { box.cleanup(); }
+});
+
+const ROTATION = ['pm2 install pm2-logrotate', 'pm2 set pm2-logrotate:max_size 10M', 'pm2 set pm2-logrotate:retain 5'];
+
+test('A service newly registered in PM2 gets log rotation once: pm2-logrotate at 10M with 5 files kept, after the service is started and saved', { skip: !enabled }, () => {
+  const box = sandbox();
+  try {
+    const result = box.run(['--port', freePort()]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const calls = box.log().split('\n').filter(line => line.startsWith('pm2 '));
+    const at = name => calls.findIndex(line => line.startsWith(name));
+    assert.ok(at('pm2 start') >= 0 && at('pm2 save') > at('pm2 start'));
+    assert.ok(at('pm2 describe pm2-logrotate') > at('pm2 save'), 'rotation is looked at only after the service is up and saved');
+    assert.deepEqual(calls.slice(at('pm2 install')), ROTATION, calls.join('\n'));
+    assert.match(result.stdout, /Setting up PM2 log rotation/);
+    assert.match(result.stdout, /PM2 log rotation is on \(pm2-logrotate: max_size 10M, retain 5\)/);
+
+    const again = box.run([]);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.ok(box.log().includes('pm2 restart t-agent --update-env'));
+    assert.equal(box.log().split('pm2 install').length - 1, 1, 'a service that was already in PM2 is not touched again');
+    assert.equal(box.log().split('pm2 set').length - 1, 2);
+    assert.doesNotMatch(again.stdout, /log rotation/);
+  } finally { box.cleanup(); }
+});
+
+test('Log rotation: a pm2-logrotate that is already installed keeps its settings, and a failed setup only warns with the command to run later', { skip: !enabled }, () => {
+  const present = sandbox({ logrotate: 'installed' });
+  try {
+    const result = present.run(['--port', freePort()]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.ok(present.log().includes('pm2 start'));
+    assert.ok(!present.log().includes('pm2 install'), present.log());
+    assert.ok(!present.log().includes('pm2 set'), 'settings the person chose are not overwritten');
+    assert.match(result.stdout, /pm2-logrotate is already installed; its settings were left as they are/);
+  } finally { present.cleanup(); }
+
+  const failing = sandbox({ logrotate: 'fails' });
+  try {
+    const result = failing.run(['--port', freePort()]);
+    assert.equal(result.status, 0, 'the install does not fail: ' + result.stdout + result.stderr);
+    assert.ok(failing.log().includes('pm2 install pm2-logrotate'));
+    assert.ok(!failing.log().includes('pm2 set'), 'nothing is configured for a module that is not there');
+    assert.match(result.stderr, /Warning: PM2 log rotation was not set up\. .*run: pm2 install pm2-logrotate && pm2 set pm2-logrotate:max_size 10M && pm2 set pm2-logrotate:retain 5/);
+    assert.match(result.stdout, /Service check: pm2 status t-agent/, 'the service is running all the same');
+  } finally { failing.cleanup(); }
+});
+
+test('Log rotation is left alone when PM2 does not manage the service', { skip: !enabled }, () => {
+  const box = sandbox();
+  try {
+    assert.equal(box.run(['--no-service', '--port', freePort()]).status, 0);
+    assert.equal(box.run(['--system-service', '--port', freePort()]).status, 0);
+    assert.ok(!box.log().includes('pm2-logrotate'), box.log());
   } finally { box.cleanup(); }
 });
 

@@ -403,6 +403,26 @@ ensure_pm2() {
   command -v pm2 >/dev/null 2>&1
 }
 
+# PM2 keeps every line the service prints (~/.pm2/logs/t-agent-out.log) and never trims it. pm2-logrotate is PM2's own module for that, and it serves
+# every app of this PM2. It is set up once, for a service newly registered in PM2, and only when the module is not there yet: an existing one keeps
+# its settings. Never fatal, the service runs without it. Existing installs: the same command by hand (README, "PM2 log rotation").
+PM2_LOGROTATE_COMMAND="pm2 install pm2-logrotate && pm2 set pm2-logrotate:max_size 10M && pm2 set pm2-logrotate:retain 5"
+ensure_pm2_logrotate() {
+  if pm2 describe pm2-logrotate >/dev/null 2>&1 || [ -d "${PM2_HOME:-$HOME/.pm2}/modules/pm2-logrotate" ]; then
+    printf 'PM2 log rotation: pm2-logrotate is already installed; its settings were left as they are.\n'
+    return 0
+  fi
+  printf 'Setting up PM2 log rotation (pm2-logrotate: a new file at 10 MB, 5 old files kept)……\n'
+  if pm2 install pm2-logrotate </dev/null >/dev/null 2>&1 \
+    && pm2 set pm2-logrotate:max_size 10M >/dev/null 2>&1 \
+    && pm2 set pm2-logrotate:retain 5 >/dev/null 2>&1; then
+    printf 'PM2 log rotation is on (pm2-logrotate: max_size 10M, retain 5).\n'
+  else
+    printf 'Warning: PM2 log rotation was not set up. The service works without it, but its log keeps growing; to set it up later, run: %s\n' "$PM2_LOGROTATE_COMMAND" >&2
+  fi
+  return 0
+}
+
 port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 # Managed by PM2 by default; old installs that already registered a system service (LaunchAgent / systemd) keep using it, so a silent switch does not leave two instances fighting over the port.
@@ -428,13 +448,17 @@ if [ "$INSTALL_SERVICE" -eq 1 ] && [ "$SERVICE_MANAGER" = "pm2" ]; then
     printf 'Warning: port %s is used by another process, so the service was not started. Change the port (edit PORT in .env) or stop the other process, then run: pm2 start %s --name %s --cwd %s\n' "$APP_PORT" "$ENTRY_SCRIPT" "$SERVICE_BASENAME" "$APP_DIR" >&2
     SERVICE_HINT="$MANUAL_START"
   else
+    PM2_NEW_SERVICE=0
     if pm2 describe "$SERVICE_BASENAME" >/dev/null 2>&1; then
       pm2 restart "$SERVICE_BASENAME" --update-env
     else
       pm2 start "$ENTRY_SCRIPT" --name "$SERVICE_BASENAME" --cwd "$APP_DIR"
+      PM2_NEW_SERVICE=1
     fi
     pm2 save >/dev/null 2>&1 || true
     SERVICE_STARTED=1
+    # After the service is up and saved, so stopping here loses nothing.
+    if [ "$PM2_NEW_SERVICE" -eq 1 ]; then ensure_pm2_logrotate; fi
     SERVICE_HINT="pm2 status $SERVICE_BASENAME (logs: pm2 logs $SERVICE_BASENAME; for start on boot run pm2 startup, follow its prompt, then pm2 save)"
   fi
 elif [ "$INSTALL_SERVICE" -eq 1 ] && [ "$PLATFORM" = "macOS" ]; then

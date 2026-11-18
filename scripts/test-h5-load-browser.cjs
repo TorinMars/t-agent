@@ -1,6 +1,7 @@
 // How the phone / computer page (/h5) loads, in real Chromium: the scripts are deferred and run in their order, a static skeleton is painted before
 // they run and has the same bars as the shell, the start requests go out together and the remembered terminal's socket opens before its list
-// arrives (and is closed when that terminal is gone), and the Chinese dictionaries are loaded only for Chinese (also after a language switch).
+// arrives (and is closed when that terminal is gone), and the Chinese dictionaries are loaded only for Chinese (also after a language switch), by their
+// own hash when i18n.js fetches them. The small scripts come as the two combined requests of lib/static-assets.js (scripts/test-h5-assets-browser.cjs).
 // The page is served through lib/static-assets.js, like server.js does (content-hash URLs, dictionaries by the ta-lang cookie).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -55,6 +56,8 @@ async function openPage(browser, { viewport = { width: 390, height: 844 }, touch
     }
     if (/^\/(js|css|vendor)\//.test(url.pathname)) {
       if (scriptsHeld && url.pathname === '/js/h5-shell.js') await scriptsHeld;
+      const combined = assets.combinedScript(url.pathname); // a run of small scripts in one request (data-combine in h5.html)
+      if (combined) return route.fulfill({ contentType: TYPES['.js'], body: combined.body });
       return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
     }
     if (url.pathname.startsWith('/api/')) mark(`ask ${url.pathname}`);
@@ -179,7 +182,10 @@ const asked = (log, what) => at(log, `ask ${what}`);
     const english = await openPage(browser, { viewport: { width: 1440, height: 900 } });
     await english.page.locator('#h5-terminal').waitFor({ state: 'attached' });
     assert.ok(!english.requests.some(url => url.includes('i18n-zh')), `no dictionary for English: ${english.requests.filter(url => url.includes('i18n')).join(', ')}`);
-    assert.ok(english.requests.includes(english.requests.find(url => url.startsWith('/js/i18n.js?v='))), 'i18n.js itself is loaded, with its hash');
+    // i18n.js itself is loaded: it is the first file of the page's first combined script.
+    const firstCombined = english.requests.find(url => /^\/js\/combined-[0-9a-f]{12}\.js\?v=[0-9a-f]{16}$/.test(url));
+    assert.ok(firstCombined && assets.combinedScript(firstCombined.split('?')[0]).files[0] === '/js/i18n.js', `i18n.js is loaded, in a combined script: ${english.requests.join(', ')}`);
+    assert.ok(!english.requests.some(url => /^\/js\/(i18n|toast|terminal-owner|agent-chat|mindmap)\.js/.test(url)), 'the small scripts are not asked for one by one');
     await Promise.all([english.page.waitForEvent('load'), english.page.evaluate(() => I18n.toggle())]);
     await english.page.locator('#h5-terminal').waitFor({ state: 'attached' });
     const loaded = english.requests.filter(url => url.includes('i18n-zh'));
@@ -199,6 +205,10 @@ const asked = (log, what) => at(log, `ask ${what}`);
     await old.page.locator('#h5-terminal').waitFor({ state: 'attached' });
     await old.page.waitForFunction(() => I18n.t('Settings') !== 'Settings');
     await old.page.waitForFunction(() => /[\u4e00-\u9fff]/.test(document.body.innerText));
+    // They are asked for by the hash the page carries for them (window.TAAsset), so they are cached for a year.
+    const fetched = old.requests.filter(url => url.includes('i18n-zh'));
+    assert.deepEqual(fetched, ['/js/i18n-zh-ui.js', '/js/i18n-zh-server.js', '/js/i18n-zh-extra.js'].map(file => assets.assetUrl(file)), 'the fetched dictionaries carry their own hash');
+    assert.ok(fetched.every(url => /\?v=[0-9a-f]{16}$/.test(url)));
     assert.ok(await old.context.cookies(ORIGIN).then(list => list.some(item => item.name === 'ta-lang' && item.value === 'zh')), 'the cookie is set for the next page');
     await old.context.close();
 

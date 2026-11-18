@@ -1,6 +1,7 @@
 // Chat-style view of a Claude Code / Codex conversation (instead of a terminal), used by the page (public/js/h5.js).
 // This file is small and loaded with every page; the view itself (React + assistant-ui, source in scripts/agent-chat/) is the bundle
-// agent-chat-ui.js, fetched when the first chat is mounted.
+// agent-chat-ui.js, fetched with its style sheet (css/agent-chat.css) when the first chat is mounted. The marks this file draws (icon, chatIcon) are
+// styled by the page's own style sheet (css/h5.css), because they also show in lists, before any chat is opened.
 //
 //   const chat = AgentChat.mount(element, { api, base, conversation, onClose });  (also: onTitle, onOpenChat, notify, draft)
 //   chat.setForeground(true | false): the page shows the chat on a screen the person uses (the T-Attention notifiers send nothing for its session)
@@ -73,22 +74,44 @@ const AgentChat = (() => {
     return api.post(`${base}/conversations`, { agent, ...resumed, ...(name ? { title: name } : {}) });
   }
 
-  // The bundle sits next to this script (same ?v= release query, so it is cached like the other scripts).
-  const BUNDLE_URL = (() => {
-    const script = document.currentScript;
-    return script && script.src ? script.src.replace(/agent-chat\.js/, 'agent-chat-ui.js') : '/js/agent-chat-ui.js';
-  })();
+  // The bundle and its style sheet are asked for by the hash of their own content, which the page carries (window.TAAsset, put there by
+  // lib/static-assets.js), so they are cached for a year like the page's other scripts. Without it (a page that was not served that way, as in most
+  // browser tests) the plain address is used, which is revalidated each time.
+  const assetUrl = path => (typeof window.TAAsset === 'function' ? window.TAAsset(path) : path);
+  const BUNDLE_PATH = '/js/agent-chat-ui.js';
+  const STYLE_PATH = '/css/agent-chat.css';
+  const FAILED = 'The chat view could not be loaded';
+  function loadNode(node, place) {
+    return new Promise((resolve, reject) => {
+      node.onload = resolve;
+      node.onerror = () => { node.remove(); reject(new Error(FAILED)); }; // removed, so the next try adds a new one
+      place(node);
+    });
+  }
+  function loadScript() {
+    if (typeof AgentChatUI !== 'undefined') return Promise.resolve();
+    const script = document.createElement('script');
+    script.src = assetUrl(BUNDLE_PATH);
+    return loadNode(script, node => document.head.append(node));
+  }
+  // The chat's style sheet is not in the page: it is loaded here, and the chat is drawn only after it has arrived (no unstyled chat). It goes right
+  // after the page's own style sheet, where its tag used to be, so rules of the same weight keep their order. A page that links it itself is left alone.
+  function loadStyle() {
+    if (document.querySelector(`link[rel~="stylesheet"][href*="${STYLE_PATH}"]`)) return Promise.resolve();
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = assetUrl(STYLE_PATH);
+    return loadNode(link, node => {
+      const page = document.querySelector('link[rel~="stylesheet"][href*="/css/h5.css"]');
+      if (page) page.after(node); else document.head.append(node);
+    });
+  }
   let bundle = null;
   function loadBundle() {
-    if (typeof AgentChatUI !== 'undefined') return Promise.resolve(AgentChatUI);
     if (!bundle) {
-      bundle = new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = BUNDLE_URL;
-        script.onload = () => resolve(AgentChatUI);
-        script.onerror = () => { bundle = null; reject(new Error('The chat view could not be loaded')); };
-        document.head.append(script);
-      });
+      const loading = Promise.all([loadScript(), loadStyle()]).then(() => AgentChatUI);
+      loading.catch(() => { if (bundle === loading) bundle = null; }); // a failed load is tried again by the next chat
+      bundle = loading;
     }
     return bundle;
   }

@@ -13,10 +13,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Tasks">
   <meta name="theme-color" content="#1e1e1e">
-  <!-- First paint: every script is deferred (they run in this order after the page is parsed), so the page is painted as soon as the three style sheets
+  <!-- First paint: every script is deferred (they run in this order after the page is parsed), so the page is painted as soon as the two style sheets
        below arrive, with this inline style and the skeleton in #h5-root. The skeleton has the shell's dark background and its header bar (and the sidebar edge on a wide screen) at the same place, so
        nothing jumps when the shell replaces it (React empties #h5-root on its first render). Keep the sizes in step with the shell; the load test
-       (scripts/test-h5-load-browser.cjs) compares them. -->
+       (scripts/test-h5-load-browser.cjs) compares them.
+       The chat's style sheet (css/agent-chat.css) is not here: js/agent-chat.js loads it with the chat bundle, when the first chat is opened.
+       Scripts marked data-combine: the server (lib/static-assets.js) sends each run of them (neighbours with nothing but white space between) as one
+       request, and runs them in this order, each as a script of its own. Mark only small hand-written scripts that do not read
+       document.currentScript.src; h5-shell.js, h5.js, the vendor scripts and the Chinese dictionaries stay requests of their own. -->
   <style>
     html, body { margin: 0; background: #121212; color: #fff; }
     .h5-skeleton { position: fixed; inset: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); background: #121212; }
@@ -31,13 +35,12 @@
   </style>
   <link rel="stylesheet" href="/vendor/xterm/xterm-5.5.0.css">
   <link rel="stylesheet" href="/css/h5.css">
-  <link rel="stylesheet" href="/css/agent-chat.css">
-  <script defer src="/js/i18n.js"></script>
+  <script defer src="/js/i18n.js" data-combine></script>
+  <script defer src="/js/toast.js" data-combine></script>
+  <script defer src="/js/client-auth.js" data-combine></script>
   <script defer src="/js/i18n-zh-ui.js"></script>
   <script defer src="/js/i18n-zh-server.js"></script>
   <script defer src="/js/i18n-zh-extra.js"></script>
-  <script defer src="/js/toast.js"></script>
-  <script defer src="/js/client-auth.js"></script>
   <script defer src="/vendor/xterm/xterm-5.5.0.js"></script>
   <script defer src="/vendor/xterm/addon-fit-0.10.0.js"></script>
   <script defer src="/vendor/xterm/addon-unicode11-0.8.0.js"></script>
@@ -50,22 +53,22 @@
   <div id="h5-mindmap" hidden></div>
 
   <script defer src="/js/h5-shell.js"></script>
-  <script defer src="/js/terminal-owner.js"></script>
-  <script defer src="/js/terminal-protocol.js"></script>
-  <script defer src="/js/terminal-keys.js"></script>
-  <script defer src="/js/terminal-ime.js"></script>
-  <script defer src="/js/terminal-translate.js"></script>
-  <script defer src="/js/terminal-input-line.js"></script>
-  <script defer src="/js/voice-overlay.js"></script>
-  <script defer src="/js/voice-input.js"></script>
-  <script defer src="/js/word-translate.js"></script>
-  <script defer src="/js/terminal-viewport.js"></script>
-  <script defer src="/js/terminal-gestures.js"></script>
-  <script defer src="/js/terminal-file-links.js"></script>
-  <script defer src="/js/terminal-clipboard.js"></script>
-  <script defer src="/js/oss-direct.js"></script>
-  <script defer src="/js/agent-chat.js"></script>
-  <script defer src="/js/mindmap.js"></script>
+  <script defer src="/js/terminal-owner.js" data-combine></script>
+  <script defer src="/js/terminal-protocol.js" data-combine></script>
+  <script defer src="/js/terminal-keys.js" data-combine></script>
+  <script defer src="/js/terminal-ime.js" data-combine></script>
+  <script defer src="/js/terminal-translate.js" data-combine></script>
+  <script defer src="/js/terminal-input-line.js" data-combine></script>
+  <script defer src="/js/voice-overlay.js" data-combine></script>
+  <script defer src="/js/voice-input.js" data-combine></script>
+  <script defer src="/js/word-translate.js" data-combine></script>
+  <script defer src="/js/terminal-viewport.js" data-combine></script>
+  <script defer src="/js/terminal-gestures.js" data-combine></script>
+  <script defer src="/js/terminal-file-links.js" data-combine></script>
+  <script defer src="/js/terminal-clipboard.js" data-combine></script>
+  <script defer src="/js/oss-direct.js" data-combine></script>
+  <script defer src="/js/agent-chat.js" data-combine></script>
+  <script defer src="/js/mindmap.js" data-combine></script>
   <script defer src="/js/h5.js"></script>
 </body>
 </html>

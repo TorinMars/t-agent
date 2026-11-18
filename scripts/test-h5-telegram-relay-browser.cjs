@@ -5,6 +5,7 @@
 // sideways. The server is a fake fetch. H5_SHOT_DIR=<dir> saves screenshots there.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { settled } = require('./browser-test-wait.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -68,6 +69,7 @@ async function openPage(browser, { wide = false, zh = false, state }) {
   await press(page.locator('#h5-set-attention .MuiAccordionSummary-root'));
   const row = page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]');
   await row.waitFor({ state: 'visible' });
+  await settled(page); // the group is still unfolding: a press on a moving row is lost
   await press(row);
   await page.locator('#h5-notifier-settings #h5-tg-state').waitFor({ state: 'visible', timeout: 10000 }).catch(error => { throw new Error(`the Telegram page did not open: ${error.message}; page errors: ${errors.join(' | ')}`); });
   const calls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/attention-notify')));

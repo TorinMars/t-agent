@@ -121,6 +121,42 @@ func activateDefaultBrowser() {
     }
 }
 
+/// The T-Agent macOS app (apps/macos; "Server and floating window integration" in docs/design/mac-app.md). When it is
+/// installed, a page of this T-Agent opens in its window through its URL scheme instead of the browser.
+let tAgentAppBundleID = "local.t-agent.app"
+
+/// The app's link for an address on the T-Agent of the window (`base`): "t-agent://open?path=<path, query and fragment,
+/// percent-encoded so only unreserved characters stay>". Nil for an address on any other origin (a task's external link),
+/// which always opens in the browser.
+func appOpenLink(_ url: URL, base: String) -> URL? {
+    guard let origin = URL(string: base), let originScheme = origin.scheme?.lowercased(), let originHost = origin.host?.lowercased(),
+          url.scheme?.lowercased() == originScheme, url.host?.lowercased() == originHost, url.port == origin.port,
+          url.user == nil, url.password == nil,
+          let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+    var path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+    guard path.hasPrefix("/"), !path.hasPrefix("//") else { return nil }
+    if let query = components.percentEncodedQuery { path += "?" + query }
+    if let fragment = components.percentEncodedFragment { path += "#" + fragment }
+    let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+    guard let encoded = path.addingPercentEncoding(withAllowedCharacters: unreserved) else { return nil }
+    return URL(string: "t-agent://open?path=" + encoded)
+}
+
+/// Whether T-Agent.app is installed (Launch Services knows it) or running.
+func tAgentAppInstalled() -> Bool {
+    NSWorkspace.shared.urlForApplication(withBundleIdentifier: tAgentAppBundleID) != nil || tAgentAppRunning()
+}
+
+func tAgentAppRunning() -> Bool {
+    !NSRunningApplication.runningApplications(withBundleIdentifier: tAgentAppBundleID).isEmpty
+}
+
+/// Brings T-Agent.app forward with its window shown ("t-agent://show"): its page took the terminal.
+func activateTAgentApp() {
+    guard let show = URL(string: "t-agent://show") else { return }
+    _ = NSWorkspace.shared.open(show)
+}
+
 /// The text of a reply as it is sent: trimmed; nil when empty or longer than the server takes.
 func replyText(_ value: String) -> String? {
     let text = value.trimmed
@@ -548,21 +584,39 @@ extension WidgetController {
     /// recently used T-Agent page of this machine to switch to it. When a page took it, the browser comes to the front
     /// (the extension has focused that tab, else the default browser is activated, without opening an address). When
     /// none did, or the server is older (404) or failed, the page path is opened in the browser as before.
+    /// With T-Agent.app installed, the app opens it when the window opens a T-Agent page (or the page took the terminal:
+    /// the app comes forward when it runs, else the browser).
     func openTerminalPage(_ path: String) {
         guard let url = linkTarget(path, base: api.base) else { return }
         guard let target = openTerminalTarget(path) else {
-            openURL(url)
+            openPage(url)
             return
         }
         perform(api.openTerminalRequest(engine: target.engine, taskId: target.taskId, terminalId: target.terminalId)) { [weak self] data, code, _ in
             guard let self = self else { return }
             switch openTerminalOutcome(code: code, data: data) {
             case .switched(let focused):
-                if !focused { self.activateBrowser() }
+                if !focused { self.raisePage() }
             case .openURL:
-                self.openURL(url)
+                self.openPage(url)
             }
         }
+    }
+
+    /// Opens an address: a page of this T-Agent in T-Agent.app when it is installed ("t-agent://open?path="), anything
+    /// else (and everything without the app) in the browser.
+    func openPage(_ url: URL) {
+        if appInstalled(), let link = appOpenLink(url, base: api.base) {
+            openURL(link)
+        } else {
+            openURL(url)
+        }
+    }
+
+    /// An open page switched to the terminal without the browser extension focusing a tab: the running T-Agent.app comes
+    /// forward (its page is the one that took it, by the simplest rule), else the default browser.
+    func raisePage() {
+        if appRunning() { activateApp() } else { activateBrowser() }
     }
 
     @objc func openSessionItemClicked(_ sender: NSMenuItem) {

@@ -470,10 +470,11 @@ extension WidgetController {
         performRowAction(key, sender.rowAction)
     }
 
-    /// Opens the link of a task as the list has it now, in the browser; nothing is sent to T-Agent.
+    /// Opens the link of a task as the list has it now, in the browser (a page of this T-Agent in T-Agent.app when it is
+    /// installed); nothing is sent to T-Agent.
     private func openLink(_ key: String) {
         guard let item = items.first(where: { $0.key == key }), let url = linkTarget(item.link, base: api.base) else { return }
-        openURL(url)
+        openPage(url)
     }
 
     @objc private func openLinkItemClicked(_ sender: NSMenuItem) {

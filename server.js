@@ -615,6 +615,35 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
+// app.json for the T-Agent macOS app (see "Server and floating window integration" in docs/design/mac-app.md). Written now and again
+// when its content changes; the remote addresses come from the tunnels and the page address of the T-Attention notifier rules.
+const appInfo = require('./services/app-info');
+function startAppInfo(listeningPort) {
+  const { detectSupervisor } = require('./lib/update-supervisor');
+  const supervisor = detectSupervisor({ env: process.env, ppid: process.ppid, hasIpc: typeof process.send === 'function', platform: process.platform });
+  // The version this process runs (read once at listen time: a later git pull changes VERSION.json before the restart).
+  const version = (() => { try { return updates.readLocalManifest().app_version || null; } catch { return null; } })();
+  const publicUrl = () => {
+    try { return attentionNotify.getRules(attentionNotify.defaultOwner()).publicUrl || ''; } catch { return ''; }
+  };
+  const tunnel = service => {
+    try { return { config: service.load(), status: service.status() }; } catch { return null; }
+  };
+  const publisher = appInfo.createAppInfoPublisher({
+    file: path.join(dataHome.paths().root, appInfo.FILE_NAME),
+    collect: () => ({
+      host: config.host, port: listeningPort, version, pid: process.pid,
+      installDir: dataHome.INSTALL_DIR, supervisor, pm2Name: appInfo.pm2Name(process.env, supervisor), launchdLabel: appInfo.launchdLabel(process.env, supervisor),
+      addresses: appInfo.buildAddresses({
+        host: config.host, port: listeningPort, interfaces: os.networkInterfaces(),
+        remote: appInfo.remoteAddresses({ frp: tunnel(frpRouter.service), ssh: tunnel(sshTunnelRouter.service), publicUrl: publicUrl() }),
+      }),
+    }),
+  });
+  appInfo.setSharedPublisher(publisher);
+  publisher.start();
+}
+
 server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
   serverLock.update({ port: listeningPort });
@@ -642,6 +671,8 @@ server.listen(config.port, config.host, () => {
   for (const page of ['h5.html']) { try { staticAssets.rewritePage(fs.readFileSync(path.join(__dirname, 'public', page), 'utf8')); } catch { /* the page is not there */ } }
   frpRouter.service.autoStart();
   sshTunnelRouter.service.autoStart();
+  // <data home>/app.json for the T-Agent macOS app: where this server is, how it runs and its web addresses (services/app-info.js).
+  startAppInfo(listeningPort);
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();
   if (clientAuth.accessMode() === 'local') {
@@ -666,5 +697,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

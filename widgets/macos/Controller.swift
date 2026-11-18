@@ -106,6 +106,11 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Brings the default browser to the front without opening anything (Open session switched a page there, and the
     /// browser extension could not focus its tab). --self-test and --render-sample replace it.
     var activateBrowser: () -> Void = { activateDefaultBrowser() }
+    /// T-Agent.app (tAgentAppBundleID): installed, running, and bringing it forward. Never the real ones offscreen
+    /// (--self-test and --render-sample), which replace them to check both cases.
+    lazy var appInstalled: () -> Bool = { [weak self] in self?.options.offscreen == false && tAgentAppInstalled() }
+    lazy var appRunning: () -> Bool = { [weak self] in self?.options.offscreen == false && tAgentAppRunning() }
+    lazy var activateApp: () -> Void = { [weak self] in if self?.options.offscreen == false { activateTAgentApp() } }
 
     // The notice bubble beside the window.
     let bubble = makePanel(size: NSSize(width: bubbleWidth, height: 80))

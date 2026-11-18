@@ -74,7 +74,7 @@
 | [upload-oss.md](docs/design/upload-oss.md) | Image and file upload to OSS: configuration, policies, limits. | 6 KB |
 | [machine-tools.md](docs/design/machine-tools.md) | Tools whose pages were removed in 2.88.0 but whose routes stay (frp, SSH tunnel, PM2, apps, file sync and more). | 1 KB |
 | [update-check-and-versions.md](docs/design/update-check-and-versions.md) | Version source, update check and apply, release rule, automatic update, automatic refresh after an update. | 16 KB |
-| [mac-app.md](docs/design/mac-app.md) | The macOS shell app T-Agent.app: why, window and web view, menu bar and web addresses, deep links, not-running view, service control, self-test, build and install. | 13 KB |
+| [mac-app.md](docs/design/mac-app.md) | The macOS shell app T-Agent.app: why, window and web view, menu bar and web addresses, deep links, not-running view, service control, self-test, build and install, app.json and the web addresses the server publishes, the Mac app card, the floating window opening pages in the app. | 19 KB |
 
 ## H. Cross-cutting rules
 

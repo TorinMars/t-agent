@@ -854,6 +854,15 @@ func runSelfTest() -> Never {
     bubbles.testShowNotices([WidgetNotice(seq: 7, title: "Close me", target: "https://example.com/x")])
     bubbles.testBubbleClose()
     check("click: the x closes without opening anything", bubbles.testBubbleTitle == nil && bubbleOpened.count == 2)
+    // With T-Agent.app installed the page root opens in the app; an external target still opens in the browser.
+    bubbles.appInstalled = { true }
+    bubbles.testShowNotices([WidgetNotice(seq: 10, kind: "test", title: "To the app")])
+    bubbles.testBubbleClick()
+    bubbles.testShowNotices([WidgetNotice(seq: 11, title: "External", target: "https://example.com/y")])
+    bubbles.testBubbleClick()
+    check("click: with the app, the T-Agent page opens in it and an external target in the browser",
+          Array(bubbleOpened.suffix(2)) == ["t-agent://open?path=%2F", "https://example.com/y"])
+    bubbles.appInstalled = { false }
 
     // Timing.
     bubbles.testShowNotices([WidgetNotice(seq: 8, title: "Timed", seconds: 8), WidgetNotice(seq: 9, title: "Sticky", seconds: 0)])

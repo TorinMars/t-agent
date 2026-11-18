@@ -201,6 +201,59 @@ func runLookSelfTest(_ check: (String, Bool) -> Void) {
     answer("", 0)
     check("open session: T-Agent unreachable opens the address", opened.count == 3)
 
+    // T-Agent.app (docs/design/mac-app.md): the lookups are injected; offscreen they are never the real ones.
+    check("app: offscreen the real lookups are never asked", !window.appInstalled() && !window.appRunning())
+    let pageBase = "http://127.0.0.1:3999"
+    check("app link: a page path, percent-encoded", appOpenLink(URL(string: pageBase + "/?openTerminal=local:12:t3")!, base: pageBase)?.absoluteString
+          == "t-agent://open?path=%2F%3FopenTerminal%3Dlocal%3A12%3At3")
+    check("app link: the root, a path with a query and fragment, and an already encoded path", appOpenLink(URL(string: pageBase)!, base: pageBase)?.absoluteString
+          == "t-agent://open?path=%2F" && appOpenLink(URL(string: pageBase + "/h5?attention=14&x=a+b#top")!, base: pageBase)?.absoluteString
+          == "t-agent://open?path=%2Fh5%3Fattention%3D14%26x%3Da%2Bb%23top"
+          && appOpenLink(URL(string: pageBase + "/files/a%20b")!, base: pageBase)?.absoluteString == "t-agent://open?path=%2Ffiles%2Fa%2520b")
+    check("app link: other origins never go to the app", ["https://ci.example.com/run/12", "http://127.0.0.1:4000/", "https://127.0.0.1:3999/",
+          "http://localhost:3999/", "http://user:pw@127.0.0.1:3999/"].allSatisfy { appOpenLink(URL(string: $0)!, base: pageBase) == nil })
+    var appInstalled = true
+    var appRunning = false
+    var appRaised = 0
+    window.appInstalled = { appInstalled }
+    window.appRunning = { appRunning }
+    window.activateApp = { appRaised += 1 }
+    opened = []
+    raised = 0
+    sent = []
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":0,\"focused\":false}")
+    check("app: no page took the terminal, so the installed app opens its path", opened == ["t-agent://open?path=%2F%3FopenTerminal%3Dlocal%3A12%3At1"]
+          && raised == 0 && appRaised == 0)
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":1,\"focused\":false}")
+    check("app: a page took it but nothing focused it, the app is not running: the browser comes forward", raised == 1 && appRaised == 0 && opened.count == 1)
+    appRunning = true
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":1,\"focused\":false}")
+    check("app: a page took it and the app runs: the app comes forward, not the browser", appRaised == 1 && raised == 1 && opened.count == 1)
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":1,\"focused\":true}")
+    check("app: the extension focused a tab: nothing else comes forward", appRaised == 1 && raised == 1 && opened.count == 1)
+    opened = []
+    _ = window.testPressButton("local:12", .link)
+    _ = window.testPressButton("local:14", .link)
+    check("app: an external task link opens in the browser, a page link in the app", opened
+          == ["https://ci.example.com/run/12", "t-agent://open?path=%2Fh5%3Fattention%3D14"])
+    appInstalled = false
+    appRunning = false
+    opened = []
+    _ = window.testPressButton("local:14", .link)
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":0,\"focused\":false}")
+    check("app: not installed, so pages open in the browser as before", opened
+          == ["http://127.0.0.1:3999/h5?attention=14", "http://127.0.0.1:3999/?openTerminal=local:12:t1"])
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":1,\"focused\":false}")
+    check("app: not running, so the browser comes forward", raised == 2 && appRaised == 1)
+    window.appInstalled = { false }
+    window.appRunning = { false }
+
     // The text of the rows.
     check("rows: the title alone on its line", window.testTitleField("local:20")?.stringValue == "Build the widget API"
           && window.testTitleField("local:22")?.stringValue == "   \u{2514} Fix the flaky stream test")

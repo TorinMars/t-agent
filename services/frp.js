@@ -375,7 +375,8 @@ function createFrpService({
     try { launch(); } catch (error) { console.warn('[frp] auto start failed:', error.message); }
   }
 
-  return { view, update, start, stop, regenerate, install, detect, autoStart, load };
+  // status(): stopped | starting | running | failed, without the frpc lookup of view() (services/app-info.js reads it every minute).
+  return { view, update, start, stop, regenerate, install, detect, autoStart, load, status: () => status };
 }
 
 module.exports = { createFrpService, FrpError, HOSTNAME, parsePort, cleanText, renderToml, findFrpc, homebrewDirs, probeFrpc, randomPort, DEFAULT_PORT_MIN, DEFAULT_PORT_MAX };

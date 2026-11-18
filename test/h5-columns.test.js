@@ -455,3 +455,13 @@ test('the page navigation rail: its destinations and the one that is the current
   assert.equal(railView({ columns: { shown: true, tab: 'bogus' } }), 'columns');
   assert.equal(railView({ settingsOpen: true, columns: { shown: true, tab: 'maps' } }), 'settings', 'Settings is current while it is open, in either view');
 });
+
+test('the phone bottom navigation: the rail\'s destinations without Columns, then Settings, and the one that is shown', async () => {
+  const { phoneDestinations, phoneView } = await load();
+  assert.deepEqual(phoneDestinations().map(item => [item.view, item.id]), [['sessions', 'h5-bnav-sessions'], ['attention', 'h5-attention'], ['maps', 'h5-bnav-maps'], ['settings', 'h5-bnav-settings']]);
+  assert.ok(phoneDestinations().every(item => !item.toggle), 'on a phone every destination is a page');
+  assert.equal(phoneView({}), 'sessions');
+  assert.equal(phoneView({ attentionOpen: true }), 'attention');
+  assert.equal(phoneView({ mindmapOpen: true }), 'maps');
+  assert.equal(phoneView({ settingsOpen: true, attentionOpen: true, mindmapOpen: true }), 'settings', 'the page on top wins');
+});

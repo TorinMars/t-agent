@@ -688,38 +688,27 @@ function Panel({ ui, wide }) {
       {/* The floating copy of a dragged row goes in here (useListDrag), and a keyboard move or a session moved is announced in the live region. */}
       <Box ref={floatRef} className="h5-task-float-host" />
       <Box id="h5-task-order-live" ref={liveRef} aria-live="assertive" aria-atomic="true" sx={VISUALLY_HIDDEN} />
-      {/* Below the list, on a phone: the other destinations of the page (DrawerNav). On the wide layout they are in the navigation rail. */}
+      {/* Below the list, in a narrow pane only: the other destinations of the page (DrawerNav). A phone has its bottom navigation, the wide layout the rail. */}
       {wide ? null : <DrawerNav ui={ui} />}
     </Box>
   );
 }
 
-// The other destinations of the page below the task list of a phone ("Phone drawer" in docs/design/page-navigation.md; the wide layout has them in the navigation
-// rail, Columns.jsx `NavRail`): labelled MD2 list rows with an icon, T-Attention (with the number of items that need the person; a pane has no
-// T-Attention), Mind maps and Settings. Choosing one closes the drawer first, as an MD2 modal navigation drawer does.
-const DRAWER_NAV = state => ({ needs: Number(state.attention && state.attention.needs) || 0, pane: Boolean(state.pane) });
+// The other destinations of the page below the task list of a narrow pane of the multi-column view ("Phone drawer" in docs/design/page-navigation.md):
+// a phone has them in its bottom navigation (BottomNav.jsx) and the wide layout in the navigation rail (Columns.jsx `NavRail`), but a pane has neither.
+// Labelled MD2 list rows with an icon: Mind maps (the top page shows its Mind maps tab) and Settings (a pane has no T-Attention). Choosing one closes
+// the drawer first, as an MD2 modal navigation drawer does.
+const DRAWER_NAV = state => Boolean(state.pane);
 const NAV_ROW_SX = { minHeight: 48, [TOUCH]: { minHeight: 48 }, px: 2, gap: 0, '& .MuiListItemIcon-root': { minWidth: 40, color: 'text.secondary' } };
 function DrawerNav({ ui }) {
-  const { needs, pane } = useStore(ui, DRAWER_NAV, shallowEqual);
+  const pane = useStore(ui, DRAWER_NAV);
+  if (!pane) return null;
   const go = open => () => { ui.actions.closeTasks(); open(); };
-  const attention = t('T-Attention');
-  const needsWords = needs === 1 ? t('1 item needs you') : t('{1} items need you').replace('{1}', needs);
   const text = { slotProps: { primary: { variant: 'subtitle2', noWrap: true } } };
   return (
     <>
       <Divider />
       <List component="nav" id="h5-tasks-nav" aria-label={t('Views')} disablePadding sx={{ py: 0.5, flex: '0 0 auto' }}>
-        {pane ? null : (
-          <ListItemButton id="h5-tasks-attention" aria-label={needs ? `${attention}, ${needsWords}` : attention} aria-haspopup="dialog" onClick={go(() => ui.actions.openAttention())} sx={NAV_ROW_SX}>
-            <ListItemIcon><Icon name="attention" size={24} /></ListItemIcon>
-            <ListItemText primary={attention} {...text} />
-            {needs ? (
-              <Box component="span" className="h5-tasks-attention-count" aria-hidden="true"
-                sx={theme => ({ ...theme.typography.caption, flex: '0 0 auto', minWidth: 20, height: 20, px: 0.75, boxSizing: 'border-box', borderRadius: 10, display: 'inline-flex',
-                  alignItems: 'center', justifyContent: 'center', fontWeight: 700, bgcolor: 'error.main', color: 'error.contrastText' })}>{needs > 99 ? '99+' : needs}</Box>
-            ) : null}
-          </ListItemButton>
-        )}
         <ListItemButton id="h5-tasks-mindmap" onClick={go(() => ui.actions.openMindmaps())} sx={NAV_ROW_SX}>
           <ListItemIcon><Icon name="mindmap" size={24} /></ListItemIcon>
           <ListItemText primary={t('Mind maps')} {...text} />

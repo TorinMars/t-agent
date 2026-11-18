@@ -231,6 +231,7 @@
       keyboardOpen = false;
       fullHeight = 0;
       fullWidth = 0;
+      if (ui.get().softKeyboard) ui.set({ softKeyboard: false });
       document.documentElement.style.setProperty('--h5-height', `${Math.round(window.innerHeight)}px`);
       if (window.scrollY) window.scrollTo(0, 0);
       holdTerminalSize();
@@ -249,6 +250,7 @@
     fullHeight = typing ? Math.max(fullHeight, height) : height;
     const wasOpen = keyboardOpen;
     keyboardOpen = fullHeight - height > KEYBOARD_MIN_SHRINK;
+    if (ui.get().softKeyboard !== keyboardOpen) ui.set({ softKeyboard: keyboardOpen }); // the phone's bottom navigation steps aside (BottomNav.jsx)
     if (wasOpen && !keyboardOpen) {
       // The keyboard went away: the translate box returns to rest at once (no timer; blur runs the focusout handler, which collapses the box, the bar and the terminal
       // shift in the same tick). One animation frame of grace only, because iOS can report the full height for a moment while focus moves between two inputs.
@@ -1854,13 +1856,19 @@
     if (mindmap && text !== mindmapSourcesSent) { mindmapSourcesSent = text; mindmap.setSources(list); }
     if (mindmapTab && text !== mindmapTab.sent) { mindmapTab.sent = text; mindmapTab.view.setSources(list); }
   }
+  // The phone's bottom navigation (BottomNav.jsx, `html[data-bnav]` while it is shown): the full-window views end above it.
+  const bottomNavSpace = () => {
+    if (!document.documentElement.hasAttribute('data-bnav')) return 0;
+    const bar = document.getElementById('h5-bnav');
+    return bar ? bar.getBoundingClientRect().height : 0;
+  };
   // The same height rule as fitViewport: visualViewport.height is believed only while something that raises a keyboard is focused (iOS Home Screen apps report wrong small heights).
   function fitMindmapView() {
     const viewport = window.visualViewport;
     const offset = viewport ? viewport.offsetTop : 0;
     const visible = viewport ? offset + viewport.height : window.innerHeight;
     const typing = pointerMode() || keyboardOpen || raisesKeyboard(document.activeElement);
-    const bottom = typing ? visible : Math.max(visible, window.innerHeight);
+    const bottom = (typing ? visible : Math.max(visible, window.innerHeight)) - bottomNavSpace();
     mindmapView.style.top = `${offset}px`;
     mindmapView.style.height = `${Math.max(0, bottom - offset)}px`;
     mindmapView.toggleAttribute('data-keyboard', !pointerMode() && keyboardOpen);
@@ -1873,8 +1881,9 @@
     mindmapView.style.height = mindmapView.style.top = '';
     window.visualViewport?.removeEventListener('resize', fitMindmapView);
     window.visualViewport?.removeEventListener('scroll', fitMindmapView);
-    ui.set({ mindmapLayers: [] });
+    ui.set({ mindmapLayers: [], mindmapOpen: false });
   }
+  ui.actions.closeMindmaps = () => { if (mindmap) { void mindmap.flush(); closeMindmaps(); } }; // the bottom navigation's other destinations (a waiting save is sent)
   // While the top page shows its columns, its own view would be hidden under them: the view's Mind maps tab is shown instead (Columns.jsx). A pane
   // shows no mind map: it asks the top page for that tab.
   function openMindmaps() {
@@ -1888,6 +1897,7 @@
     const list = mindmapSources();
     mindmapSourcesSent = JSON.stringify(list);
     mindmap = MindMap.mount(mindmapView, { onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }), sources: list });
+    ui.set({ mindmapOpen: true });
     fitMindmapView();
   }
   ui.actions.openMindmaps = openMindmaps;
@@ -1925,11 +1935,14 @@
     const top = header ? header.getBoundingClientRect().bottom : 0;
     const viewport = window.visualViewport;
     const visible = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
-    // The same rule as fitViewport: without a keyboard a small reading is not believed.
-    const bottom = pointerMode() || keyboardOpen || raisesKeyboard(document.activeElement) ? visible : Math.max(visible, window.innerHeight);
+    // The same rule as fitViewport: without a keyboard a small reading is not believed. It ends above the phone's bottom navigation.
+    const bottom = (pointerMode() || keyboardOpen || raisesKeyboard(document.activeElement) ? visible : Math.max(visible, window.innerHeight)) - bottomNavSpace();
     agentView.style.top = `${top}px`;
     agentView.style.height = `${Math.max(0, bottom - top)}px`;
   }
+  // The phone's bottom navigation appeared or went away (BottomNav.jsx): the full-window views that end above it fit again (the terminal refits by itself:
+  // its box changed size).
+  ui.actions.fitAboveBottomNav = () => { if (mindmap) fitMindmapView(); if (agentChat) fitAgentView(); };
   // Which chat of which task is shown. It is not brought back by a refresh: the page opens on a terminal, whatever earlier versions saved (the open flag of the
   // conversation on the server, `h5-agent:...` in localStorage).
   let agentFor = null;

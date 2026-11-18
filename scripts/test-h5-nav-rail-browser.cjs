@@ -6,7 +6,7 @@
 //   view and its Mind maps tab, back); Attention toggling the T-Attention panel with its badge; Settings closed by another destination; arrow keys,
 //   Home and End; the header's "More" menu (Refresh the page only) and no Update or columns switch in the header; the folded sidebar.
 // - 390x844 (touch): no rail; the 56px app bar with the menu button, "More" with Refresh the page and Update (which opens the update dialog); the drawer
-//   from the left at min(320px, 100vw - 56px) over a scrim, the page not moved, its labelled T-Attention (with the count), Mind maps and Settings rows.
+//   from the left at min(320px, 100vw - 56px) over a scrim, the page not moved, and no destination rows below the list (they are in the bottom navigation).
 // H5_SHOT_DIR=<dir> saves the wide page and the open drawer.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -269,22 +269,9 @@ async function openTerminal(page, task, terminal, how = 'click') {
       assert.equal(await page.evaluate(() => document.body.classList.contains('h5-tasks-open')), true);
       assert.equal((await rect(page, '#h5-app')).x, 0, 'the page stays where it is');
       assert.equal(await page.locator('#h5-task-backdrop').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0.32)', 'the MD2 scrim');
-      const rows = await page.locator('#h5-tasks-nav .MuiListItemButton-root').evaluateAll(items => items.map(el => [el.id, el.querySelector('.MuiListItemText-primary').textContent]));
-      assert.deepEqual(rows, [['h5-tasks-attention', 'T-Attention'], ['h5-tasks-mindmap', 'Mind maps'], ['h5-tasks-settings', 'Settings']], 'labelled rows below the list');
-      await page.waitForFunction(() => document.querySelector('#h5-tasks-attention .h5-tasks-attention-count')?.textContent === '1', null, { timeout: 8000 });
-      assert.equal(await page.locator('#h5-tasks-attention').getAttribute('aria-label'), 'T-Attention, 1 item needs you');
-      for (const id of ['h5-tasks-attention', 'h5-tasks-mindmap', 'h5-tasks-settings']) { const h = await page.locator(`#${id}`).evaluate(el => el.getBoundingClientRect().height); assert.ok(h >= 47.5, `${id}: a 48px row (${h})`); }
+      // The destinations are in the bottom navigation (scripts/test-h5-bottom-nav-browser.cjs), not below the list.
+      assert.equal(await page.locator('#h5-tasks-nav').count(), 0, 'no destination rows below the list');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'nav-drawer-phone.png') });
-      // A destination closes the drawer first.
-      await page.locator('#h5-tasks-settings').tap();
-      await page.waitForFunction(() => window.H5UI.get().settingsOpen && !window.H5UI.get().tasksOpen);
-      await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-      await page.locator('#h5-close-settings').tap();
-      await page.waitForFunction(() => !window.H5UI.get().settingsOpen);
-      await menu.tap();
-      await page.locator('#h5-tasks-attention').waitFor({ state: 'visible' });
-      await page.locator('#h5-tasks-attention').tap();
-      await page.waitForFunction(() => window.H5UI.get().attention.open && !window.H5UI.get().tasksOpen);
       await context.close();
     }
   } finally {

@@ -136,10 +136,9 @@ function measure(min) {
       await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
       await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
       const main = await check('main');
-      // Row 2 at rest: eight buttons from 360px (seven at 320px, where Docs is left out: the saved commands list has a Docs entry), every one at least
-      // 44px wide, inside the screen, none on top of another.
+      // Row 2 at rest: seven buttons (T-Attention is in the bottom navigation), every one at least 44px wide, inside the screen, none on top of another.
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].map(b => b.getBoundingClientRect()).filter(b => b.width > 0).map(b => ({ left: b.left, right: b.right, width: b.width, height: b.height })));
-      const count = viewport.width < 360 ? 7 : 8;
+      const count = 7;
       assert.equal(row2.length, count, `${viewport.width}px: ${count} buttons in row 2`);
       assert.ok(row2.every((b, i) => b.width >= MIN - 0.01 && b.height >= MIN - 0.01 && b.left >= 0 && b.right <= viewport.width && (i === 0 || row2[i - 1].right <= b.left + 0.01)), `${viewport.width}px: row 2 has ${count} 44px buttons in the screen: ${JSON.stringify(row2.map(b => Math.round(b.width * 10) / 10))}`);
       // Row 1: 44px high keys with 8px between them.
@@ -176,7 +175,7 @@ function measure(min) {
       await page.locator('#h5-commands').tap();
       await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
       // The design sheet (Docs; under 360px from the saved commands list).
-      if (viewport.width < 360) { await page.locator('#h5-commands').tap(); await page.locator('#h5-commands-docs').tap(); } else await page.locator('#h5-design').tap();
+      await page.locator('#h5-design').tap();
       await page.locator('#h5-design-close').waitFor();
       await check('design-sheet');
       await page.locator('#h5-design-close').tap();
@@ -215,10 +214,9 @@ function measure(min) {
       await check('new-task');
       await page.locator('#h5-new-task-cancel').tap();
       await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
-      // The settings sheet, from the gear of the task sheet.
-      if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
-      await page.locator('#h5-tasks').waitFor({ state: 'visible' });
-      await page.locator('#h5-tasks-settings').tap();
+      // The settings sheet, from the bottom navigation.
+      if (await page.locator('#h5-tasks').isVisible()) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
+      await page.locator('#h5-bnav-settings').tap();
       await page.locator('#h5-close-settings').waitFor();
       await check('settings');
       await context.close();

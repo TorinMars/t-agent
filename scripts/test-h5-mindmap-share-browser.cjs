@@ -128,12 +128,10 @@ function tools(page, touch) {
   const section = key => page.locator(`.mm-section[data-source="${key}"]`);
   const row = (key, title) => section(key).locator('.mm-row').filter({ has: page.locator('.mm-row-title', { hasText: new RegExp(`^${title}$`) }) });
   const openView = async () => {
-    if (touch && !await page.locator('#h5-tasks-mindmap').isVisible().catch(() => false)) {
-      await page.locator('#h5-open-tasks').tap();
-      await page.locator('#h5-tasks-mindmap').waitFor({ state: 'visible' });
-    }
+    // A phone: Mind maps in the bottom navigation (the drawer, open at the start, lies over it: closed first).
+    if (touch && await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
     // A computer: the full-window view (the rail's Mind maps opens the columns view's tab, test-h5-columns-rail-browser.cjs).
-    if (touch) await press(page.locator('#h5-tasks-mindmap')); else await page.evaluate(() => window.H5UI.actions.openMindmaps());
+    if (touch) await press(page.locator('#h5-bnav-maps')); else await page.evaluate(() => window.H5UI.actions.openMindmaps());
     await page.locator('#mm-new').waitFor();
   };
   const sections = () => page.evaluate(() => [...document.querySelectorAll('.mm-section')].map(node => ({

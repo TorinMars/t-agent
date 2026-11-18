@@ -393,5 +393,18 @@ export function railView({ settingsOpen = false, columns = null } = {}) {
   if (columns && columns.shown) return readTab(columns.tab) === 'maps' ? 'maps' : 'columns';
   return 'sessions';
 }
+// The phone's bottom navigation (BottomNav.jsx): the same destinations without Columns (a phone has no columns view), then Settings. On a phone
+// Attention, Mind maps and Settings are pages of their own over the terminal page: one at a time, and Sessions is the terminal page itself.
+export const SETTINGS_DESTINATION = { view: 'settings', id: 'h5-bnav-settings', icon: 'setting', label: 'Settings' };
+// The ids of the bar's items; Attention keeps the page's T-Attention id (`#h5-attention`), which a phone has nowhere else.
+const PHONE_IDS = { sessions: 'h5-bnav-sessions', attention: 'h5-attention', maps: 'h5-bnav-maps', settings: 'h5-bnav-settings' };
+export const phoneDestinations = () => [...railDestinations(false), SETTINGS_DESTINATION].map(item => ({ ...item, id: PHONE_IDS[item.view], toggle: false }));
+// The destination that is shown on a phone: Settings, T-Attention or the mind maps while open (in that order, the one on top first), else Sessions.
+export function phoneView({ settingsOpen = false, attentionOpen = false, mindmapOpen = false } = {}) {
+  if (settingsOpen) return 'settings';
+  if (attentionOpen) return 'attention';
+  if (mindmapOpen) return 'maps';
+  return 'sessions';
+}
 // The red badge of the "Columns" destination: the number of open columns that need the person, the same count as the bar's "N needs you" chip.
 export const needsCount = (ids, statusOf) => summarize(ids, statusOf).waiting;

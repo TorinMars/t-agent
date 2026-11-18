@@ -114,11 +114,9 @@ async function openPage(browser, { touch }) {
 
 const openView = async (page, touch) => {
   if (touch) {
-    if (!await page.locator('#h5-tasks-mindmap').isVisible().catch(() => false)) {
-      await page.locator('#h5-open-tasks').tap();
-      await page.locator('#h5-tasks-mindmap').waitFor({ state: 'visible' });
-    }
-    await page.locator('#h5-tasks-mindmap').tap();
+    // Mind maps in the bottom navigation (the drawer, open at the start, lies over it: closed first).
+    if (await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
+    await page.locator('#h5-bnav-maps').tap();
   } else {
     // The full-window view (a computer's Mind maps destination in the navigation rail opens the columns view's tab instead, see
     // test-h5-columns-rail-browser.cjs; this view is what a page without the columns view shows).

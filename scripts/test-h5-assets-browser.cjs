@@ -183,11 +183,8 @@ async function waitFor(condition, what) {
       await page.close();
       // The mind map.
       page = await open('/h5');
-      if (!await page.locator('#h5-tasks-mindmap').isVisible().catch(() => false)) {
-        await page.locator('#h5-open-tasks').tap();
-        await page.locator('#h5-tasks-mindmap').waitFor({ state: 'visible' });
-      }
-      await page.locator('#h5-tasks-mindmap').tap();
+      if (await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
+      await page.locator('#h5-bnav-maps').tap(); // Mind maps in the bottom navigation
       await page.locator('#mm-new').waitFor();
       await page.close();
       // The document preview: marked, the Markdown view and its style sheet, and mermaid for the diagram.

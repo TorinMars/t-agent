@@ -16,6 +16,11 @@ if (storedSchema > codeSchema) {
 }
 
 db.pragma('journal_mode = WAL');
+// With WAL, NORMAL syncs the log at checkpoints instead of at every commit (FULL costs an fsync per commit). The database cannot be corrupted by
+// that; a power failure or an operating system crash can only lose the last commits, and a crash of this process loses nothing. The SQLite bundled
+// with better-sqlite3 already picks NORMAL for a WAL database (it is built with SQLITE_DEFAULT_WAL_SYNCHRONOUS=1); it is set here so that it does
+// not depend on how the driver was built.
+db.pragma('synchronous = NORMAL');
 db.pragma('foreign_keys = ON');
 dataHome.secureDatabaseFiles(dbPath);
 

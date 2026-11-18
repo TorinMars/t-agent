@@ -288,6 +288,61 @@ test('a value the receiver refuses is ignored and logged by code only', async ()
   assert.deepEqual(a.service.view().keys.find(entry => entry.key === 'translate').pending_peers, ['B'], 'still pending');
 });
 
+// One service with one linked peer whose answers the test decides; `logs` collects what it logs.
+function loggedService({ answer, db: database = memoryDb(), intervalMs = 0 }) {
+  const logs = [];
+  const log = { warn: message => logs.push(`warn ${message}`), info: message => logs.push(`info ${message}`) };
+  const peer = { id: LINK, name: 'B', online: true, remoteServerId: 1, instanceId: null, baseUrl: 'fake://B', token: TOKEN_TO_B };
+  const service = createSettingsSync({
+    db: database, sessionSecret: 'log-test-session-secret', registry: [{ key: 'translate', read: () => null, write() {} }], owner: () => 'owner',
+    serviceLinks: { peers: () => [peer], onChange: () => () => {}, noteUnauthorized() {} },
+    identity: () => ({ instance_id: ID_A, name: 'A' }), issuedTokenHash: () => sha(TOKEN_TO_A),
+    request: async (...args) => answer.current(...args), log, intervalMs, debounceMs: 5,
+  });
+  return { service, logs };
+}
+const failWith = (code, statusCode = 502) => () => { throw Object.assign(new Error(code), { statusCode }); };
+
+test('a failing peer is logged once per reason and once when it works again, by code only', async () => {
+  const answer = { current: failWith('REMOTE_TIMEOUT', 504) };
+  const { service, logs } = loggedService({ answer });
+  for (let i = 0; i < 3; i += 1) await service.syncAll();
+  assert.deepEqual(logs, ['warn [settings-sync] sync with B failed: REMOTE_TIMEOUT'], 'three failed rounds, one line');
+  assert.equal(service.view().peers[0].last_error, 'REMOTE_TIMEOUT', 'the page still shows the error');
+
+  // Another reason is logged again. A message that is not a code never reaches the log: it could quote a value or a token.
+  answer.current = () => { throw Object.assign(new TypeError(`bad answer {"apiKey":"sk-live-SECRET"} for ${TOKEN_TO_B}`), { code: 'ERR_BAD_ANSWER' }); };
+  for (let i = 0; i < 3; i += 1) await service.syncAll();
+  assert.deepEqual(logs.slice(1), ['warn [settings-sync] sync with B failed: SETTINGS_SYNC_FAILED (ERR_BAD_ANSWER)']);
+  assert.equal(logs.join('\n').includes('SECRET'), false);
+  assert.equal(logs.join('\n').includes(TOKEN_TO_B), false);
+
+  // The peer answers again: one line says so, then nothing while it keeps working.
+  answer.current = () => ({ capabilities: [] });
+  for (let i = 0; i < 3; i += 1) await service.syncAll();
+  assert.deepEqual(logs.slice(2), ['info [settings-sync] sync with B works again (it failed with SETTINGS_SYNC_FAILED (ERR_BAD_ANSWER))']);
+
+  // The first reason, after it worked in between, is a new failure.
+  answer.current = failWith('REMOTE_TIMEOUT', 504);
+  await service.syncAll();
+  assert.deepEqual(logs.slice(3), ['warn [settings-sync] sync with B failed: REMOTE_TIMEOUT']);
+});
+
+test('the rounds of the timer log a failure once, and a round that fails while saving its own state is not swallowed', async () => {
+  const timed = loggedService({ answer: { current: failWith('REMOTE_OFFLINE') }, intervalMs: 15 });
+  timed.service.start();
+  try { await settle(200); } finally { timed.service.stop(); }
+  assert.deepEqual(timed.logs, ['warn [settings-sync] sync with B failed: REMOTE_OFFLINE'], 'many rounds in 200 ms, one line');
+
+  // The peer answers, but this device cannot write what it learned (its database is gone): nothing is thrown, and the log says that it failed.
+  const memory = memoryDb();
+  const broken = loggedService({ answer: { current: () => ({ capabilities: [] }) }, db: memory });
+  broken.service.meta();
+  memory.close();
+  for (let i = 0; i < 3; i += 1) await broken.service.syncAll();
+  assert.deepEqual(broken.logs, ['warn [settings-sync] sync with B failed: SETTINGS_SYNC_FAILED (TypeError)']);
+});
+
 test('a link that comes online is synced at once; an older peer without the capability is skipped', async () => {
   const { a, b } = pairOf();
   a.peer.online = false;

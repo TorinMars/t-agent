@@ -44,7 +44,8 @@ function mount(router, auth, browser = false) {
       if (match && service.verifyToken(match[1])) return next();
       return auth(req, res, next);
     };
-    router.get('/manifest', syncAuth, handler(() => service.manifest()));
+    // `if_none_match` (optional): the etag of the manifest the slave already has; while nothing changed the answer is { unchanged: true } without contents.
+    router.get('/manifest', syncAuth, handler(req => service.manifest({ if_none_match: req.query.if_none_match })));
     router.put('/file', syncAuth, handler(req => service.receive(req.body)));
     router.post('/heartbeat', syncAuth, handler(req => service.registerChild(req.body)));
     router.delete('/heartbeat', syncAuth, handler(req => service.unregisterChild(req.body)));

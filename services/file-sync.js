@@ -10,6 +10,21 @@ const CHILD_ONLINE_MS = 15_000;
 const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_KEY = 'file_sync_v1';
 const MANAGED_SUFFIX = '.t-agent-file-sync-managed';
+const MARKER_TEXT = 't-agent-file-sync\n';
+// scripts/agent-sync.py takes a marker changed less than 60 s ago as "file sync still manages this file", so its time is renewed well before that.
+const MARKER_REFRESH_MS = 20_000;
+// A file read less than this long after its last change is read again at the next look: its timestamps may be too coarse (up to 2 s on some file
+// systems) to show a second change made in the same moment. The same idea as git's "racily clean" entries.
+const RACY_MS = 2500;
+// The clock-like fields of the state (last sync, last seen) alone reach the database at most this often; every other change is written at once.
+const CLOCK_SAVE_MS = 60_000;
+// A master from before the `if_none_match` answer sends every file's content each time: once its answers stopped changing, a scheduled tick asks
+// it only this often (after IDLE_ROUNDS answers in a row that changed nothing).
+const IDLE_POLL_MS = 15_000;
+const IDLE_ROUNDS = 2;
+const statKey = stat => `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}`;
+const settledAt = (stat, at) => at - Math.max(stat.mtimeMs, stat.ctimeMs) >= RACY_MS;
+const withoutClocks = (key, value) => (key === 'lastSyncAt' || key === 'lastSeenAt' ? undefined : value);
 const sha = data => crypto.createHash('sha256').update(data).digest('hex');
 // A user may paste 192.168.1.5:3000 or a full address with /web; normalize it to protocol://host:port.
 function masterBaseUrl(input) {
@@ -81,8 +96,8 @@ function writeFile(spec, encoded, home) {
   return { hash: sha(data), content: encoded, size: data.length };
 }
 class FileSync {
-  constructor({ db, secret, home, intervalMs = 3000, remoteRequest = request } = {}) {
-    this.db = db; this.secret = secret; this.home = home || os.homedir(); this.remoteRequest = remoteRequest;
+  constructor({ db, secret, home, intervalMs = 3000, remoteRequest = request, now = Date.now, log = console } = {}) {
+    this.db = db; this.secret = secret; this.home = home || os.homedir(); this.remoteRequest = remoteRequest; this.now = now; this.log = log;
     const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY);
     this.state = row ? JSON.parse(row.value) : { masterId: null, files: [], versions: {}, observed: {}, backups: {}, error: null };
     this.state.generation ||= crypto.randomUUID();
@@ -91,11 +106,39 @@ class FileSync {
     this.state.mode ||= this.state.masterId == null ? 'master' : 'slave';
     this.masterCodes = new Map();
     this.busy = false;
-    this.timer = intervalMs ? setInterval(() => this.tick().catch(error => { this.state.error = error.message; }), intervalMs) : null;
+    // What the database holds (see save()): `json` the whole state, `durable` the state without its clocks, `at` when it was written.
+    this.stored = { json: row ? row.value : null, durable: null, at: 0 };
+    this.scanned = new Map(); // master: spec -> { key, hash, settled } of the file when it was last read (see inspect())
+    this.markers = new Map(); // marker path -> the stat of the marker whose content was checked (see refreshMarkers())
+    this.round = null; // slave: what the last full round saw (see pollMaster())
+    this.epoch = 0; // goes up when the pairing, a path or a conflict is changed by hand, so a round in flight is not remembered
+    this.loggedError = null;
+    // A new or normalized state (the generation above) is written once here: a tick with nothing to do never writes it.
+    this.save();
+    this.timer = intervalMs ? setInterval(() => this.tick({ scheduled: true }).catch(error => { this.state.error = error.message; }), intervalMs) : null;
     this.timer?.unref();
   }
+  // Writes the state only when it differs from what the database holds. The clocks (lastSyncAt, the children's lastSeenAt / lastSyncAt) move on
+  // every tick and heartbeat: alone they are written at most once per CLOCK_SAVE_MS, and status() and the heartbeat read them from memory.
   save() {
-    this.db.prepare(`INSERT INTO system_state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`).run(STATE_KEY, JSON.stringify(this.state));
+    const durable = JSON.stringify(this.state, withoutClocks);
+    const at = this.now();
+    if (durable === this.stored.durable && Math.abs(at - this.stored.at) < CLOCK_SAVE_MS) return;
+    const json = JSON.stringify(this.state);
+    if (json === this.stored.json) { this.stored.durable = durable; return; }
+    this.db.prepare(`INSERT INTO system_state (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP`).run(STATE_KEY, json);
+    this.stored = { json, durable, at };
+  }
+  // The pairing, a local path or a conflict was changed by hand: the next round looks at everything again.
+  invalidate() { this.epoch += 1; this.round = null; this.scanned.clear(); }
+  // The error of the last round (or of the heartbeat) is kept in the state for the API; in the log each distinct error appears once, and once more
+  // when it is over.
+  reportError() {
+    const error = this.state.error || (this.state.registrationError ? `heartbeat: ${this.state.registrationError}` : null);
+    if (error === this.loggedError) return;
+    if (error) this.log.warn(`[file-sync] error: ${error}`);
+    else (this.log.info || this.log.warn).call(this.log, `[file-sync] working again (the error was: ${this.loggedError})`);
+    this.loggedError = error;
   }
   isMaster() { return this.state.mode === 'master'; }
   paired() { return Boolean(this.state.link) || this.state.masterId != null; }
@@ -139,22 +182,41 @@ class FileSync {
   localPath(spec) { return resolveSpec(this.localSpec(spec), this.home); }
   removeMarker(file) {
     const marker = file + MANAGED_SUFFIX;
-    try { if (fs.readFileSync(marker, 'utf8') === 't-agent-file-sync\n') fs.unlinkSync(marker); }
+    this.markers.delete(marker);
+    try { if (fs.readFileSync(marker, 'utf8') === MARKER_TEXT) fs.unlinkSync(marker); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
+  // The marker beside a synced file tells scripts/agent-sync.py that file sync manages the file; the script trusts a marker changed less than 60 s
+  // ago. It is written when it is missing or holds something else; otherwise only its time is renewed, once it is MARKER_REFRESH_MS old. A marker
+  // whose stat is the one seen when its content was checked is not read again, so a tick that finds fresh markers reads and writes nothing.
   refreshMarkers() {
+    const now = this.now();
+    const live = new Set();
     for (const spec of this.state.files) {
       const file = this.localPath(spec);
       const marker = file + MANAGED_SUFFIX;
       try {
         if (!fs.lstatSync(file).isFile()) continue;
-        const temp = `${marker}.${crypto.randomBytes(6).toString('hex')}`;
-        try {
-          fs.writeFileSync(temp, 't-agent-file-sync\n', { flag: 'wx', mode: 0o600 });
-          fs.renameSync(temp, marker);
-        } finally { try { fs.unlinkSync(temp); } catch {} }
+        live.add(marker);
+        let stat = null;
+        try { stat = fs.lstatSync(marker); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        let good = Boolean(stat) && stat.isFile() && stat.size === MARKER_TEXT.length
+          && (this.markers.get(marker) === statKey(stat) || fs.readFileSync(marker, 'utf8') === MARKER_TEXT);
+        if (good && Math.abs(now - stat.mtimeMs) >= MARKER_REFRESH_MS) {
+          try { fs.utimesSync(marker, new Date(now), new Date(now)); stat = fs.lstatSync(marker); } catch { good = false; }
+        }
+        if (!good) {
+          const temp = `${marker}.${crypto.randomBytes(6).toString('hex')}`;
+          try {
+            fs.writeFileSync(temp, MARKER_TEXT, { flag: 'wx', mode: 0o600 });
+            fs.renameSync(temp, marker);
+          } finally { try { fs.unlinkSync(temp); } catch {} }
+          stat = fs.lstatSync(marker);
+        }
+        this.markers.set(marker, statKey(stat));
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
+    for (const marker of this.markers.keys()) if (!live.has(marker)) this.markers.delete(marker);
   }
   identity() { return this.db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get()?.value; }
   status() {
@@ -219,21 +281,59 @@ class FileSync {
       });
     } catch { /* while offline, the master marks the last heartbeat as offline. */ }
   }
+  // Master: one listed file as it is now, or null when it does not exist; its revision goes up when its content hash changed. The file is read (and
+  // hashed) only when `read` asks for its content, when its stat (size, times, inode) differs from the one seen at the last read, or when that read
+  // came less than RACY_MS after the file's last change. Otherwise the remembered hash stands and only the stat was taken.
+  inspect(spec, read = false) {
+    const at = this.now();
+    let stat;
+    try { stat = fs.lstatSync(resolveSpec(spec, this.home)); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      this.scanned.delete(spec);
+      return null;
+    }
+    const key = statKey(stat);
+    const seen = this.scanned.get(spec);
+    let current = !read && seen && seen.settled && seen.key === key ? seen : null;
+    if (!current) {
+      current = readFile(spec, this.home);
+      if (!current) { this.scanned.delete(spec); return null; }
+      // The stat is the one taken before the read: a change made in between shows as a different stat at the next look.
+      this.scanned.set(spec, { key, hash: current.hash, settled: settledAt(stat, at) });
+    }
+    const previous = this.state.versions[spec];
+    if (!previous || previous.hash !== current.hash) this.state.versions[spec] = { hash: current.hash, revision: ++this.state.clock };
+    return current;
+  }
   scanMaster() {
     if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
-    for (const spec of this.state.files) {
-      const current = readFile(spec, this.home);
-      if (!current) continue;
-      const previous = this.state.versions[spec];
-      if (!previous || previous.hash !== current.hash) this.state.versions[spec] = { hash: current.hash, revision: ++this.state.clock };
-    }
+    for (const spec of this.state.files) this.inspect(spec);
+    for (const spec of this.scanned.keys()) if (!this.state.files.includes(spec)) this.scanned.delete(spec);
     this.save();
   }
-  manifest() {
-    this.scanMaster();
-    return { instance_id: this.identity(),
-      generation: this.state.generation,
-      files: this.state.files.map(spec => ({ path: spec, revision: this.state.versions[spec]?.revision || 0, ...readFile(spec, this.home) })) };
+  // Master: names what a manifest holds right after a scan (the generation and, per listed file, its revision and its content hash, or that it is
+  // missing), so a slave that already has exactly that can be answered without the contents.
+  manifestTag() {
+    return sha(JSON.stringify([this.state.generation,
+      this.state.files.map(spec => [spec, this.state.versions[spec]?.revision || 0, this.scanned.get(spec)?.hash || null])])).slice(0, 32);
+  }
+  // GET /v1/file-sync/manifest. Every answer carries `etag`. A slave that sends it back as `if_none_match` gets { unchanged: true } and no `files`
+  // while nothing changed (the files are only stat-ed for that); without the parameter, as older slaves ask, the answer is the full manifest as before.
+  manifest({ if_none_match: known } = {}) {
+    if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
+    const head = { instance_id: this.identity(), generation: this.state.generation };
+    if (typeof known === 'string' && known) {
+      this.scanMaster();
+      if (known === this.manifestTag()) return { ...head, etag: known, unchanged: true };
+    }
+    // Each file is read once here, so the revision always belongs to the content sent with it.
+    const files = this.state.files.map(spec => {
+      const current = this.inspect(spec, true);
+      return { path: spec, revision: this.state.versions[spec]?.revision || 0, ...current };
+    });
+    this.save();
+    return { ...head, etag: this.manifestTag(), files };
   }
   setFiles(paths) {
     if (!this.isMaster()) throw fault('SYNC_NOT_MASTER', 409);
@@ -263,6 +363,7 @@ class FileSync {
     this.state.pathOverrides ||= {};
     if (effective) this.state.pathOverrides[spec] = effective;
     else delete this.state.pathOverrides[spec];
+    this.invalidate();
     this.save();
     return this.status();
   }
@@ -309,9 +410,10 @@ class FileSync {
     this.state.observed = {};
     this.state.pathOverrides = {};
     this.state.masterGeneration = manifest.generation;
+    this.invalidate();
     try { await this.applyManifest(manifest, true); }
     catch (error) { this.state = old; this.save(); throw error; }
-    this.state.lastSyncAt = new Date().toISOString();
+    this.state.lastSyncAt = new Date(this.now()).toISOString();
     this.save();
     for (const file of oldPaths) if (!this.state.files.some(spec => this.localPath(spec) === file)) this.removeMarker(file);
     this.refreshMarkers();
@@ -326,6 +428,7 @@ class FileSync {
     const children = this.isMaster() ? this.state.children : {};
     const tokens = this.isMaster() ? this.state.tokens : {};
     this.state = { mode: 'master', masterId: null, files: [], versions: {}, observed: {}, pathOverrides: {}, backups: this.state.backups || {}, children, tokens, generation: crypto.randomUUID(), clock: 0, error: null };
+    this.invalidate();
     this.save();
     for (const file of oldPaths) this.removeMarker(file);
     await this.unregisterFrom(oldMaster, oldGeneration);
@@ -391,26 +494,76 @@ class FileSync {
     writeFile(this.localSpec(spec), item.content, this.home);
     this.state.observed[spec] = { hash: item.hash, revision: item.revision, generation: manifest.generation };
     this.state.error = null;
+    this.invalidate();
     this.save();
     return this.status();
   }
-  async tick() {
+  // One round. The timer passes `scheduled`; a round asked for by hand (POST /run) always asks the master.
+  async tick({ scheduled = false } = {}) {
     if (this.busy) return;
     this.busy = true;
     try {
-      this.state.error = null;
-      if (this.awaitingPairing()) return;
-      if (this.isMaster()) this.scanMaster();
-      else {
-        const { url, token } = this.remote();
-        await this.applyManifest(await this.remoteRequest(url, '/v1/file-sync/manifest', token, { maxBytes: 160 * 1024 * 1024 }));
+      // Nothing to do: a slave that is not paired yet, or a master with an empty list (its slaves ask it, it never calls them).
+      if (this.awaitingPairing() || (this.isMaster() && !this.state.files.length)) {
+        this.state.error = null;
+        this.save();
+        return;
       }
-      this.state.lastSyncAt = new Date().toISOString();
+      let checked = true;
+      if (this.isMaster()) { this.state.error = null; this.scanMaster(); }
+      else checked = await this.pollMaster(scheduled);
+      if (checked) this.state.lastSyncAt = new Date(this.now()).toISOString();
       this.save();
       this.refreshMarkers();
       if (!this.isMaster()) await this.heartbeat();
-    } catch (error) { this.state.error = error.message; this.save(); throw error; }
-    finally { this.busy = false; }
+    } catch (error) { this.round = null; this.state.error = error.message; this.save(); throw error; }
+    finally { this.busy = false; this.reportError(); }
+  }
+  // Slave: the stats of the local copies, taken before a round reads them. `settled` is false while one of them changed less than RACY_MS ago.
+  localSnapshot() {
+    const at = this.now();
+    let settled = true;
+    const files = this.state.files.map(spec => {
+      const file = this.localPath(spec);
+      try {
+        const stat = fs.lstatSync(file);
+        if (!settledAt(stat, at)) settled = false;
+        return [spec, file, statKey(stat)];
+      } catch (error) {
+        if (error.code !== 'ENOENT') settled = false;
+        return [spec, file, null];
+      }
+    });
+    return { key: JSON.stringify(files), settled };
+  }
+  // Slave: one look at the master; false when the master was not asked this time. A full manifest holds every file's content, so it is fetched
+  // only when something may have changed:
+  // - the local copies are compared by stat with what the last full round saw. Any difference, or a copy changed a moment ago, means a full round;
+  // - when they are the same, the master is asked with `if_none_match` = the etag of the manifest of that round, and answers { unchanged: true }
+  //   without contents while it has nothing new. Then nothing is read or written here, and the error of that round (a conflict) stands;
+  // - a master from before that parameter ignores it and sends the full manifest, which is applied as always. Once its answers stopped changing,
+  //   a scheduled tick asks such a master only every IDLE_POLL_MS; a local change is still sent at the next tick.
+  async pollMaster(scheduled) {
+    const { url, token } = this.remote();
+    const epoch = this.epoch;
+    const local = this.localSnapshot();
+    const known = this.round && this.round.settled && this.round.local === local.key ? this.round : null;
+    if (known && !known.etag && scheduled && known.idle >= IDLE_ROUNDS && Math.abs(this.now() - known.at) < IDLE_POLL_MS) return false;
+    const query = known && known.etag ? `?if_none_match=${encodeURIComponent(known.etag)}` : '';
+    const manifest = await this.remoteRequest(url, `/v1/file-sync/manifest${query}`, token, { maxBytes: 160 * 1024 * 1024 });
+    if (query && manifest && manifest.unchanged === true && manifest.etag === known.etag) {
+      if (epoch === this.epoch) this.state.error = known.error;
+      return true;
+    }
+    this.state.error = null;
+    await this.applyManifest(manifest);
+    const digest = sha(JSON.stringify([manifest.generation, manifest.files.map(item => [item.path, item.revision, item.content == null ? null : item.hash])]));
+    this.round = epoch !== this.epoch ? null : {
+      etag: typeof manifest.etag === 'string' && manifest.etag ? manifest.etag : null,
+      digest, local: local.key, settled: local.settled, error: this.state.error,
+      idle: known && known.digest === digest ? known.idle + 1 : 0, at: this.now(),
+    };
+    return true;
   }
   async applyManifest(manifest, initial = false) {
     if (!Array.isArray(manifest.files) || manifest.files.length > 100 || typeof manifest.generation !== 'string') throw fault('SYNC_MANIFEST_INVALID', 502);

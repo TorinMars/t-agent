@@ -42,7 +42,10 @@ test('every widget string has a Chinese translation', () => {
     vm.runInContext(fs.readFileSync(path.join(ROOT, 'public', 'js', file), 'utf8'), sandbox);
   }
   const list = JSON.parse(fs.readFileSync(STRINGS, 'utf8'));
-  assert.deepEqual(list.filter(item => sandbox.I18n.t(item) === item), []);
+  // Placeholders are filled with a number first, as the window shows them: a template with almost no fixed text
+  // ("{1}m") matches only numbers in the page's engine (the server itself serves the exact key).
+  const shown = item => item.replace(/\{\d\}/g, '7');
+  assert.deepEqual(list.filter(item => sandbox.I18n.t(shown(item)) === shown(item)), []);
 });
 
 function swiftSkipReason() {

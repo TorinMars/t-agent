@@ -47,5 +47,15 @@
   "Open link: {1}",
   "Close",
   "Open T-Agent",
-  "+{1} more"
+  "+{1} more",
+  "Working now",
+  "Running",
+  "Waiting for you",
+  "Finished",
+  "Terminal",
+  "{1} running",
+  "{1} waiting for you",
+  "{1}s",
+  "{1}m",
+  "{1}h {2}m"
 ]

@@ -579,8 +579,9 @@ async function testTouch(browser) {
   await page.locator('#h5-session-menu-actions').first().waitFor();
   await t.closeMenu();
   assert.equal(t.puts(world), saved, `${label}: taps, long presses and swipes save nothing`);
-  // A finger that moves on a row scrolls the list, as before sorting existed.
-  await page.setViewportSize({ width: 390, height: 420 });
+  // A finger that moves on a row scrolls the list, as before sorting existed. (The drawer has no destination rows below the list any more, so the
+  // window is shorter than before for the list to scroll.)
+  await page.setViewportSize({ width: 390, height: 340 });
   await t.settle();
   const list = page.locator('#h5-task-list');
   assert.ok(await list.evaluate(node => node.scrollHeight > node.clientHeight + 40), `${label}: the short list can scroll`);
@@ -861,8 +862,9 @@ async function testRowHold(browser) {
     if (await page.locator('#h5-new-session').count() && await page.locator('#h5-new-session').isVisible()) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
   }
   assert.equal(t.puts(world), saved, `${label}: nothing saved from the buttons`);
-  // A swipe before the hold scrolls the list and drags nothing; held at the bottom edge, a picked-up row scrolls the list.
-  await page.setViewportSize({ width: 390, height: 420 });
+  // A swipe before the hold scrolls the list and drags nothing; held at the bottom edge, a picked-up row scrolls the list. (A window short enough for
+  // the list to scroll now that the drawer has no destination rows below it.)
+  await page.setViewportSize({ width: 390, height: 340 });
   await t.settle();
   const list = page.locator('#h5-task-list');
   const second = await t.box((await t.titles())[1]);

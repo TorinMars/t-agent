@@ -158,8 +158,6 @@ export function BottomArea({ ui }) {
   const presets = commandsFor(state.terminalAgent);
   const rows = [
     { icon: <Icon name="paste" size={20} />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
-    // Under 360px (touch) row 2 has no room for the Docs button: the list leads to the documents instead (shown only there, `narrowOnly`).
-    ...(pointer || compact ? [] : [{ icon: <Icon name="designDoc" size={20} />, label: 'Docs', id: 'h5-commands-docs', narrowOnly: true, run: () => run(() => ui.actions.openDesign()) }]),
     // The presets of the open terminal's kind (Claude Code, Codex or a plain shell; `state.terminalAgent`, set by h5.js), under a header naming the list (scripts/h5-shell/commands.mjs).
     // A tap types the command WITHOUT Enter, so the user checks it and presses Enter.
     { head: true, label: presets.title },
@@ -204,7 +202,7 @@ function CommandsList({ rows, at = null }) {
           key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} id={row.id} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
           sx={{
             justifyContent: 'flex-start', minHeight: 40, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, typography: 'body1', fontWeight: 400, [TOUCH]: { minHeight: 48 },
-            '& .MuiButton-startIcon': { mr: 2, color: 'text.secondary' }, ...(row.narrowOnly ? { [WIDE_ENOUGH]: { display: 'none' } } : {}),
+            '& .MuiButton-startIcon': { mr: 2, color: 'text.secondary' },
           }}
         >
           {row.note ? (
@@ -263,9 +261,10 @@ function CompactBottom({ state, ui, list, onMenu, pointer }) {
 //   tools" and Send. More holds T-Attention (`#h5-attention`, with its "Needs you" count), Next running or pending session (`#h5-cycle`) and Send as
 //   typed (`#h5-translate-send`): the ids of the buttons they replace. The menu stays mounted (hidden while closed), so those ids are always in the
 //   page. When the area is narrower than SINGLE_NARROW px, Saved commands and Docs go into More too (`#h5-more-commands`, `#h5-more-docs`), as in a column.
-// - 'phone' (touch input): all eight tools as flat 48px icon buttons that share the width: terminal keyboard, draft keyboard, upload, saved commands,
-//   voice, Docs, T-Attention and next session. The set never changes with the state (the send buttons are in the draft box); only under 360px Docs is
-//   left out (the saved commands list has a Docs entry there). The active tool is drawn in the primary colour.
+// - 'phone' (touch input): seven tools as flat 44px icon buttons that share the width of a 48px row: terminal keyboard, draft keyboard, upload, saved
+//   commands, voice, Docs and next session (seven fit from 320px). The set never changes with the state (the send buttons are in the draft box). The
+//   active tool is drawn in the primary colour. T-Attention is not among them: on a phone it is a destination of the bottom navigation (BottomNav.jsx,
+//   which carries `#h5-attention`); a touch screen on the wide layout has it in the navigation rail.
 // The elements h5.js and voice-input.js hold (the file input, the voice button) keep their place among the children in every mode (the `null`
 // slots), so a change of the input mode never remounts them.
 // A chosen menu item runs after the menu closed, so the focus the menu gives back to its button does not take it from where the action put it
@@ -275,7 +274,7 @@ const COMPACT_ICON = { flex: '0 0 auto', width: 36, height: 36, p: 0, color: 'te
 const SELECTED_TOOL = theme => ({ color: theme.palette.primary.main, backgroundColor: alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) });
 const ACTIVE = '&[aria-pressed="true"], &[aria-expanded="true"]';
 const SINGLE_ICON = { ...COMPACT_ICON, width: 40, height: 40, [ACTIVE]: SELECTED_TOOL };
-const PHONE_TOOL = { flex: '1 1 0', minWidth: 0, height: 48, p: 0, borderRadius: 2, color: 'text.primary', [ACTIVE]: SELECTED_TOOL, '& .MuiTouchRipple-root': { borderRadius: 2 } };
+const PHONE_TOOL = { flex: '1 1 0', minWidth: 0, height: 44, p: 0, borderRadius: 2, color: 'text.primary', [ACTIVE]: SELECTED_TOOL, '& .MuiTouchRipple-root': { borderRadius: 2 } };
 const BADGE = { '& .MuiBadge-badge': { typography: 'caption', fontSize: 10, fontWeight: 500, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } };
 const COUNT_PILL = { ml: 2, height: 20, px: 0.75, typography: 'caption' };
 // The width of the computer row, read while it is shown (the menu needs to know, so CSS alone cannot do it).
@@ -304,7 +303,7 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
   const close = () => setAnchor(null);
   const choose = action => () => { close(); setTimeout(action, 0); };
   const active = Number(state.activeCount) || 0;
-  const needs = single || phone ? state.attentionNeeds : 0;
+  const needs = single ? state.attentionNeeds : 0;
   // The "More tools" button counts what waits inside it: running or pending sessions, and on the computer row the T-Attention items that need the person
   // too (the badge is orange while some do, like the T-Attention badge).
   const waiting = active + (single ? needs : 0);
@@ -329,11 +328,10 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
       <Icon name="commands" size={size} />
     </IconButton>
   );
-  // Docs: the design document sheet (Design.jsx); its header has Files (the read-only file tree). On a touch screen under 360px eight buttons do not
-  // fit, so it is left out there: the saved commands list has a Docs entry instead.
+  // Docs: the design document sheet (Design.jsx); its header has Files (the read-only file tree).
   const docsButton = (
     <IconButton
-      id="h5-design" data-action="design" sx={phone ? { ...look, '@media (max-width: 359.98px)': { display: 'none' } } : look} {...named(docs)}
+      id="h5-design" data-action="design" sx={look} {...named(docs)}
       aria-haspopup="dialog" aria-expanded={state.designOpen} onClick={() => ui.actions.openDesign()}
     ><Icon name="designDoc" size={size} /></IconButton>
   );
@@ -384,7 +382,7 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
       onMouseDown={event => { if (event.target.closest('button, label')) event.preventDefault(); }}
       sx={column ? { display: 'none', alignItems: 'center', gap: 0.5, flex: '0 0 auto' }
         : single ? { display: 'flex', alignItems: 'center', gap: 0.5, flex: '0 0 auto' }
-          : { display: 'flex', alignItems: 'center', px: 0.5, py: 0.5, borderTop: 1, borderColor: 'divider' }}
+          : { display: 'flex', alignItems: 'center', px: 0.5, py: 0.25, borderTop: 1, borderColor: 'divider' }}
     >
       {phone ? keyboard('keyboard', 'terminal', 'Terminal keyboard') : null}
       {phone ? keyboard('draft', 'draft', 'Draft keyboard') : null}
@@ -403,12 +401,6 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
       <IconButton id="h5-voice" className="h5-voice" sx={look} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" size={size} /></IconButton>
       {single && !narrow ? commandsButton : null}
       {phone || (single && !narrow) ? docsButton : null}
-      {/* T-Attention: the badge counts the tasks that need the user (waiting_user). Not in a pane of the multi-column view (the top page keeps it). */}
-      {phone ? (
-        <IconButton id="h5-attention" data-action="attention" sx={look} {...named(attention)} aria-haspopup={state.wide ? undefined : 'dialog'} aria-expanded={state.attentionOpen} onClick={() => ui.actions.toggleAttention()}>
-          <Badge className="h5-attention-badge" badgeContent={needs} max={99} color="warning" invisible={!needs} overlap="circular" sx={BADGE}><Icon name="attention" size={size} /></Badge>
-        </IconButton>
-      ) : null}
       {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). */}
       {phone ? (
         <IconButton id="h5-cycle" data-action="cycle" sx={look} {...named(cycle)} onClick={() => ui.actions.nextActiveSession()}>
@@ -587,14 +579,14 @@ const KEY = {
 };
 
 // Row 1: the function keys. A tap keeps the focus where it is (mouse down is stopped), so it neither opens nor closes the on-screen keyboard. They stay visible while the on-screen keyboard is open.
-// The row is 48px: 44px targets with the 36px keys drawn in them, 8px apart.
+// The row is 44px: 44px targets with the 36px keys drawn in them, 8px apart.
 export function KeyBar({ state, ui }) {
   const fade = useEdgeFade();
   return (
     <Box
       ref={fade} className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')}
       onMouseDown={event => event.preventDefault()}
-      sx={{ display: 'flex', gap: 1, px: 1, py: 0.25, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, ...EDGE_FADE }}
+      sx={{ display: 'flex', gap: 1, px: 1, py: 0, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, ...EDGE_FADE }}
     >
       {KEYS.map(item => {
         const name = item.aria ? t(item.aria) : undefined;
@@ -612,7 +604,6 @@ export function KeyBar({ state, ui }) {
 }
 
 // The hardware keyboard shortcuts of the draft box (keydown on #h5-translate-input in h5.js), shown after the tooltips: Apple systems (iPadOS reports MacIntel) use Cmd / Option.
-const WIDE_ENOUGH = '@media (min-width: 360px)'; // eight tools fit in row 2 (touch): the Docs entry of the saved commands list is not needed
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 const SEND_KEYS = APPLE ? ' (⌥↩)' : ' (Alt+Enter)';
 const TRANSLATE_KEYS = APPLE ? ' (↩)' : ' (Enter)';

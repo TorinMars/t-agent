@@ -299,9 +299,11 @@ const editLayout = page => page.evaluate(() => {
       assert.equal(await page.locator('#h5-files').count(), 0, 'no Files button in row 2');
       assert.equal(await page.locator('#h5-design').getAttribute('aria-label'), 'Docs');
       const buttons = await row2(page);
-      assert.deepEqual(buttons.map(b => b.id).slice(-3), ['h5-design', 'h5-attention', 'h5-cycle']);
-      assert.equal(buttons.length, 8);
-      assert.ok(buttons.every(b => b.width >= 43.99 && b.height >= 43.99), `eight 44px buttons at 390px: ${JSON.stringify(buttons.map(b => [b.width, b.height]))}`);
+      // T-Attention is a destination of the bottom navigation (#h5-attention there), no longer a tool of row 2.
+      assert.deepEqual(buttons.map(b => b.id).slice(-2), ['h5-design', 'h5-cycle']);
+      assert.equal(buttons.length, 7);
+      assert.ok(buttons.every(b => b.width >= 43.99 && b.height >= 43.99), `seven 44px buttons at 390px: ${JSON.stringify(buttons.map(b => [b.width, b.height]))}`);
+      assert.equal(await page.locator('#h5-bnav #h5-attention').count(), 1, 'Attention is in the bottom navigation');
       assert.equal(await page.locator('#h5-attention-sheet').count(), 0, 'the panel is drawn only when it is opened');
       assert.deepEqual(calls.map(call => `${call.method} ${call.path}`), ['GET /api/attention?include_done=1&limit=200'], 'the list is read once at start');
       assert.equal(await page.evaluate(() => window.streams.length), 1, 'the live stream is open');
@@ -314,7 +316,8 @@ const editLayout = page => page.evaluate(() => {
       await sheet.waitFor({ state: 'visible' });
       await settled(page, '#h5-attention-sheet .h5-attention-panel');
       const box = await sheet.boundingBox();
-      assert.ok(box.width === 390 && Math.abs(box.height - 844) <= 1 && box.y === 0, `full-screen sheet (${JSON.stringify(box)})`);
+      // A page of its own over the terminal page, ending at the bottom navigation (56px).
+      assert.ok(box.width === 390 && Math.abs(box.height - (844 - 56)) <= 1 && box.y === 0, `full-screen sheet above the bottom navigation (${JSON.stringify(box)})`);
       assert.deepEqual(await groupKeys(page), ['needs_you', 'working', 'todo', 'closed']);
       assert.deepEqual(await idsIn(page, 'needs_you'), [1, 2], 'waiting_user, then review');
       assert.deepEqual(await idsIn(page, 'todo'), [8, 5, 4], 'priority, then the earlier due date');
@@ -876,18 +879,17 @@ const editLayout = page => page.evaluate(() => {
       await context.close();
     }
 
-    // ── Phone 320x640, touch: seven buttons, Docs from the saved commands list ──
+    // ── Phone 320x640, touch: the seven tools fit, Docs among them ──
     {
       const { context, page, errors } = await openPage(browser, { viewport: { width: 320, height: 640 } });
       await page.waitForFunction(() => document.getElementById('h5-attention').getAttribute('aria-label') === 'Attention (1)');
       const buttons = await row2(page);
       assert.equal(buttons.length, 7, `seven buttons at 320px: ${buttons.map(b => b.id)}`);
-      assert.ok(!buttons.some(b => b.id === 'h5-design'), 'Docs is left out at 320px');
-      assert.ok(buttons.some(b => b.id === 'h5-attention'));
+      assert.ok(buttons.some(b => b.id === 'h5-design'), 'Docs fits at 320px');
+      assert.equal(await page.locator('#h5-bnav #h5-attention').isVisible(), true, 'T-Attention in the bottom navigation');
       assert.ok(buttons.every((b, i) => b.width >= 43.99 && b.height >= 43.99 && b.right <= 320.01 && (i === 0 || buttons[i - 1].right <= b.left + 0.01)), `44px buttons: ${JSON.stringify(buttons.map(b => [b.left, b.right, b.height]))}`);
       if (SHOTS) await page.locator('#h5-actions').screenshot({ path: path.join(SHOTS, 'h5-attention-row2-320.png') });
-      await page.locator('#h5-commands').tap();
-      await page.locator('#h5-commands-docs').tap();
+      await page.locator('#h5-design').tap();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       await page.locator('#h5-design-close').tap();
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
@@ -916,13 +918,13 @@ const editLayout = page => page.evaluate(() => {
       assert.deepEqual(errors, []);
       await context.close();
     }
-    // At 360px the eight buttons fit: the saved commands list has no Docs entry there.
+    // At 360px the seven tools fit too, and the saved commands list has no Docs entry.
     {
       const { context, page, errors } = await openPage(browser, { viewport: { width: 360, height: 740 } });
-      assert.equal((await row2(page)).length, 8);
+      assert.equal((await row2(page)).length, 7);
       await page.locator('#h5-commands').tap();
       await page.locator('.h5-add-menu').waitFor();
-      assert.equal(await page.locator('#h5-commands-docs').isVisible(), false);
+      assert.equal(await page.locator('#h5-commands-docs').count(), 0);
       assert.deepEqual(errors, []);
       await context.close();
     }

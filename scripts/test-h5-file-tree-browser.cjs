@@ -109,10 +109,11 @@ const rowOf = (page, filePath) => page.locator(`#h5-files-tree [data-path="${fil
 const names = page => page.evaluate(() => [...document.querySelectorAll('#h5-files-tree [role="treeitem"]')].map(node => node.textContent));
 const resizes = page => page.evaluate(() => window.sockets.reduce((sum, socket) => sum + socket.sent.filter(data => data.includes('"resize"')).length, 0));
 // The sheet has stopped sliding (its transform is none or the identity).
-// The tree is reached from the Docs button (the design document sheet) and its Files button; under 360px Docs is in the saved commands list.
+// The tree is reached from the Docs button (the design document sheet) and its Files button; on a computer row narrower than 560px (the T-Attention
+// panel open beside it) Docs is an item of More tools.
 async function openTree(page, how = 'tap') {
   if (await page.locator('#h5-design').isVisible()) await page.locator('#h5-design')[how]();
-  else { await page.locator('#h5-commands')[how](); await page.locator('#h5-commands-docs')[how](); }
+  else { await page.locator('#h5-more')[how](); await page.locator('#h5-more-docs')[how](); }
   await page.locator('#h5-design-files')[how]();
   await page.locator('#h5-files-sheet .h5-files-panel').waitFor({ state: 'visible' });
 }
@@ -223,7 +224,7 @@ async function checkTerminalAlignment(browser) {
   const { context, page, errors } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
   const views = [
     { name: 'file tree', selector: '#h5-files-sheet .h5-files-panel', close: '#h5-files-close', open: () => openTree(page, 'click') },
-    { name: 'design document', selector: '#h5-design-sheet .h5-design-panel', close: '#h5-design-close', open: () => page.locator('#h5-design').click() },
+    { name: 'design document', selector: '#h5-design-sheet .h5-design-panel', close: '#h5-design-close', open: async () => { if (await page.locator('#h5-design').isVisible()) await page.locator('#h5-design').click(); else { await page.locator('#h5-more').click(); await page.locator('#h5-more-docs').click(); } } },
   ];
   const fold = value => page.evaluate(on => document.documentElement.toggleAttribute('data-sidebar-collapsed', on), value); // the header button is under the modal
   for (const view of views) {
@@ -565,11 +566,10 @@ async function checkListScrolling(browser, viewport, touch) {
     // ── Phone 320x640, touch: Files is left out of row 2, the viewer leads to the tree ──
     {
       const { context, page, errors, lists } = await openPage(browser, { viewport: { width: 320, height: 640 } });
-      assert.equal(await page.locator('#h5-design').isVisible(), false, 'no room for an eighth button at 320px: Docs is left out');
+      assert.equal(await page.locator('#h5-design').isVisible(), true, 'the seven tools fit at 320px, Docs among them');
       const widths = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(node => getComputedStyle(node).display !== 'none').map(node => Math.round(node.getBoundingClientRect().width)));
       assert.ok(widths.every(w => w >= 44), `row 2 keeps 44px buttons (${widths})`);
-      await page.locator('#h5-commands').tap();
-      await page.locator('#h5-commands-docs').tap();
+      await page.locator('#h5-design').tap();
       const viewerFiles = page.locator('#h5-design-files');
       await viewerFiles.waitFor();
       assert.equal(await viewerFiles.getAttribute('aria-label'), 'Files');

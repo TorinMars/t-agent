@@ -102,6 +102,9 @@ const measure = page => page.evaluate(() => {
     pinnedHeight: el.style.height, shift: el.style.transform, screen: Math.round(el.querySelector('.xterm-screen').getBoundingClientRect().height),
     resizes: resizes.length, lastResize: resizes.at(-1) || null, rowsSent: resizes.map(item => item.rows),
     focused: document.activeElement === document.getElementById('h5-translate-input'),
+    // The phone's bottom navigation (BottomNav.jsx): while it is shown (and while it is away for typing without a system keyboard) the page keeps its
+    // 56px free at the bottom.
+    bar: Math.round(parseFloat(getComputedStyle(document.querySelector('.h5-app')).paddingBottom) || 0),
   };
 });
 const settle = (page, ms = 300) => page.waitForTimeout(ms);
@@ -111,7 +114,7 @@ const describe = (name, state) => console.log(`  ${name}: page ${state.app.heigh
 function fullPage(state, what) {
   check(near(state.app.height, HEIGHT), `${what}: the page is full height (${state.app.height})`);
   check(state.terminal.height > 400, `${what}: the terminal box is usable (${state.terminal.height})`);
-  check(near(state.keys.bottom, HEIGHT), `${what}: the keys sit at the bottom (${state.keys.bottom})`);
+  check(near(state.keys.bottom, HEIGHT - state.bar), `${what}: the keys sit at the bottom, above the bottom navigation (${state.keys.bottom}, bar ${state.bar})`);
   if (!state.focused) check(state.keys.top >= state.terminal.bottom - 1, `${what}: the keys are under the terminal`); // a focused draft bar grows over the terminal
   check(state.keys.top > state.header.bottom + 100, `${what}: the keys are not right under the header (${state.keys.top}, header ${state.header.bottom})`);
   check(state.pinnedHeight === '', `${what}: the terminal is not pinned`);
@@ -310,7 +313,7 @@ async function runCase(browser, name, options, body) {
       const before = await measure(page);
       const collapse = height => page.evaluate(value => document.documentElement.style.setProperty('--h5-height', `${value}px`), height);
       for (const room of [0, 20, 40]) {
-        await collapse(before.header.height + before.keys.height + room);
+        await collapse(before.header.height + before.keys.height + before.bar + room);
         await settle(page);
         const state = await measure(page);
         describe(`terminal box ${room}`, state);
@@ -318,7 +321,7 @@ async function runCase(browser, name, options, body) {
         check(state.resizes === before.resizes, `box of ${room}px: no PTY resize (rows sent: ${state.rowsSent.join(', ')})`);
       }
       // The terminal connects again while the box is collapsed: no size now, and the right one afterwards.
-      await collapse(before.header.height + before.keys.height + 20);
+      await collapse(before.header.height + before.keys.height + before.bar + 20);
       await settle(page, 100);
       await page.evaluate(() => window.sockets.at(-1).onopen());
       await settle(page, 100);
@@ -335,9 +338,9 @@ async function runCase(browser, name, options, body) {
     await runCase(browser, 'the chat view on a small reading', { chat: true }, async page => {
       await setReadings(page, { visual: 200 });
       await settle(page);
-      const box = await page.evaluate(() => { const rect = document.getElementById('h5-agent').getBoundingClientRect(); return { bottom: Math.round(rect.bottom), height: Math.round(rect.height) }; });
+      const box = await page.evaluate(() => { const rect = document.getElementById('h5-agent').getBoundingClientRect(); const nav = document.documentElement.hasAttribute('data-bnav') ? document.getElementById('h5-bnav').getBoundingClientRect().height : 0; return { bottom: Math.round(rect.bottom), height: Math.round(rect.height), bar: Math.round(nav) }; });
       console.log(`  chat view: bottom ${box.bottom}, height ${box.height}`);
-      check(near(box.bottom, HEIGHT), `the chat reaches the bottom of the screen (${box.bottom})`);
+      check(near(box.bottom, HEIGHT - box.bar), `the chat reaches the bottom of the screen, above the bottom navigation (${box.bottom}, bar ${box.bar})`);
       check(box.height > 500, `the chat keeps its height (${box.height})`);
     });
 

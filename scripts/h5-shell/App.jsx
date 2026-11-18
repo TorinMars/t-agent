@@ -7,6 +7,7 @@ import { TaskDialog } from './TaskDialogs.jsx';
 import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
 import { ColumnStrip, NavRail } from './Columns.jsx';
+import { BottomNav } from './BottomNav.jsx';
 import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
@@ -101,6 +102,8 @@ export function App({ ui }) {
       <TaskDrawer ui={ui} />
       {/* The navigation rail of the wide layout, in the single view and above the columns view (Columns.jsx). */}
       <NavRail ui={ui} />
+      {/* Its phone counterpart: the bottom navigation of the narrow layout (BottomNav.jsx). */}
+      <BottomNav ui={ui} />
       <Lazy open={open.settings}><Whole ui={ui} part={SettingsDrawer} /></Lazy>
       <Lazy open={open.menu}><Part ui={ui} keys={TERM_MENU_KEYS} part={TermMenu} /></Lazy>
       <Lazy open={open.copy}><Part ui={ui} keys={COPY_KEYS} part={CopyDialog} /></Lazy>

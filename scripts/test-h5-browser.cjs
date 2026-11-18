@@ -296,12 +296,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Docs', 'Attention', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, Docs, Attention, next running or pending session');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Docs', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, Docs, next running or pending session (T-Attention is in the bottom navigation)');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
       for (const id of ['h5-translate-send', 'h5-translate-button']) assert.equal(await page.locator(`#${id}`).isVisible(), false, `${id} is not shown while the box is hidden`);
-      // MD2: flat 48px icon buttons on the bar surface (no box, no border), the keys of row 1 drawn 36px high with 8px corners inside a 44px target.
+      // MD2: flat 44px icon buttons (in a 48px row) on the bar surface (no box, no border), the keys of row 1 drawn 36px high with 8px corners inside a 44px target.
       const look = await page.evaluate(() => {
         const tool = document.querySelector('#h5-actions [data-action="keyboard"]');
         const key = document.querySelector('#h5-keys [data-key="Escape"]');
@@ -310,7 +310,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
           keyHeight: key.getBoundingClientRect().height, faceHeight: key.getBoundingClientRect().height - parseFloat(face.top) - parseFloat(face.bottom), faceRadius: face.borderTopLeftRadius, keyBorder: getComputedStyle(key).borderTopWidth,
           badges: [...document.querySelectorAll('#h5-actions .MuiBadge-root')].length };
       });
-      assert.deepEqual(look, { toolHeight: 48, toolBg: 'rgba(0, 0, 0, 0)', toolBorder: '0px', keyHeight: 44, faceHeight: 36, faceRadius: '8px', keyBorder: '0px', badges: 2 }, 'flat MD2 tools and keys, two MUI badges');
+      assert.deepEqual(look, { toolHeight: 44, toolBg: 'rgba(0, 0, 0, 0)', toolBorder: '0px', keyHeight: 44, faceHeight: 36, faceRadius: '8px', keyBorder: '0px', badges: 1 }, 'flat MD2 tools and keys, one MUI badge (next session)');
       assert.equal(await page.evaluate(() => Boolean(document.getElementById('h5-translate').compareDocumentPosition(document.getElementById('h5-keys')) & Node.DOCUMENT_POSITION_FOLLOWING && document.getElementById('h5-keys').compareDocumentPosition(document.getElementById('h5-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)), true, 'order: draft box, function keys, action row');
     }
     assert.ok(rows.flat().every(cell => cell.height >= 32), 'the keys are finger-sized');
@@ -507,7 +507,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(active.keys.top - active.form.bottom <= 12, 'right above the keys, not floating away');
       assert.ok(active.root.bottom <= active.keys.top + 1 && active.keys.bottom <= active.voice.top + 1, 'the box is above the function keys, and the action row below them');
       // The two send actions are in the draft box, under the text, right-aligned ("Bottom bar"): "Send as is" (outlined) then the primary "Send".
-      // The tool row keeps all eight tools while the box is shown: no button appears or disappears.
+      // The tool row keeps all seven tools while the box is shown: no button appears or disappears.
       assert.ok(active.send.top >= active.root.bottom - 1 && active.send.bottom <= active.keys.top + 1, 'the send actions sit under the text, inside the draft box');
       assert.ok(Math.abs(active.send.top - active.translate.top) <= 1 && active.send.right <= active.translate.left + 1, '"Send as is" is left of "Send" on one line');
       assert.ok(active.translate.right <= 390 && active.translate.right >= 390 - 16 && active.send.height >= 40 && active.translate.height >= 40, 'right-aligned, fit the screen and finger-sized');
@@ -516,7 +516,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.deepEqual([looks.send.text, looks.send.label, looks.send.type, looks.send.form], ['Send as is', null, 'submit', 'h5-translate'], '"Send as is" is the form\'s submit, named by its text');
       assert.ok(/MuiButton-outlined/.test(looks.send.classes) && /MuiButton-contained/.test(looks.translate.classes) && /MuiButton-colorPrimary/.test(looks.translate.classes), 'a secondary outlined action and one primary contained "Send"');
       assert.deepEqual([looks.translate.text, looks.translate.label, looks.aa], ['Send', 'Translate and send', 0], 'the primary button says "Send" and is named "Translate and send"; no "Aa" mark any more');
-      assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width > 0).length), 8, 'the tool row keeps its eight tools while the draft box is shown');
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width > 0).length), 7, 'the tool row keeps its seven tools while the draft box is shown');
       assert.ok(active.root.width > 250 && active.root.left >= 0 && active.root.right <= 390, 'the box takes the full width');
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-translate-input')).borderTopLeftRadius), '8px', 'the text field has the theme\'s 8px corners');
       // The terminal is moved, not resized: same box, same element height, same rows, no resize message; it only moves up.
@@ -1756,10 +1756,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await Promise.all([page.waitForEvent('load'), page.locator('#h5-refresh').click()]);
     await page.waitForSelector('#h5-header-more');
     assert.equal(await page.evaluate(() => window.beforeRefresh === true), false, 'the page was loaded again');
-    await page.locator('#h5-open-tasks').tap();
-    assert.equal(await page.locator('#h5-tasks-settings svg').count(), 1, 'a gear icon');
-    assert.equal(await page.locator('#h5-tasks-settings').textContent(), 'Settings', 'a labelled row');
-    await page.locator('#h5-tasks-settings').tap();
+    // Settings is a destination of the bottom navigation (the drawer has no destination rows on a phone).
+    assert.equal(await page.locator('#h5-bnav-settings svg').count(), 1, 'a gear icon');
+    assert.equal(await page.locator('#h5-bnav-settings').textContent(), 'Settings', 'a labelled item');
+    if (await page.locator('#h5-tasks').isVisible()) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
+    await page.locator('#h5-bnav-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');
     assert.equal(await page.locator('#h5-lang').textContent(), '\u4e2d\u6587', 'it names the other language');
@@ -1771,8 +1772,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await Promise.all([page.waitForURL(`${ORIGIN}/torin/hide/login?return_to=/h5`), page.locator('#h5-logout').tap()]);
     assert.ok(calls.includes('POST /auth/logout'));
     await page.goto(`${ORIGIN}/h5`);
-    await page.locator('#h5-open-tasks').tap();
-    await page.locator('#h5-tasks-settings').tap();
+    await page.locator('#h5-bnav-settings').waitFor();
+    if (await page.locator('#h5-tasks').isVisible()) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
+    await page.locator('#h5-bnav-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     // The settings sheet has no updater any more: the Update button's modal does the whole flow.
     assert.equal(await page.locator('#h5-settings #h5-update-check, #h5-settings #h5-update-log, #h5-settings #h5-update-hint').count(), 0, 'no updater in Settings');
@@ -1798,9 +1800,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await narrow.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const row = await narrow.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(); const ids = ['h5-image', 'h5-commands', 'h5-voice', 'h5-translate-send', 'h5-translate-button'];
         const boxes = [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0);
-        return { allEight: [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width >= 44).length === 8, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
+        return { allEight: [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width >= 44).length === 7, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
       });
-      assert.deepEqual(row, { allEight: true, inside: true, overflow: false, noOverlap: true }, 'at 360px all eight tools stay (44px each) and the send actions of the draft box fit');
+      assert.deepEqual(row, { allEight: true, inside: true, overflow: false, noOverlap: true }, 'at 360px all seven tools stay (44px each) and the send actions of the draft box fit');
       await narrow.context.close();
     }
 
@@ -1820,7 +1822,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
       const resting = await row2();
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-rest.png') });
-      const restCount = viewport.width < 360 ? 7 : 8; // Docs is left out under 360px (eight 44px buttons do not fit)
+      const restCount = 7; // the seven tools (T-Attention is in the bottom navigation) fit from 320px
       assert.ok(resting.length === restCount && resting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40 && (i === 0 || resting[i - 1].right <= box.left + 0.5)), `row 2 at rest: ${restCount} buttons of at least 40px at ${viewport.width}px`);
       await small.page.locator('#h5-translate-input').focus();
       await small.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });

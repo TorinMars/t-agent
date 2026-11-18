@@ -152,9 +152,14 @@ async function openSidebar(page, touch) {
   } else await page.locator('#h5-tasks').waitFor({ state: 'visible' });
 }
 async function openSettingsGroup(page, touch, id) {
-  await openSidebar(page, touch);
-  // A phone: the Settings row below the task list; a computer: Settings in the navigation rail.
-  await page.locator(touch ? '#h5-tasks-settings' : '#h5-nav-settings').click();
+  // A phone: Settings in the bottom navigation (the drawer lies over it: closed first); a computer: Settings in the navigation rail.
+  if (touch) {
+    if (await page.evaluate(() => window.H5UI.get().tasksOpen)) { await page.evaluate(() => window.H5UI.actions.closeTasks()); await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open')); }
+    await page.locator('#h5-bnav-settings').tap();
+  } else {
+    await openSidebar(page, touch);
+    await page.locator('#h5-nav-settings').click();
+  }
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   await openGroup(page, id);
 }

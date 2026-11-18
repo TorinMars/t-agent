@@ -110,6 +110,16 @@ html[data-voice-off] .h5-voice, html[data-voice-off] .ac-mic, html[data-voice-of
 .h5-agent .ac-box { padding: 3px 6px; border-radius: 20px; }
 .h5-agent .ac-input { min-height: 32px; padding: 5px 4px; }
 .h5-agent[hidden] { display: none; }
+/* The phone's bottom navigation (BottomNav.jsx, #h5-bnav, fixed at the bottom; `html[data-bnav]` while it is shown, never on the wide layout): the page
+   keeps its room free, so the terminal refits when the bar comes or goes; the bottom area leaves the safe-area inset to the bar. While the bar is away for
+   typing without a system keyboard (`html[data-bnav-room]`) the room stays, so the terminal keeps its size. T-Attention and
+   Settings (its list `#h5-settings` and a group's page `#h5-settings-page`), pages of their own on a phone, end above it: their modal root is
+   shortened and made the containing block of their fixed paper (by the ids only: Attention.jsx and Settings.jsx draw them). The full-window mind map and the chat are fitted above it by h5.js (`bottomNavSpace`). */
+html[data-bnav], html[data-bnav-room] { --h5-bnav-space: calc(56px + env(safe-area-inset-bottom)); }
+html[data-bnav] .h5-app, html[data-bnav-room] .h5-app { padding-bottom: var(--h5-bnav-space); }
+html[data-bnav] #h5-bottom, html[data-bnav-room] #h5-bottom { padding-bottom: 0 !important; }
+html[data-bnav] #h5-attention-sheet, html[data-bnav] #h5-settings, html[data-bnav] #h5-settings-page { bottom: var(--h5-bnav-space) !important; transform: translateZ(0); }
+html[data-bnav] #h5-attention-sheet > .MuiDrawer-paper { max-height: 100%; padding-bottom: 0 !important; }
 /* The task drawer of a phone lies over the page with its scrim (body.h5-tasks-open marks it open; App.jsx makes the page inert meanwhile): the page
    does not move. */
 

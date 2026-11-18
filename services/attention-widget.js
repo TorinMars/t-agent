@@ -1,4 +1,5 @@
-// The T-Attention desktop window (macOS): its settings and the launcher that builds and starts the native window (widgets/macos/TAttentionWidget.swift).
+// The T-Attention desktop window (macOS): its settings and the launcher that builds and starts the native window (widgets/macos/*.swift, entry point
+// in main.swift).
 // See "T-Attention desktop window (macOS)" in DESIGN.md.
 //
 // Settings (system_state, one key, nothing secret): `enabled` (default true), `language` ('auto' | 'en' | 'zh', default 'auto') and the window
@@ -7,8 +8,9 @@
 // or the window settings are loaded, and keeps in system_state; before the page was ever opened it is English.
 //
 // Launcher, on macOS only and when the switch is on: after the server listens, `start({ url })` finds swiftc (`xcode-select -p`, then `xcrun --find
-// swiftc`, so a Mac without the command line tools never shows the system's install dialog), builds the window into <data folder>/widget/ when the binary
-// is missing, older than the source or made by another T-Agent version (to a temporary name, then renamed; 600 s at most), and spawns it with
+// swiftc`, so a Mac without the command line tools never shows the system's install dialog), builds the window from every widgets/macos/*.swift file
+// (sorted by name) into <data folder>/widget/ when the binary is missing, older than the newest source file, made from another set of files or by
+// another T-Agent version (to a temporary name, then renamed; 600 s at most), and spawns it with
 // `--parent-pid <server pid>`, TA_WIDGET_URL and a new TA_WIDGET_TOKEN (32 random bytes, base64url, kept only in memory; the widget API checks it). It
 // never blocks the start and never throws: a failure is one log line and `last_error`. A window that exits on its own (the person quit it, or it
 // crashed) is not started again until the switch is turned off and on, or the server restarts. Turning the switch off sends SIGTERM; so does the
@@ -30,6 +32,10 @@ const BUILD_TIMEOUT_MS = 600 * 1000;
 const LOOKUP_TIMEOUT_MS = 10 * 1000;
 const MISSING_TOOLS_MS = 30 * 1000; // a missing swiftc is looked for again after this (the person may have installed the tools meanwhile)
 const STDERR_KEEP = 2048;
+const SOURCE_DIR = path.join(__dirname, '..', 'widgets', 'macos');
+// Source files of older versions. An archive update copies the new files over the old ones and deletes nothing, so the single-file source of v2.132.0
+// and older stays next to the new files there; built together with them it would define everything twice (and a second entry point).
+const RETIRED_SOURCES = new Set(['TAttentionWidget.swift']);
 
 class WidgetError extends Error {
   constructor(code, message, statusCode = 400) {
@@ -109,10 +115,18 @@ function blockedReason(env) {
   return null;
 }
 
+// The window's source files in `dir`: every *.swift file but the retired ones, sorted by name (a stable order for swiftc), as absolute paths.
+function widgetSources(dir = SOURCE_DIR, fs = nodeFs) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  return names.filter(name => name.endsWith('.swift') && !RETIRED_SOURCES.has(name)).sort().map(name => path.join(dir, name));
+}
+
 function createWidgetLauncher({
   settings,
   dataDir,
-  sourcePath = path.join(__dirname, '..', 'widgets', 'macos', 'TAttentionWidget.swift'),
+  sourceDir = SOURCE_DIR,
+  sourcePath = null, // one file instead of the folder (it then needs no main.swift)
   version = require('../VERSION.json').app_version,
   platform = process.platform,
   env = process.env,
@@ -169,24 +183,34 @@ function createWidgetLauncher({
     return swiftc;
   }
 
+  // The files swiftc compiles, read again each time (an update may add or remove files).
+  const sources = () => (sourcePath ? [sourcePath] : widgetSources(sourceDir, fs));
+  // Whether the install has a complete source: with several files, Swift runs top-level code only from main.swift.
+  const sourceComplete = files => files.length > 0 && files.every(file => fs.existsSync(file)) && (Boolean(sourcePath) || files.some(file => path.basename(file) === 'main.swift'));
+  const sourceNames = files => files.map(file => path.basename(file));
+
   function readStamp() {
     try { return JSON.parse(fs.readFileSync(stampFile, 'utf8')); } catch { return null; }
   }
-  // Why the binary must be built, or null when the one there is current.
+  // Why the binary must be built, or null when the one there is current: missing, older than the newest source file, made by another version, or
+  // made from another set of files (a file removed by an update leaves the newest time of the others as it was).
   function rebuildReason() {
     let binaryStat;
     try { binaryStat = fs.statSync(binary); } catch { return 'missing'; }
-    const sourceStat = fs.statSync(sourcePath);
-    if (binaryStat.mtimeMs < sourceStat.mtimeMs) return 'source changed';
+    const files = sources();
+    let newest = 0;
+    try { for (const file of files) newest = Math.max(newest, fs.statSync(file).mtimeMs); } catch { return 'source changed'; }
+    if (!files.length || binaryStat.mtimeMs < newest) return 'source changed';
     const stamp = readStamp();
     if (!stamp || stamp.version !== version) return 'version changed';
+    if (Array.isArray(stamp.sources) && stamp.sources.join('\n') !== sourceNames(files).join('\n')) return 'source changed';
     return null;
   }
 
-  async function build(compiler) {
+  async function build(compiler, files) {
     fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
     const temporary = path.join(folder, `${BINARY}.${pid}.tmp`);
-    const result = await run(compiler, ['-O', '-swift-version', '5', '-framework', 'AppKit', sourcePath, '-o', temporary], {
+    const result = await run(compiler, ['-O', '-swift-version', '5', '-framework', 'AppKit', ...files, '-o', temporary], {
       timeout: BUILD_TIMEOUT_MS, env: { ...env, ...(sdkRoot ? { SDKROOT: sdkRoot } : {}) },
     });
     if (result.error) {
@@ -195,7 +219,7 @@ function createWidgetLauncher({
       throw new WidgetError('BUILD_FAILED', `The build failed: ${reason}`);
     }
     fs.renameSync(temporary, binary);
-    fs.writeFileSync(stampFile, `${JSON.stringify({ version, built_at: new Date(now()).toISOString() })}\n`);
+    fs.writeFileSync(stampFile, `${JSON.stringify({ version, built_at: new Date(now()).toISOString(), sources: sourceNames(files) })}\n`);
   }
 
   function launch() {
@@ -239,9 +263,10 @@ function createWidgetLauncher({
     pending = (async () => {
       const compiler = await findSwiftc();
       if (!compiler) { lastError = 'Xcode command line tools needed: xcode-select --install'; return; }
-      if (!fs.existsSync(sourcePath)) { lastError = 'The window source is missing from this install'; return; }
+      const files = sources();
+      if (!sourceComplete(files)) { lastError = 'The window source is missing from this install'; return; }
       const reason = rebuildReason();
-      if (reason) await build(compiler);
+      if (reason) await build(compiler, files);
       if (!settings.read().enabled || child || quit) return;
       launch();
       lastError = null;
@@ -296,7 +321,7 @@ function createWidgetLauncher({
     return { supported, blocked: Boolean(blocked), enabled, running: Boolean(child), url };
   }
 
-  return { start, ensure, setEnabled, status, state, verifyToken, stop: kill, paths: { folder, binary, stampFile, sourcePath }, rebuildReason, blocked: () => blocked, idle: () => pending || Promise.resolve() };
+  return { start, ensure, setEnabled, status, state, verifyToken, stop: kill, paths: { folder, binary, stampFile, sourceDir, sourcePath }, sources, rebuildReason, blocked: () => blocked, idle: () => pending || Promise.resolve() };
 }
 
 // Settings sync across linked devices (services/settings-sync.js): only the language of the window ('en' | 'zh'; null is 'auto', the default).
@@ -314,4 +339,4 @@ function importFromSync({ db }, owner, value) {
   syncStore.writeState(db, SETTINGS_KEY, next);
 }
 
-module.exports = { SYNC_GROUP, exportForSync, importFromSync, createWidgetSettings, createWidgetLauncher, blockedReason, WidgetError, SETTINGS_KEY, PAGE_LANGUAGE_KEY, LANGUAGES, PREFS };
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, createWidgetSettings, createWidgetLauncher, widgetSources, RETIRED_SOURCES, blockedReason, WidgetError, SETTINGS_KEY, PAGE_LANGUAGE_KEY, LANGUAGES, PREFS };

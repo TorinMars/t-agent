@@ -20,7 +20,7 @@ const express = require('express');
 const db = require('../db');
 const { defaultService } = require('../services/attention');
 const { RemoteAttentionError } = require('../services/remote-attention');
-const { createWidgetSettings, createWidgetLauncher, blockedReason } = require('../services/attention-widget');
+const { createWidgetSettings, createWidgetLauncher, widgetSources, RETIRED_SOURCES, blockedReason } = require('../services/attention-widget');
 const { createAttentionWidgetRoutes, tagColorIndex, readStringList, createDictionary } = require('../routes/attention-widget');
 const { STATE_KEY: HIDDEN_KEY } = require('../routes/task-list-prefs');
 
@@ -452,10 +452,18 @@ function fakeChild() {
   return child;
 }
 
-function launcherKit({ platform = 'darwin', env = { PATH: '/usr/bin', HOME: '/Users/me' }, version = '9.9.9', tools = true, buildFails = false, source = true } = {}) {
+// The window's sources: by default a folder like widgets/macos (main.swift and another file, plus files that are not Swift); `single` passes one
+// file as `sourcePath` instead.
+function launcherKit({ platform = 'darwin', env = { PATH: '/usr/bin', HOME: '/Users/me' }, version = '9.9.9', tools = true, buildFails = false, source = true,
+  files = ['main.swift', 'Model.swift', 'README.md', 'strings.json'], single = false } = {}) {
   const dir = fs.mkdtempSync(path.join(root, 'launcher-'));
-  const sourcePath = path.join(dir, 'TAttentionWidget.swift');
-  if (source) fs.writeFileSync(sourcePath, 'import AppKit\n');
+  const sourceDir = path.join(dir, 'macos');
+  const sourcePath = single ? path.join(dir, 'Single.swift') : null;
+  if (source && single) fs.writeFileSync(sourcePath, 'import AppKit\n');
+  if (source && !single) {
+    fs.mkdirSync(sourceDir);
+    for (const name of files) fs.writeFileSync(path.join(sourceDir, name), 'import AppKit\n');
+  }
   const calls = { exec: [], spawn: [], logs: [] };
   const children = [];
   const execFile = (file, args, options, callback) => {
@@ -464,7 +472,7 @@ function launcherKit({ platform = 'darwin', env = { PATH: '/usr/bin', HOME: '/Us
       if (file === '/usr/bin/xcode-select') return tools ? callback(null, '/Library/Developer/CommandLineTools\n', '') : callback(Object.assign(new Error('no tools'), { code: 2 }), '', 'error: unable to get active developer directory');
       if (file === '/usr/bin/xcrun' && args.includes('--show-sdk-path')) return callback(null, '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk\n', '');
       if (file === '/usr/bin/xcrun') return callback(null, '/Library/Developer/CommandLineTools/usr/bin/swiftc\n', '');
-      if (buildFails) return callback(Object.assign(new Error('exit 1'), { code: 1 }), '', 'warning: x\nTAttentionWidget.swift:3:1: error: cannot find foo in scope\n');
+      if (buildFails) return callback(Object.assign(new Error('exit 1'), { code: 1 }), '', 'warning: x\nModel.swift:3:1: error: cannot find foo in scope\n');
       fs.writeFileSync(args[args.indexOf('-o') + 1], 'binary');
       return callback(null, '', '');
     });
@@ -479,10 +487,10 @@ function launcherKit({ platform = 'darwin', env = { PATH: '/usr/bin', HOME: '/Us
   db.prepare("DELETE FROM system_state WHERE key LIKE 'attention_widget_%'").run();
   let tokenCount = 0;
   const launcher = createWidgetLauncher({
-    settings, dataDir: dir, sourcePath, version, platform, env, pid: 4242, spawn: spawnFake, execFile,
+    settings, dataDir: dir, sourceDir, ...(single ? { sourcePath } : {}), version, platform, env, pid: 4242, spawn: spawnFake, execFile,
     randomToken: () => `token-${++tokenCount}`, log: line => calls.logs.push(line),
   });
-  return { launcher, settings, calls, children, dir, sourcePath };
+  return { launcher, settings, calls, children, dir, sourceDir, sourcePath };
 }
 const URL_OF = 'http://127.0.0.1:5173';
 
@@ -490,15 +498,19 @@ test('launcher: builds once, spawns with the parent pid, the url and a new token
   const kit = launcherKit();
   await kit.launcher.start({ url: URL_OF });
   const build = kit.calls.exec.find(entry => entry.file.endsWith('swiftc'));
-  assert.deepEqual(build.args.slice(0, 6), ['-O', '-swift-version', '5', '-framework', 'AppKit', kit.sourcePath]);
-  assert.equal(build.args[6], '-o');
-  assert.match(build.args[7], /t-attention-widget\.4242\.tmp$/, 'built to a temporary name first');
+  // Every .swift file of the folder, sorted by name (Swift runs top-level code only from main.swift), and nothing else.
+  assert.deepEqual(build.args.slice(0, 7), ['-O', '-swift-version', '5', '-framework', 'AppKit', path.join(kit.sourceDir, 'Model.swift'), path.join(kit.sourceDir, 'main.swift')]);
+  assert.equal(build.args[7], '-o');
+  assert.match(build.args[8], /t-attention-widget\.4242\.tmp$/, 'built to a temporary name first');
+  assert.equal(build.args.length, 9);
   assert.equal(build.timeout, 600000);
   // swiftc by its own path needs the SDK from xcrun (without it: "unable to load standard library for target ...").
   assert.equal(build.env.SDKROOT, '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk');
   assert.equal(fs.readFileSync(kit.launcher.paths.binary, 'utf8'), 'binary');
-  assert.equal(fs.existsSync(build.args[7]), false, 'the temporary file was renamed');
-  assert.equal(JSON.parse(fs.readFileSync(kit.launcher.paths.stampFile, 'utf8')).version, '9.9.9');
+  assert.equal(fs.existsSync(build.args[8]), false, 'the temporary file was renamed');
+  const stamp = JSON.parse(fs.readFileSync(kit.launcher.paths.stampFile, 'utf8'));
+  assert.equal(stamp.version, '9.9.9');
+  assert.deepEqual(stamp.sources, ['Model.swift', 'main.swift']);
   assert.equal(kit.calls.spawn.length, 1);
   const spawned = kit.calls.spawn[0];
   assert.equal(spawned.file, kit.launcher.paths.binary);
@@ -514,10 +526,25 @@ test('launcher: builds once, spawns with the parent pid, the url and a new token
 
   // Rebuild decisions.
   assert.equal(kit.launcher.rebuildReason(), null, 'current');
+  // The newest of the files counts: here one that is not main.swift.
   const future = new Date(Date.now() + 60000);
-  fs.utimesSync(kit.sourcePath, future, future);
+  fs.utimesSync(path.join(kit.sourceDir, 'Model.swift'), future, future);
   assert.equal(kit.launcher.rebuildReason(), 'source changed');
   fs.utimesSync(kit.launcher.paths.binary, new Date(Date.now() + 120000), new Date(Date.now() + 120000));
+  assert.equal(kit.launcher.rebuildReason(), null);
+  // A file that is not Swift changes nothing.
+  fs.utimesSync(path.join(kit.sourceDir, 'README.md'), new Date(Date.now() + 180000), new Date(Date.now() + 180000));
+  assert.equal(kit.launcher.rebuildReason(), null);
+  // A file added or removed: the set of files differs from the one the binary was made from.
+  fs.writeFileSync(path.join(kit.sourceDir, 'Views.swift'), 'import AppKit\n');
+  fs.utimesSync(path.join(kit.sourceDir, 'Views.swift'), new Date(Date.now() - 600000), new Date(Date.now() - 600000));
+  assert.equal(kit.launcher.rebuildReason(), 'source changed', 'a file was added');
+  fs.rmSync(path.join(kit.sourceDir, 'Views.swift'));
+  assert.equal(kit.launcher.rebuildReason(), null);
+  fs.rmSync(path.join(kit.sourceDir, 'Model.swift'));
+  assert.equal(kit.launcher.rebuildReason(), 'source changed', 'a file was removed');
+  fs.writeFileSync(path.join(kit.sourceDir, 'Model.swift'), 'import AppKit\n');
+  fs.utimesSync(path.join(kit.sourceDir, 'Model.swift'), future, future);
   assert.equal(kit.launcher.rebuildReason(), null);
   fs.writeFileSync(kit.launcher.paths.stampFile, JSON.stringify({ version: '1.0.0' }));
   assert.equal(kit.launcher.rebuildReason(), 'version changed');
@@ -529,7 +556,7 @@ test('launcher: builds once, spawns with the parent pid, the url and a new token
   await again.launcher.start({ url: URL_OF });
   const builds = again.calls.exec.filter(entry => entry.file.endsWith('swiftc')).length;
   again.children[0].emit('exit', 0, null);
-  const fresh = createWidgetLauncher({ settings: again.settings, dataDir: again.dir, sourcePath: again.sourcePath, version: '9.9.9', platform: 'darwin', env: {}, pid: 1, spawn: () => fakeChild(), execFile: (file, args, options, callback) => { again.calls.exec.push({ file, args }); setImmediate(() => callback(null, file.endsWith('xcrun') ? '/x/swiftc\n' : '/dev\n', '')); }, log: () => {} });
+  const fresh = createWidgetLauncher({ settings: again.settings, dataDir: again.dir, sourceDir: again.sourceDir, version: '9.9.9', platform: 'darwin', env: {}, pid: 1, spawn: () => fakeChild(), execFile: (file, args, options, callback) => { again.calls.exec.push({ file, args }); setImmediate(() => callback(null, file.endsWith('xcrun') ? '/x/swiftc\n' : '/dev\n', '')); }, log: () => {} });
   await fresh.start({ url: URL_OF });
   assert.equal(again.calls.exec.filter(entry => entry.file.endsWith('swiftc')).length, builds, 'no second build');
   fresh.stop();
@@ -612,8 +639,8 @@ test('launcher: not on Linux, not in test mode, CI, a T-Agent terminal or with T
   await failing.launcher.start({ url: URL_OF });
   assert.equal(failing.calls.spawn.length, 0);
   const status = await failing.launcher.status();
-  assert.equal(status.last_error, 'The build failed: TAttentionWidget.swift:3:1: error: cannot find foo in scope');
-  assert.deepEqual(failing.calls.logs, ['T-Attention desktop window: The build failed: TAttentionWidget.swift:3:1: error: cannot find foo in scope']);
+  assert.equal(status.last_error, 'The build failed: Model.swift:3:1: error: cannot find foo in scope');
+  assert.deepEqual(failing.calls.logs, ['T-Attention desktop window: The build failed: Model.swift:3:1: error: cannot find foo in scope']);
   assert.equal(fs.existsSync(failing.launcher.paths.binary), false, 'a failed build leaves no binary');
   assert.deepEqual(fs.readdirSync(failing.launcher.paths.folder), [], 'nor a temporary file');
 
@@ -621,6 +648,49 @@ test('launcher: not on Linux, not in test mode, CI, a T-Agent terminal or with T
   await noSource.launcher.start({ url: URL_OF });
   assert.equal(noSource.calls.spawn.length, 0);
   assert.equal((await noSource.launcher.status()).last_error, 'The window source is missing from this install');
+  // Several files without main.swift have no entry point: not built.
+  const noMain = launcherKit({ files: ['Model.swift', 'Views.swift'] });
+  await noMain.launcher.start({ url: URL_OF });
+  assert.ok(!noMain.calls.exec.some(entry => entry.file.endsWith('swiftc')), 'nothing is built without main.swift');
+  assert.equal((await noMain.launcher.status()).last_error, 'The window source is missing from this install');
+});
+
+test('launcher: the single-file source of older versions left by an archive update is not built; one sourcePath still works', async () => {
+  // An archive update copies the new files over the old ones and deletes nothing: TAttentionWidget.swift (v2.132.0 and older) stays beside
+  // main.swift. Built together they would define everything twice.
+  const updated = launcherKit({ files: ['main.swift', 'Model.swift', 'TAttentionWidget.swift'] });
+  await updated.launcher.start({ url: URL_OF });
+  const build = updated.calls.exec.find(entry => entry.file.endsWith('swiftc'));
+  assert.deepEqual(build.args.slice(5, -2), [path.join(updated.sourceDir, 'Model.swift'), path.join(updated.sourceDir, 'main.swift')]);
+  assert.equal(updated.calls.spawn.length, 1);
+  // The leftover's time does not make the binary stale either.
+  const later = new Date(Date.now() + 60000);
+  fs.utimesSync(path.join(updated.sourceDir, 'TAttentionWidget.swift'), later, later);
+  assert.equal(updated.launcher.rebuildReason(), null);
+  assert.deepEqual(widgetSources(updated.sourceDir).map(file => path.basename(file)), ['Model.swift', 'main.swift']);
+  assert.deepEqual(widgetSources(path.join(updated.dir, 'nothing-here')), []);
+  assert.ok(RETIRED_SOURCES.has('TAttentionWidget.swift'));
+
+  // One file given as sourcePath (no main.swift needed): only that file is compiled, and its time decides.
+  const single = launcherKit({ single: true });
+  await single.launcher.start({ url: URL_OF });
+  const one = single.calls.exec.find(entry => entry.file.endsWith('swiftc'));
+  assert.deepEqual(one.args.slice(0, 7), ['-O', '-swift-version', '5', '-framework', 'AppKit', single.sourcePath, '-o']);
+  assert.equal(one.args.length, 8);
+  assert.equal(single.calls.spawn.length, 1);
+  assert.equal(single.launcher.rebuildReason(), null);
+  fs.utimesSync(single.sourcePath, later, later);
+  assert.equal(single.launcher.rebuildReason(), 'source changed');
+  const gone = launcherKit({ single: true, source: false });
+  await gone.launcher.start({ url: URL_OF });
+  assert.equal((await gone.launcher.status()).last_error, 'The window source is missing from this install');
+
+  // The real folder: main.swift is the entry point, every other file is compiled with it, and the retired file is gone.
+  const real = widgetSources();
+  assert.ok(real.length > 1 && real.some(file => path.basename(file) === 'main.swift'));
+  assert.ok(real.every(file => path.dirname(file) === path.join(__dirname, '..', 'widgets', 'macos') && file.endsWith('.swift')));
+  assert.deepEqual(real, [...real].sort());
+  assert.equal(fs.existsSync(path.join(__dirname, '..', 'widgets', 'macos', 'TAttentionWidget.swift')), false);
 });
 
 test('a real server.js answers the widget API before the gates and keeps its settings behind the login', async t => {

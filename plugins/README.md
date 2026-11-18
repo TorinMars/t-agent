@@ -105,7 +105,7 @@ Called with the plugin's stored settings and the user. It returns an object for 
 
 ## widget
 
-`plugins/notifiers/widget/` shows T-Attention messages as a bubble beside the T-Attention desktop window on this Mac (`widgets/macos/TAttentionWidget.swift`). Nothing goes over the network: each message becomes a notice in the in-memory queue of `services/widget-notices.js`, which the window reads with `GET /api/attention/widget/notices?after=<seq>`; a click on the bubble opens the notice's `target`.
+`plugins/notifiers/widget/` shows T-Attention messages as a bubble beside the T-Attention desktop window on this Mac (`widgets/macos/`). Nothing goes over the network: each message becomes a notice in the in-memory queue of `services/widget-notices.js`, which the window reads with `GET /api/attention/widget/notices?after=<seq>`; a click on the bubble opens the notice's `target`.
 
 | Setting | Meaning |
 | --- | --- |

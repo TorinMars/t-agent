@@ -2,17 +2,33 @@
 
 A small native window that stays on top of everything and shows how many T-Attention tasks are unfinished, with a red badge for the ones that need you. Point at it and a panel opens with the tasks, where you can confirm, reject, mark as handled, open a task's link, reorder, change status, create, edit and delete them. Notifications that T-Agent sends to this Mac slide out beside it as a small bubble; a click opens their target, and a task's bubble carries its buttons (Confirm, Reject, Handled) and a Reply field that types into the agent's terminal. A task tied to an agent terminal has Open session, the panel shows the agent terminals working now, Ctrl+Option+T opens the panel from the keyboard and Ctrl+Option+N starts a new task. It is a port of the floating window of the earlier SELF-ATTENTION tracker (`task_widget.swift`), now reading T-Agent's widget API, so it shows the tasks of this machine and of every connected Engine.
 
-- `TAttentionWidget.swift`: the whole widget. One file, AppKit only, no dependencies.
+- `*.swift`: the widget, AppKit only, no dependencies, compiled together. `main.swift` is the entry point (Swift runs top-level code only from `main.swift`) and has the overview comment; every other file holds one `// MARK: -` section of the code, or part of one, so changes to different parts touch different files:
+
+  | File | Section |
+  |------|---------|
+  | `Strings.swift` | Strings: `L()`, `S()`, the string table, loose JSON values |
+  | `Model.swift` | Model: items, engines, the item list |
+  | `Notices.swift` | Notices: notices and their queue, the bubble's place, sections, the display order, rows and the summary |
+  | `Reordering.swift` | Reordering: moves and drops |
+  | `Requests.swift` | Requests: `WidgetAPI`, the form draft |
+  | `Views.swift`, `Views-Forms.swift`, `Views-Bubble.swift` | Views: panels, buttons, rows, the background and offscreen render; the task form and the delete question; the notice bubble |
+  | `Controller.swift` | Controller: the layout constants and `WidgetController` with all its stored properties, `init` and the app delegate methods |
+  | `Controller-Window.swift`, `Controller-Rows.swift`, `Controller-Data.swift`, `Controller-Testing.swift` | The controller's methods as `extension WidgetController`, by its own `// MARK:` groups: collapsed window and detail panel; reordering, menus, form and row actions; timers, data and the notice bubble; offscreen checks and renders |
+  | `PartB-Actions.swift` … `PartF-Look.swift` | Parts B (actions and replies), C (live activity), D (shortcuts and preferences), E (one request per tick), F (the panel's look and Open session) |
+  | `SampleData.swift`, `SelfTest.swift` | `--render-sample` and `--self-test` |
+
+  Stored properties stay in the class body in `Controller.swift` (an extension cannot have them; a part with much state keeps it in a small object the class holds, like `PartDState`). A member used from another file cannot be `private` (Swift's `private` and `fileprivate` stop at the file), so the controller's members used across files are internal. Any new `*.swift` file in this folder is built with the others; top-level statements belong only in `main.swift`. The name `TAttentionWidget.swift` (the single file of v2.132.0 and older) is never built: an archive update leaves that file behind, see below.
 - `strings.json`: every English string the widget shows (a JSON array). T-Agent serves their translations from `GET /api/attention/widget/strings`; the Chinese text is in `public/js/i18n-zh-ui.js`.
 
 ## How T-Agent builds and starts it
 
 ```bash
-swiftc -O -swift-version 5 -framework AppKit widgets/macos/TAttentionWidget.swift -o <binary>
+swiftc -O -swift-version 5 -framework AppKit widgets/macos/*.swift -o <binary>
 TA_WIDGET_URL=http://127.0.0.1:3000 TA_WIDGET_TOKEN=<token> <binary> --parent-pid <server pid>
 ```
 
-- Build only when the binary is missing or older than the source, into a temporary name first, so a failed build never replaces a working binary. A build takes about 30 s with `-O` (about 10 s with `-Onone`). It needs the Xcode command line tools (`xcode-select --install`); without `swiftc` the server should log one line and keep running.
+- Build only when the binary is missing, older than the newest source file, made from another set of `.swift` files (the stamp lists them) or by another T-Agent version, into a temporary name first, so a failed build never replaces a working binary. The launcher passes the files sorted by name (`widgetSources` in `services/attention-widget.js`).
+- Updating from v2.132.0 or older (one file, `TAttentionWidget.swift`): the old server keeps its old launcher until it restarts. If that launcher runs meanwhile (the switch turned on), a git install has no `TAttentionWidget.swift` any more, so it only sets "The window source is missing from this install" and leaves the running window and the binary alone; an archive install still has the old file (an archive update deletes nothing), so it starts the old binary as before. After the restart the new launcher builds the files of this folder (the version in the stamp changed), never the leftover `TAttentionWidget.swift`, which would define everything a second time. A build takes about 30 s with `-O` (about 10 s with `-Onone`). It needs the Xcode command line tools (`xcode-select --install`); without `swiftc` the server should log one line and keep running.
 - `TA_WIDGET_URL`: the server's base address (default `http://127.0.0.1:3000`; anything that is not an `http(s)` URL falls back to it). `TA_WIDGET_TOKEN`: sent as `Authorization: Bearer <token>` on every request. The widget never prints or logs the token.
 - With `--parent-pid` the widget exits within a second after the server process goes away, so restarting T-Agent replaces the window.
 - Requests use their own `URLSession` with no proxy (`connectionProxyDictionary = [:]`, so `http_proxy` never catches `127.0.0.1`), a 3 s timeout and no cache.
@@ -70,5 +86,5 @@ The widget runs on the user's desktop. When working on it:
 - No CGEvent or other system-level input injection. The self-test sends its mouse events in-process to the views; the real pointer never moves.
 - Compile test binaries outside the repository (a temporary or scratch folder), never next to the source.
 - Never touch the live defaults suite `local.t-agent.attention-widget` (the self-test and the renders never read or write it).
-- `test/attention-widget-swift.test.js` checks `strings.json` against the source and the Chinese dictionary everywhere, and on macOS with `swiftc` compiles the widget to a temporary folder (`-Onone`) and runs `--self-test` (skipped elsewhere; `TA_SKIP_SWIFT_WIDGET=1` skips it on a Mac).
+- `test/attention-widget-swift.test.js` checks `strings.json` against all the `.swift` files and the Chinese dictionary everywhere, that top-level statements are only in `main.swift`, and on macOS with `swiftc` compiles the files the launcher builds to a temporary folder (`-Onone`) and runs `--self-test` (skipped elsewhere; `TA_SKIP_SWIFT_WIDGET=1` skips it on a Mac).
 - What only a person can check (no automated test reaches it): typing into the bubble's reply field (the bubble taking and giving back the keyboard, the cursor over the field), the pulse of the activity dot (offscreen renders show it still), the hand pointer and hover highlight on Working now rows, real hover and the 0.3 s close, the row icons appearing under the pointer and their hover square, the blur under the veil over real windows, Open session switching a real browser tab and the extension or the window bringing it to the front, the bubble's slide, its shadow and the hand pointer over it, the VoiceOver announcement, a real mouse drag of rows and of the window, right-click menus, keyboard focus going back to the previous app, typing with an input method, staying on top over full-screen apps and on every Space; the global shortcuts (and the stderr line when another app holds one), Esc and the click elsewhere that close a pinned panel, Cmd+F, the fade animation, and the pill moving between displays when they are plugged in or out.

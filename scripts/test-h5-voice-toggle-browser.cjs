@@ -2,6 +2,7 @@
 // (touch) and on a computer: on by default; turned off, the button takes no room, the bar keeps its layout, a kept microphone is let go and nothing starts a recording;
 // a reload keeps it off without asking for the microphone; turned on, everything is back. The composer of the chat is covered in test-agent-chat-browser.cjs.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -30,7 +31,7 @@ function installFakes() {
 
 async function boot(page, { beforeVoice } = {}) {
   await page.addStyleTag({ content: read('css/h5.css') });
-  await page.addScriptTag({ content: read('js/h5-shell.js') });
+  await addShell(page);
   if (beforeVoice) await beforeVoice();
   await page.addScriptTag({ content: read('js/voice-overlay.js') });
   await page.addScriptTag({ content: read('js/voice-input.js') });

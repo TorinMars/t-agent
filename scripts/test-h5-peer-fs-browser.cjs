@@ -2,6 +2,7 @@
 // group opens and echoes the server's value, a change is saved at once, a refused save shows the error and the value in effect, it is read
 // again each time the group opens, an older server (404) shows nothing, and the Chinese page shows the dictionary text.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -40,7 +41,7 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
       return new Response('Not found', { status: 404 }); // the other reads of the page and the sheet: an older server
     };
   }, { supported, enabled });
-  await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') });
+  await addShell(page);
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const peerCalls = () => page.evaluate(() => window.calls.filter(call => call.url === '/api/peer-fs/settings'));

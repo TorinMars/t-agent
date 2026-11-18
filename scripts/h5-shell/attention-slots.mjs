@@ -6,7 +6,7 @@
 //
 // `part` (optional) is its id in settings-tabs.mjs PARTS: with the tabs of the sheet the component is drawn only in the tabs that hold that part. A
 // component without it is drawn in every tab and splits its own controls (useSettingsTab of DeviceTarget.jsx).
-// The module is imported for that side effect in entry.jsx (the marked line "T-Attention settings slots"). The component gets { ui, opened } (the
+// The module is imported for that side effect in screen-settings.jsx (the Settings chunk, loaded before the sheet is first drawn). The component gets { ui, opened } (the
 // page store: `ui.notify`, `ui.actions`; `opened` counts the openings of the group, 0 before the first one: the group's content stays mounted while it
 // is closed, so a component reads nothing while `opened` is 0) and draws its own content inside the group (headings, fields, buttons; reuse Form.jsx). When nothing is
 // registered the group draws nothing extra. A second registration with the same id replaces the first.

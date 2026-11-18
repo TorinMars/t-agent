@@ -16,6 +16,7 @@ const PUBLIC = path.join(__dirname, '../public');
 const sha16 = content => crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 const hashOf = file => sha16(fs.readFileSync(path.join(PUBLIC, file)));
 const COMBINED = /^\/js\/combined-[0-9a-f]{12}\.js$/;
+const CHUNK = /^\/js\/chunks\/[\w.-]+-[A-Z0-9]{8}\.js$/;
 const LONG = 'public, max-age=31536000, immutable';
 
 async function startServer(t) {
@@ -52,11 +53,24 @@ test('the page names each script and style by its content hash; only that URL is
   assert.equal(page.headers['cache-control'], 'no-store', 'the page itself is never stored');
   const html = page.body.toString();
   const urls = [...html.matchAll(/(?:src|href)="(\/(?:js|css|vendor)\/[^"]+)"/g)].map(match => match[1]);
+  const chunks = urls.filter(url => url.startsWith('/js/chunks/'));
+  assert.ok(chunks.length >= 1 && chunks.length <= 4, `the shell's chunks are preloaded: ${chunks}`);
   assert.deepEqual(urls.map(url => url.split('?v=')[0].replace(/combined-[0-9a-f]{12}/, 'combined')), [
     '/vendor/xterm/xterm-5.5.0.css', '/css/h5.css', '/js/combined.js', '/vendor/xterm/xterm-5.5.0.js', '/vendor/xterm/addon-fit-0.10.0.js', '/vendor/xterm/addon-unicode11-0.8.0.js',
-    '/js/h5-shell.js', '/js/combined.js', '/js/h5.js',
-  ], 'the English page: two style sheets, the shell, the page script, xterm, and one request for each run of small scripts');
+    ...chunks, '/js/h5-shell.js', '/js/combined.js', '/js/h5.js',
+  ], 'the English page: two style sheets, the shell and its chunks, the page script, xterm, and one request for each run of small scripts');
+  for (const chunk of chunks) {
+    // A chunk is imported by its name, which is the hash of its content (scripts/build-page-bundles.js): cached for a year by name, no ?v=.
+    assert.match(chunk, CHUNK);
+    assert.match(html, new RegExp(`<link rel="modulepreload" href="${chunk}">`));
+    const response = await get(chunk);
+    assert.equal(response.status, 200, chunk);
+    assert.equal(response.headers['cache-control'], LONG, `${chunk} is cached for a year by its name`);
+    assert.match(response.headers['content-type'], /javascript/);
+  }
+  assert.doesNotMatch(/window\.TAAssets=[^<]*/.exec(html)[0], /\/js\/chunks\//, 'no loader builds a chunk URL, so the page does not carry their hashes');
   for (const url of urls) {
+    if (CHUNK.test(url)) continue;
     const [file, v] = url.split('?v=');
     if (!COMBINED.test(file)) { assert.equal(v, hashOf(file), `${file} carries the hash of its content`); continue; }
     // A combined script is no file: it is named by the hash of what the server sends for it, and cached like the files.
@@ -71,7 +85,7 @@ test('the page names each script and style by its content hash; only that URL is
   // The files the page loads later (the chat and mind map bundles, the chat's style sheet, the Markdown renderer, mermaid, the dictionaries of an
   // English page): the page carries the hash of each, and the URL made from it is cached for a year too.
   const later = JSON.parse(/window\.TAAssets=(\{[^;<]*\});/.exec(html)[1]);
-  for (const file of ['/js/agent-chat-ui.js', '/css/agent-chat.css', '/js/mindmap-ui.js', '/js/markdown-view.js', '/css/markdown.css', '/vendor/marked/marked-15.0.12.min.js', '/vendor/mermaid/mermaid-12.1.0.min.js', '/js/i18n-zh-ui.js', '/js/i18n-zh-server.js', '/js/i18n-zh-extra.js']) {
+  for (const file of ['/js/agent-chat-ui.js', '/css/agent-chat.css', '/js/mindmap-ui.js', '/css/markdown.css', '/vendor/marked/marked-15.0.12.min.js', '/vendor/mermaid/mermaid-12.1.0.min.js', '/js/i18n-zh-ui.js', '/js/i18n-zh-server.js', '/js/i18n-zh-extra.js']) {
     assert.equal(later[file], hashOf(file), `the page knows the hash of ${file}`);
     const response = await get(`${file}?v=${later[file]}`);
     assert.equal(response.status, 200, file);
@@ -167,7 +181,9 @@ test('every script of the phone page is deferred, in its old order, and the page
   const html = fs.readFileSync(path.join(PUBLIC, 'h5.html'), 'utf8');
   const scripts = [...html.matchAll(/<script\b([^>]*)>/g)].map(match => match[1]);
   assert.ok(scripts.length > 20);
-  for (const attrs of scripts) assert.match(attrs, /^ defer src="[^"]+"(?: data-combine)?$/, `deferred, no inline script: ${attrs}`);
+  // The shell is an ES module (deferred by itself, it runs in its place in this order); every other script is a deferred classic one.
+  assert.deepEqual(scripts.filter(attrs => attrs.includes('type="module"')), [' type="module" src="/js/h5-shell.js"']);
+  for (const attrs of scripts) assert.match(attrs, /^ (?:defer|type="module") src="[^"]+"(?: data-combine)?$/, `deferred, no inline script: ${attrs}`);
   const order = scripts.map(attrs => /src="([^"]+)"/.exec(attrs)[1]);
   const before = (a, b) => assert.ok(order.indexOf(a) >= 0 && order.indexOf(a) < order.indexOf(b), `${a} before ${b}`);
   before('/js/i18n.js', '/js/i18n-zh-ui.js');

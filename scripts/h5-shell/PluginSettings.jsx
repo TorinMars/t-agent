@@ -10,7 +10,7 @@ import Typography from '@mui/material/Typography';
 import { Pill, api, errorText, named, t } from './common.jsx';
 import { Feedback, Hint, SubHeading, useFeedback } from './Form.jsx';
 import { Icon } from './Icons.jsx';
-import { copyText } from './Attention.jsx';
+import { copyText } from './copy-text.mjs';
 import { BASE } from './attention-feed.mjs';
 import { registerAttentionSettings, setAttentionPluginPageOpener } from './attention-slots.mjs';
 import PluginConfigForm from './PluginConfigForm.jsx';

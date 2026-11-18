@@ -18,6 +18,7 @@ import { shortName } from './task-order.mjs';
 import { Field } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { Icon } from './Icons.jsx';
+import { copyText } from './copy-text.mjs';
 import { AttentionGuide } from './AttentionGuide.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import {
@@ -280,20 +281,6 @@ export function contextFileAction(ui, absolute, engine = 'local') {
   if (typeof ui.actions.openAnyPath === 'function') return () => ui.actions.openAnyPath(absolute);
   if (ui.actions.canOpenLocalPath && ui.actions.canOpenLocalPath(absolute)) return () => ui.actions.openLocalPath(absolute);
   return null;
-}
-
-export async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; } catch { /* plain HTTP: the old way */ }
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
-  document.body.appendChild(area);
-  area.select();
-  let ok = false;
-  try { ok = document.execCommand('copy'); } catch { ok = false; }
-  area.remove();
-  return ok;
 }
 
 // The context card at the top of the edit view: what the task is, how far it got, what it needs, the AI summary, where it runs, and the way back.

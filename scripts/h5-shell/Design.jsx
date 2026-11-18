@@ -23,9 +23,18 @@ import { ImageViewer } from './ImageViewer.jsx';
 // document, from this server; mermaid (about 5 MB) only when the document has a diagram. Keep the versions in step with scripts/vendor-libs.json.
 // Each is asked for by the hash of its content when the page carries it (window.TAAsset, put there by lib/static-assets.js), so it is cached for a
 // year; without it (a page that was not served that way, as in most browser tests) the plain address is used, which is revalidated each time.
+// The code highlighter and the code cards (scripts/markdown-view-entry.js, the same source as the share page's js/markdown-view.js) are a chunk of
+// this build instead: its highlight.js is the one the chat view uses too (scripts/build-page-bundles.js), so a page loads it once.
 const MARKED_SRC = '/vendor/marked/marked-15.0.12.min.js';
-const MARKDOWN_VIEW_SRC = '/js/markdown-view.js';
 const MARKDOWN_CSS = '/css/markdown.css';
+let markdownView = null;
+function loadMarkdownView() {
+  if (!markdownView) {
+    markdownView = import('../markdown-view-entry.js');
+    markdownView.catch(() => { markdownView = null; }); // a failed load is tried again next time
+  }
+  return markdownView;
+}
 const MERMAID_SRC = '/vendor/mermaid/mermaid-12.1.0.min.js';
 
 const assetUrl = path => (typeof window.TAAsset === 'function' ? window.TAAsset(path) : path);
@@ -301,9 +310,9 @@ export function DesignSheet({ state, ui }) {
           let html = null;
           if (plan.language && plan.text.length <= HIGHLIGHT_LIMIT) {
             try {
-              await loadOnce(MARKDOWN_VIEW_SRC);
+              const { highlight } = await loadMarkdownView();
               if (cancelled) return;
-              const marked = window.MarkdownView.highlight(plan.text.replace(/\r\n?/g, '\n'), plan.language);
+              const marked = highlight(plan.text.replace(/\r\n?/g, '\n'), plan.language);
               if (marked !== null && marked !== undefined) html = splitHighlighted(marked);
             } catch { /* the highlighter did not load: plain text */ }
           }
@@ -312,12 +321,12 @@ export function DesignSheet({ state, ui }) {
           setRender({ status: 'done' });
           return;
         }
-        await Promise.all([loadOnce(MARKED_SRC), loadOnce(MARKDOWN_VIEW_SRC), loadOnce(MARKDOWN_CSS, true)]);
+        const [, { enhance }] = await Promise.all([loadOnce(MARKED_SRC), loadMarkdownView(), loadOnce(MARKDOWN_CSS, true)]);
         if (cancelled) return;
         node.innerHTML = renderMarkdown(content, filePathInDir, imageBase ? path => `${imageBase}${encodeURIComponent(path)}` : null);
         for (const img of node.querySelectorAll('img[data-h5-local]')) img.addEventListener('error', localImageFailed);
         for (const img of node.querySelectorAll('img')) { img.tabIndex = 0; img.setAttribute('aria-haspopup', 'dialog'); } // a tap or Enter shows it full screen
-        window.MarkdownView.enhance(node);
+        enhance(node);
         node.scrollTop = 0;
         pinned.current = null;
         setOutline(buildOutline(node));

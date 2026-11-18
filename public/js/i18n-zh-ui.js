@@ -1435,6 +1435,7 @@ I18n.add({
   "The editor could not start": "编辑器无法启动",
   "The map could not be exported": "无法导出导图",
   "The mind map view could not be loaded": "无法加载思维导图视图",
+  "This part of the page could not be loaded. Check the connection and reload the page.": "页面的这一部分无法加载。请检查网络连接后重新加载页面。",
   "These topics cannot be pasted": "这些主题无法粘贴",
   "Imported": "已导入",
   "Imported.": "已导入。",

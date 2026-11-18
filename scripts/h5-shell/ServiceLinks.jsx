@@ -8,11 +8,12 @@ import DialogTitle from '@mui/material/DialogTitle';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
-import { copyText } from './Attention.jsx';
+import { copyText } from './copy-text.mjs';
 import { Actions, EngineDialog, Feedback, Field, Hint, Section, failure, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
 import { LocalOnly } from './DeviceTarget.jsx';
 import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
+import { LIST, readLinks } from './service-links-read.mjs';
 
 // "Link a device" in Settings → Devices (until the sheet was tidied up the group "Linked services"): two T-Agent services that see and operate each
 // other's tasks, terminals and sessions. Service A generates a 6-digit code (POST /api/service-links/code), service B enters A's address and the code
@@ -20,19 +21,9 @@ import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
 // `remote_server_id`), so the rest of the page does not change. See "Settings, Devices and Update" in DESIGN.md. After a join or an unlink the task list is
 // read again with ui.actions.enginesChanged, as the device list does.
 
-const LIST = '/api/service-links';
 const POLL_EVERY = 3; // seconds between two reads of the list while the code dialog is open
 
-// The links, or null when this server has no linking (an older server answers 404). Any other failure is thrown: it says nothing about the server's version.
-export async function readLinks() {
-  try {
-    const data = await api('GET', LIST);
-    return data && data.supported === true && Array.isArray(data.links) ? data.links : null;
-  } catch (error) {
-    if (error.status === 404) return null;
-    throw error;
-  }
-}
+export { readLinks }; // service-links-read.mjs: the Update dialog reads the links without this file
 // The Engine key of a link in the engine selector: its terminals close when the link ends.
 export const linkEngineKey = link => (link.remote_server_id === null || link.remote_server_id === undefined ? null : `remote:${link.remote_server_id}`);
 

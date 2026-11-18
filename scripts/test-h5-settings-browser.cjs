@@ -2,6 +2,7 @@
 // Voice and translation, the remote access part of Devices → Advanced, and Account and access, on a phone-sized page. The order, the aliases of the old
 // group ids, 320 / 390 px and Chinese are in scripts/test-h5-settings-layout-browser.cjs.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -49,7 +50,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         throw new Error(`unexpected ${method} ${url}`);
       };
     });
-    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') }); // the shell draws the page, and the settings with it
+    await addShell(page); // the shell draws the page, and the settings with it
     await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-update-check, #h5-update-log, #h5-update-hint').count(), 0, 'the updater moved to the header Update button');

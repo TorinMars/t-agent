@@ -11,10 +11,9 @@ import { api, t } from './common.jsx';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 import { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget } from './task-order.mjs';
 import { startColumns } from './Columns.jsx';
-// T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported here, e.g.
-import './PluginSettings.jsx';
-import './AttentionSkillSettings.jsx';
-import './AttentionWidgetSettings.jsx';
+// T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported by the Settings
+// chunk (screen-settings.jsx), which is loaded when Settings first opens (lazy-screens.jsx).
+import { preloadOnIntent } from './lazy-screens.jsx';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');
@@ -112,3 +111,6 @@ if (back) ui.subscribe(back.sync);
 // T-Attention: the list, its live stream and the reminders run from the start (the badge on the Attention button); the panel is drawn when opened.
 // A pane has no Attention button and leaves the stream and the reminders to the top page (`passive`).
 startAttentionFeed(ui, { t, api, passive: Boolean(paneId) });
+
+// The chunk of an on-demand screen is asked for as soon as the pointer, a finger or the focus reaches the button that opens it.
+preloadOnIntent(document);

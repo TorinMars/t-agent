@@ -3,6 +3,7 @@
 // opening the group and part that took their place, no horizontal overflow and 44px touch targets at 320 and 390 px, and the Chinese headings.
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots: the folded sheet, Devices open, and Advanced open.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -62,7 +63,8 @@ async function openPage(browser, { width, zh = false, scale = 1 }) {
   if (zh) await page.evaluate(() => localStorage.setItem('ta-lang', 'zh'));
   await page.addStyleTag({ content: read('public/css/h5.css') });
   await page.evaluate(mockServer);
-  for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js', 'public/js/h5-shell.js']) await page.addScriptTag({ content: read(file) });
+  for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
+  await addShell(page);
   return { context, page, errors };
 }
 

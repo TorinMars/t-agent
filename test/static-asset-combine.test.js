@@ -282,7 +282,7 @@ test('the real page: its two combined scripts hold the marked files as they are,
     assert.doesNotMatch(text, /currentScript/, `${file} does not build an address from its own tag`);
     for (const [, urlPath] of text.matchAll(/'(\/(?:js|css|vendor)\/[\w./-]+\.(?:js|css))'/g)) named.add(urlPath);
   }
-  assert.deepEqual([...named].sort(), ['/css/agent-chat.css', '/css/markdown.css', '/js/agent-chat-ui.js', '/js/i18n-zh-extra.js', '/js/i18n-zh-server.js', '/js/i18n-zh-ui.js', '/js/markdown-view.js', '/js/mindmap-ui.js', '/vendor/marked/marked-15.0.12.min.js', '/vendor/mermaid/mermaid-12.1.0.min.js']);
+  assert.deepEqual([...named].sort(), ['/css/agent-chat.css', '/css/markdown.css', '/js/agent-chat-ui.js', '/js/i18n-zh-extra.js', '/js/i18n-zh-server.js', '/js/i18n-zh-ui.js', '/js/mindmap-ui.js', '/vendor/marked/marked-15.0.12.min.js', '/vendor/mermaid/mermaid-12.1.0.min.js']);
   for (const urlPath of named) assert.equal(map[urlPath], hashOf(urlPath), `the page knows the hash of ${urlPath}`);
   for (const urlPath of marked) assert.equal(map[urlPath], undefined, `${urlPath} is loaded by the page`);
   assert.equal(later(chinese).map['/js/i18n-zh-ui.js'], undefined, 'the Chinese page loads its dictionaries itself');
@@ -322,6 +322,7 @@ test('the chat and mind map loaders ask for their bundles by the hash the page c
     // The style sheet goes where its tag used to be, after h5.css, so rules of the same weight keep their order.
     assert.deepEqual(page.added.map(node => [node.name, node.src || node.href, node.place]).sort(), [['link', url('/css/agent-chat.css'), 'after h5.css'], ['script', url('/js/agent-chat-ui.js'), 'end of head']]);
     assert.equal(page.added.find(node => node.name === 'link').rel, 'stylesheet');
+    assert.equal(page.added.find(node => node.name === 'script').type, 'module', 'the chat bundle is an ES module (it imports the chunks it shares with the shell)');
     // A style sheet that fails to load: the chat is not drawn unstyled, the person is told, and the failed tag is gone so the next chat tries again.
     page.added.find(node => node.name === 'link').onerror();
     await new Promise(resolve => setImmediate(resolve));

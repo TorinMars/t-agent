@@ -4,6 +4,7 @@
 // the choice when several devices are logged in, and the recent list. At 390px (touch), 1280px (mouse) and in Chinese at 390px; the page never scrolls
 // sideways. The server is a fake fetch. H5_SHOT_DIR=<dir> saves screenshots there.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -60,7 +61,7 @@ async function openPage(browser, { wide = false, zh = false, state }) {
       throw new Error(`unexpected ${method} ${url}`);
     };
   }, state);
-  await page.addScriptTag({ content: read('public/js/h5-shell.js') });
+  await addShell(page);
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const press = locator => (wide ? locator.click() : locator.tap());

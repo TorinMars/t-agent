@@ -10,7 +10,7 @@ import { Pill, api, errorText, t } from './common.jsx';
 import { Feedback, Field, Hint, Section, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
 import { LocalOnly } from './DeviceTarget.jsx';
-import { copyText } from './Attention.jsx';
+import { copyText } from './copy-text.mjs';
 import { countdownText, secondsLeft } from './plugins-model.mjs';
 import { browserDetail, newlyPaired, normalizeStatus, pairCodeText } from './browser-ext-model.mjs';
 

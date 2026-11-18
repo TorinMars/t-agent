@@ -4,6 +4,7 @@
 // Rename (PATCH) and Remove (DELETE, after a confirmation); the warning when the folder is missing; an older server (404) shows nothing; the
 // Chinese page; nothing is wider than a 390px phone.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -46,7 +47,7 @@ async function openPage(browser, { supported = true, present = true, browsers = 
       return new Response('Not found', { status: 404 });
     };
   }, { supported, present, browsers, DIR });
-  await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') });
+  await addShell(page);
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const extCalls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/browser-ext')));

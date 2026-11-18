@@ -86,7 +86,7 @@ const asked = (log, what) => at(log, `ask ${what}`);
     const tags = [...html.matchAll(/<script\b([^>]*)>/g)].map(match => match[1]);
     const external = tags.filter(attrs => /\bsrc=/.test(attrs));
     assert.ok(external.length > 20, 'the page loads its scripts');
-    assert.ok(external.every(attrs => /\bdefer\b/.test(attrs)), 'every script is deferred');
+    assert.ok(external.every(attrs => /\bdefer\b/.test(attrs) || /\btype="module"/.test(attrs)), 'every script is deferred (the shell is an ES module, deferred by itself)');
     const order = external.map(attrs => /src="([^"]+)"/.exec(attrs)[1]);
     for (const [before, after] of [['/js/i18n.js', '/js/i18n-zh-ui.js'], ['/js/i18n-zh-extra.js', '/js/h5-shell.js'], ['/vendor/xterm/xterm-5.5.0.js', '/js/h5.js'], ['/js/h5-shell.js', '/js/h5.js'], ['/js/agent-chat.js', '/js/h5.js']]) {
       assert.ok(order.indexOf(before) >= 0 && order.indexOf(before) < order.indexOf(after), `${before} runs before ${after}`);

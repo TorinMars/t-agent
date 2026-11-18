@@ -2,8 +2,11 @@
 // (precompressed copies, compression, express.static with the cache headers), so the browser's own cache decides what is asked for again:
 // - the first load of the page (English and Chinese) asks for the two runs of small scripts as two combined requests, every URL carries a content hash
 //   and is answered `immutable`, and the page works (no errors, the Chinese page is in Chinese);
+// - the shell is an ES module: the chunks it imports (/js/chunks/<name>-<hash>.js, scripts/build-page-bundles.js) are named by their content hash,
+//   preloaded by the page and cached for a year by name;
 // - the lazy loaders (the chat bundle and its style sheet, the mind map bundle, the document preview's Markdown renderer and mermaid) ask for each
-//   file by the hash of that file, get the year-long cache, and the chat is drawn with its style sheet;
+//   file by the hash of that file, or by a chunk name, get the year-long cache, and the chat is drawn with its style sheet and highlighted code; the
+//   screens that open on demand (Settings, T-Attention, the design sheet) load their chunks the same way;
 // - a second visit asks the server for none of these files again (all from the browser's cache);
 // - in a combined script each part is a script of its own: a part that throws or does not parse stops nothing after it, top-level names are shared
 //   as with separate tags, 'use strict' stays in its file, and an error names the file it came from.
@@ -23,7 +26,8 @@ const PUBLIC = path.join(root, 'public');
 const LONG = 'public, max-age=31536000, immutable';
 const sha16 = content => crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
 const hashOf = urlPath => sha16(fs.readFileSync(path.join(PUBLIC, urlPath)));
-const DESIGN_MD = ['# Design of Fix login', '', 'Some **bold** text.', '', '```mermaid', 'graph TD', '  A --> B', '```', ''].join('\n');
+const DESIGN_MD = ['# Design of Fix login', '', 'Some **bold** text.', '', '```js', 'const answer = 42;', '```', '', '```mermaid', 'graph TD', '  A --> B', '```', ''].join('\n');
+const CHUNK = /^\/js\/chunks\/[\w.-]+-[A-Z0-9]{8}\.js$/;
 
 // An app like server.js: the page through rewritePage, the static files with the same middleware, and the few API answers the page needs.
 // `seen`: every request that reached the server ({ url, status, cacheControl, encoding, bytes }; bytes: the body as sent, after compression).
@@ -53,7 +57,7 @@ function makeApp(assets, publicDir, page, seen) {
   app.get('/api/mindmaps', json({ maps: [] }));
   app.get('/api/tasks/1/files/content', json({ path: 'DESIGN.md', content: DESIGN_MD, revision: 'r1', eol: '\n', bom: false }));
   app.get('/api/tasks/1/agent/conversations', json([{ id: 'c1', agent: 'claude', session_id: null, title: 'New chat', mode: 'ask', running: false, opened: { web: null, h5: null } }]));
-  app.get('/api/tasks/1/agent/conversations/c1', json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**' }], pending: [], status: 'idle', seq: 0 }));
+  app.get('/api/tasks/1/agent/conversations/c1', json({ conversation: { id: 'c1' }, items: [{ id: 'u1', kind: 'user', text: 'hello agent' }, { id: 't1', kind: 'text', text: 'Hi **there**\n\n```js\nconst answer = 42;\n```' }], pending: [], status: 'idle', seq: 0 }));
   app.get('/api/tasks/1/agent/conversations/c1/events', (req, res) => { res.type('text/event-stream'); res.end(': ok\n\n'); });
   app.use(['/js', '/css', '/vendor'], assets.precompressed);
   app.use('/vendor', compression(), express.static(path.join(publicDir, 'vendor'), { index: false, setHeaders: assets.setHeaders }));
@@ -116,11 +120,20 @@ async function waitFor(condition, what) {
       await page.waitForFunction(() => window.sockets.length > 0 && window.sockets[0].readyState === 1);
       await page.locator('.h5-header').waitFor();
       const loaded = seen.filter(isAsset);
+      const chunks = assets.modulePreloads('/js/h5-shell.js');
+      assert.ok(chunks.length >= 1 && chunks.length <= 4, `the shell imports a few chunks: ${chunks}`);
       const expected = ['/vendor/xterm/xterm-5.5.0.css', '/css/h5.css', '/js/combined.js',
         ...(zh ? ['/js/i18n-zh-ui.js', '/js/i18n-zh-server.js', '/js/i18n-zh-extra.js'] : []),
-        '/vendor/xterm/xterm-5.5.0.js', '/vendor/xterm/addon-fit-0.10.0.js', '/vendor/xterm/addon-unicode11-0.8.0.js', '/js/h5-shell.js', '/js/combined.js', '/js/h5.js'];
+        '/vendor/xterm/xterm-5.5.0.js', '/vendor/xterm/addon-fit-0.10.0.js', '/vendor/xterm/addon-unicode11-0.8.0.js', '/js/h5-shell.js', ...chunks, '/js/combined.js', '/js/h5.js'];
       assert.deepEqual(loaded.map(entry => plain(entry.url)).sort(), expected.slice().sort(), `${zh ? 'Chinese' : 'English'}: the scripts and styles of the first load`);
+      assert.equal(await page.locator('link[rel="modulepreload"]').count(), chunks.length, 'each chunk of the shell is preloaded');
       for (const entry of loaded) {
+        if (entry.url.startsWith('/js/chunks/')) {
+          assert.match(entry.url, CHUNK, `${entry.url}: a chunk is named by its hash, with no ?v=`);
+          assert.equal(entry.status, 200, entry.url);
+          assert.equal(entry.cacheControl, LONG, `${entry.url} is cached for a year`);
+          continue;
+        }
         assert.match(entry.url, /\?v=[0-9a-f]{16}$/, `${entry.url} carries a hash`);
         assert.equal(entry.status, 200, entry.url);
         assert.equal(entry.cacheControl, LONG, `${entry.url} is cached for a year`);
@@ -165,6 +178,8 @@ async function waitFor(condition, what) {
       assert.equal(styled.display, 'flex', 'the chat is laid out by agent-chat.css');
       assert.ok(styled.bg, 'the chat has its colours');
       assert.deepEqual(styled.links.slice(0, 3), ['/vendor/xterm/xterm-5.5.0.css', '/css/h5.css', '/css/agent-chat.css'], 'the chat style sheet goes right after the page one');
+      // The chat's code is highlighted (highlight.js from the chunk it shares with the design sheet), and it runs on the shell's React.
+      await page.locator('#h5-agent .hljs-keyword', { hasText: 'const' }).waitFor();
       await page.close();
       // The mind map.
       page = await open('/h5');
@@ -179,13 +194,30 @@ async function waitFor(condition, what) {
       page = await open('/h5');
       await page.locator('#h5-design').tap();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
+      await page.locator('#h5-design-body .hljs-keyword', { hasText: 'const' }).waitFor();
       await page.waitForFunction(() => typeof window.mermaid === 'object' && window.mermaid);
+      await page.close();
+      // The screens that open on demand: Settings and the T-Attention panel come from their chunks.
+      page = await open('/h5');
+      await page.evaluate(() => window.H5UI.actions.openSettings());
+      await page.locator('#h5-settings .h5-setting-group').first().waitFor();
+      await page.evaluate(() => window.H5UI.actions.closeSettings());
+      await page.locator('#h5-attention').tap();
+      await page.locator('#h5-attention-sheet').waitFor();
       await page.close();
     };
     seen.length = 0;
     await openAll();
-    for (const urlPath of ['/js/agent-chat-ui.js', '/css/agent-chat.css', '/js/mindmap-ui.js', '/vendor/marked/marked-15.0.12.min.js', '/js/markdown-view.js', '/css/markdown.css', '/vendor/mermaid/mermaid-12.1.0.min.js']) expectLazy(urlPath);
-    const lazyBytes = seen.filter(entry => /agent-chat-ui|agent-chat\.css|mindmap-ui|marked-|markdown-view|markdown\.css|mermaid-/.test(entry.url)).reduce((sum, entry) => sum + entry.bytes, 0);
+    for (const urlPath of ['/js/agent-chat-ui.js', '/css/agent-chat.css', '/js/mindmap-ui.js', '/vendor/marked/marked-15.0.12.min.js', '/css/markdown.css', '/vendor/mermaid/mermaid-12.1.0.min.js']) expectLazy(urlPath);
+    assert.equal(lazyRequest('/js/markdown-view.js'), undefined, 'the page takes the Markdown view from its chunk, not from the share page file');
+    const lazyChunks = seen.filter(entry => entry.url.startsWith('/js/chunks/'));
+    for (const name of ['screen-settings', 'screen-attention', 'screen-design', 'markdown-view-entry']) assert.ok(lazyChunks.some(entry => entry.url.startsWith(`/js/chunks/${name}-`)), `the ${name} chunk was loaded`);
+    for (const entry of lazyChunks) {
+      assert.match(entry.url, CHUNK, entry.url);
+      assert.equal(entry.status, 200, entry.url);
+      assert.equal(entry.cacheControl, LONG, `${entry.url} is cached for a year`);
+    }
+    const lazyBytes = seen.filter(entry => /agent-chat-ui|agent-chat\.css|mindmap-ui|marked-|\/chunks\/|markdown\.css|mermaid-/.test(entry.url)).reduce((sum, entry) => sum + entry.bytes, 0);
 
     // 3. The same again, as a later visit: no script or style is asked for again, the lazy ones included.
     seen.length = 0;

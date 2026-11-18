@@ -1,6 +1,6 @@
 // Chat-style view of a Claude Code / Codex conversation (instead of a terminal), used by the page (public/js/h5.js).
 // This file is small and loaded with every page; the view itself (React + assistant-ui, source in scripts/agent-chat/) is the bundle
-// agent-chat-ui.js, fetched with its style sheet (css/agent-chat.css) when the first chat is mounted. The marks this file draws (icon, chatIcon) are
+// agent-chat-ui.js (an ES module that takes React and highlight.js from chunks it shares with the page shell), fetched with its style sheet (css/agent-chat.css) when the first chat is mounted. The marks this file draws (icon, chatIcon) are
 // styled by the page's own style sheet (css/h5.css), because they also show in lists, before any chat is opened.
 //
 //   const chat = AgentChat.mount(element, { api, base, conversation, onClose });  (also: onTitle, onOpenChat, notify, draft)
@@ -91,6 +91,7 @@ const AgentChat = (() => {
   function loadScript() {
     if (typeof AgentChatUI !== 'undefined') return Promise.resolve();
     const script = document.createElement('script');
+    script.type = 'module'; // it imports its shared chunks (/js/chunks/) itself; `load` comes after it ran and set AgentChatUI
     script.src = assetUrl(BUNDLE_PATH);
     return loadNode(script, node => document.head.append(node));
   }

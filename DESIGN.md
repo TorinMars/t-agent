@@ -77,6 +77,7 @@
 
 ## H. Cross-cutting rules
 
+- **UI design**: Material Design 2 is the design specification for every screen and mockup; the page is built with MUI 9 components styled through the shared theme (`scripts/h5-shell/theme.mjs`); native macOS windows follow MD2 with AppKit controls. See `AGENTS.md` "UI design: Material Design 2, built with MUI 9".
 
 - **Language and i18n**: code, docs and UI text are English; Chinese lives only in `public/js/i18n-zh-ui.js`, `i18n-zh-server.js`, `i18n-zh-extra.js` (keyed by the exact English text) and in fixtures; `test/i18n.test.js` enforces it. See "Interface language" ([interface-language.md](docs/design/interface-language.md)).
 - **UI icons**: one library (Ant Design Official Icon Library, iconfont.cn collection 9402), inline SVG in `scripts/h5-shell/Icons.jsx`; self-drawn icons (`DRAWN`) or text labels where no library icon is clear; every icon-only button has an English `aria-label` and `title`. See `AGENTS.md` "UI icons" and "UI icons" in [page-ui-icons.md](docs/design/page-ui-icons.md).

@@ -15,6 +15,15 @@
 - Chinese characters may appear only in those dictionaries and in test fixtures that exist to prove that Chinese user content (translator input, terminal output, file names) is handled. `test/i18n.test.js` fails when Chinese shows up anywhere else. Where a regular expression needs a CJK range, write it with `\u` escapes.
 - Content created or entered by users (tasks, documents, file names, terminal input) must keep working with Chinese and any other language.
 
+## UI design: Material Design 2, built with MUI 9
+
+- Design specification: every UI design follows Material Design 2 (https://m2.material.io), including mockups and design proposals. Layout on its 8px grid (4px for small details), its type scale (h1–h6, subtitle, body, button, caption, overline), its color system (primary, secondary, surface, background, error, and the "on" colors, in a dark and a light theme), elevation for layering, its component guidelines (app bars, navigation drawer, lists, cards, dialogs, menus, chips, buttons, text fields, snackbars, sheets, tabs) and its state, motion and accessibility guidance. Do not use Material Design 3 patterns (color roles such as `primaryContainer` or `surfaceContainer`, tonal buttons, the M3 shape scale) or another design system's look.
+- Components: the page (the MUI page at `/` and `/h5` and its lazy bundles) is built with MUI 9 (`@mui/material`, the version in `package.json`). Use the MUI component when one exists instead of a hand-made control or another component library, and style it through the shared theme in `scripts/h5-shell/theme.mjs` (palette, typography, shape, component overrides) rather than hard-coded colors, radii or font sizes in components. A change to the look of a whole kind of component goes into the theme.
+- Material Theming choices of this project, made through the theme and allowed by MD2's theming: the dark theme; buttons in sentence case, without elevation, with an 8px corner radius; the `notice` color (blue 800) for requests that wait for the person over the terminal; touch targets of at least 44 x 44px in touch input mode. Change them in the theme, and record a new one here.
+- Icons: the "UI icons" rule below still applies (the Ant Design icon library instead of Material Icons), drawn at MD2's icon sizes and placements.
+- Native macOS parts (the floating window in `widgets/macos/`, the app in `apps/macos/`) are AppKit, where MUI cannot be used: they follow MD2's grid, type hierarchy, color use and states with native controls, and keep the platform's own behaviour for menus, the menu bar, window chrome and keyboard.
+- Existing screens that do not follow this yet move to it when they are changed; a screen you touch follows MD2 in that change.
+
 ## UI icons
 
 - All icons in the page (the MUI page at `/` and `/h5`) come from one icon library: the "Ant Design Official Icon Library" collection on iconfont.cn (https://www.iconfont.cn/collections/detail?cid=9402). Same grid, same outlined style. Do not mix in icons from other sets. Library icons come first.

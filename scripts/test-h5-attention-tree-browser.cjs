@@ -159,7 +159,9 @@ async function openPage(browser, { viewport, touch = true, items = ITEMS(), zh =
 
 // The sheet open and settled.
 async function openSheet(page, how) {
+  if (how === 'click' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click(); // a computer: T-Attention is in More tools
   await page.locator('#h5-attention')[how]();
+  await page.locator('#h5-more-menu .MuiBackdrop-root').waitFor({ state: 'hidden' }); // the closing menu no longer takes the pointer
   await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => { const node = document.querySelector('#h5-attention-sheet .h5-attention-panel'); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); });
   await page.locator('#h5-attention-sheet .h5-attention-row').first().waitFor();

@@ -206,7 +206,7 @@ async function computer(browser) {
     await input.click();
     await page.keyboard.type('slow one');
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.getElementById('h5-translate-send').disabled === true);
+    await page.waitForFunction(() => document.getElementById('h5-translate-button').disabled === true);
     await page.keyboard.press('Enter');
     await page.keyboard.press('Enter');
     await page.keyboard.type(' more');

@@ -904,6 +904,7 @@ I18n.add({
   "Translate and send": "翻译并发送",
   "Translate to English and send": "翻译成英文并发送",
   "Send as typed, without translating": "按原文发送，不翻译",
+  "Send as is": "按原文发送",
   // The compact bottom area of a column of the multi-column view
   "More tools": "更多工具",
   "Draft": "草稿",

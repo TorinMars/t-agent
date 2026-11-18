@@ -94,6 +94,8 @@ async function press(page, input, button, text) {
   if (await page.evaluate(() => matchMedia('(pointer: coarse)').matches)) await input.focus(); // on a phone the key bar can sit over the box
   else await input.click();
   await input.fill(text);
+  // On a computer "Send as typed" is an item of More tools (the one-row bottom area); on a phone it is in the draft box.
+  if (button === '#h5-translate-send' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click();
   await page.locator(button).click();
   await page.waitForFunction(count => window.sockets.at(-1).sent.filter(item => !item.startsWith('{')).length >= count + 2, before);
   await page.waitForTimeout(250); // nothing more follows

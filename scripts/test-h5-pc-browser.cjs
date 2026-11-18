@@ -121,10 +121,31 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"], #h5-actions [data-action="draft"]').count(), 0, `${label}: no keyboard buttons`);
       const draft = await page.evaluate(() => ({ focused: document.activeElement && document.activeElement.id === 'h5-translate-input', height: document.getElementById('h5-translate').getBoundingClientRect().height, input: document.getElementById('h5-translate-input').getBoundingClientRect().height }));
       assert.equal(draft.focused, false);
-      assert.ok(draft.height > 30 && draft.input < 40, `${label}: the draft box is shown as one line without focus (${JSON.stringify(draft)})`);
-      for (const id of ['h5-image', 'h5-commands', 'h5-voice', 'h5-design', 'h5-attention', 'h5-cycle', 'h5-translate-send', 'h5-translate-button']) {
-        assert.equal(await page.locator(`#${id}`).isVisible(), true, `${label}: #${id} is shown`);
-      }
+      assert.ok(draft.height >= 36 && draft.height <= 44 && draft.input <= 44, `${label}: the draft box is shown as one line without focus (${JSON.stringify(draft)})`);
+      // ONE row ("Bottom bar" in docs/design/page-terminal-and-bottom-bar.md): 56px plus its divider, the draft box and the tools on one line, and one
+      // primary "Send" (translate and send). Send as typed, T-Attention and the next session are in "More tools", under their old ids.
+      const row = await page.evaluate(() => {
+        const bottom = document.getElementById('h5-bottom');
+        const box = el => el.getBoundingClientRect();
+        const shown = [...bottom.querySelectorAll('button, label')].filter(el => box(el).width > 0 && !el.closest('.h5-add-menu'));
+        return { single: bottom.hasAttribute('data-single'), height: box(bottom).height, ids: shown.map(el => el.id), lines: new Set([...shown, document.getElementById('h5-translate')].map(el => Math.round(box(el).bottom))).size,
+          contained: [...bottom.querySelectorAll('.MuiButton-contained')].filter(el => box(el).width > 0).map(el => el.id + ':' + el.textContent) };
+      });
+      assert.equal(row.single, true, `${label}: the single view's computer row`);
+      assert.ok(Math.abs(row.height - 57) <= 1, `${label}: the row is 56px plus the divider (${row.height})`);
+      assert.equal(row.lines, 1, `${label}: the draft box and every tool share one line`);
+      assert.deepEqual(row.ids, ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-more', 'h5-translate-button'], `${label}: Upload, Voice, Saved commands, Docs, More tools, Send`);
+      assert.deepEqual(row.contained, ['h5-translate-button:Send'], `${label}: one primary "Send"`);
+      assert.equal(await page.locator('#h5-translate-button').getAttribute('aria-label'), 'Translate and send');
+      // The menu stays mounted, so the moved ids are always in the page (contract 3 of the redesign: #h5-attention).
+      for (const id of ['h5-attention', 'h5-cycle', 'h5-translate-send']) assert.equal(await page.locator(`#h5-more-menu #${id}[role="menuitem"]`).count(), 1, `${label}: #${id} is an item of More tools`);
+      assert.equal(await page.locator('#h5-attention').isVisible(), false, `${label}: More tools is closed`);
+      await page.locator('#h5-more').click();
+      await page.locator('#h5-more-menu [role="menu"]').waitFor();
+      for (const id of ['h5-attention', 'h5-cycle', 'h5-translate-send']) assert.equal(await page.locator(`#${id}`).isVisible(), true, `${label}: #${id} is shown in More tools`);
+      assert.equal(await page.locator('#h5-more-commands, #h5-more-docs').count(), 0, `${label}: Saved commands and Docs have their own buttons here`);
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-more-menu [role="menu"]').waitFor({ state: 'hidden' });
       const bottom = await page.evaluate(() => ({ terminal: document.querySelector('.h5-terminal').getBoundingClientRect().bottom, box: document.getElementById('h5-translate').getBoundingClientRect().top }));
       assert.ok(bottom.terminal <= bottom.box + 1, `${label}: the resting draft box has its own room below the terminal (${JSON.stringify(bottom)})`);
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '13px', `${label}: 13px terminal font`);
@@ -272,6 +293,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
         assert.deepEqual(activity, { 1: {} }, 'the server cleared the pending state');
         const push = snapshot => page.waitForFunction(snap => window.activityStream.push('/api/tasks/terminal-activity/stream', snap), snapshot);
         await push({ activity, subagents: {} }); // the server pushes the cleared state
+        await page.locator('#h5-more').click();
         await page.locator('#h5-cycle').click();
         await toast(page, 'No running or pending sessions');
         // The shown terminal finishes while it is on screen: the pushed 'done' makes the page ack it again by itself.
@@ -418,7 +440,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(await page.locator('#h5-wheel').count(), 1, 'phone: the wheel strip is there');
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"]').isVisible(), true, 'phone: the keyboard buttons are shown');
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'phone: the draft box is hidden at rest');
-      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '11px', 'phone: 11px terminal font');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '12px', 'phone: 12px terminal font');
       assert.equal(await page.locator('#h5-sidebar-toggle').count(), 0, 'phone: no sidebar toggle');
       assert.equal(await activeIsTerminal(page), false, 'phone: showing a terminal does not focus it (no on-screen keyboard)');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'phone-390-unchanged.png') });

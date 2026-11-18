@@ -892,8 +892,11 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       const { context, page, errors, calls } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
       const resizes = () => page.evaluate(() => window.sockets.reduce((sum, socket) => sum + socket.sent.filter(data => data.includes('"resize"')).length, 0));
       const buttons = await row2(page);
-      assert.deepEqual(buttons.map(b => b.id).slice(0, 6), ['h5-image', 'h5-commands', 'h5-voice', 'h5-design', 'h5-attention', 'h5-cycle']);
-      await page.locator('#h5-attention').click();
+      // The computer row ("Bottom bar"): T-Attention is an item of More tools, under its old id.
+      assert.deepEqual(buttons.map(b => b.id), ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-more', 'h5-translate-button']);
+      assert.equal(await page.locator('#h5-more-menu #h5-attention[role="menuitem"]').count(), 1, 'T-Attention is in More tools');
+      const attention = async () => { await page.locator('#h5-more').click(); await page.locator('#h5-attention').click(); };
+      await attention();
       const panel = page.locator('#h5-attention-sheet .h5-attention-panel');
       await panel.waitFor({ state: 'visible' });
       await page.waitForFunction(() => { const p = document.querySelector('.h5-attention-panel'); return document.documentElement.hasAttribute('data-side-panel') && p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; });
@@ -915,14 +918,14 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await panel.waitFor({ state: 'hidden' });
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
       // One at a time: Docs takes the place of T-Attention; the sheet is a modal, so it is closed before the panel can open again.
-      await page.locator('#h5-attention').click();
+      await attention();
       await panel.waitFor({ state: 'visible' });
       await page.locator('#h5-design').click();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       await panel.waitFor({ state: 'hidden' });
       await page.keyboard.press('Escape');
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
-      await page.locator('#h5-attention').click();
+      await attention();
       await panel.waitFor({ state: 'visible' });
       // The Docs sheet's Files button opens the tree, and the tree's Design document button leads back to DESIGN.md.
       await page.locator('#h5-design').click();
@@ -938,13 +941,13 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       await page.keyboard.press('Escape');
       await page.locator('#h5-files-sheet .h5-files-panel').waitFor({ state: 'hidden' });
       // The Attention button shows and hides the panel; keys typed in it are not sent to the terminal.
-      await page.locator('#h5-attention').click();
+      await attention();
       await panel.waitFor({ state: 'visible' });
       const sentBefore = await page.evaluate(() => window.sockets.at(-1).sent.filter(data => data === 'x' || data === 'y').length);
       await page.locator('#h5-attention-close').focus();
       await page.keyboard.type('xy');
       assert.equal(await page.evaluate(() => window.sockets.at(-1).sent.filter(data => data === 'x' || data === 'y').length), sentBefore, 'no keys reach the terminal from the panel');
-      await page.locator('#h5-attention').click();
+      await attention();
       await panel.waitFor({ state: 'hidden' });
       assert.ok(calls.length >= 2);
       assert.ok(await resizes() >= 1);

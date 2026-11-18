@@ -301,6 +301,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
       for (const id of ['h5-translate-send', 'h5-translate-button']) assert.equal(await page.locator(`#${id}`).isVisible(), false, `${id} is not shown while the box is hidden`);
+      // MD2: flat 48px icon buttons on the bar surface (no box, no border), the keys of row 1 drawn 36px high with 8px corners inside a 44px target.
+      const look = await page.evaluate(() => {
+        const tool = document.querySelector('#h5-actions [data-action="keyboard"]');
+        const key = document.querySelector('#h5-keys [data-key="Escape"]');
+        const face = getComputedStyle(key, '::before');
+        return { toolHeight: tool.getBoundingClientRect().height, toolBg: getComputedStyle(tool).backgroundColor, toolBorder: getComputedStyle(tool).borderTopWidth,
+          keyHeight: key.getBoundingClientRect().height, faceHeight: key.getBoundingClientRect().height - parseFloat(face.top) - parseFloat(face.bottom), faceRadius: face.borderTopLeftRadius, keyBorder: getComputedStyle(key).borderTopWidth,
+          badges: [...document.querySelectorAll('#h5-actions .MuiBadge-root')].length };
+      });
+      assert.deepEqual(look, { toolHeight: 48, toolBg: 'rgba(0, 0, 0, 0)', toolBorder: '0px', keyHeight: 44, faceHeight: 36, faceRadius: '8px', keyBorder: '0px', badges: 2 }, 'flat MD2 tools and keys, two MUI badges');
       assert.equal(await page.evaluate(() => Boolean(document.getElementById('h5-translate').compareDocumentPosition(document.getElementById('h5-keys')) & Node.DOCUMENT_POSITION_FOLLOWING && document.getElementById('h5-keys').compareDocumentPosition(document.getElementById('h5-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)), true, 'order: draft box, function keys, action row');
     }
     assert.ok(rows.flat().every(cell => cell.height >= 32), 'the keys are finger-sized');
@@ -496,21 +506,19 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(active.form.bottom <= active.keys.top + 1 && active.form.top < active.keys.top, 'the draft box is above the function keys');
       assert.ok(active.keys.top - active.form.bottom <= 12, 'right above the keys, not floating away');
       assert.ok(active.root.bottom <= active.keys.top + 1 && active.keys.bottom <= active.voice.top + 1, 'the box is above the function keys, and the action row below them');
-      assert.ok(Math.abs(active.voice.top - active.send.top) <= 6 && Math.abs(active.send.top - active.translate.top) <= 6, 'voice, send and translate share the action row');
-      assert.ok(active.commands.right <= active.voice.left + 1 && active.voice.right <= active.send.left + 1, 'voice is left of the send arrow');
-      assert.ok(active.send.right <= active.translate.left + 1, 'the send arrow is left of the translate-and-send button');
-      assert.ok(active.translate.right <= 390 && active.send.width >= 40 && active.send.height >= 40 && active.translate.height >= 40, 'the buttons fit the screen and are finger-sized');
-      assert.equal(await page.evaluate(() => { const a = document.getElementById('h5-translate-send'), b = document.getElementById('h5-translate-button'); return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }), true, 'DOM and tab order: send arrow before translate-and-send');
-      const looks = await page.evaluate(() => { const bg = id => getComputedStyle(document.getElementById(id)).backgroundColor; const rad = id => getComputedStyle(document.getElementById(id)).borderTopLeftRadius; return { send: bg('h5-translate-send'), translate: bg('h5-translate-button'), sendRadius: rad('h5-translate-send') }; });
-      assert.equal(looks.send, 'rgb(255, 255, 255)', 'as in the image, the send arrow is the white round button');
-      assert.equal(looks.translate, 'rgb(255, 255, 255)', 'translate-and-send looks like the send button (white round button)');
-      const same = await page.evaluate(() => { const pick = id => { const el = document.getElementById(id), cs = getComputedStyle(el), box = el.getBoundingClientRect(); return { w: box.width, h: box.height, radius: cs.borderTopLeftRadius, bg: cs.backgroundColor, color: cs.color, border: cs.borderTopWidth, icon: el.querySelector('svg').innerHTML }; }; const aa = document.querySelector('#h5-translate-button .h5-aa'), box = document.getElementById('h5-translate-button').getBoundingClientRect(), ab = aa.getBoundingClientRect(); return { send: pick('h5-translate-send'), translate: pick('h5-translate-button'), aa: aa.textContent, inside: ab.left >= box.left && ab.right <= box.right && ab.top >= box.top && ab.bottom <= box.bottom, sendAa: document.querySelectorAll('#h5-translate-send .h5-aa').length }; });
-      assert.deepEqual(same.translate, same.send, 'translate-and-send has the same size, shape, colours, border and send icon as the send button');
-      assert.deepEqual([same.aa, same.inside, same.sendAa], ['Aa', true, 0], 'only translate-and-send has the small Aa mark, inside the button');
-      assert.ok(parseFloat(looks.sendRadius) >= 20, 'the send arrow is round');
+      // The two send actions are in the draft box, under the text, right-aligned ("Bottom bar"): "Send as is" (outlined) then the primary "Send".
+      // The tool row keeps all eight tools while the box is shown: no button appears or disappears.
+      assert.ok(active.send.top >= active.root.bottom - 1 && active.send.bottom <= active.keys.top + 1, 'the send actions sit under the text, inside the draft box');
+      assert.ok(Math.abs(active.send.top - active.translate.top) <= 1 && active.send.right <= active.translate.left + 1, '"Send as is" is left of "Send" on one line');
+      assert.ok(active.translate.right <= 390 && active.translate.right >= 390 - 16 && active.send.height >= 40 && active.translate.height >= 40, 'right-aligned, fit the screen and finger-sized');
+      assert.equal(await page.evaluate(() => { const a = document.getElementById('h5-translate-send'), b = document.getElementById('h5-translate-button'); return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }), true, 'DOM and tab order: send as is before translate-and-send');
+      const looks = await page.evaluate(() => { const pick = id => { const el = document.getElementById(id); return { text: el.textContent.trim(), classes: el.className, label: el.getAttribute('aria-label'), form: el.closest('form') && el.closest('form').id, type: el.type }; }; return { send: pick('h5-translate-send'), translate: pick('h5-translate-button'), aa: document.querySelectorAll('.h5-aa').length }; });
+      assert.deepEqual([looks.send.text, looks.send.label, looks.send.type, looks.send.form], ['Send as is', null, 'submit', 'h5-translate'], '"Send as is" is the form\'s submit, named by its text');
+      assert.ok(/MuiButton-outlined/.test(looks.send.classes) && /MuiButton-contained/.test(looks.translate.classes) && /MuiButton-colorPrimary/.test(looks.translate.classes), 'a secondary outlined action and one primary contained "Send"');
+      assert.deepEqual([looks.translate.text, looks.translate.label, looks.aa], ['Send', 'Translate and send', 0], 'the primary button says "Send" and is named "Translate and send"; no "Aa" mark any more');
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width > 0).length), 8, 'the tool row keeps its eight tools while the draft box is shown');
       assert.ok(active.root.width > 250 && active.root.left >= 0 && active.root.right <= 390, 'the box takes the full width');
-      assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('h5-translate')).borderTopLeftRadius), '22px', 'the box has the 22px outer radius');
-      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-translate-input')).borderTopLeftRadius), '16px', 'the textarea radius is the outer radius minus the 6px padding');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-translate-input')).borderTopLeftRadius), '8px', 'the text field has the theme\'s 8px corners');
       // The terminal is moved, not resized: same box, same element height, same rows, no resize message; it only moves up.
       assert.equal(active.term, rest.term, 'the terminal box keeps its height');
       assert.equal(active.xterm.height, rest.xterm.height, 'the terminal element keeps its height');
@@ -1559,7 +1567,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.waitForTimeout(150);
     await openCopyFromMenu();
     const view = await page.locator('#h5-copy-text').evaluate(el => ({ white: getComputedStyle(el).whiteSpace, size: getComputedStyle(el).fontSize, over: el.scrollWidth - el.clientWidth }));
-    assert.deepEqual({ white: view.white, size: view.size }, { white: 'pre', size: '11px' });
+    assert.deepEqual({ white: view.white, size: view.size }, { white: 'pre', size: '12px' });
     assert.ok(view.over <= 0, `a full-width terminal row fits without scrolling sideways (${view.over}px over)`);
     assert.match(await page.locator('#h5-copy-text').textContent(), /full screen app/);
     assert.equal(await page.locator('#h5-copy-text').evaluate(el => getComputedStyle(el).userSelect), 'text');
@@ -1785,9 +1793,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await narrow.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const row = await narrow.page.evaluate(() => { const r = id => document.getElementById(id).getBoundingClientRect(); const ids = ['h5-image', 'h5-commands', 'h5-voice', 'h5-translate-send', 'h5-translate-button'];
         const boxes = [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0);
-        return { designHidden: document.getElementById('h5-design').getBoundingClientRect().width === 0 && document.getElementById('h5-cycle').getBoundingClientRect().width === 0, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
+        return { allEight: [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width >= 44).length === 8, inside: ids.every(id => r(id).left >= 0 && r(id).right <= innerWidth && r(id).width >= 32 && r(id).height >= 40), overflow: document.documentElement.scrollWidth > innerWidth, noOverlap: boxes.every((box, i) => i === 0 || boxes[i - 1].right <= box.left + 0.5) };
       });
-      assert.deepEqual(row, { designHidden: true, inside: true, overflow: false, noOverlap: true }, 'the action row with send and translate fits at 360px (the design and next-session buttons step aside)');
+      assert.deepEqual(row, { allEight: true, inside: true, overflow: false, noOverlap: true }, 'at 360px all eight tools stay (44px each) and the send actions of the draft box fit');
       await narrow.context.close();
     }
 
@@ -1807,12 +1815,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const row2 = () => small.page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => b.getBoundingClientRect()).filter(box => box.width > 0).map(box => ({ left: box.left, right: box.right, width: box.width, height: box.height })));
       const resting = await row2();
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-rest.png') });
-      const restCount = viewport.width < 360 ? 7 : 8; // Files is left out under 360px (eight 44px buttons do not fit)
+      const restCount = viewport.width < 360 ? 7 : 8; // Docs is left out under 360px (eight 44px buttons do not fit)
       assert.ok(resting.length === restCount && resting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 40 && box.height >= 40 && (i === 0 || resting[i - 1].right <= box.left + 0.5)), `row 2 at rest: ${restCount} buttons of at least 40px at ${viewport.width}px`);
       await small.page.locator('#h5-translate-input').focus();
       await small.page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running') && !document.querySelector('.h5-bar-moving'), null, { timeout: 3000 });
       const drafting = await row2();
-      assert.ok(drafting.length === 7 && drafting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 32 && (i === 0 || drafting[i - 1].right <= box.left + 0.5)), `row 2 with the draft box: the design and next-session buttons step aside and the rest fits at ${viewport.width}px`);
+      assert.ok(drafting.length === restCount && drafting.every((box, i) => box.left >= 0 && box.right <= innerWidthOf(viewport) && box.width >= 32 && (i === 0 || drafting[i - 1].right <= box.left + 0.5)), `row 2 with the draft box: the same ${restCount} tools at ${viewport.width}px`);
       if (process.env.H5_SHOT_DIR && viewport.width === 320) await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-row2-320-draft.png') });
       await small.page.evaluate(() => document.activeElement.blur());
       await small.context.close();

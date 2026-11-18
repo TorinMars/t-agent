@@ -331,6 +331,30 @@ function createSettingsSync(options) {
     return { applied, ignored };
   }
 
+  // ---- Failures in the log ----
+  // A failure is logged when it starts and when its reason changes, and once more when it is over, so a peer that stays broken does not fill the log
+  // and nothing fails silently. Only codes are logged (the error's code-shaped message, else its `code` or class name): a free-text message could
+  // quote a value.
+  const reported = new Map(); // what failed (a link id, 'rounds') -> the reason last logged
+  function reasonOf(error) {
+    const code = errorCode(error);
+    if (code !== 'SETTINGS_SYNC_FAILED' || !error) return code;
+    const detail = [error.code, error.name].find(part => typeof part === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(part) && part !== 'Error');
+    return detail ? `${code} (${detail})` : code;
+  }
+  function report(key, what, error = null) {
+    const reason = error ? reasonOf(error) : null;
+    const before = reported.get(key) || null;
+    if (reason === before) return;
+    if (reason) {
+      reported.set(key, reason);
+      log.warn(`[settings-sync] ${what} failed: ${reason}`);
+    } else {
+      reported.delete(key);
+      (log.info || log.warn).call(log, `[settings-sync] ${what} works again (it failed with ${before})`);
+    }
+  }
+
   // ---- Rounds ----
   const running = new Map(); // link id -> the round running for it
   const again = new Set(); // link ids to run once more when their round ends
@@ -342,6 +366,7 @@ function createSettingsSync(options) {
       const info = await call('/v1/info');
       if (!info || !Array.isArray(info.capabilities) || !info.capabilities.includes(CAPABILITY)) {
         updatePeer(peer.id, () => ({ supported: false, last_error: null }));
+        report(peer.id, `sync with ${peer.name}`);
         return 0;
       }
       reconcile(undefined, { announce: false });
@@ -380,13 +405,15 @@ function createSettingsSync(options) {
         }
       }
       updatePeer(peer.id, () => ({ supported: true, instance_id: theirs.instance_id, last_sync_at: new Date(now()).toISOString(), last_error: null, versions }));
+      report(peer.id, `sync with ${peer.name}`);
     } catch (error) {
       if (error && error.statusCode === 401 && typeof serviceLinks.noteUnauthorized === 'function') {
         try { serviceLinks.noteUnauthorized(peer.remoteServerId); } catch { /* the next call tries again */ }
       }
+      // Logged before the state is written: when the write is what fails, the failure is still in the log.
+      report(peer.id, `sync with ${peer.name}`, error);
       const code = errorCode(error);
       updatePeer(peer.id, () => ({ last_error: code, last_error_at: new Date(now()).toISOString() }));
-      log.warn(`[settings-sync] sync with ${peer.name} failed: ${code}`);
     }
     return applied;
   }
@@ -402,7 +429,7 @@ function createSettingsSync(options) {
         applied += await round(current);
       } while (again.has(peer.id));
       return applied;
-    })().catch(() => 0).finally(() => running.delete(peer.id));
+    })().catch(error => { report(peer.id, `sync with ${peer.name}`, error); return 0; }).finally(() => running.delete(peer.id));
     running.set(peer.id, work);
     return work;
   }
@@ -412,6 +439,9 @@ function createSettingsSync(options) {
     // What came from one peer goes on to the others.
     if (results.some(count => count > 0)) fanOut();
   }
+  // The rounds nobody waits for (the timer, the start, a local change): a failure is logged (see report), never thrown.
+  const syncInBackground = () => syncAll().then(() => report('rounds', 'a sync round'), error => report('rounds', 'a sync round', error))
+    .catch(() => { /* only a logger that throws gets here */ });
 
   // ---- Local changes, debounced ----
   let timer = null;
@@ -424,7 +454,7 @@ function createSettingsSync(options) {
     const changed = keys.length ? reconcile(keys, { announce: false }) : [];
     const go = changed.length > 0 || forward;
     forward = false;
-    if (go) syncAll().catch(() => {});
+    if (go) syncInBackground();
   }
   function schedule() {
     if (timer) clearTimeout(timer);
@@ -494,10 +524,10 @@ function createSettingsSync(options) {
         if (peer) syncPeer(peer);
       });
       if (intervalMs > 0) {
-        interval = setInterval(() => { syncAll().catch(() => {}); }, intervalMs);
+        interval = setInterval(syncInBackground, intervalMs);
         if (interval.unref) interval.unref();
       }
-      setImmediate(() => { syncAll().catch(() => {}); });
+      setImmediate(syncInBackground);
     }
   }
   function stop() {

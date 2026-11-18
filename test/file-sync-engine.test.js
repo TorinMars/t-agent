@@ -42,6 +42,17 @@ test('Engine authentication, master node list and proxying of existing connectio
   const manifest = await (await requestJson(`${engine}/v1/file-sync/manifest`, token)).json();
   assert.equal(manifest.files[0].path, file);
   assert.equal(Buffer.from(manifest.files[0].content, 'base64').toString(), '{"setting":true}\n');
+  // A slave that already has this manifest sends its etag and gets no contents; another etag, or a changed file, gets the full manifest.
+  assert.match(manifest.etag, /^[0-9a-f]{32}$/);
+  const unchanged = await (await requestJson(`${engine}/v1/file-sync/manifest?if_none_match=${manifest.etag}`, token)).json();
+  assert.deepEqual(unchanged, { instance_id: manifest.instance_id, generation: manifest.generation, etag: manifest.etag, unchanged: true });
+  assert.equal((await (await requestJson(`${engine}/v1/file-sync/manifest?if_none_match=other`, token)).json()).files[0].path, file);
+  fs.writeFileSync(file, '{"setting":false,"changed":true}\n');
+  const changed = await (await requestJson(`${engine}/v1/file-sync/manifest?if_none_match=${manifest.etag}`, token)).json();
+  assert.equal(changed.unchanged, undefined);
+  assert.equal(Buffer.from(changed.files[0].content, 'base64').toString(), '{"setting":false,"changed":true}\n');
+  assert.equal(changed.files[0].revision, manifest.files[0].revision + 1);
+  assert.notEqual(changed.etag, manifest.etag);
   const heartbeat = { instance_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Configure node', generation: manifest.generation, last_sync_at: new Date().toISOString() };
   assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, null, 'POST', heartbeat)).status, 401);
   assert.equal((await requestJson(`${engine}/v1/file-sync/heartbeat`, token, 'POST', heartbeat)).status, 200);

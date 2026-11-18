@@ -196,7 +196,7 @@ After the install, open:
 http://127.0.0.1:3000
 ```
 
-The Client is managed by **PM2** by default: when PM2 is missing the script installs it with `npm install -g pm2` (into `~/.local` when the global directory is not writable), then runs `pm2 start server.js --name t-agent --cwd <project directory>` and `pm2 save` (the working directory must be the project directory so that `.env` can be read). If the port is already in use it does not start and shows a hint. **Start on boot** needs you to run `pm2 startup` once (run the command it prints, with the sudo part executed by you) and then `pm2 save` again. After the in-app "Check for updates / Update" finishes, the process exits with exit code 75 and PM2 starts it again automatically; if the service has not restarted after an update, the update check says "restart the service" (`pm2 restart t-agent`). Once the service is running it shows up in the "App list" automatically.
+The Client is managed by **PM2** by default: when PM2 is missing the script installs it with `npm install -g pm2` (into `~/.local` when the global directory is not writable), then runs `pm2 start server.js --name t-agent --cwd <project directory>` and `pm2 save` (the working directory must be the project directory so that `.env` can be read). If the port is already in use it does not start and shows a hint. For a service it registers in PM2 for the first time, the script also sets up PM2's log rotation module when it is not installed yet (`pm2-logrotate`, a new file at 10 MB and 5 old files kept; see "PM2 log rotation" under "Service management"); if that fails the install goes on and prints the command to run later. **Start on boot** needs you to run `pm2 startup` once (run the command it prints, with the sudo part executed by you) and then `pm2 save` again. After the in-app "Check for updates / Update" finishes, the process exits with exit code 75 and PM2 starts it again automatically; if the service has not restarted after an update, the update check says "restart the service" (`pm2 restart t-agent`). Once the service is running it shows up in the "App list" automatically.
 
 Old installs that already registered a system service (the macOS `com.tagent.client` LaunchAgent or the Linux `t-agent.service`) **keep using the existing system service** when `install.sh` is run again, and are not silently switched, so two instances do not fight over the port. To switch to PM2, run again with `--pm2` (the old service is stopped and removed first, then PM2 starts it); to keep using the system service, add `--system-service`.
 
@@ -544,18 +544,22 @@ A new version is installed without asking, unless you turn this off (the auto up
 
 When **tracked files** in the Git working tree have uncommitted changes, or the local branch has diverged, the web update stops to avoid overwriting local code; the error lists exactly which files (at most 8). Untracked stray files (such as `.DS_Store`, `nohup.out`, or `.claude/` created by an editor or Agent) do **not** block the update: during the fast-forward merge, if the new version happens to write a file of the same name, git refuses by itself and keeps your file without overwriting it.
 
-The update UI (the same for this machine and remote Engines) shows the elapsed time of installing dependencies and building the frontend and the latest npm output line, and after 30 seconds without output it hints "the network may be down or it may be compiling"; the npm used for the update has short retries and timeouts (`fetch-retries=1`, `fetch-timeout=60s`, values already set in the environment are not overridden), so an unreachable download address fails within a minute or two instead of waiting the full 10 minutes. The update process writes the time, stage and command duration to the service log with an `[update]` prefix, along with the live output of the npm install and the frontend build; on failure the exit code and error details are recorded. For a PM2 deployment use `pm2 logs t-agent` (with the `PM2_HOME` used at deployment), and for a systemd deployment look at the journal of the corresponding service. The `esbuild` needed by the online update is installed as a regular dependency, so the build also works in production with dev dependencies omitted.
+The update UI (the same for this machine and remote Engines) shows the elapsed time of installing dependencies and the latest npm output line, and after 30 seconds without output it hints "the network may be down or it may be compiling"; the npm used for the update has short retries and timeouts (`fetch-retries=1`, `fetch-timeout=60s`, values already set in the environment are not overridden), so an unreachable download address fails within a minute or two instead of waiting the full 10 minutes.
+
+An update installs only what the running service needs: `npm ci --omit=dev --ignore-scripts=false`, the same as `install.sh` (about half of the packages of a full install). Nothing is built during an update, because the page bundles under `public/js` are part of the repository; the build and test tools (esbuild, React, Material UI, Playwright and so on) are dev dependencies. In a checkout where you also run the tests or build the bundles, an update therefore removes the dev dependencies: install them again with `npm ci --include=dev`, or keep them through updates by setting `npm_config_include=dev` in the service's environment (for example in `.env`).
+
+The update process writes to the service log with an `[update]` prefix: the time, the stage, each command with its duration, warnings and errors, and on failure the exit code and the error details. The line-by-line output of npm (one `npm http` line for every download) is shown in the update UI only and is not written to the service log; a `Finished` line says how many such lines were left out. A version check that finds nothing writes one line. For a PM2 deployment use `pm2 logs t-agent` (with the `PM2_HOME` used at deployment), and for a systemd deployment look at the journal of the corresponding service.
 
 ### Update a Git Client by hand
 
 ```bash
 cd /path/to/t-agent
 git pull --ff-only origin main
-npm ci --ignore-scripts=false
+npm ci --omit=dev --ignore-scripts=false
 node scripts/verify-node-pty.js
 ```
 
-Then restart the service for the current system, and force-refresh static assets in the browser with `Command/Ctrl + Shift + R`.
+`--omit=dev` leaves out the build and test tools, which the service does not need; leave it out in a checkout where you also run the tests. Then restart the service for the current system, and force-refresh static assets in the browser with `Command/Ctrl + Shift + R`.
 
 ### Migrate a package install to a Git install
 
@@ -581,6 +585,16 @@ pm2 startup && pm2 save     # start on boot: run the command printed by pm2 star
 ```
 
 The PM2 and App list pages were removed in 2.88.0 (their endpoints `/api/pm2` and `/api/apps` stay); use `pm2 status`, `pm2 logs t-agent` and `pm2 restart t-agent` on the machine. To migrate from an old LaunchAgent/systemd: `./install.sh --pm2`. The macOS / Linux sections below apply to old installs that keep using a system service.
+
+#### PM2 log rotation
+
+PM2 writes everything the service prints to `~/.pm2/logs/t-agent-out.log` and `t-agent-error.log` and never trims them. `install.sh` sets up PM2's rotation module for a service it registers in PM2 for the first time (only when the module is not installed yet; a module you already have keeps its settings). An install made before that, or one where that step failed, is not changed by an update. Run this once on the machine, as the user that runs PM2:
+
+```bash
+pm2 install pm2-logrotate && pm2 set pm2-logrotate:max_size 10M && pm2 set pm2-logrotate:retain 5
+```
+
+A log file is then closed at 10 MB and the 5 newest closed files are kept. The module works for every app of that PM2, not only `t-agent`; `pm2 conf pm2-logrotate` shows its settings and `pm2 uninstall pm2-logrotate` removes it. To empty the current logs once: `pm2 flush t-agent`.
 
 ### macOS
 
@@ -685,7 +699,7 @@ When the HTTP health check is fine but the terminal fails, you should usually ch
 ### `node-pty is not installed` or `posix_spawnp failed`
 
 ```bash
-npm ci --ignore-scripts=false
+npm ci --omit=dev --ignore-scripts=false   # in a development checkout: npm ci --include=dev --ignore-scripts=false
 node scripts/verify-node-pty.js
 ```
 

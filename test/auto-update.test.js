@@ -465,6 +465,7 @@ test('update manager: restart pending restarts through server-restart after npm 
   const npm = world.commands.findIndex(entry => entry[0].startsWith('npm'));
   const pty = world.commands.findIndex(entry => entry[0] === process.execPath);
   assert.ok(npm >= 0 && world.commands[npm].includes('ci'), 'npm ci ran');
+  assert.deepEqual(world.commands[npm].slice(1), ['ci', '--omit=dev', '--ignore-scripts=false'], 'the same production-only install as an update');
   assert.ok(pty > npm, 'node-pty is checked after npm ci');
   assert.equal(ran(world, 'merge'), false, 'nothing is merged');
   assert.deepEqual(world.timers, [750], 'the exit of lib/server-restart.js is scheduled');

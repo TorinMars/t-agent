@@ -201,7 +201,10 @@ function safeError(error) {
   return /^[A-Z0-9_]+$/.test(message) ? message : 'UPDATE_CHECK_FAILED';
 }
 
-async function runCheck({ force = false } = {}) {
+// `quiet`: the check is not part of an update (the timer, or the page asking). It runs every half hour and nearly always finds nothing, so the starts and
+// ends of its Git commands stay out of the service log (they used to be about 14 lines per check); a failure is printed as before.
+async function runCheck({ force = false, quiet = false } = {}) {
+  const git = quiet ? quietGit : execGit;
   const local = readLocalManifest();
   const gitInstall = installationType() === 'git';
   const url = gitInstall ? null : configuredVersionUrl();
@@ -210,16 +213,16 @@ async function runCheck({ force = false } = {}) {
   let restartRequired = true;
   let pending = { pending: false, target: null };
   if (gitInstall) {
-    await execGit(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`], 120_000);
+    await git(['fetch', config.gitRemote, `refs/heads/${config.gitBranch}:refs/remotes/${config.gitRemote}/${config.gitBranch}`], 120_000);
     const target = `${config.gitRemote}/${config.gitBranch}`;
-    const manifestText = await execGit(['show', `${target}:VERSION.json`]);
+    const manifestText = await git(['show', `${target}:VERSION.json`]);
     result = { manifest: validateVersionManifest(JSON.parse(manifestText)) };
-    restartRequired = await requiresRestart(execGit, runningCommit, target);
+    restartRequired = await requiresRestart(git, runningCommit, target);
     // Whether the workspace code is already newer than the running process (and the change needs a restart to take effect). Auxiliary information; a failure does not affect the check itself.
-    try { pending = await pendingRestart(); }
+    try { pending = await pendingRestart(git); }
     catch (error) { logUpdate('checking', `Cannot tell whether a restart is needed: ${error.message}`); }
   } else {
-    pending = await pendingRestart();
+    pending = await pendingRestart(git);
     const headers = {};
     if (!force && state.manifest_etag) headers['If-None-Match'] = state.manifest_etag;
     if (!force && state.manifest_last_modified) headers['If-Modified-Since'] = state.manifest_last_modified;
@@ -258,15 +261,15 @@ async function runCheck({ force = false } = {}) {
 
 // Whether the code on disk needs a restart to take effect, and what a restart would load: the HEAD commit (git) or the version on disk (archive).
 // The automatic restart counts its attempts per target, and does nothing when the target is unknown (HEAD could not be read).
-async function pendingRestart() {
+async function pendingRestart(git = execGit) {
   if (installationType() !== 'git') {
     const disk = readLocalManifest().app_version;
     const pending = Boolean(runningVersion) && runningVersion !== disk;
     return { pending, target: pending ? disk : null };
   }
-  if (!runningCommit || !(await requiresRestart(execGit, runningCommit, 'HEAD'))) return { pending: false, target: null };
+  if (!runningCommit || !(await requiresRestart(git, runningCommit, 'HEAD'))) return { pending: false, target: null };
   let head = '';
-  try { head = String(await execGit(['rev-parse', 'HEAD'])).trim(); }
+  try { head = String(await git(['rev-parse', 'HEAD'])).trim(); }
   catch (error) { logUpdate('checking', `Cannot read HEAD: ${error.message}`); }
   return { pending: true, target: head || null };
 }
@@ -274,7 +277,7 @@ async function pendingRestart() {
 async function check(options) {
   if (applyPromise || restartPromise) throw new Error('UPDATE_IN_PROGRESS');
   if (checkPromise) return checkPromise;
-  checkPromise = runCheck(options).catch(error => {
+  checkPromise = runCheck({ ...options, quiet: true }).catch(error => {
     saveState({ status: 'failed', stage: null, error: safeError(error), error_details: error.details || null, last_checked_at: new Date().toISOString(), message: 'Update check failed' });
     throw error;
   }).finally(() => { checkPromise = null; });
@@ -282,17 +285,21 @@ async function check(options) {
   return checkPromise;
 }
 
-function execGit(args, timeout = 60_000) {
+function execGit(args, timeout = 60_000, { quiet = false } = {}) {
   return runUpdateCommand('git', args, {
     cwd: projectRoot,
     env: { ...process.env, PATH: executablePath() },
     timeout,
     maxBuffer: 1024 * 1024,
-  }, { stage: `git:${args[0]}`, errorCode: `GIT_${String(args[0]).toUpperCase()}_FAILED` });
+  }, { stage: `git:${args[0]}`, errorCode: `GIT_${String(args[0]).toUpperCase()}_FAILED`, quiet });
 }
+// The same command with its start and end kept out of the service log (see runCheck).
+const quietGit = (args, timeout) => execGit(args, timeout, { quiet: true });
 
 // npm network requests during an update: few retries and a short timeout, so an unreachable network errors within a minute or two instead of waiting the full 10 minutes.
-// Values the user already set in the environment are not overridden. The http log level prints a line for every download so the UI can see it is still moving.
+// Values the user already set in the environment are not overridden. The http log level prints a line for every download so the UI can see it is still moving
+// (the progress text, and its "no output for 30s" hint when a download stalls). Those lines are for the Update dialog only: lib/update-command.js keeps them
+// in its buffer and out of the service log.
 const NPM_UPDATE_ENV = {
   npm_config_fetch_retries: '1',
   npm_config_fetch_retry_mintimeout: '2000',
@@ -307,16 +314,23 @@ function npmEnv() {
   return env;
 }
 
-function execNpm(args, stage) {
-  const label = stage === 'installing' ? 'Installing dependencies' : 'Building frontend assets';
+// What an update installs: the packages the running service needs (`dependencies`), as install.sh does. The dev dependencies are the tools that build the
+// page bundles and run the tests (esbuild, React, Material UI, Playwright ...); the bundles under public/js are committed, so an update builds nothing, and
+// leaving them out halves the install. test/production-dependencies.test.js fails when a file the service runs needs one of them.
+// The service must start with them present as well as absent: the update that brings this code in is run by the previous version, which installs everything.
+// npm's own `include=dev` setting (npm_config_include=dev in the service's environment) still wins over --omit, for a checkout that is also developed in.
+const NPM_INSTALL_ARGS = ['ci', '--omit=dev', '--ignore-scripts=false'];
+
+function installDependencies() {
+  const stage = 'installing';
   return runWithProgress(
-    label,
-    onOutput => runUpdateCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
+    'Installing dependencies',
+    onOutput => runUpdateCommand(process.platform === 'win32' ? 'npm.cmd' : 'npm', NPM_INSTALL_ARGS, {
       cwd: projectRoot,
       env: npmEnv(),
       timeout: 10 * 60_000,
       maxBuffer: 2 * 1024 * 1024,
-    }, { stage, errorCode: `NPM_${stage.toUpperCase()}_FAILED`, streamOutput: true, onOutput }),
+    }, { stage, errorCode: 'NPM_INSTALLING_FAILED', streamOutput: true, onOutput }),
     message => saveState({ status: 'updating', stage, message }),
   );
 }
@@ -340,7 +354,7 @@ async function runApply({ force = false, expectNoRestart = false } = {}) {
       message: 'Frontend update finished; the service was not restarted and existing shell connections stay open. Refresh the page later to load the new UI.' });
   }
 
-  await execNpm(['ci', '--ignore-scripts=false'], 'installing');
+  await installDependencies();
   await verifyNodePty();
   saveState({ status: 'updating', stage: 'restarting', message: 'Update finished, restarting the service' });
   // A non-zero exit code makes both systemd Restart=on-failure and macOS KeepAlive bring the new version up.
@@ -452,7 +466,7 @@ async function prepareRestart(target) {
     saveState({ status: 'updating', stage: 'preparing_restart', error: null, error_details: null, message: 'Checking that the new code can start' });
     if (installationType() === 'git') {
       const lockChanged = String(await execGit(['diff', '--name-only', runningCommit, 'HEAD', '--', 'package-lock.json'])).trim();
-      if (lockChanged) await execNpm(['ci', '--ignore-scripts=false'], 'installing');
+      if (lockChanged) await installDependencies();
     }
     await verifyNodePty();
     saveState({ status: 'updating', stage: 'restarting', message: 'Restarting the service to load the new code' });

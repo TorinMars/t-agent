@@ -156,12 +156,14 @@ function measure(min) {
       await check('copy-bar');
       await page.locator('#h5-clipboard-cancel').tap();
       await page.locator('#h5-clipboard-bar').waitFor({ state: 'detached' });
-      // The draft box is shown (its keyboard key): send and translate-and-send join row 2, which still fits with 44px buttons.
+      // The draft box is shown (its keyboard key): its two send actions are under its text, and row 2 keeps the same tools with 44px buttons.
       await page.locator('[data-action="draft"]').tap();
       await page.locator('#h5-translate-send').waitFor({ state: 'visible' });
       await check('draft');
       const drafting = await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].map(b => b.getBoundingClientRect()).filter(b => b.width > 0).map(b => ({ left: b.left, right: b.right, width: b.width })));
-      assert.ok(drafting.length === 7 && drafting.every((b, i) => b.width >= MIN - 0.01 && b.right <= viewport.width && (i === 0 || drafting[i - 1].right <= b.left + 0.01)), `${viewport.width}px: row 2 with the draft box: seven 44px buttons: ${JSON.stringify(drafting.map(b => Math.round(b.width * 10) / 10))}`);
+      assert.ok(drafting.length === count && drafting.every((b, i) => b.width >= MIN - 0.01 && b.right <= viewport.width && (i === 0 || drafting[i - 1].right <= b.left + 0.01)), `${viewport.width}px: row 2 with the draft box: the same ${count} 44px buttons: ${JSON.stringify(drafting.map(b => Math.round(b.width * 10) / 10))}`);
+      const sends = await page.evaluate(() => ['h5-translate-send', 'h5-translate-button'].map(id => { const b = document.getElementById(id).getBoundingClientRect(); return { right: b.right, width: b.width, height: b.height }; }));
+      assert.ok(sends.every(b => b.width >= MIN && b.height >= MIN && b.right <= viewport.width), `${viewport.width}px: the send actions of the draft box are 44px targets in the screen`);
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
       await page.locator('#h5-translate-send').waitFor({ state: 'hidden' });
       // The saved commands menu (the open terminal is a plain shell: its list has notes under the commands).

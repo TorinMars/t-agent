@@ -95,7 +95,7 @@ async function openPage(browser, { viewport, touch = true, db: start = {} }) {
   if (!(await row.isVisible())) await page.locator('.h5-task-item', { hasText: 'Fix login' })[how]();
   await row[how]();
   await page.waitForFunction(() => innerWidth >= 900 || !document.body.classList.contains('h5-tasks-open') && Math.abs(document.getElementById('h5-app').getBoundingClientRect().left) < 0.5);
-  await page.locator('#h5-attention').waitFor();
+  await page.locator('#h5-attention').waitFor({ state: 'attached' }); // in More tools (hidden) on a computer
   return { context, page, errors, calls, db, how };
 }
 
@@ -109,7 +109,9 @@ const overflow = page => page.evaluate(() => [...document.querySelectorAll('#h5-
 
 // Waits until the sheet's slide-in has ended (no transform left), so sizes and positions are final.
 async function openPanel(page, how) {
+  if (how === 'click' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click(); // a computer: T-Attention is in More tools
   await page.locator('#h5-attention')[how]();
+  await page.locator('#h5-more-menu .MuiBackdrop-root').waitFor({ state: 'hidden' }); // the closing menu no longer takes the pointer
   await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => { const node = document.querySelector('#h5-attention-sheet .h5-attention-panel'); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); }, null, { timeout: 3000 });
 }

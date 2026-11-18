@@ -208,9 +208,10 @@ async function toast(page, text) {
     assert.deepEqual(await shown(page), { terminal: 'g1', task: 'Gamma' });
     assert.equal(await page.evaluate(() => window.sockets.length), before, 'still no new connection');
 
-    // While the draft box is shown, the button steps aside like the design button.
+    // While the draft box is shown the button stays (the tool row never changes with the state; the send actions are in the draft box).
     await page.locator('#h5-translate-input').focus();
-    await page.waitForFunction(() => document.getElementById('h5-cycle').getBoundingClientRect().width === 0);
+    await page.locator('#h5-translate-send').waitFor({ state: 'visible' });
+    assert.ok(await page.evaluate(() => document.getElementById('h5-cycle').getBoundingClientRect().width >= 44), 'next session stays in the tool row');
     await page.evaluate(() => document.activeElement.blur());
     await context.close();
 

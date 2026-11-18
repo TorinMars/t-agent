@@ -74,9 +74,8 @@ body { -webkit-text-size-adjust: 100%; }
 .h5-translate-input textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* the hint stays on one line on a narrow phone */
 .h5-voice { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
 .h5-voice.listening { color: #e5484d; animation: h5-voice-pulse 1.2s ease-in-out infinite; }
-/* Voice input turned off in Settings (voice-input.js sets the attribute): no microphone anywhere, and the row of buttons spreads over the free room. */
+/* Voice input turned off in Settings (voice-input.js sets the attribute): no microphone anywhere (the other tools share the free room). */
 html[data-voice-off] .h5-voice, html[data-voice-off] .ac-mic, html[data-voice-off] .ac-keep-mic { display: none !important; }
-html[data-voice-off] #h5-actions { --h5-rest-width: 308px; --h5-rest-gaps: 6; }
 @keyframes h5-voice-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); } 50% { box-shadow: 0 0 8px 1px rgba(229, 72, 77, .75); } }
 @media (prefers-reduced-motion: reduce) { .h5-voice.listening { animation: none; box-shadow: 0 0 6px 1px rgba(229, 72, 77, .6); } .h5-translate-input.translating { animation: none; } }
 @keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(144, 202, 249, .6); } }
@@ -114,7 +113,7 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 
 /* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. Same font, size, letter spacing (none: the dialog inherits MUI's 0.15px, which made a full-width row about 8px wider) and side padding as the terminal and no
    wrapping of its own: one terminal row is one line, so the layout matches. */
-.h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; font: 11px/1.2 Menlo, Monaco, "Courier New", monospace; letter-spacing: normal; -webkit-text-size-adjust: 100%; white-space: pre;
+.h5-copy-text { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; font: 12px/1.2 Menlo, Monaco, "Courier New", monospace; letter-spacing: normal; -webkit-text-size-adjust: 100%; white-space: pre;
   user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; outline: none; }
 
 /* Shown over a terminal that another device is using; the button takes it over. */
@@ -142,11 +141,11 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 /* Responsive layout.
    - Phone (under 900px): the page fills the window; the task list slides over it (a Material UI temporary drawer).
    - Wide (900px and up, a computer or a landscape tablet): the task list is a permanent sidebar (a permanent drawer) and the terminal or chat fills the rest;
-     the keys and the composer are limited to 960px. h5.js (`isWide`) and the shell use the same breakpoint. */
+     the touch keys and draft box are limited to 960px (the computer row spans the width). h5.js (`isWide`) and the shell use the same breakpoint. */
 @media (min-width: 900px) {
   .h5-app { inset: 0 0 auto var(--h5-sidebar-width); width: auto; }
   .h5-agent { left: var(--h5-sidebar-width); width: auto; }
-  .h5-bottom { width: 100%; max-width: 960px; margin-inline: auto; }
+  .h5-bottom:not([data-single]) { width: 100%; max-width: 960px; margin-inline: auto; } /* the computer's one row spans the whole width */
   .h5-copy-text { font-size: 13px; padding: 8px 16px; }
   /* The sidebar folded away (header button): the page and the chat take the whole width. */
   html[data-sidebar-collapsed] { --h5-sidebar-width: 0px; }

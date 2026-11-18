@@ -54,7 +54,7 @@ async function measure(page) {
 }
 async function fillsWidth(browser) {
   const cases = [];
-  for (const width of [360, 393, 412]) for (const scale of [2.625, 3]) cases.push({ width, scale, touch: true, fontSize: 11 });
+  for (const width of [360, 393, 412]) for (const scale of [2.625, 3]) cases.push({ width, scale, touch: true, fontSize: 12 }); // the phone terminal font (h5.js terminalFontSize)
   cases.push({ width: 1280, scale: 1, fontSize: 13, classic: true }, { width: 1440, scale: 2, fontSize: 13, classic: true }, { width: 1440, scale: 2, fontSize: 13 });
   for (const { width, scale, touch = false, fontSize, classic = false } of cases) {
     const label = `${width}px x${scale}${touch ? ' touch' : ' pointer'}${classic ? ' classic scrollbar' : ''}`;
@@ -93,7 +93,7 @@ async function fillsWidth(browser) {
   const browser = await chromium.launch({ headless: true,
     ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
-    for (const [width, fontSize] of [[390, 11], [1280, 13], [1440, 13], [1920, 13]]) {
+    for (const [width, fontSize] of [[390, 12], [1280, 13], [1440, 13], [1920, 13]]) {
       const page = await browser.newPage({ viewport: { width, height: 800 } });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));

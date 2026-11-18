@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
+import { alpha } from '@mui/material/styles';
 import { t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 
@@ -40,14 +41,16 @@ function rowsFor(layer) {
   return [chars(one), chars(two), [{ ...SHIFT_SLOT[layer], span: 3, fn: true }, ...chars(three), backspace], bottom];
 }
 
+// The keys' look comes from the theme: the overlays of the dark palette (`action.selected` for a letter, `action.hover` for a function key, a stronger
+// white while pressed), the primary colour for Shift / caps lock while on, 6px corners and the MD2 type scale (h6 for a letter, body2 medium for a label).
 const KEY = {
-  height: 44, minWidth: 0, p: 0, m: 0, border: 0, borderRadius: '6px', font: 'inherit', fontSize: 20, lineHeight: 1, color: 'text.primary',
-  bgcolor: 'rgba(255, 255, 255, .16)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 1px 0 rgba(0, 0, 0, .5)',
+  height: 44, minWidth: 0, p: 0, m: 0, border: 0, borderRadius: 1.5, font: 'inherit', typography: 'h6', fontWeight: 400, lineHeight: 1, color: 'text.primary',
+  bgcolor: 'action.selected', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: 1,
   WebkitTapHighlightColor: 'transparent', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none',
-  '&[data-fn]': { bgcolor: 'rgba(255, 255, 255, .08)', fontSize: 15, fontWeight: 500 },
-  '&[aria-pressed="true"]': { bgcolor: 'rgba(41, 182, 246, .18)', color: 'primary.light', boxShadow: 'inset 0 0 0 1px currentColor' },
+  '&[data-fn]': { bgcolor: 'action.hover', typography: 'body2', fontWeight: 500, lineHeight: 1 },
+  '&[aria-pressed="true"]': { bgcolor: theme => alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity), color: 'primary.main', boxShadow: 'inset 0 0 0 1px currentColor' },
   // Press feedback: set on pointerdown, cleared on release; the attribute is set on the DOM node, so a press does not re-render.
-  '&[data-down]': { bgcolor: 'rgba(255, 255, 255, .34)' },
+  '&[data-down]': { bgcolor: theme => alpha(theme.palette.text.primary, 0.34) },
 };
 
 export function TerminalKeyboard({ ui }) {
@@ -95,7 +98,7 @@ export function TerminalKeyboard({ ui }) {
     <Box
       className="h5-osk" id="h5-osk" role="group" aria-label={t('Terminal on-screen keyboard')} data-layer={layer} data-shift={shift}
       onMouseDown={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}
-      sx={{ display: 'flex', flexDirection: 'column', gap: '6px', px: 0.5, pt: 1, maxWidth: 720, mx: 'auto', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
+      sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, px: 0.5, pt: 1, pb: 0.5, maxWidth: 720, mx: 'auto', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
     >
       {rowsFor(layer).map((row, rowIndex) => (
         <Box key={`${layer}-${rowIndex}`} className="h5-osk-row" sx={{ display: 'grid', gridTemplateColumns: 'repeat(20, minmax(0, 1fr))', columnGap: '4px' }}>

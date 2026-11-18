@@ -252,6 +252,7 @@ async function checkTerminalAlignment(browser) {
     await page.locator('#h5-sidebar-toggle').click();
 
     // The T-Attention panel gives way to a sheet (attention-feed.mjs): opening one closes it, so the terminal is wide again and the sheet takes that width.
+    await page.locator('#h5-more').click(); // T-Attention is an item of More tools on the computer row
     await page.locator('#h5-attention').click();
     await page.waitForFunction(() => document.documentElement.hasAttribute('data-side-panel'));
     await open();

@@ -93,22 +93,28 @@ function ClipboardBar({ bar, ui }) {
 
 // The copy bar's colours come from the theme (`notice`); its layout and its one slide-in and pulse are `.h5-clipboard-*` in h5.css.
 // `backgroundImage: none` drops the dark theme's elevation overlay, which would grey the blue. A focused button gets a white ring.
-const FOCUS_RING = { '&.Mui-focusVisible': { outline: '2px solid #fff', outlineOffset: 2 } };
+const FOCUS_RING = { '&.Mui-focusVisible': { outline: theme => `2px solid ${theme.palette.notice.contrastText}`, outlineOffset: 2 } };
 const CLIPBOARD_BAR = {
   bgcolor: 'notice.main', color: 'notice.contrastText', backgroundImage: 'none',
-  border: 1, borderColor: 'rgba(255, 255, 255, .28)', '--h5-clipboard-ring': theme => theme.palette.notice.ring,
+  border: 1, borderColor: theme => alpha(theme.palette.notice.contrastText, 0.28), '--h5-clipboard-ring': theme => theme.palette.notice.ring,
 };
 const CLIPBOARD_COPY = {
   bgcolor: 'notice.button', color: 'notice.main', fontWeight: 600, px: 2,
   '&:hover': { bgcolor: 'notice.buttonHover' }, '&:active': { bgcolor: 'notice.buttonHover' }, ...FOCUS_RING,
 };
-const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { bgcolor: 'rgba(255, 255, 255, .14)' }, ...FOCUS_RING };
+const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { bgcolor: theme => alpha(theme.palette.notice.contrastText, 0.14) }, ...FOCUS_RING };
 
 
-// The bottom area (reference design): the draft box (hidden by default), then two rows of buttons. Row 1 are the function keys (one row that scrolls sideways); row 2 is the action row:
-// terminal keyboard, draft keyboard, upload image, saved commands, voice, and (only while the draft box is shown) send and translate-and-send. One box holds all of it so that, when the draft box
-// grows over the terminal, the rows move up with it and stay visible (h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized for it).
-// Under row 2, while `state.osk` is on (touch mode only), the terminal's own on-screen keyboard (Osk.jsx). It takes room in the layout, so the terminal refits above it.
+// The bottom area ("Bottom bar" in docs/design/page-terminal-and-bottom-bar.md). Three layouts, one component tree:
+// - a column of the multi-column view (pane mode): CompactBottom, one row (decided once, before the first render);
+// - the single view on a computer (input mode 'pointer'): ONE 56px row, the draft box, Upload, Voice, Saved commands, Docs, "More tools" and Send
+//   (`#h5-bottom[data-single]`; CompactTools in its 'single' mode);
+// - the single view on a touch screen: the draft box (hidden by default), row 1 the function keys, row 2 the eight tools (CompactTools in its
+//   'phone' mode), and under them, while `state.osk` is on, the terminal's own on-screen keyboard (Osk.jsx), which takes room in the layout.
+// The input mode can change while the page is open (a mouse plugged in), so the computer row and the touch layout are the SAME elements in the same
+// places: the form and its textarea, the voice button and the file input are never remounted (h5.js and voice-input.js hold those DOM nodes from the
+// start). Only Send (`#h5-translate-button`) moves between the draft box (touch) and the row (computer); h5.js listens for it on `#h5-bottom`.
+// When the draft box grows over the terminal h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized for it.
 // What the bottom area draws (its rows read it from here): T-Attention and the file sheet only as the counts and flags the buttons show.
 const BOTTOM = state => ({
   input: state.input, terminalAgent: state.terminalAgent, translating: state.translating, osk: state.osk, mods: state.mods, keyboard: state.keyboard,
@@ -116,10 +122,15 @@ const BOTTOM = state => ({
   attentionNeeds: Number(state.attention && state.attention.needs) || 0, attentionOpen: Boolean(state.attention && state.attention.open),
   designOpen: Boolean(state.design && state.design.open),
 });
+// The surface of the single view's bottom area: an MD2 bar (Paper at elevation 1, without its shadow) with a divider above it.
+const BAR_SURFACE = { flex: '0 0 auto', position: 'relative', zIndex: 3, borderTop: 1, borderColor: 'divider', boxShadow: 'none' };
+// The computer row: 56px (plus the divider), the controls on its bottom line, so a draft of several lines grows upward out of it over the terminal.
+const SINGLE_ROW = { boxSizing: 'border-box', height: 57, display: 'flex', alignItems: 'flex-end', gap: 0.5, px: 1.5, pb: 1 };
 export function BottomArea({ ui }) {
   const state = useStore(ui, BOTTOM, shallowEqual);
   countRender('BottomArea');
   const [menu, setMenu] = useState(false); // the saved commands list (and Paste text) is open
+  const [menuAt, setMenuAt] = useState(null); // where the list opens: the left edge of the button that opened it (computer row), else the left side
   // A column of the multi-column view (pane mode) has the compact bottom area: one row (see CompactBottom). It is decided once, before the first render.
   const compact = Boolean(state.pane);
   useEffect(() => {
@@ -136,13 +147,19 @@ export function BottomArea({ ui }) {
   // A column that is no longer the focused one closes its list: a press in another column is in another window, which the listener above never hears.
   useEffect(() => { if (compact && !state.paneFocused) setMenu(false); }, [compact, state.paneFocused]);
   const run = action => { setMenu(false); action(); };
-  // A computer (input mode 'pointer'): no function key row (a real keyboard has the keys), the draft box always shown, and the whole action row always there.
+  // Opens or closes the list. On the computer row it opens above the button that opened it (`anchor`), like an MD2 menu.
+  const onMenu = (open, anchor) => {
+    const bottom = anchor && anchor.closest && anchor.closest('#h5-bottom');
+    setMenuAt(bottom && bottom.hasAttribute('data-single') ? Math.round(anchor.getBoundingClientRect().left - bottom.getBoundingClientRect().left) : null);
+    setMenu(open);
+  };
+  // A computer (input mode 'pointer'): no function key row (a real keyboard has the keys), the draft box always shown, one row.
   const pointer = state.input === 'pointer';
   const presets = commandsFor(state.terminalAgent);
   const rows = [
-    { icon: <Icon name="paste" />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
+    { icon: <Icon name="paste" size={20} />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
     // Under 360px (touch) row 2 has no room for the Docs button: the list leads to the documents instead (shown only there, `narrowOnly`).
-    ...(pointer || compact ? [] : [{ icon: <Icon name="designDoc" />, label: 'Docs', id: 'h5-commands-docs', narrowOnly: true, run: () => run(() => ui.actions.openDesign()) }]),
+    ...(pointer || compact ? [] : [{ icon: <Icon name="designDoc" size={20} />, label: 'Docs', id: 'h5-commands-docs', narrowOnly: true, run: () => run(() => ui.actions.openDesign()) }]),
     // The presets of the open terminal's kind (Claude Code, Codex or a plain shell; `state.terminalAgent`, set by h5.js), under a header naming the list (scripts/h5-shell/commands.mjs).
     // A tap types the command WITHOUT Enter, so the user checks it and presses Enter.
     { head: true, label: presets.title },
@@ -151,37 +168,49 @@ export function BottomArea({ ui }) {
     // and closes the list, like a command.
     ...(presets.keys ? [{ head: true, label: 'Keys' }, ...presets.keys.map(({ label, send, note }) => ({ label, note, mono: true, keyRow: true, run: () => run(() => ui.actions.key({ send })) }))] : []),
   ];
-  const list = menu ? <CommandsList rows={rows} /> : null;
+  const list = menu ? <CommandsList rows={rows} at={menuAt} /> : null;
   if (compact) return <CompactBottom state={state} ui={ui} list={list} onMenu={setMenu} pointer={pointer} />;
   return (
-    <Box className="h5-bottom" id="h5-bottom" sx={{ flex: '0 0 auto', position: 'relative', zIndex: 3, bgcolor: 'var(--h5-bg)', marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'max(8px, env(safe-area-inset-bottom))', ...(pointer ? POINTER_ON : DRAFT_ON) }}>
+    <Paper
+      square elevation={1} className="h5-bottom" id="h5-bottom" data-single={pointer ? '' : undefined} data-focused={pointer ? '' : undefined}
+      sx={pointer ? { ...BAR_SURFACE, ...SINGLE_ROW } : { ...BAR_SURFACE, marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'env(safe-area-inset-bottom)', ...DRAFT_ON }}
+    >
       {list}
-      <TranslateBar state={state} pointer={pointer} />
+      <TranslateBar state={state} pointer={pointer} single={pointer} />
       {pointer ? null : <KeyBar state={state} ui={ui} />}
-      <ActionBar state={state} ui={ui} menu={menu} onMenu={setMenu} pointer={pointer} />
+      <CompactTools state={state} ui={ui} onMenu={onMenu} menu={menu} pointer={pointer} mode={pointer ? 'single' : 'phone'} />
       {state.osk && !pointer ? <TerminalKeyboard ui={ui} /> : null}
-    </Box>
+    </Paper>
   );
 }
 
-// The saved commands list (and Paste text), above the bottom area: opened by the saved commands button, or from "More tools" in a column.
-function CommandsList({ rows }) {
+// The saved commands list (and Paste text), above the bottom area: opened by the saved commands button, or from "More tools". An MD2 menu: a Paper at
+// elevation 8, 4px corners, rows of body text (commands in monospace with a caption under them) and list subheaders with a divider above them.
+// `at`: the left edge of the button that opened it on the computer row (kept inside the area); otherwise 8px from the left.
+function CommandsList({ rows, at = null }) {
+  const left = at == null ? 8 : `max(8px, min(${at}px, calc(100% - 308px)))`;
   return (
     <Paper
       className="h5-add-menu" role="menu" aria-label={t('Saved commands')} elevation={8} onMouseDown={event => event.preventDefault()}
-      sx={{ position: 'absolute', left: 8, bottom: 'calc(100% + 8px)', width: 300, maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box', maxHeight: '60vh', overflowY: 'auto', borderRadius: 2, border: 1, borderColor: 'divider', zIndex: 4 }}
+      sx={{ position: 'absolute', left, bottom: 'calc(100% + 8px)', width: 300, maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box', maxHeight: '60vh', overflowY: 'auto', py: 1, zIndex: 4 }}
     >
       {rows.map((row, index) => (row.head ? (
-        <Box key={`head-${row.label}`} className="h5-add-menu-head" role="presentation" sx={{ px: 2, pt: 1.25, pb: 0.5, fontSize: 12, fontWeight: 600, color: 'text.secondary', borderTop: index ? 1 : 0, borderColor: 'divider' }}>{t(row.label)}</Box>
+        <Box
+          key={`head-${row.label}`} className="h5-add-menu-head" role="presentation"
+          sx={{ px: 2, pt: index ? 1.5 : 1, pb: 0.5, mt: index ? 1 : 0, typography: 'body2', fontWeight: 500, color: 'text.secondary', borderTop: index ? 1 : 0, borderColor: 'divider' }}
+        >{t(row.label)}</Box>
       ) : (
         <Button
           key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} id={row.id} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
-          sx={{ justifyContent: 'flex-start', minHeight: 44, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, textTransform: 'none', fontSize: 15, borderTop: index && !rows[index - 1].head ? 1 : 0, borderColor: 'divider', ...(row.narrowOnly ? { [WIDE_ENOUGH]: { display: 'none' } } : {}) }}
+          sx={{
+            justifyContent: 'flex-start', minHeight: 40, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, typography: 'body1', fontWeight: 400, [TOUCH]: { minHeight: 48 },
+            '& .MuiButton-startIcon': { mr: 2, color: 'text.secondary' }, ...(row.narrowOnly ? { [WIDE_ENOUGH]: { display: 'none' } } : {}),
+          }}
         >
           {row.note ? (
             <Box component="span" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', flex: '1 1 auto', minWidth: 0, textAlign: 'left' }}>
-              <Box component="span" className={row.keyRow ? 'h5-add-menu-key' : 'h5-add-menu-command'} translate="no" sx={{ fontFamily: 'ui-monospace, Menlo, monospace', lineHeight: 1.3, overflowWrap: 'anywhere' }}>{row.label}</Box>
-              <Box component="span" className="h5-add-menu-note" sx={{ fontSize: 12, lineHeight: 1.35, color: 'text.secondary', overflowWrap: 'anywhere', textWrap: 'pretty' }}>{t(row.note)}</Box>
+              <Box component="span" className={row.keyRow ? 'h5-add-menu-key' : 'h5-add-menu-command'} translate="no" sx={{ typography: 'body2', fontFamily: 'ui-monospace, Menlo, monospace', fontWeight: 500, overflowWrap: 'anywhere' }}>{row.label}</Box>
+              <Box component="span" className="h5-add-menu-note" sx={{ typography: 'caption', color: 'text.secondary', overflowWrap: 'anywhere', textWrap: 'pretty' }}>{t(row.note)}</Box>
             </Box>
           ) : t(row.label)}
         </Button>
@@ -226,74 +255,189 @@ function CompactBottom({ state, ui, list, onMenu, pointer }) {
   );
 }
 
-// The buttons of the focused column's row. "More tools" holds what has no button here, each doing exactly what its button does on the page:
-// Saved commands (the same list), Docs, Next running or pending session (with its count, which the "More tools" button also shows as a badge),
-// Send as typed without translating (the form's submit, as the send arrow and Option+Enter), and in touch input mode Terminal keyboard.
-// A chosen item runs after the menu closed, so the focus the menu gives back to its button does not take it from where the action put it
+// The tools of the bottom area, one component for its three layouts (`mode`):
+// - 'column' (a column's row): Upload, Voice, "More tools", Send. More holds Saved commands (the same list), Docs, Next running or pending session (with
+//   its count, which the "More tools" button also shows as a badge), Send as typed without translating (the form's submit, as Option+Enter), and in
+//   touch input mode Terminal keyboard.
+// - 'single' (the single view on a computer, which is wider than a column, so more tools have a button): Upload, Voice, Saved commands, Docs, "More
+//   tools" and Send. More holds T-Attention (`#h5-attention`, with its "Needs you" count), Next running or pending session (`#h5-cycle`) and Send as
+//   typed (`#h5-translate-send`): the ids of the buttons they replace. The menu stays mounted (hidden while closed), so those ids are always in the
+//   page. When the area is narrower than SINGLE_NARROW px, Saved commands and Docs go into More too (`#h5-more-commands`, `#h5-more-docs`), as in a column.
+// - 'phone' (touch input): all eight tools as flat 48px icon buttons that share the width: terminal keyboard, draft keyboard, upload, saved commands,
+//   voice, Docs, T-Attention and next session. The set never changes with the state (the send buttons are in the draft box); only under 360px Docs is
+//   left out (the saved commands list has a Docs entry there). The active tool is drawn in the primary colour.
+// The elements h5.js and voice-input.js hold (the file input, the voice button) keep their place among the children in every mode (the `null`
+// slots), so a change of the input mode never remounts them.
+// A chosen menu item runs after the menu closed, so the focus the menu gives back to its button does not take it from where the action put it
 // (a sent message focuses the terminal on a computer).
+const SINGLE_NARROW = 560;
 const COMPACT_ICON = { flex: '0 0 auto', width: 36, height: 36, p: 0, color: 'text.secondary', '&:hover': { color: 'text.primary' }, [TOUCH]: { width: 44, height: 44 } };
-const BADGE = { '& .MuiBadge-badge': { fontSize: 10, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } };
-function CompactTools({ state, ui, onMenu, pointer }) {
+const SELECTED_TOOL = theme => ({ color: theme.palette.primary.main, backgroundColor: alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) });
+const ACTIVE = '&[aria-pressed="true"], &[aria-expanded="true"]';
+const SINGLE_ICON = { ...COMPACT_ICON, width: 40, height: 40, [ACTIVE]: SELECTED_TOOL };
+const PHONE_TOOL = { flex: '1 1 0', minWidth: 0, height: 48, p: 0, borderRadius: 2, color: 'text.primary', [ACTIVE]: SELECTED_TOOL, '& .MuiTouchRipple-root': { borderRadius: 2 } };
+const BADGE = { '& .MuiBadge-badge': { typography: 'caption', fontSize: 10, fontWeight: 500, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } };
+const COUNT_PILL = { ml: 2, height: 20, px: 0.75, typography: 'caption' };
+// The width of the computer row, read while it is shown (the menu needs to know, so CSS alone cannot do it).
+function useNarrowRow(on) {
+  const ref = useRef(null);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const row = on && ref.current ? ref.current.closest('#h5-bottom') : null;
+    if (!row || typeof ResizeObserver === 'undefined') { setNarrow(false); return undefined; }
+    const update = () => setNarrow(row.clientWidth > 0 && row.clientWidth < SINGLE_NARROW);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [on]);
+  return [ref, narrow];
+}
+function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column' }) {
+  const column = mode === 'column';
+  const single = mode === 'single';
+  const phone = mode === 'phone';
   const [anchor, setAnchor] = useState(null);
-  useEffect(() => { if (!state.paneFocused) setAnchor(null); }, [state.paneFocused]);
+  const [ref, narrow] = useNarrowRow(single);
+  useEffect(() => { if (column && !state.paneFocused) setAnchor(null); }, [column, state.paneFocused]);
+  useEffect(() => { if (phone) setAnchor(null); }, [phone]);
   const close = () => setAnchor(null);
   const choose = action => () => { close(); setTimeout(action, 0); };
   const active = Number(state.activeCount) || 0;
-  const more = t('More tools') + (active ? ` (${active})` : '');
+  const needs = single || phone ? state.attentionNeeds : 0;
+  // The "More tools" button counts what waits inside it: running or pending sessions, and on the computer row the T-Attention items that need the person
+  // too (the badge is orange while some do, like the T-Attention badge).
+  const waiting = active + (single ? needs : 0);
+  const more = t('More tools') + (waiting ? ` (${waiting})` : '');
   const cycle = t('Next running or pending session') + (active ? ` (${active})` : '');
+  const attention = t('Attention') + (needs ? ` (${needs})` : '');
   const image = t('Upload image or file');
+  const commands = t('Saved commands');
+  const docs = t('Docs');
+  const look = phone ? PHONE_TOOL : single ? SINGLE_ICON : COMPACT_ICON;
+  const size = phone ? 24 : 20;
   const item = { sx: { minHeight: 40, [TOUCH]: { minHeight: 48 } } };
+  // The keyboard keys exist only on touch screens. Terminal keyboard shows and hides the terminal's own on-screen keyboard (Osk.jsx, never the system
+  // one); draft keyboard focuses the draft box, so the system keyboard (with its IME and dictation) types into it.
+  const keyboard = (action, kind, label) => (
+    <IconButton data-action={action} sx={look} {...named(t(label))} aria-pressed={kind === 'terminal' ? Boolean(state.osk) : state.keyboard === kind} onClick={() => ui.actions.key({ action })}>
+      <Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} size={size} />
+    </IconButton>
+  );
+  const commandsButton = (
+    <IconButton id="h5-commands" data-action="commands" sx={look} {...named(commands)} aria-haspopup="menu" aria-expanded={menu} onClick={event => onMenu(!menu, event.currentTarget)}>
+      <Icon name="commands" size={size} />
+    </IconButton>
+  );
+  // Docs: the design document sheet (Design.jsx); its header has Files (the read-only file tree). On a touch screen under 360px eight buttons do not
+  // fit, so it is left out there: the saved commands list has a Docs entry instead.
+  const docsButton = (
+    <IconButton
+      id="h5-design" data-action="design" sx={phone ? { ...look, '@media (max-width: 359.98px)': { display: 'none' } } : look} {...named(docs)}
+      aria-haspopup="dialog" aria-expanded={state.designOpen} onClick={() => ui.actions.openDesign()}
+    ><Icon name="designDoc" size={size} /></IconButton>
+  );
+  const menuItems = [];
+  if (column || narrow) {
+    menuItems.push(
+      <MenuItem key="commands" {...item} id="h5-more-commands" aria-haspopup="menu" onClick={choose(() => onMenu(true, single ? anchor : null))}>
+        <ListItemIcon><Icon name="commands" size={20} /></ListItemIcon><ListItemText>{commands}</ListItemText>
+      </MenuItem>,
+      <MenuItem key="docs" {...item} id="h5-more-docs" aria-haspopup="dialog" onClick={choose(() => ui.actions.openDesign())}>
+        <ListItemIcon><Icon name="designDoc" size={20} /></ListItemIcon><ListItemText>{docs}</ListItemText>
+      </MenuItem>,
+    );
+  }
+  if (single) {
+    // T-Attention (Attention.jsx): opens or closes the side panel, as the rail's Attention button does. Its name carries the "Needs you" count.
+    menuItems.push(
+      <MenuItem key="attention" {...item} id="h5-attention" data-action="attention" aria-label={attention} title={attention} aria-expanded={state.attentionOpen} selected={state.attentionOpen} onClick={choose(() => ui.actions.toggleAttention())}>
+        <ListItemIcon><Icon name="attention" size={20} /></ListItemIcon><ListItemText>{t('Attention')}</ListItemText>
+        {needs ? <Pill className="h5-attention-count" label={needs > 99 ? '99+' : String(needs)} tone="warning" filled aria-hidden="true" sx={COUNT_PILL} /> : null}
+      </MenuItem>,
+    );
+  }
+  menuItems.push(
+    <MenuItem key="cycle" {...item} id={single ? 'h5-cycle' : 'h5-more-cycle'} data-action="cycle" aria-label={cycle} onClick={choose(() => ui.actions.nextActiveSession())}>
+      <ListItemIcon><Icon name="cycleSessions" size={20} /></ListItemIcon><ListItemText>{t('Next running or pending session')}</ListItemText>
+      {active ? <Pill className="h5-more-count" label={active > 99 ? '99+' : String(active)} tone="primary" filled aria-hidden="true" sx={COUNT_PILL} /> : null}
+    </MenuItem>,
+    <Divider key="divider" />,
+    <MenuItem
+      key="send" {...item} id={single ? 'h5-translate-send' : 'h5-more-send'} disabled={state.translating} title={single ? t('Send as typed, without translating') + SEND_KEYS : undefined}
+      onClick={choose(() => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); })}
+    >
+      <ListItemIcon><Icon name="send" size={20} /></ListItemIcon><ListItemText>{t('Send as typed, without translating')}</ListItemText>
+      <Box component="span" aria-hidden="true" sx={{ ml: 3, color: 'text.secondary', typography: 'body2' }}>{SEND_KEYS.trim().replace(/^\(|\)$/g, '')}</Box>
+    </MenuItem>,
+  );
+  if (column && !pointer) {
+    menuItems.push(
+      <MenuItem key="keyboard" {...item} id="h5-more-keyboard" role="menuitemcheckbox" aria-checked={Boolean(state.osk)} selected={Boolean(state.osk)} onClick={choose(() => ui.actions.key({ action: 'keyboard' }))}>
+        <ListItemIcon><Icon name="terminalKeyboard" size={20} /></ListItemIcon><ListItemText>{t('Terminal keyboard')}</ListItemText>
+      </MenuItem>,
+    );
+  }
   return (
     <Box
-      className="h5-row-tools" id="h5-actions" role="toolbar" aria-label={t('Input')}
+      ref={ref} className={column ? 'h5-row-tools' : `h5-actions h5-tools-${mode}`} id="h5-actions" role="toolbar" aria-label={t('Input')}
       onMouseDown={event => { if (event.target.closest('button, label')) event.preventDefault(); }}
-      sx={{ display: 'none', alignItems: 'center', gap: 0.5, flex: '0 0 auto' }}
+      sx={column ? { display: 'none', alignItems: 'center', gap: 0.5, flex: '0 0 auto' }
+        : single ? { display: 'flex', alignItems: 'center', gap: 0.5, flex: '0 0 auto' }
+          : { display: 'flex', alignItems: 'center', px: 0.5, py: 0.5, borderTop: 1, borderColor: 'divider' }}
     >
-      {/* The same label around the real file input as on the page (see ActionBar), so the picker opens natively and h5.js reads the files. */}
-      <IconButton component="label" id="h5-image" data-action="image" sx={{ ...COMPACT_ICON, position: 'relative', overflow: 'hidden' }} {...named(image)}>
-        <Icon name="image" size={20} />
+      {phone ? keyboard('keyboard', 'terminal', 'Terminal keyboard') : null}
+      {phone ? keyboard('draft', 'draft', 'Draft keyboard') : null}
+      {/* Upload image or file is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger
+          taps the input itself and the picker opens natively. iOS WebKit, a Home Screen web app above all, ignores a script `input.click()` on a hidden
+          input here. h5.js checks on the input's click (it can cancel it) and reads the chosen files (`multiple`: up to nine go up in one batch). */}
+      <IconButton component="label" id="h5-image" data-action="image" sx={{ ...look, position: 'relative', overflow: 'hidden' }} {...named(image)}>
+        <Icon name="image" size={size} />
         <input
           type="file" id="h5-image-picker" multiple tabIndex={-1} aria-hidden="true"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
         />
       </IconButton>
-      <IconButton id="h5-voice" className="h5-voice" sx={COMPACT_ICON} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" size={20} /></IconButton>
-      <IconButton
-        id="h5-more" data-action="more" sx={COMPACT_ICON} {...named(more)} aria-haspopup="menu" aria-expanded={anchor ? 'true' : 'false'} aria-controls={anchor ? 'h5-more-menu' : undefined}
-        onClick={event => setAnchor(anchor ? null : event.currentTarget)}
-      >
-        <Badge className="h5-more-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="rectangular" sx={BADGE}><Icon name="taskMore" size={20} /></Badge>
-      </IconButton>
-      <Button
-        id="h5-translate-button" type="button" variant="contained" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
-        startIcon={<Icon name="send" size={16} />} sx={{ flex: '0 0 auto', height: 36, minWidth: 0, px: 1.5, borderRadius: '18px', fontSize: 13, [TOUCH]: { height: 44, borderRadius: '22px' } }}
-      >{t('Send')}</Button>
-      <Menu
-        id="h5-more-menu" anchorEl={anchor} open={Boolean(anchor)} onClose={close}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }} transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        slotProps={{ paper: { sx: { minWidth: 260, maxWidth: 'calc(100vw - 16px)' } }, list: { 'aria-label': t('More tools'), dense: pointer } }}
-      >
-        <MenuItem {...item} id="h5-more-commands" aria-haspopup="menu" onClick={choose(() => onMenu(true))}>
-          <ListItemIcon><Icon name="commands" size={20} /></ListItemIcon><ListItemText>{t('Saved commands')}</ListItemText>
-        </MenuItem>
-        <MenuItem {...item} id="h5-more-docs" aria-haspopup="dialog" onClick={choose(() => ui.actions.openDesign())}>
-          <ListItemIcon><Icon name="designDoc" size={20} /></ListItemIcon><ListItemText>{t('Docs')}</ListItemText>
-        </MenuItem>
-        <MenuItem {...item} id="h5-more-cycle" aria-label={cycle} onClick={choose(() => ui.actions.nextActiveSession())}>
-          <ListItemIcon><Icon name="cycleSessions" size={20} /></ListItemIcon><ListItemText>{t('Next running or pending session')}</ListItemText>
-          {active ? <Pill className="h5-more-count" label={active > 99 ? '99+' : String(active)} tone="primary" filled aria-hidden="true" sx={{ ml: 2, height: 20, px: 0.75, fontSize: 12 }} /> : null}
-        </MenuItem>
-        <Divider />
-        <MenuItem {...item} id="h5-more-send" disabled={state.translating} onClick={choose(() => { const form = document.getElementById('h5-translate'); if (form && form.requestSubmit) form.requestSubmit(); })}>
-          <ListItemIcon><Icon name="send" size={20} /></ListItemIcon><ListItemText>{t('Send as typed, without translating')}</ListItemText>
-          <Box component="span" aria-hidden="true" sx={{ ml: 3, color: 'text.secondary', typography: 'body2' }}>{SEND_KEYS.trim().replace(/^\(|\)$/g, '')}</Box>
-        </MenuItem>
-        {pointer ? null : (
-          <MenuItem {...item} id="h5-more-keyboard" role="menuitemcheckbox" aria-checked={Boolean(state.osk)} selected={Boolean(state.osk)} onClick={choose(() => ui.actions.key({ action: 'keyboard' }))}>
-            <ListItemIcon><Icon name="terminalKeyboard" size={20} /></ListItemIcon><ListItemText>{t('Terminal keyboard')}</ListItemText>
-          </MenuItem>
-        )}
-      </Menu>
+      {phone ? commandsButton : null}
+      {/* voice-input.js owns this button's title (hold-to-talk on touch, click to start and stop on a computer) and its `listening` class. */}
+      <IconButton id="h5-voice" className="h5-voice" sx={look} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" size={size} /></IconButton>
+      {single && !narrow ? commandsButton : null}
+      {phone || (single && !narrow) ? docsButton : null}
+      {/* T-Attention: the badge counts the tasks that need the user (waiting_user). Not in a pane of the multi-column view (the top page keeps it). */}
+      {phone ? (
+        <IconButton id="h5-attention" data-action="attention" sx={look} {...named(attention)} aria-haspopup={state.wide ? undefined : 'dialog'} aria-expanded={state.attentionOpen} onClick={() => ui.actions.toggleAttention()}>
+          <Badge className="h5-attention-badge" badgeContent={needs} max={99} color="warning" invisible={!needs} overlap="circular" sx={BADGE}><Icon name="attention" size={size} /></Badge>
+        </IconButton>
+      ) : null}
+      {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). */}
+      {phone ? (
+        <IconButton id="h5-cycle" data-action="cycle" sx={look} {...named(cycle)} onClick={() => ui.actions.nextActiveSession()}>
+          <Badge className="h5-cycle-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="circular" sx={BADGE}><Icon name="cycleSessions" size={size} /></Badge>
+        </IconButton>
+      ) : null}
+      {phone ? null : (
+        <IconButton
+          id="h5-more" data-action="more" sx={look} {...named(more)} aria-haspopup="menu" aria-expanded={anchor ? 'true' : 'false'} aria-controls={anchor ? 'h5-more-menu' : undefined}
+          onClick={event => setAnchor(anchor ? null : event.currentTarget)}
+        >
+          <Badge className="h5-more-badge" badgeContent={waiting} max={99} color={needs ? 'warning' : 'primary'} invisible={!waiting} overlap="rectangular" sx={BADGE}><Icon name="taskMore" size={20} /></Badge>
+        </IconButton>
+      )}
+      {phone ? null : (
+        <Button
+          id="h5-translate-button" type="button" variant="contained" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
+          startIcon={<Icon name="send" size={16} />}
+          sx={single ? { flex: '0 0 auto', height: 40, minWidth: 0, px: 2.5, ml: 0.5, [TOUCH]: { height: 44 } }
+            : { flex: '0 0 auto', height: 36, minWidth: 0, px: 1.5, borderRadius: '18px', fontSize: 13, [TOUCH]: { height: 44, borderRadius: '22px' } }}
+        >{t('Send')}</Button>
+      )}
+      {phone ? null : (
+        <Menu
+          id="h5-more-menu" anchorEl={anchor} open={Boolean(anchor)} onClose={close} keepMounted={single}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }} transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          slotProps={{ paper: { sx: { minWidth: 260, maxWidth: 'calc(100vw - 16px)' } }, list: { 'aria-label': t('More tools'), dense: pointer } }}
+        >{menuItems}</Menu>
+      )}
     </Box>
   );
 }
@@ -306,53 +450,72 @@ function DraftPeek({ ui }) {
   return (
     <Box className="h5-draft-peek" id="h5-draft-peek" aria-hidden="true" sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', gap: 1, px: 1.5, pointerEvents: 'none', overflow: 'hidden' }}>
       <Pill className="h5-draft-tag" label={t('Draft')} tone="primary" sx={{ flex: '0 0 auto', height: 18, px: 0.75, borderRadius: 1, fontSize: 11, fontWeight: 500 }} />
-      <Box component="span" className="h5-draft-peek-text" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'text.secondary', fontSize: 14 }}>{text}</Box>
+      <Box component="span" className="h5-draft-peek-text" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'text.secondary', typography: 'body2' }}>{text}</Box>
     </Box>
   );
 }
 
-// The draft box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js grows it to show all its text); Material UI draws around it.
-// The box is hidden by default: it has no height at all (`COLLAPSED`) and sits ABOVE the two button rows. The "Draft keyboard" key focuses the textarea; while the textarea has focus (`:focus-within`), a button is
-// being pressed (`data-hold`, set by h5.js), voice is recording (`:has(.listening)`) or a translation is running (class `translating`), the box is shown, and so are the send and translate-and-send buttons
-// at the right end of the action row (`DRAFT_ON`, a `:has()` rule on `#h5-bottom`). Losing the focus hides it again at once (CSS only, no timer); the text stays in the textarea. Only the CSS changes,
-// so the textarea is never remounted and keeps its focus. The send button is outside the form and points at it with the `form` attribute.
-// The bar reserves nothing in the page layout: all of its height is `--h5-bar-extra`, set by h5.js on `#h5-bottom`, pulled back by a negative top margin
-// there, so the bar grows upward OVER the terminal and the terminal box never changes size (no fit, no PTY resize); h5.js moves the terminal instead.
-// One radius system: the box sets `--h5-bar-radius` (its outer corner radius) and the textarea inside uses it minus the box padding (concentric corners, never below 8px).
-const BAR_RADIUS = '22px';
-const BAR_PAD = '6px'; // the box padding (px/py 0.75 = 6px) between the outer shape and the textarea
+// The draft box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js grows it to
+// show all its text); Material UI draws around it.
+// Touch: the box is hidden by default: it has no height at all (`COLLAPSED`) and sits ABOVE the two rows. The "Draft keyboard" key focuses the textarea;
+// while the textarea has focus (`:focus-within`), a button is being pressed (`data-hold`, set by h5.js), voice is recording (`:has(.listening)`) or a
+// translation is running (class `translating`), the box is shown with its two send actions under the text (`DRAFT_ON`, a `:has()` rule on `#h5-bottom`):
+// Send as is (`#h5-translate-send`, outlined: the text as typed) and Send (`#h5-translate-button`, contained primary: translate, then send). Losing the
+// focus hides it again at once (CSS only, no timer); the text stays in the textarea. Only the CSS changes, so the textarea is never remounted.
+// The box reserves nothing in the page layout there: all of its height is `--h5-bar-extra`, set by h5.js on `#h5-bottom`, pulled back by a negative top
+// margin, so it grows upward OVER the terminal and the terminal box never changes size (no fit, no PTY resize); h5.js moves the terminal instead.
+// Computer (`single`) and a column (`compact`): the box is always shown in the row and grows upward out of it (`COMPACT_BOX`).
 const COLLAPSED = { maxHeight: 0, overflow: 'hidden', m: 0, p: 0, border: 0 };
-const SHOWN = { maxHeight: 'none', overflow: 'visible', mt: 0.75, mx: 1, px: 0.75, py: 0.75, border: 1, borderColor: 'divider' };
-// On a computer the draft box is always shown (one line at rest, growing with its text like on the phone) and so are send and translate-and-send.
-// Its resting line takes room in the page layout there (h5.js `syncBar` counts only the growth beyond one line as `--h5-bar-extra`), so the terminal sits above it.
-const POINTER_ON = { '& .h5-draft-only': { display: 'inline-flex' } };
+const SHOWN = { maxHeight: 'none', overflow: 'visible', px: 1, pt: 1 };
 const DRAFT_ON = {
   '&:has(#h5-translate:focus-within), &:has(#h5-translate[data-hold]), &:has(#h5-translate.translating), &:has(.h5-voice.listening)': {
-    '& #h5-translate': SHOWN, '& .h5-draft-only': { display: 'inline-flex' }, '& .h5-draft-hide': { display: 'none' },
-    '@media (min-width: 380px)': { '& #h5-actions': { gap: '8px' } }, // the draft-shown row has fewer buttons: the full 8px gaps (see REST_GAP)
+    '& #h5-translate': SHOWN, '& .h5-draft-actions': { display: 'flex' },
   },
 };
 // The draft box takes anything: no length cap, no character filter, and it stays editable while a translation runs (only the send buttons wait).
 // The keyboard settings are the platform defaults (Enter is a new line), so the user's own keyboard, IME, autocorrect and dictation work as usual.
-export function TranslateBar({ state, pointer = false, compact = false, ui = null }) {
+export function TranslateBar({ state, pointer = false, compact = false, single = false, ui = null }) {
+  const row = compact || single;
   return (
     <Box
       component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off"
       onMouseDown={event => { if (event.target.closest('button')) event.preventDefault(); }}
       // A column: the focus coming into the draft box (a click, Tab) makes it the focused column at once (pane.mjs `paneUse`).
       onFocus={compact && ui && ui.actions.paneUse ? () => ui.actions.paneUse() : undefined}
-      sx={compact ? COMPACT_BOX : { position: 'relative', '--h5-bar-radius': BAR_RADIUS, borderRadius: 'var(--h5-bar-radius)', bgcolor: 'action.hover', ...(pointer ? SHOWN : COLLAPSED) }}
+      sx={single ? SINGLE_BOX : compact ? COMPACT_BOX : { position: 'relative', ...COLLAPSED }}
     >
       <OutlinedInput
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea"
         placeholder={t('Chinese → English, then send')}
         inputProps={{ rows: 1, enterKeyHint: 'enter', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
-        sx={compact ? COMPACT_INPUT : { alignItems: 'flex-end', py: 0.25, fontSize: 15, bgcolor: 'transparent', borderRadius: `max(8px, calc(var(--h5-bar-radius) - ${BAR_PAD}))`, '& fieldset': { borderColor: 'transparent' } }}
+        sx={single ? SINGLE_INPUT : compact ? COMPACT_INPUT : PHONE_INPUT}
       />
       {compact && ui ? <DraftPeek ui={ui} /> : null}
+      {row ? null : <DraftActions state={state} />}
     </Box>
   );
 }
+// The two send actions of the touch draft box: a secondary "Send as is" (outlined; the form's submit, as Option/Alt+Enter) and the primary "Send"
+// (translate, then send; Enter from a hardware keyboard). Hidden with the box (`display: none` until `DRAFT_ON`, so they are never tabbed to while hidden).
+function DraftActions({ state }) {
+  return (
+    <Box className="h5-draft-actions" sx={{ display: 'none', justifyContent: 'flex-end', alignItems: 'center', gap: 1, pt: 1 }}>
+      <Button
+        type="submit" id="h5-translate-send" className="h5-translate-send" variant="outlined" disabled={state.translating} title={t('Send as typed, without translating') + SEND_KEYS}
+        sx={{ px: 2 }}
+      >{t('Send as is')}</Button>
+      <Button
+        id="h5-translate-button" type="button" variant="contained" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
+        startIcon={<Icon name="send" size={18} />} sx={{ px: 2.5 }}
+      >{t('Send')}</Button>
+    </Box>
+  );
+}
+// The touch draft box's text field: a filled surface with 8px corners and the primary outline while it has the focus; 16px text (iOS zooms smaller).
+const PHONE_INPUT = {
+  alignItems: 'flex-end', py: 0.25, typography: 'body1', bgcolor: 'action.hover', borderRadius: 2,
+  '&:not(.Mui-focused) fieldset': { borderColor: 'transparent' },
+};
 // The draft box of a column (CompactBottom): a 36px pill (44px in touch input mode) that takes the free width of the row; a 2px primary ring while
 // it has the focus. In a column that is not the focused one it is quieter (a fainter surface and hint), and an unsent draft shows as DraftPeek.
 // It grows upward from the row's bottom line with its text (h5.js `autosize`), over the terminal.
@@ -368,8 +531,19 @@ const COMPACT_INPUT = {
   '& textarea': { px: 1.5, py: '8px', height: '20px', lineHeight: '20px', [TOUCH]: { py: '12px' } },
   '& fieldset': { borderColor: 'transparent' }, '&:hover fieldset, &.Mui-focused fieldset': { borderColor: 'transparent' },
 };
+// The draft box of the computer row: the column's box at the row's 40px with 8px corners (the theme's), body2 text. Its surface is opaque (the hover
+// overlay over the paper colour), so a draft of several lines that grows over the terminal and the row's divider hides what is under it.
+const SINGLE_BOX = {
+  ...COMPACT_BOX, borderRadius: 2, [TOUCH]: { borderRadius: 2 },
+  bgcolor: 'background.paper', backgroundImage: theme => { const tint = alpha(theme.palette.text.primary, 0.05 + theme.palette.action.hoverOpacity); return `linear-gradient(${tint}, ${tint})`; },
+};
+const SINGLE_INPUT = {
+  alignItems: 'flex-end', p: 0, typography: 'body2', bgcolor: 'transparent', borderRadius: 'inherit', minHeight: 40, [TOUCH]: { minHeight: 44 },
+  '& textarea': { px: 2, py: '10px', height: '20px', lineHeight: '20px', [TOUCH]: { py: '12px' } },
+  '& fieldset': { borderColor: 'transparent' }, '&:hover fieldset, &.Mui-focused fieldset': { borderColor: 'transparent' },
+};
 
-// Row 1, one row that scrolls sideways. Order: Esc, the four arrows, Enter, then all the other keys. Keys with `icon` draw that icon from `Icons.jsx` (Ant Design Official Icon Library, see "Phone UI icons" in AGENTS.md)
+// Row 1, one row that scrolls sideways. Order: Esc, the four arrows, Enter, then all the other keys. Keys with `icon` draw that icon from `Icons.jsx` (Ant Design Official Icon Library, see "UI icons" in AGENTS.md)
 // and need `aria` (the English accessible name, also used as the title). The self-drawn Tab and Shift outlines are drawn a little larger (`iconSize`) so they look as big as the filled arrows. Keys without an icon (the set has none that fits Ctrl, Alt, Ins or ^C) keep a short text label in the same size and weight.
 const KEYS = [
   { key: 'Escape', label: 'Esc', aria: 'Escape' },
@@ -400,22 +574,31 @@ function useEdgeFade() {
   return ref;
 }
 
-const KEY_BLUE = { bgcolor: 'rgba(41, 182, 246, .18)', borderColor: 'primary.main', color: 'primary.light' };
-const keyLook = { border: 1, borderColor: 'divider', borderRadius: 2, color: 'text.primary', bgcolor: 'action.hover', textTransform: 'none', '&:hover': { bgcolor: 'action.selected' }, '&.Mui-selected, &.Mui-selected:hover, &[aria-pressed="true"], &[aria-pressed="true"]:hover': KEY_BLUE };
+// A key of row 1: flat, drawn 36px high with 8px corners (`::before`) inside a 44px-high target, so a finger still hits it; the latched Ctrl / Alt /
+// Shift in the primary colour with its selected overlay. A press shows the hover overlay and the ripple, clipped to the drawn key.
+const KEY_FACE = { content: '""', position: 'absolute', zIndex: -1, inset: '4px 0', borderRadius: 2, bgcolor: 'action.hover' };
+const KEY = {
+  flex: '0 0 auto', minWidth: 44, height: 44, px: 1.25, py: 0, border: 0, borderRadius: 2, position: 'relative', isolation: 'isolate', color: 'text.primary',
+  typography: 'body2', fontWeight: 500, lineHeight: 1, textTransform: 'none', bgcolor: 'transparent',
+  '&::before': KEY_FACE, '&:hover, &.Mui-selected:hover': { bgcolor: 'transparent' }, '&:hover::before': { bgcolor: 'action.selected' },
+  '& .MuiTouchRipple-root': { inset: '4px 0', borderRadius: 2 },
+  '&.Mui-selected, &[aria-pressed="true"]': { bgcolor: 'transparent', color: 'primary.main' },
+  '&.Mui-selected::before, &[aria-pressed="true"]::before': { bgcolor: theme => alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) },
+};
 
 // Row 1: the function keys. A tap keeps the focus where it is (mouse down is stopped), so it neither opens nor closes the on-screen keyboard. They stay visible while the on-screen keyboard is open.
-// The keys are 44px high (a finger-sized target) with 8px between them.
+// The row is 48px: 44px targets with the 36px keys drawn in them, 8px apart.
 export function KeyBar({ state, ui }) {
   const fade = useEdgeFade();
   return (
     <Box
       ref={fade} className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')}
       onMouseDown={event => event.preventDefault()}
-      sx={{ display: 'flex', gap: 1, px: 1, pt: 0.75, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, ...EDGE_FADE }}
+      sx={{ display: 'flex', gap: 1, px: 1, py: 0.25, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, ...EDGE_FADE }}
     >
       {KEYS.map(item => {
         const name = item.aria ? t(item.aria) : undefined;
-        const common = { key: item.aria || item.label, size: 'small', 'aria-label': name, title: name, sx: { flex: '0 0 auto', minWidth: 44, px: 1.25, height: 44, fontSize: 14, fontWeight: 500, lineHeight: 1, ...keyLook } };
+        const common = { key: item.aria || item.label, size: 'small', 'aria-label': name, title: name, sx: KEY };
         const face = item.icon ? <Icon name={item.icon} size={item.iconSize || 22} /> : item.label;
         const data = item.key ? { 'data-key': item.key } : item.modifier ? { 'data-modifier': item.modifier } : { 'data-shortcut': item.shortcut };
         if (item.modifier) {
@@ -428,109 +611,8 @@ export function KeyBar({ state, ui }) {
   );
 }
 
-// Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice, Docs (the design document sheet, whose header leads to the
-// file tree), Attention (T-Attention, with the "Needs you" count) and next running or pending session (the last three hidden while the draft box is shown); then, only while the draft box is shown, a divider, the send arrow (white circle: sends the text as typed)
-// and translate-and-send (the same white circle with a small "Aa"). The keyboard key whose input has the focus is blue and aria-pressed. The voice button is the one voice-input.js drives (`#h5-voice`).
-// The send and translate-and-send buttons look the same (white round button, send icon); translate-and-send only has a small "Aa" mark in its lower right corner.
-// Touch targets: every button of the row is at least 44 x 44px. At rest the row has eight buttons (seven under 360px, where Docs is left out and the saved
-// commands list has a Docs entry instead), which
-// need 8 x 44 + 7 x 8 + 16 = 424px with 8px gaps: from 380px the gaps shrink to what is left (`REST_GAP`, about 3px at 390px, 8px from 424px), and
-// with the draft box shown (five buttons, a divider and the two send buttons) they are 8px again. Under 380px (a 320 or 360px phone) the buttons touch: each takes an equal share of the row (at least 44px at
-// 320px) and is DRAWN `--h5-slot-pad` smaller on each side (`::before`), so the whole share is the target and the gap stays visible.
-const NARROW = '@media (max-width: 379.98px)';
-// Eight 44px buttons in the row's width, at most 8px apart; with voice input off there are seven (`--h5-rest-*` in h5.css).
-const REST_GAP = 'min(8px, calc((100% - var(--h5-rest-width, 352px)) / var(--h5-rest-gaps, 7)))';
-const WIDE_ENOUGH = '@media (min-width: 360px)'; // eight 44px buttons fit in row 2 (touch)
-const SEND = { display: 'none', flex: '0 0 auto', width: 44, height: 44, bgcolor: '#fff', color: '#111', '&:hover': { bgcolor: '#e6e6e6' }, '&.Mui-disabled': { bgcolor: 'action.disabledBackground', color: 'action.disabled' } };
-const TOUCH_SEND = {
-  ...SEND,
-  [NARROW]: {
-    flex: '1 1 0', width: 'auto', minWidth: 44, position: 'relative', isolation: 'isolate', '&, &:hover, &.Mui-disabled': { bgcolor: 'transparent' },
-    '&::before': { content: '""', position: 'absolute', zIndex: -1, top: '50%', left: '50%', width: 40, height: 40, transform: 'translate(-50%, -50%)', borderRadius: '50%', bgcolor: '#fff' },
-    '&:hover::before': { bgcolor: '#e6e6e6' }, '&.Mui-disabled::before': { bgcolor: 'action.disabledBackground' },
-    '& .MuiTouchRipple-root': { inset: 'auto', top: '50%', left: '50%', width: 40, height: 40, transform: 'translate(-50%, -50%)' },
-  },
-};
-const ACTION = {
-  flex: '1 1 0', minWidth: 44, height: 44, p: 0, ...keyLook,
-  [NARROW]: {
-    position: 'relative', isolation: 'isolate',
-    '&, &:hover, &.Mui-selected, &.Mui-selected:hover, &[aria-pressed="true"], &[aria-pressed="true"]:hover': { bgcolor: 'transparent', borderColor: 'transparent' },
-    '&::before': { content: '""', position: 'absolute', zIndex: -1, inset: '0 var(--h5-slot-pad)', border: 1, borderColor: 'divider', borderRadius: 2, bgcolor: 'action.hover' },
-    '&:hover::before': { bgcolor: 'action.selected' },
-    '&[aria-pressed="true"]::before': { bgcolor: KEY_BLUE.bgcolor, borderColor: KEY_BLUE.borderColor },
-    '& .MuiTouchRipple-root': { inset: '0 var(--h5-slot-pad)' },
-  },
-};
-// A computer: compact square buttons on the left, send and translate-and-send at the right end (the row does not stretch the buttons over 960px).
-const POINTER_ACTION = { flex: '0 0 auto', width: 40, height: 40, p: 0, ...keyLook };
 // The hardware keyboard shortcuts of the draft box (keydown on #h5-translate-input in h5.js), shown after the tooltips: Apple systems (iPadOS reports MacIntel) use Cmd / Option.
+const WIDE_ENOUGH = '@media (min-width: 360px)'; // eight tools fit in row 2 (touch): the Docs entry of the saved commands list is not needed
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
-const SEND_KEYS = APPLE ? ' (\u2325\u21a9)' : ' (Alt+Enter)';
-const TRANSLATE_KEYS = APPLE ? ' (\u21a9)' : ' (Enter)';
-export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
-  const look = pointer ? POINTER_ACTION : ACTION;
-  // The keyboard keys exist only on touch screens. Terminal keyboard shows and hides the terminal's own on-screen keyboard (Osk.jsx, never the system one);
-  // draft keyboard focuses the draft box, so the system keyboard (with its IME and dictation) types into it.
-  const keyboard = (action, kind, label) => (
-    <IconButton data-action={action} sx={look} title={t(label)} aria-label={t(label)} aria-pressed={kind === 'terminal' ? Boolean(state.osk) : state.keyboard === kind} onClick={() => ui.actions.key({ action })}><Icon name={kind === 'terminal' ? 'terminalKeyboard' : 'draftKeyboard'} /></IconButton>
-  );
-  const image = t('Upload image or file');
-  const commands = t('Saved commands');
-  const docs = t('Docs');
-  // The name carries the "Needs you" count of T-Attention while there are some; the badge shows the same number.
-  const needs = state.attentionNeeds;
-  const attention = t('Attention') + (needs ? ` (${needs})` : '');
-  const attentionOpen = state.attentionOpen;
-  // The name carries the count of running or pending sessions while there are some; the badge shows the same number.
-  const active = Number(state.activeCount) || 0;
-  const cycle = t('Next running or pending session') + (active ? ` (${active})` : '');
-  const sendTitle = t('Send as typed, without translating') + SEND_KEYS;
-  const translateTitle = t('Translate to English and send') + TRANSLATE_KEYS;
-  return (
-    <Box
-      className="h5-actions" id="h5-actions" role="toolbar" aria-label={t('Input')}
-      onMouseDown={event => { if (event.target.closest('button, label')) event.preventDefault(); }}
-      sx={pointer ? { display: 'flex', alignItems: 'center', gap: 0.75, px: 1, pt: 0.75 }
-        : { display: 'flex', alignItems: 'center', gap: REST_GAP, px: 1, pt: 1, [NARROW]: { gap: 0, px: 0.5, '--h5-slot-pad': '3px' }, '@media (max-width: 339.98px)': { '--h5-slot-pad': '2px' } }}
-    >
-      {pointer ? null : keyboard('keyboard', 'terminal', 'Terminal keyboard')}
-      {pointer ? null : keyboard('draft', 'draft', 'Draft keyboard')}
-      {/* Upload image or file is a label around the real file input, and the (invisible, not display:none) input covers the whole button, so the finger taps the input
-          itself and the picker opens natively. iOS WebKit, a Home Screen web app above all, ignores a script `input.click()` on a hidden input here. h5.js checks
-          on the input's click (it can cancel it) and reads the chosen files (`multiple`: up to nine go up in one batch). Not a <button>, so the bar's press capture
-          leaves it alone. */}
-      <IconButton component="label" id="h5-image" data-action="image" sx={{ ...look, position: 'relative', overflow: 'hidden' }} {...named(image)}>
-        <Icon name="image" />
-        <input
-          type="file" id="h5-image-picker" multiple tabIndex={-1} aria-hidden="true"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, padding: 0, opacity: 0, cursor: 'pointer', fontSize: 0 }}
-        />
-      </IconButton>
-      <IconButton id="h5-commands" data-action="commands" sx={look} {...named(commands)} aria-haspopup="menu" aria-expanded={menu} onClick={() => onMenu(!menu)}><Icon name="commands" /></IconButton>
-      {/* voice-input.js owns this button's title (hold-to-talk on touch, click to start and stop on a computer), so it keeps the native title only. */}
-      <IconButton id="h5-voice" className="h5-voice" sx={look} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" /></IconButton>
-      {/* Docs: the design document sheet (Design.jsx); its header has Files (the read-only file tree, FileTree.jsx), and the tree's header leads back to the
-          design document. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px.
-          On a touch screen under 360px eight 44px buttons do not fit, so it is left out there: the saved commands list has a Docs entry instead. */}
-      <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={pointer ? look : { ...look, '@media (max-width: 359.98px)': { display: 'none' } }} {...named(docs)} aria-haspopup="dialog" aria-expanded={state.designOpen} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>
-      {/* T-Attention (Attention.jsx): the badge counts the tasks that need the user (waiting_user). Steps aside with the draft box too. Not in a pane of the
-          multi-column view: the top page keeps T-Attention for all its columns (pane.mjs). */}
-      {state.pane ? null : (
-        <IconButton id="h5-attention" className="h5-draft-hide" data-action="attention" sx={look} {...named(attention)} aria-haspopup={state.wide ? undefined : 'dialog'} aria-expanded={attentionOpen} onClick={() => ui.actions.toggleAttention()}><Badge className="h5-attention-badge" badgeContent={needs} max={99} color="warning" invisible={!needs} overlap="circular" sx={{ '& .MuiBadge-badge': { fontSize: 10, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } }}><Icon name="attention" /></Badge></IconButton>
-      )}
-      {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). Also steps aside while the draft box is shown. */}
-      <IconButton id="h5-cycle" className="h5-draft-hide" data-action="cycle" sx={look} {...named(cycle)} onClick={() => ui.actions.nextActiveSession()}><Badge className="h5-cycle-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="circular" sx={{ '& .MuiBadge-badge': { fontSize: 10, height: 16, minWidth: 16, px: 0.5, pointerEvents: 'none' } }}><Icon name="cycleSessions" /></Badge></IconButton>
-      {/* The divider takes 1px and no extra gap (its right margin cancels one gap), so the draft-shown row fits from 380px with 8px gaps. */}
-      <Box className="h5-draft-only" aria-hidden="true" sx={{ display: 'none', alignSelf: 'stretch', width: '1px', my: 0.5, ml: pointer ? 'auto' : 0, mr: pointer ? 0 : -1, bgcolor: 'divider', [NARROW]: { mr: 0 } }} />
-      <IconButton
-        type="submit" form="h5-translate" id="h5-translate-send" className="h5-translate-send h5-draft-only" disabled={state.translating} title={sendTitle} aria-label={t('Send')}
-        sx={pointer ? SEND : TOUCH_SEND}
-      ><Icon name="send" /></IconButton>
-      <IconButton
-        id="h5-translate-button" type="button" className="h5-draft-only" disabled={state.translating} title={translateTitle} aria-label={t('Translate and send')}
-        sx={{ ...(pointer ? SEND : TOUCH_SEND), position: 'relative' }}
-      ><Icon name="send" /><Box component="span" className="h5-aa" aria-hidden="true" sx={{ position: 'absolute', right: 10, bottom: 8, fontSize: 10, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', pointerEvents: 'none' }}>Aa</Box></IconButton>
-    </Box>
-  );
-}
+const SEND_KEYS = APPLE ? ' (⌥↩)' : ' (Alt+Enter)';
+const TRANSLATE_KEYS = APPLE ? ' (↩)' : ' (Enter)';

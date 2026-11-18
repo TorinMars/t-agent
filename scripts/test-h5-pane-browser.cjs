@@ -337,7 +337,7 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     assert.equal(await top.evaluate(() => window.H5UI.get().pane), null);
     assert.equal(socketTerminal(await top.evaluate(() => window.sockets[0].url)), 't2', 'the normal view\'s own terminal');
     await top.locator('#h5-update').waitFor();
-    await top.locator('#h5-attention').waitFor();
+    await top.locator('#h5-attention').waitFor({ state: 'attached' }); // in More tools on a computer
     await top.waitForFunction(() => window.activityStream.opens.includes('/api/tasks/terminal-activity/stream'));
     await top.waitForFunction(() => window.streams.some(s => s.url.endsWith('/api/attention/stream?tab=1') && s.readyState === 1));
     assert.equal(await top.evaluate(() => window.emitChange({ kind: 'updated', item: { id: 5, title: 'Ping', status: 'waiting_user' }, previous: { id: 5, status: 'working' }, event: { actor: 'claude' } })), true);

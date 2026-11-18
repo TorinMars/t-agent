@@ -10,7 +10,7 @@
   const pointerMode = () => ui.get().input === 'pointer';
   // The computer keyboard shortcuts (typing to the terminal, Escape back to it, Cmd/Ctrl+K): on a computer, and on a touch device once a hardware keyboard was used.
   const deskKeys = () => pointerMode() || Boolean(ui.get().hasKeyboard);
-  const terminalFontSize = () => (pointerMode() ? 13 : 11);
+  const terminalFontSize = () => (pointerMode() ? 13 : 12); // a phone: 12px (11px until the single-view redesign); no user setting
   const TERMINAL_FONT_FAMILY = 'Menlo, Monaco, "Courier New", monospace';
   const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
   const tell = (message, type = 'info') => notify(message, type);
@@ -2146,7 +2146,7 @@
     const term = new Terminal({
       allowProposedApi: true, // needed by the Unicode 11 addon
       cursorBlink: true,
-      fontSize: terminalFontSize(), // 13px on a computer, 11px on a phone
+      fontSize: terminalFontSize(), // 13px on a computer, 12px on a phone
       fontFamily: TERMINAL_FONT_FAMILY,
       theme: { background: '#121212' },
       scrollback: 5000,
@@ -3570,7 +3570,9 @@
     if (!event.repeat) void submitBox(!event.altKey); // a held key sends once
   });
   translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
-  $('h5-translate-button').addEventListener('click', () => void submitBox(true));
+  // Send (translate, then send) sits in the draft box on a touch screen and in the row on a computer, so it is remounted when the input mode changes:
+  // its click is heard on the bottom area, which stays.
+  bottomArea.addEventListener('click', event => { if (event.target.closest && event.target.closest('#h5-translate-button')) void submitBox(true); });
   // The draft box is hidden (no height) until it has the focus, a button is pressed, voice is recording or a translation runs (CSS only, see TranslateBar). It covers the terminal:
   // the page layout reserves nothing for it (`--h5-bar-extra` is a negative top margin of `#h5-bottom`), so no fit and no PTY resize happens. The terminal is moved up by the
   // covered height with one transform (holdTerminalSize), and that move and the bar's own growth or shrink animate over the same time (nothing at all with prefers-reduced-motion).
@@ -3609,7 +3611,7 @@
       movingTimer = setTimeout(() => { if (el) el.classList.remove('h5-bar-moving'); }, FLIP_MS + 60);
     }
     holdTerminalSize();
-    if (motion && delta && bottomArea.animate && !COMPACT_ROW) { // a column's box grows out of its row, which a clip of the row would hide
+    if (motion && delta && bottomArea.animate && !COMPACT_ROW && !pointerMode()) { // a column's or the computer row's box grows out of its row, which a clip of the row would hide
       const grow = delta > 0;
       const d = Math.abs(delta);
       const frames = grow ? [{ clipPath: `inset(${d}px 0 0 0)` }, { clipPath: 'inset(0)' }] : [{ boxShadow: `0 -${d}px 0 0 var(--h5-bg)` }, { boxShadow: '0 0 0 0 var(--h5-bg)' }];

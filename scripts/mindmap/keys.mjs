@@ -1,4 +1,4 @@
-// The keyboard shortcuts of the map editor, modelled on XMind (see "Mind maps" in DESIGN.md for the source of each key and those that are left out).
+// The keyboard shortcuts of the map editor, modelled on XMind (see "Mind maps" in docs/design/mind-maps.md for the source of each key and those that are left out).
 // `actionFor` says what a key press means while no text is being edited: an action name or null. It is pure so it can be tested without a page.
 export function actionFor(event, apple) {
   const mod = apple ? event.metaKey : event.ctrlKey;

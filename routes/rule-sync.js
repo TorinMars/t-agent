@@ -1,5 +1,5 @@
 // Rules and skills sync (services/rule-sync.js). Two routers: the Engine API a source pushes to (/v1/rule-sync, admin tokens: a service link's token is one)
-// and the browser's settings (/api/rule-sync, the normal login). See "Rules and skills sync" in DESIGN.md.
+// and the browser's settings (/api/rule-sync, the normal login). See "Rules and skills sync" in docs/design/rules-and-skills-sync.md.
 const express = require('express');
 const { RuleSyncError } = require('../services/rule-sync');
 

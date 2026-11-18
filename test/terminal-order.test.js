@@ -1,4 +1,4 @@
-// The shared order of a task's terminals (PUT …/terminals/order, "Terminal order" in DESIGN.md): stored per task, listed by every GET …/terminals,
+// The shared order of a task's terminals (PUT …/terminals/order, "Terminal order" in docs/design/terminals.md): stored per task, listed by every GET …/terminals,
 // on this machine, through the Engine API and through the Client's remote proxy. The routes are the real ones; no shell is started.
 const test = require('node:test');
 const assert = require('node:assert/strict');

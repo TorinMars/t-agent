@@ -1,4 +1,4 @@
-// T-Attention HTTP API, mounted at /api/attention (see "T-Attention" in DESIGN.md).
+// T-Attention HTTP API, mounted at /api/attention (see "T-Attention" in docs/design/architecture-features-and-page.md).
 //
 // Two ways in:
 //  - the browser session: `router`, mounted after the /api session check (middleware/auth.js) and the same-origin rule for mutations
@@ -402,7 +402,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
 }
 
 // T-Attention of this service for the other services connected to it: /v1/attention (routes/engine-v1.js), see "Shared across connected services"
-// under "T-Attention" in DESIGN.md. The same service instance and the same shapes as /api/attention, for the item routes only: no tokens, settings,
+// under "T-Attention" in docs/design/architecture-features-and-page.md. The same service instance and the same shapes as /api/attention, for the item routes only: no tokens, settings,
 // plugins, market, pairing, skill installer or by-ref. The item stays here; the other service reads and edits it in place.
 // - `authenticate` (the Engine token, middleware/engine-auth.js) runs first, before any body is read; reads then need the scope `attention:read`,
 //   writes `attention:write` (every Engine token is admin, `*`, which has both).

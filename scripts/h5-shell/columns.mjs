@@ -1,5 +1,5 @@
 // The multi-column view (Columns.jsx): the rules without the page. Each column is an iframe of the same page in pane mode, `/h5?pane=<id>`; the top
-// page only keeps the list of column ids, in order, and whether the view is on. See "Multi-column view" in DESIGN.md.
+// page only keeps the list of column ids, in order, and whether the view is on. See "Multi-column view" in docs/design/page-shell-and-columns.md.
 
 export const STORAGE_KEY = 'h5-columns'; // { on: boolean, ids: [id, ...] }, one per device
 export const MAX_COLUMNS = 12;

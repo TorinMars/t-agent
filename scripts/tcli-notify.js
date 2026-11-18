@@ -2,7 +2,7 @@
 // `tcli notify ...`: an agent session tells the user something on the notifiers the user set up in T-Attention (Telegram, email ... every plugin
 // that takes direct messages), through the relay /api/tcli/notify (routes/tcli-notify.js). The server builds the "From" line from the terminal and
 // applies the user's rules (the agent messages switch, quiet hours, a 60 s dedupe, the hourly limit). Wired into scripts/tcli.js with one GROUPS.notify
-// line; it gets the shared helpers from there. See "tcli (agent command line)" in DESIGN.md.
+// line; it gets the shared helpers from there. See "tcli (agent command line)" in docs/design/tcli.md.
 const fs = require('node:fs');
 const path = require('node:path');
 

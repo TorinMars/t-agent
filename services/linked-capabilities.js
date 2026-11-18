@@ -1,5 +1,5 @@
 // Translation, voice input and OSS upload for a service that has none of its own: the call goes to a linked service that does, and no key is copied.
-// Local configuration always wins, and a real failure of a configured local service never moves to a peer. See "Service links" in DESIGN.md.
+// Local configuration always wins, and a real failure of a configured local service never moves to a peer. See "Service links" in docs/design/service-links.md.
 const { readRemoteInfo } = require('./remote-info');
 
 const FEATURES = ['translate', 'speech', 'oss'];

@@ -21,7 +21,7 @@ import { SharedClaudeSettings } from './SharedClaudeSettings.jsx';
 // "Rules and skills sync", a part of Settings → Devices (GET / PUT /api/rule-sync and its actions, routes/rule-sync.js): one linked service is the source of a shared layer of
 // Claude rules, chosen skills and the same rules for Codex; services that receive only take it and never send anything. The shared rules can be edited
 // here on every service (GET / PUT /api/rule-sync/shared): the text is always saved on the source. A receiver shows the local edits its guard replaced.
-// See "Rules and skills sync" in DESIGN.md.
+// See "Rules and skills sync" in docs/design/rules-and-skills-sync.md.
 
 const BASE = '/api/rule-sync';
 const ROLES = [

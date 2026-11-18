@@ -1,4 +1,4 @@
-// Routes of the browser extension ("Browser extension" in DESIGN.md; services/browser-bridge.js, services/browser-recordings.js). Three routers:
+// Routes of the browser extension ("Browser extension" in docs/design/browser-extension.md; services/browser-bridge.js, services/browser-recordings.js). Three routers:
 //  - pair:  POST /api/browser-ext/pair, for the extension's options page. No login (the one-time code is the credential), so server.js mounts
 //           it before the session and the gates. This machine only (anything else gets the 404 of an unknown route), and from an extension
 //           page or a program without an Origin (a web page's Origin gets 403). CORS answers for chrome-extension:// origins.

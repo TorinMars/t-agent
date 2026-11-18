@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // `t-agent-peers`: a small MCP server (stdio, JSON-RPC 2.0, one JSON message per line) that the Claude Code and Codex
-// sessions of a T-Agent terminal get (routes/terminal.js, "Peer file access" in DESIGN.md). Its tools let the agent see
+// sessions of a T-Agent terminal get (routes/terminal.js, "Peer file access" in docs/design/peer-file-access.md). Its tools let the agent see
 // the other T-Agent Engines linked to this one and READ their files; nothing can be written. Every call goes to this
 // Engine's local relay (`/api/peer-fs/*`), which forwards it to the Engine named in the call.
 //

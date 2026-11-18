@@ -176,7 +176,7 @@ export function UpdateButton({ ui }) {
   }, [open]);
 
   // The red dot: read the state now and every minute; a state that was never checked (or whose last check failed) is checked once.
-  // The same reads notice that the service restarted into an automatic update, and reload this page silently ("Automatic refresh after an update" in DESIGN.md).
+  // The same reads notice that the service restarted into an automatic update, and reload this page silently ("Automatic refresh after an update" in docs/design/update-check-and-versions.md).
   useEffect(() => {
     let stop = false;
     let baseline = null; // boot_id and local_version of the first answer: the code this page was loaded from

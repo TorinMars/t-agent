@@ -183,7 +183,7 @@ function selectVia(via) {
 
 // ---- Manifest-driven plugin settings (manifest "config", "test", "customUi") ----
 // A notifier's manifest may describe its simple settings; the server validates them, stores them per user (encrypted, with the enable switch) and
-// the page draws a form from the schema. See "Plugin settings from the manifest" in DESIGN.md and plugins/README.md.
+// the page draws a form from the schema. See "Plugin settings from the manifest" in docs/design/attention-cli-and-listener.md and plugins/README.md.
 const CONFIG_TYPES = ['string', 'secret', 'number', 'boolean', 'select'];
 const CONFIG_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const CONFIG_MAX_FIELDS = 30;

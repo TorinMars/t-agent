@@ -1,4 +1,4 @@
-// The shared task order (services/task-order.js). See "Shared task order" in DESIGN.md.
+// The shared task order (services/task-order.js). See "Shared task order" in docs/design/page-task-list.md.
 //
 // Page: GET /api/task-order -> { order: [key, ...], updated_at }, PUT { order } -> the stored value. Behind the session and same-origin gates of /api, per
 // owner, like routes/task-list-prefs.js.

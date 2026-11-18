@@ -1,5 +1,5 @@
 'use strict';
-// The relay of `tcli notify` (scripts/tcli-notify.js; "tcli (agent command line)" and "Direct messages" under "T-Attention notifiers" in DESIGN.md):
+// The relay of `tcli notify` (scripts/tcli-notify.js; "tcli (agent command line)" in docs/design/tcli.md and "Direct messages" under "T-Attention notifiers" in docs/design/attention-notifiers.md):
 // an agent session in a T-Agent terminal tells the user something on the configured notifiers (Telegram, email ... every plugin with `direct: true`).
 //  - POST /api/tcli/notify { text, title?, via?: [names] | 'all', link? } -> 200 { results: [{ notifier, outcome, detail?, via? }] }
 //  - GET  /api/tcli/notify/status -> { agentMessages, quietHours: { enabled, start, end, timeZone, active }, notifiers: [{ name, label, enabled, ready, via? }] }

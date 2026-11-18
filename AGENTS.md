@@ -2,13 +2,16 @@
 
 ## Design document
 
-- Path: `DESIGN.md`
+- Index: `DESIGN.md`. It is small: a table of every topic file with a one-line description and its size, the cross-cutting rules, the development notes and "Recent versions" (where `scripts/release.js` appends one line per release; keep that section last).
+- Topics: `docs/design/*.md`, one file per area (architecture, terminals, service links, settings sync, the page split into shell and columns, task list, terminal and bottom bar, files and settings, T-Attention, UI icons, bundles and tests, and so on). Each is at most about 60 KB and can be read whole.
+- Find your area in the table of `DESIGN.md` and open only the topic files you need; do not read every file. For a term you cannot place, `grep -rn "<term>" docs/design`.
+- When you change a feature, update its topic file (not the index). A new area gets a new lower-case-kebab file with a `# ` title and the "Part of" line, and a row in the table of `DESIGN.md`. Code comments name the place as `"<heading or bold title>" in docs/design/<file>.md`.
 - Handoff notes (current state, unverified items, known limitations, things to watch out for): `docs/HANDOFF.md`. Read it before taking over.
 
 ## Language
 
 - All source code, comments, documentation, test names, commit messages and agent rules are written in English.
-- User-facing text in the UI, error messages from the server and CLI output are written in English. The Chinese UI is a translation layer: add the Chinese text to `public/js/i18n-zh-ui.js` (client text), `public/js/i18n-zh-server.js` (server messages) or `public/js/i18n-zh-extra.js` (sentences assembled from several pieces), keyed by the exact English text. See "Interface language" in `DESIGN.md`.
+- User-facing text in the UI, error messages from the server and CLI output are written in English. The Chinese UI is a translation layer: add the Chinese text to `public/js/i18n-zh-ui.js` (client text), `public/js/i18n-zh-server.js` (server messages) or `public/js/i18n-zh-extra.js` (sentences assembled from several pieces), keyed by the exact English text. See "Interface language" in `docs/design/interface-language.md`.
 - Chinese characters may appear only in those dictionaries and in test fixtures that exist to prove that Chinese user content (translator input, terminal output, file names) is handled. `test/i18n.test.js` fails when Chinese shows up anywhere else. Where a regular expression needs a CJK range, write it with `\u` escapes.
 - Content created or entered by users (tasks, documents, file names, terminal input) must keep working with Chinese and any other language.
 
@@ -19,7 +22,7 @@
 - Self-drawn icons live in `scripts/h5-shell/Icons.jsx`, in the clearly marked `SELF-DRAWN ICONS` section (the `DRAWN` map).
 - Icons are inline SVG paths in `scripts/h5-shell/Icons.jsx`, drawn with `currentColor` at a consistent size (24px; 22px for the function keys; the self-drawn ones are stroked on a 24 viewBox). No runtime requests and no icon fonts.
 - Every icon-only button has an English `aria-label` and the same `title` (with its Chinese text in `public/js/i18n-zh-ui.js`).
-- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "UI icons" in `DESIGN.md` (library icon with its id, self-drawn icon, or text label).
+- To add an icon: take the closest same-style icon from the same collection, add its path to `Icons.jsx`, and update the mapping table in "UI icons" in `docs/design/page-ui-icons.md` (library icon with its id, self-drawn icon, or text label).
 - Text labels are styled to match the icons (same size, weight and vertical alignment).
 
 ## Development workflow
@@ -31,7 +34,7 @@
 4. Verify changes according to their impact. While developing, run only the files the change touches (`npm run test:quick -- test/<file>.test.js`, or one `node scripts/test-<name>-browser.cjs`); `npm run test:quick` runs every unit test except the slow installer tests (about 20 seconds). Run the full `npm test` (13 to 23 minutes on an otherwise idle development machine, about 40 minutes while other heavy work runs: about 200 unit test files and about 80 headless browser scripts) once, before the release (see "Requirement batches" for when that is), not after every edit. Details: for fixes that touch logic or endpoint behavior add meaningful regression cases and run the relevant `node --test test/<file>.test.js`; for cross-module changes run `npm test` as needed. Low-risk changes such as pure documentation need no new tests.
 5. Run `node --check <file>` on modified JavaScript, and run `git diff --check` and review the diff before committing. Rebuild Markdown, Monaco and other bundles only when their build entry points or dependencies changed; when upgrading marked, mermaid or xterm, download them again according to `scripts/vendor-libs.json` (`node scripts/fetch-vendor.js --update`).
 6. When tests lack dependencies, install the dependencies declared by the project, including the dev dependencies the tests need. When blocked by permissions, network or the environment, state the actual reason; a check that was not run or did not pass must not be reported as passed.
-7. When done, briefly state the result, how it was verified and the remaining limitations. When features, configuration or interfaces change, update the necessary documentation such as `README.md` and `DESIGN.md`.
+7. When done, briefly state the result, how it was verified and the remaining limitations. When features, configuration or interfaces change, update the necessary documentation such as `README.md` and the topic files in `docs/design/` (see "Design document").
 
 ## Requirement batches (overrides the automatic release below)
 

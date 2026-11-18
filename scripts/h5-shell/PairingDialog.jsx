@@ -12,7 +12,7 @@ import { BASE } from './attention-feed.mjs';
 import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
 
 // "Another machine…" in the claude listener row (Settings → T-Attention → Plugins): a pairing code for `t-attention pair` on another machine
-// (POST /api/attention/pairing { origin }, see "T-Attention: easy listener install" in DESIGN.md). The code is shown big with a countdown and
+// (POST /api/attention/pairing { origin }, see "T-Attention: easy listener install" in docs/design/attention-cli-and-listener.md). The code is shown big with a countdown and
 // the command to copy; GET /pairing is read every 3 s to see when the other machine used it. Closing the dialog ends a code that was not used.
 export function PairingDialog({ open, onClose, onPaired }) {
   const [pairing, setPairing] = useState(null);

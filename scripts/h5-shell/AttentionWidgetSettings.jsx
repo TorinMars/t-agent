@@ -13,7 +13,7 @@ import { useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 // The "Desktop window (macOS)" part of the Settings group "T-Attention": the switch of the native floating window (services/attention-widget.js), the
 // language it shows, the window's preferences (global shortcuts, fading when idle, the working agents section) and a status line. GET / PUT
 // /api/attention/widget/settings { enabled, language, hotkeys, dim_when_idle, show_activity, platform_supported, swiftc, running, building, last_error }. Read each time the group opens (`opened` goes up), saved at once without Save. An older server answers 404: nothing is drawn.
-// See "T-Attention desktop window (macOS)" in DESIGN.md.
+// See "T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md.
 const SETTINGS_URL = '/api/attention/widget/settings';
 const INPUT_INSIDE = { left: 0, width: '100%' }; // MUI's hidden input of the switch stays on the thumb (see PeerFs.jsx)
 const LANGUAGES = [['auto', 'Same as this page'], ['en', 'English'], ['zh', 'Chinese']];

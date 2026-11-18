@@ -75,7 +75,7 @@ const shellQuote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 // With peer file access on, the same settings also allow the read-only tools of the `t-agent-peers` MCP server, so reading
 // a linked engine's file does not ask each time.
 // On a machine that receives the rules and skills sync, the shared Claude settings (<claude>/shared/claude-settings.json, without the keys kept
-// local; "Shared Claude settings (injected at session start)" in DESIGN.md) come first and T-Agent's own parts go on top, so the hook and the
+// local; "Shared Claude settings (injected at session start)" in docs/design/rules-and-skills-sync.md) come first and T-Agent's own parts go on top, so the hook and the
 // peer permission are never lost. Shared settings cannot hold hooks or permission rules; `permissions.defaultMode` shares the `permissions` object.
 function sharedClaudeSettings() {
   try { return require('../services/rule-sync').sessionClaudeSettings({ db }); } catch (error) {
@@ -91,7 +91,7 @@ function claudeSettings(peer = false) {
   return JSON.stringify(settings);
 }
 
-// Peer file access ("Peer file access" in DESIGN.md, MCP part): when the switch of services/peer-fs-settings.js is on and the hook endpoint
+// Peer file access ("Peer file access" in docs/design/peer-file-access.md, MCP part): when the switch of services/peer-fs-settings.js is on and the hook endpoint
 // is known, every Claude and Codex session started here gets the read-only `t-agent-peers` MCP server (scripts/peer-mcp.js), added for
 // that process only on its command line (the person's own MCP servers and config files are not touched and still apply). The server
 // calls this Engine's relay at TA_PEER_URL with TA_PEER_TASK, TA_PEER_TERMINAL and the terminal's TA_HOOK_TOKEN. The token is only
@@ -144,7 +144,7 @@ function withSessionHook(agent, command, peer = peerFsOn()) {
 }
 
 // A Claude terminal the person named (at creation or by a rename: title_custom) starts Claude with that name as the session's display name
-// ("Agent terminals" in DESIGN.md): `--name "$TA_SESSION_NAME"`, the name itself only in the PTY environment, so quotes, `$` or backticks in it are
+// ("Agent terminals" in docs/design/terminals.md): `--name "$TA_SESSION_NAME"`, the name itself only in the PTY environment, so quotes, `$` or backticks in it are
 // never parsed by the shell. Claude writes it to the session file as its custom-title (a resume with a new name appends one), so the name shows in
 // Claude's prompt box, its /resume picker and the terminal title. It goes right after the base command: --settings and --mcp-config follow
 // (--mcp-config takes several values, so it stays last). Codex has no option to name a session at start, so it gets none.
@@ -168,7 +168,7 @@ function withoutInheritedHookEnv(env) {
   return next;
 }
 
-// tcli (scripts/tcli.js, "tcli (agent command line)" in DESIGN.md): the agent command line of this install. It reads TA_HOOK_URL and TA_HOOK_TOKEN
+// tcli (scripts/tcli.js, "tcli (agent command line)" in docs/design/tcli.md): the agent command line of this install. It reads TA_HOOK_URL and TA_HOOK_TOKEN
 // and calls the relay /api/tcli on the hook endpoint's origin, so it is set in every shell that has them.
 const TCLI = path.resolve(__dirname, '..', 'scripts', 'tcli.js');
 
@@ -377,7 +377,7 @@ function listTerminals(taskId) {
   return rows;
 }
 
-// The order of a task's terminals, as the person dragged them (PUT …/tasks/:id/terminals/order, see "Terminal order" in DESIGN.md). One system_state
+// The order of a task's terminals, as the person dragged them (PUT …/tasks/:id/terminals/order, see "Terminal order" in docs/design/terminals.md). One system_state
 // row per task, `terminal_order_v1:<task id>`, holding a JSON list of terminal ids; no schema change. Every device and linked service lists the
 // terminals in this order. A write keeps only terminals that exist, a deleted terminal is taken out and a deleted task's row is removed, so the list
 // never holds more than the task's terminals.
@@ -1062,7 +1062,7 @@ function liveTerminalIds(taskId) {
   return ids;
 }
 
-// The T-Attention desktop window (routes/attention-widget.js; "T-Attention desktop window (macOS)" in DESIGN.md) reads and writes this machine's
+// The T-Attention desktop window (routes/attention-widget.js; "T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md) reads and writes this machine's
 // terminals through the three functions below.
 const liveSession = (taskId, requestedTerminalId) => {
   if (!Number.isInteger(Number(taskId)) || Number(taskId) < 1 || typeof requestedTerminalId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(requestedTerminalId)) return null;

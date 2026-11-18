@@ -5,7 +5,7 @@
 # So when stdin is a terminal, SSH_TTY / SSH_CONNECTION are both unset and the terminal is not tmux, the real codex is
 # started with SSH_TTY set to that terminal; Codex then also sends its copies to the browser. Everything else is
 # unchanged: all arguments, stdin, signals and the exit code (exec). Without a terminal on stdin (codex app-server of
-# the agent chat, pipes) nothing is set. See "Clipboard (OSC 52)" in DESIGN.md for what SSH_TTY changes in Codex.
+# the agent chat, pipes) nothing is set. See "Clipboard (OSC 52)" in docs/design/terminals.md for what SSH_TTY changes in Codex.
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/osc52-lib.sh" || exit 1
 if [ "$TA_CLIPBOARD_OSC52" = 1 ] && [ -z "$SSH_TTY" ] && [ -z "$SSH_CONNECTION" ] && [ -z "$TMUX" ] && [ -t 0 ]; then
   if ta_tty=$(tty 2>/dev/null); then

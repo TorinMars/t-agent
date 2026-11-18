@@ -67,7 +67,7 @@ const OPEN = state => ({
 
 // The whole phone page. Every part subscribes to the slice of the store it draws (the header, the terminal area, the bottom rows, the task list and its
 // rows, the column strip read theirs themselves; the sheets and dialogs through `Part`), so a change is drawn only where it shows (see "Page store" in
-// DESIGN.md). The chat (#h5-agent) and the image picker are plain elements of h5.html, outside of React.
+// docs/design/page-shell-and-columns.md). The chat (#h5-agent) and the image picker are plain elements of h5.html, outside of React.
 export function App({ ui }) {
   const open = useStore(ui, OPEN, shallowEqual);
   countRender('App');

@@ -14,7 +14,7 @@ import { copyText } from './copy-text.mjs';
 import { countdownText, secondsLeft } from './plugins-model.mjs';
 import { browserDetail, newlyPaired, normalizeStatus, pairCodeText } from './browser-ext-model.mjs';
 
-// "Browser extension", a part of the Settings group "Tasks and files" (`#h5-sec-browser-ext`; "Browser extension" in DESIGN.md): the browsers
+// "Browser extension", a part of the Settings group "Tasks and files" (`#h5-sec-browser-ext`; "Browser extension" in docs/design/browser-extension.md): the browsers
 // paired with this T-Agent (GET /api/browser-ext, read each time the group opens), "Pair a browser" (POST /pair-code: a one-time code with a
 // countdown and the steps to load the extension from this install's `extensions/chrome` folder), Rename (PATCH /:id) and Remove (DELETE /:id,
 // which revokes the token and closes its connection). It always shows this device: the extension pairs only with the T-Agent on its own

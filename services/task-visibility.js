@@ -1,4 +1,4 @@
-// Which linked services may see which task of this service. See "Per-task visibility" under "Service links" in DESIGN.md.
+// Which linked services may see which task of this service. See "Per-task visibility" under "Service links" in docs/design/service-links.md.
 // system_state holds { "<task id>": ["<denied link id>", ...] }. A task with no entry is visible to every link, which is what makes a new link allowed by default.
 // It is read on every /v1 task request, so the map lives in memory; every write goes to the database first and then replaces the map. One server owns a data folder.
 //

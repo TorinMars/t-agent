@@ -1,5 +1,5 @@
 // The pure logic of the "Plugins" section in Settings "T-Attention" (PluginSettings.jsx): the status chips, the activity line and the per-status
-// modes of each plugin, from the JSON of GET /api/attention/plugins (see "T-Attention on the page" in DESIGN.md). No DOM, no requests, so
+// modes of each plugin, from the JSON of GET /api/attention/plugins (see "T-Attention on the page" in docs/design/page-attention.md). No DOM, no requests, so
 // test/plugins-model.test.js runs it in Node. `t` is passed in (the page's I18n.t); the labels below are English keys of public/js/i18n-zh-ui.js.
 import { STATUS_LABELS } from './attention-model.mjs';
 

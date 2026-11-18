@@ -1,5 +1,5 @@
 // How much of the phone page (/h5) React draws again, in real Chromium with mocked routes and a pushed terminal activity stream (see "Page store"
-// in DESIGN.md): the page is given `window.__h5RenderCounts` before it loads, so the shell's components count their renders (use-store.mjs
+// in docs/design/page-shell-and-columns.md): the page is given `window.__h5RenderCounts` before it loads, so the shell's components count their renders (use-store.mjs
 // `countRender`), and a minimal React DevTools hook counts the commits. On a computer (1280x800, the permanent sidebar) with 20 tasks, one of them open
 // with its sessions: one pushed activity change of one task's terminal draws that task's row again and no other row, not the header, the terminal area
 // or the column strip; the same snapshot pushed again commits nothing; typing in the task search field draws no task row while the shown rows stay the

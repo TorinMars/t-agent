@@ -19,7 +19,7 @@ import {
 
 // The dialogs of the plugin marketplace (PluginMarket.jsx): the install / update confirmation with the prepared preview, "Install from Git
 // URL…", "Link local folder…", "Sources" and the remove confirmation. Server side: /api/attention/market/* (services/attention-market.js; see
-// "Plugin marketplace" in DESIGN.md). Nothing is installed before the person presses Install in the confirmation dialog.
+// "Plugin marketplace" in docs/design/attention-cli-and-listener.md). Nothing is installed before the person presses Install in the confirmation dialog.
 
 // Examples in the empty fields: addresses and paths, not text to translate.
 const GIT_EXAMPLE = 'https://github.com/owner/repo.git#v1.0.0';

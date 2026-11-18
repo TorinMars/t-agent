@@ -1,6 +1,6 @@
 // The pure logic of the T-Attention first-run guide (AttentionGuide.jsx): the three steps and whether each is done, from the JSON of
 // GET /api/attention/plugins (the plugin overview) and GET /api/attention/settings/guide (services/attention-guide.js). No DOM, no requests,
-// so test/guide-model.test.js runs it in Node. See "T-Attention first-run guide" in DESIGN.md.
+// so test/guide-model.test.js runs it in Node. See "T-Attention first-run guide" in docs/design/page-attention.md.
 import { normalizePlugins } from './plugins-model.mjs';
 
 export const GUIDE_FLAGS = ['dismissed', 'pageOnly', 'paired', 'tested'];

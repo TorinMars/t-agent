@@ -9,7 +9,7 @@
 // <data folder>/listeners/claude-state/<session>.json remembers the last status this hook set, the turn count and the
 // tool of a pending permission dialog, whether a Stop was held back for sub-agents in this turn, so the tool hooks (PostToolUse, PostToolUseFailure: every tool call) only
 // make a request after a prompt left the task waiting_user, and PermissionRequest never makes one.
-// Mapping: see "T-Attention: CLI and Claude listener" in DESIGN.md and plugins/README.md.
+// Mapping: see "T-Attention: CLI and Claude listener" in docs/design/attention-cli-and-listener.md and plugins/README.md.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');

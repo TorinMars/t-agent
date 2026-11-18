@@ -1,5 +1,5 @@
 // The agent skills installer (services/agent-skills.js), for the browser's settings: the normal login and same-origin writes, like every setting.
-// Mounted in server.js at /api/agent-skills. See "Agent skills" in DESIGN.md.
+// Mounted in server.js at /api/agent-skills. See "Agent skills" in docs/design/attention-cli-and-listener.md.
 //   GET  /                        -> { skills: [{ name, description, claude: { installed, path, current, conflict }, codex, cli }], old_task_tracker, user }
 //   POST /:name/install           -> { ok, name, results: { claude: { action, path, conflict? }, codex }, status }   (status = the GET answer)
 //   POST /t-attention/remove-old  -> { ok, moved: [{ agent, from, to }], skipped: [{ agent, path, reason }], backup, status }

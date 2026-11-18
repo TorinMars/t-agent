@@ -13,7 +13,7 @@ import { ScopeLabel } from './ScopeLabel.jsx';
 import CloseIcon from '@mui/icons-material/Close';
 
 // "Site library", a part of the Settings group "Tasks and files" (`#h5-sec-browser-sites`): the site capability library (what the model has learnt
-// about each website; services/browser-sites.js, "Site library" in DESIGN.md). It is read-only here plus delete; agents write it with `tcli site`.
+// about each website; services/browser-sites.js, "Site library" in docs/design/site-library.md). It is read-only here plus delete; agents write it with `tcli site`.
 // The entries are shared across linked devices (scope "shared"). GET /api/browser-sites lists them; opening one reads GET /api/browser-sites/:site
 // and shows its summary, pages, actions and APIs; the Delete button calls DELETE /api/browser-sites/:site. Hosts, selectors and URLs are not
 // translated; the headings are. The summary is shown as its Markdown source (kept readable, never rendered as HTML, so nothing a site stored can run).

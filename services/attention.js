@@ -363,7 +363,7 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
   const selectEvent = db.prepare('SELECT * FROM attention_events WHERE id = ?');
 
   // Public subscribers get the change; in-process ones of onChangeInternal also get the request's excerpt (never stored or sent to a page).
-  // plain_turn_end (body field, see "T-Attention" in DESIGN.md) is copied onto this one published change and never stored, so no later change inherits it.
+  // plain_turn_end (body field, see "T-Attention" in docs/design/architecture-features-and-page.md) is copied onto this one published change and never stored, so no later change inherits it.
   function emit(rawChange, extra = null) {
     const { excerpt: transcript = null, plainTurnEnd = false } = extra || {};
     const change = plainTurnEnd ? { ...rawChange, plain_turn_end: true } : rawChange;

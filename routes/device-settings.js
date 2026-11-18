@@ -1,5 +1,5 @@
 'use strict';
-// Settings of a linked device, changed from this device's page ("Settings of a linked device" in DESIGN.md). The settings sheet has a selector
+// Settings of a linked device, changed from this device's page ("Settings of a linked device" in docs/design/linked-device-settings.md). The settings sheet has a selector
 // "Settings for: This device | K01 | ..."; with a linked device chosen, every part labelled "This device only" reads and writes that device's own
 // values through the link. Shared parts and Telegram are one set already and never go this way.
 //

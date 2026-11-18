@@ -1,4 +1,4 @@
-// T-Attention in T-Agent terminals (B in DESIGN.md "T-Attention: easy listener install"): routes/terminal.js gives each new shell
+// T-Attention in T-Agent terminals (B in docs/design/attention-cli-and-listener.md "T-Attention: easy listener install"): routes/terminal.js gives each new shell
 // TA_ATTENTION_URL, a per-terminal TA_ATTENTION_TOKEN and TA_ATTENTION_HOOK, and ends the token when the shell closes or exits.
 // node-pty is mocked; the data folder and HOME are temporary.
 const test = require('node:test');

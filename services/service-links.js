@@ -1,6 +1,6 @@
 // Service links: two T-Agent services that see and operate each other as remote Engines, in both directions. The side that made the code is the
 // initiator (A), the side that entered it is the joiner (B). B may be behind NAT, so B always calls A directly and A calls B through the reverse tunnel B
-// keeps open (lib/service-link-tunnel.js). See "Service links" in DESIGN.md.
+// keeps open (lib/service-link-tunnel.js). See "Service links" in docs/design/service-links.md.
 const crypto = require('crypto');
 const { hashSecret, createAccessToken } = require('./engine-auth');
 const { decryptToken, encryptToken } = require('../lib/token-crypto');

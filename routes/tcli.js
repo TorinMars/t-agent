@@ -1,4 +1,4 @@
-// tcli, the command line of agent sessions in T-Agent terminals (scripts/tcli.js; "tcli (agent command line)" in DESIGN.md). Two routers with the
+// tcli, the command line of agent sessions in T-Agent terminals (scripts/tcli.js; "tcli (agent command line)" in docs/design/tcli.md). Two routers with the
 // same OSS routes (list, stat, object GET / PUT, copy, move, remove, sign):
 //  - relay: /api/tcli/oss/* on this machine, for tcli. No browser login: the credential is the terminal's hook token in X-T-Agent-Task,
 //    X-T-Agent-Terminal and X-T-Agent-Token (lib/terminal-relay-auth.js, as for the peer file relay), and only requests from this machine are

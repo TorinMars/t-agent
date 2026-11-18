@@ -1,7 +1,7 @@
 // Objects of the bucket configured in "Image and file upload" (services/oss-images.js), for `tcli oss` in agent sessions (routes/tcli.js) and for
 // linked services (/v1/oss/files). Keys are relative to the bucket root (the upload prefix is not added). The AccessKey secret stays in the
 // ali-oss client made by oss-images.js: no answer, error or log line of this module holds it, and upstream error messages are never passed on
-// (only the OSS error code, such as AccessDenied). See "tcli (agent command line)" in DESIGN.md.
+// (only the OSS error code, such as AccessDenied). See "tcli (agent command line)" in docs/design/tcli.md.
 const { Transform, pipeline } = require('stream');
 const { createOssImages, fileType, ACTIVE_TYPE } = require('./oss-images');
 

@@ -1,5 +1,5 @@
 // Renaming a task's working folder (POST /api/tasks/:id/rename-folder, POST /v1/tasks/:id/rename-folder, and the remote proxy), optionally with a new title.
-// See "Task rename" in DESIGN.md. The folder gets a new name in the same parent folder; the Claude Code and Codex sessions that were run in it move with
+// See "Task rename" in docs/design/architecture-data.md. The folder gets a new name in the same parent folder; the Claude Code and Codex sessions that were run in it move with
 // it (lib/agent-session-move.js), so a terminal reopened in the new folder resumes them; then the task's records follow.
 //
 // All or nothing: each step records how to undo it, and a failure in a later step undoes the earlier ones in reverse order. The whole operation is

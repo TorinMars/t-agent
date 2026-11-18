@@ -189,7 +189,7 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(id));
 });
 
-// Rename the task's working folder (and its title, when `title` is given): `{ name, title? }`. See services/task-rename.js and "Task rename" in DESIGN.md.
+// Rename the task's working folder (and its title, when `title` is given): `{ name, title? }`. See services/task-rename.js and "Task rename" in docs/design/architecture-data.md.
 router.post('/:id/rename-folder', (req, res) => {
   try {
     const result = taskRename.renameTaskFolder({ db, owner: ownerFilter(req), taskId: req.params.id, body: req.body || {}, workRoot: toolWorkDir(req) });
@@ -304,7 +304,7 @@ router.delete('/:id', (req, res) => {
 });
 
 // Which linked services may see this task. Behind the browser session and same-origin gates of /api, so a linked service cannot reach it: it is not under /v1, and
-// the tunnel carries only /v1. See "Per-task visibility" in DESIGN.md. Two segments, so "/:id" handlers cannot take it.
+// the tunnel carries only /v1. See "Per-task visibility" in docs/design/service-links.md. Two segments, so "/:id" handlers cannot take it.
 function taskVisibilityRoute(change) {
   return (req, res) => {
     const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));

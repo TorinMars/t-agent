@@ -1,5 +1,5 @@
 // Peer file access (read only): what a linked Engine may see of this machine through /v1/peer-fs (routes/peer-fs.js). See "Peer file access" in
-// DESIGN.md.
+// docs/design/peer-file-access.md.
 //
 // Scope: the home folder of the terminal user (lib/terminal-user.js; the service's own home when there is no drop), without sensitive paths
 // (DENIED_* below, the T-Agent data folder and its database). A path is checked twice: as written (so ~/.ssh/x is refused before anything is read,

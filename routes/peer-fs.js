@@ -1,4 +1,4 @@
-// Peer file access (read only; services/peer-fs.js, "Peer file access" in DESIGN.md). Three routers:
+// Peer file access (read only; services/peer-fs.js, "Peer file access" in docs/design/peer-file-access.md). Three routers:
 //  - engine: /v1/peer-fs/{info,list,read,search} on the Engine whose files are read, behind requireEngineAuth('files:read') (routes/engine-v1.js).
 //    When this Engine's switch (services/peer-fs-settings.js) is off, every route answers 403 PEER_FS_DISABLED.
 //  - relay: /api/peer-fs/{engines,list,read,search} on the Engine that runs the Claude / Codex session, for its `t-agent-peers` MCP server

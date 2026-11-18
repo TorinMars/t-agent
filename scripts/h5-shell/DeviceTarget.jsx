@@ -6,7 +6,7 @@ import { devicePath, normalizeDevices, ownPageText } from './device-target.mjs';
 import { deviceOfTab, partShown, readTab, resolveTab, tabScope, tabsShown, writeTab } from './settings-tabs.mjs';
 
 // The tab chosen at the top of the settings sheet (SettingsTabs.jsx: Shared, this device, each linked device), and the one place that decides where the
-// per-device parts read and write ("Settings of a linked device" in DESIGN.md). A per-device part takes `useDeviceTarget()`:
+// per-device parts read and write ("Settings of a linked device" in docs/design/linked-device-settings.md). A per-device part takes `useDeviceTarget()`:
 //   { device, remote, name, key, api }   device: null (this device) or { id, name, online, supported }; `api(method, url, body)` is `api` of
 //                                        common.jsx with the URL of the chosen device (device-target.mjs devicePath); `key` changes with the choice.
 // A part keyed by `key` is drawn again from scratch when the choice changes, and reads that device's values (its group is open, so `opened` > 0).

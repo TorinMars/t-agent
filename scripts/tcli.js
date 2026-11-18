@@ -3,7 +3,7 @@
 // /api/tcli (routes/tcli.js) on the origin of TA_HOOK_URL, with the terminal's hook token (TA_HOOK_TOKEN). The T-Agent makes the real calls, so no
 // cloud key is ever in this process. Groups of commands live in GROUPS below; `oss` works on the bucket of "Image and file upload", `notify`
 // sends the user a message through the T-Attention notifiers (scripts/tcli-notify.js).
-// See "tcli (agent command line)" in DESIGN.md. Node built-ins only.
+// See "tcli (agent command line)" in docs/design/tcli.md. Node built-ins only.
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');

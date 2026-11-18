@@ -1,5 +1,5 @@
 // The pure logic of the per-plugin settings form (PluginConfigForm.jsx): the form state from GET /api/attention/plugins/:name/config and the
-// `values` of the PUT from the form (see "Plugin settings from the manifest" in DESIGN.md). No DOM, no requests: test/plugin-config-model.test.js
+// `values` of the PUT from the form (see "Plugin settings from the manifest" in docs/design/attention-cli-and-listener.md). No DOM, no requests: test/plugin-config-model.test.js
 // runs it in Node.
 //
 // Rules (they match services/attention-notify.js normalizeConfigValues):

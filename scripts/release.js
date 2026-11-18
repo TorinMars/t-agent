@@ -47,6 +47,7 @@ function main(argv) {
   write('package.json', pkg);
   write('package-lock.json', lock);
   if (note) {
+    // "Recent versions" is the last section of the DESIGN.md index (the topic files are in docs/design/), so a note is appended at the end.
     const file = path.join(root, 'DESIGN.md');
     const text = fs.readFileSync(file, 'utf8');
     fs.writeFileSync(file, `${text}${text.endsWith('\n') ? '' : '\n'}> v${next} ${note}\n`);

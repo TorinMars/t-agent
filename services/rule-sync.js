@@ -1,6 +1,6 @@
 'use strict';
 // Rules and skills sync: one linked service (the source) shares a layer of Claude rules, chosen Claude skills and the same rules for Codex with the linked
-// services that only receive. Each machine's own rules and skills are never read, sent or changed. See "Rules and skills sync" in DESIGN.md.
+// services that only receive. Each machine's own rules and skills are never read, sent or changed. See "Rules and skills sync" in docs/design/rules-and-skills-sync.md.
 //
 // On disk (Claude config dir = $CLAUDE_CONFIG_DIR or ~/.claude, Codex home = $CODEX_HOME or ~/.codex):
 //   <claude>/shared/CLAUDE.shared.md   the shared rules (edited by hand on the source, written by the sync on a receiver)

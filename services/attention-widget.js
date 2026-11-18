@@ -1,6 +1,6 @@
 // The T-Attention desktop window (macOS): its settings and the launcher that builds and starts the native window (widgets/macos/*.swift, entry point
 // in main.swift).
-// See "T-Attention desktop window (macOS)" in DESIGN.md.
+// See "T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md.
 //
 // Settings (system_state, one key, nothing secret): `enabled` (default true), `language` ('auto' | 'en' | 'zh', default 'auto') and the window
 // preferences `hotkeys`, `dim_when_idle`, `show_activity` (booleans, default true; the window reads them at GET /prefs). 'auto' follows the

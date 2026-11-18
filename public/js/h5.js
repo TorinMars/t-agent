@@ -37,7 +37,7 @@
   }
   // Remembered choices are a convenience only; private mode or blocked storage just starts fresh.
   // In a pane of the multi-column view (scripts/h5-shell/pane.mjs) what this view shows is kept per pane (`pane:<id>:h5-...`); the keys in SHARED_KEYS stay
-  // one for the device. See "Pane mode" in DESIGN.md for the list.
+  // one for the device. See "Pane mode" in docs/design/page-shell-and-columns.md for the list.
   const PANE = window.H5Pane || null;
   const SHARED_KEYS = new Set(['terminal-width-noted']);
   const storeKey = key => (PANE && !SHARED_KEYS.has(key) ? PANE.key(`h5-${key}`) : `h5-${key}`);
@@ -1330,7 +1330,7 @@
   // ── Renaming a task (the "Rename" of its "⋯"): the title through `PUT {tasksBase}/:id`, or the title and the folder through `POST {tasksBase}/:id/rename-folder`
   // (services/task-rename.js), which moves the folder's Claude Code and Codex sessions with it. The folder part is offered on this machine and on an Engine with
   // 'tasks:rename-folder' (asked for when not known yet: `folderSupported` is null until then). A task with open terminals is refused (TASK_BUSY with their ids):
-  // the dialog then offers to close them (the same path as a terminal's Close) and try again. See "Task rename" in DESIGN.md.
+  // the dialog then offers to close them (the same path as a terminal's Close) and try again. See "Task rename" in docs/design/architecture-data.md.
   const renamesFolder = from => from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:rename-folder'));
   const renameDialog = () => { const dialog = ui.get().taskDialog; return dialog && dialog.kind === 'rename' ? dialog : null; };
   async function askTaskRename(from, item) {
@@ -2464,7 +2464,7 @@
   }
   bindWheelStrip();
 
-  // ── Sideways: the wide terminal (public/js/terminal-gestures.js; "Terminal width" in DESIGN.md) ──
+  // ── Sideways: the wide terminal (public/js/terminal-gestures.js; "Terminal width" in docs/design/page-terminal-and-bottom-bar.md) ──
   // Terminal width, one setting for this device (localStorage): 'fit' gives the PTY the columns that fit the screen; 'wide' gives it `cols`
   // (120 / 160 / 200, never fewer than fit), so programs that wrap their own output (Claude Code, Codex) keep whole sentences, and the screen,
   // wider than the view, moves sideways. Only the shown terminal sizes its PTY (sendResize), and the server lets one client own a terminal.

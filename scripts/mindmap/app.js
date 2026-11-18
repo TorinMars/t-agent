@@ -145,7 +145,7 @@ function download(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-// A mind map column of the multi-column view (`inColumn`, see "Mind maps" in DESIGN.md): the editor's bar has Maximize (`#mm-maximize`, and
+// A mind map column of the multi-column view (`inColumn`, see "Mind maps" in docs/design/mind-maps.md): the editor's bar has Maximize (`#mm-maximize`, and
 // Cmd/Ctrl+Shift+Enter anywhere in the view unless a topic is being edited or a dialog is open), which calls `onMaximize` (the top page toggles);
 // while `maximized`, Escape in the editor (not editing a topic, no dialog) and in the list restores the columns instead of leaving. `onView` hears what
 // the view shows ({ screen: 'list' } or { screen: 'editor', sourceKey, id, title }), so the column remembers it; `open` ({ sourceKey, id }) is opened

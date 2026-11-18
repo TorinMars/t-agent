@@ -7,21 +7,19 @@
 // - the pane tells its parent `ready`, `focus` and `title` ({ type: 't-agent-pane', paneId, event }, posted to this origin only), and forgets its keys
 //   on `{ type: 't-agent-pane', event: 'forget' }` from its parent window on this origin (answered with `forgotten`); `{ ..., event: 'open', sourceKey,
 //   taskId, terminalId?, conversationId? }` from there opens that task and terminal as a tap in the list would, or that agent chat as a `?openChat=` link
-//   would (h5.js `ui.actions.paneOpen`); `maximized` ({ on }) tells the pane's mind map that its column is maximized, `peek` asks for the last lines
-//   of the terminal (answered with `peek` { lines }); the actions of the column's header, which the top page draws in place of this page's own header
+//   would (h5.js `ui.actions.paneOpen`); `peek` asks for the last lines of the terminal (answered with `peek` { lines }); the actions of the column's header, which the top page draws in place of this page's own header
 //   (hidden in a pane, Header.jsx): `tasks` ({ toggle? }) shows (or hides) the task sheet, `width` ({ mode?, cols? }) sets or switches the terminal
 //   width, `rename` and `restart` act on the session shown as its row's menu does (restart asks first), `reload` loads this page again (h5.js
 //   `ui.actions.paneTasks`, `paneRename`, `paneRestart`, `setTerminalWidth`, `toggleTerminalWidth`, `refresh`); each one counts as the person using
 //   this column (`engaged`), since it is;
-// - a mind map column: the pane remembers its mind map view under `pane:<id>:h5-mindmap` and opens it again on start (see "mind map columns" in
-//   columns.mjs);
+// - a pane shows no mind map: its Mind maps button posts `mindmaps` and the top page shows its Mind maps tab (h5.js `openMindmaps`);
 // - a sideways wheel or trackpad swipe (or Shift+wheel) that nothing inside the pane can scroll is posted as `scroll-x` ({ dx }) and the top page
 //   scrolls its strip: the gesture never reaches xterm, and a vertical one is never touched; Ctrl+Alt+Left / Right (Ctrl+Option on a Mac) is posted as
 //   `step` ({ step: -1 | 1 }), with Shift as `move` (this column one place left / right), and Cmd/Ctrl+Shift+Enter as `maximize` (this column
 //   maximized, or the columns restored); none of them reaches the terminal (see "Multi-column view" in docs/design/page-shell-and-columns.md);
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
-import { MAP_KEY, PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readAction, readDevice, readMapColumn, sidewaysDelta, writeMapColumn } from './columns.mjs';
+import { PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readAction, readDevice, sidewaysDelta } from './columns.mjs';
 
 export const PANE_ID = /^[a-z0-9]{1,16}$/;
 export const PANE_MESSAGE = 't-agent-pane';
@@ -53,8 +51,8 @@ export function forgetPaneKeys(id, stores = [globalThis.localStorage, globalThis
   return removed;
 }
 
-// Parts of the page that keep every wheel event for themselves (an editor with its own scrollbars, the mind map's canvas, an open dialog).
-const OWN_WHEEL = '.monaco-editor, #h5-mindmap, .MuiModal-root, dialog[open]';
+// Parts of the page that keep every wheel event for themselves (an editor with its own scrollbars, an open dialog).
+const OWN_WHEEL = '.monaco-editor, .MuiModal-root, dialog[open]';
 // Whether something under `target` can still scroll sideways by `dx` (it takes the gesture, not the strip): the wide terminal (moved with a transform
 // on .xterm-screen inside `.h5-xterm.h5-wide`, public/js/terminal-gestures.js) until its edge, and any element that scrolls sideways itself.
 export function scrollsInside(target, dx, win = window) {
@@ -99,37 +97,17 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
     const device = deviceOfRow(row) || (state.sourceLabel ? readDevice({ name: state.sourceLabel, local: false }) : null);
     const sheet = state.wide ? !state.sidebarCollapsed : Boolean(state.tasksOpen);
     const width = state.terminalWidth ? { mode: state.terminalWidth.mode === 'wide' ? 'wide' : 'fit', cols: state.terminalWidth.cols || 0 } : null;
-    const view = state.mindmapView;
-    const map = view ? { title: view.title || '', screen: view.screen } : null;
     const target = state.shownTarget || null;
     const agent = state.terminalAgent || '';
-    const next = { title: state.taskName || '', session: state.sessionName || '', ...(device ? { device } : {}), ...(map ? { map } : {}), ...(target ? { target } : {}), ...(agent ? { agent } : {}), ...(sheet ? { sheet } : {}), ...(width ? { width } : {}) };
+    const next = { title: state.taskName || '', session: state.sessionName || '', ...(device ? { device } : {}), ...(target ? { target } : {}), ...(agent ? { agent } : {}), ...(sheet ? { sheet } : {}), ...(width ? { width } : {}) };
     const key = JSON.stringify(next);
     if (title === key) return;
     title = key;
     post('title', next);
   };
   ui.subscribe(() => { if (started) sendTitle(); });
-  // A mind map column: what the mind map view shows is kept under `pane:<id>:h5-mindmap` (columns.mjs MAP_KEY, readMapColumn), written whenever it
-  // changes once the page has started, so a reload (or the top page's "Add mind map column", which writes { screen: 'list' } first) opens it again.
-  // The view is opened without taking the focus: a column takes none until the person used it.
-  const mapKey = pane.key(MAP_KEY);
-  let mapStored;
-  const storeMap = () => {
-    const text = writeMapColumn(ui.get().mindmapView || null);
-    if (text === mapStored) return;
-    mapStored = text;
-    try { if (text) win.localStorage.setItem(mapKey, text); else win.localStorage.removeItem(mapKey); } catch { /* not remembered */ }
-  };
-  const restoreMap = () => {
-    let saved = null;
-    try { saved = readMapColumn(win.localStorage.getItem(mapKey)); } catch { saved = null; }
-    mapStored = saved ? JSON.stringify(saved) : null;
-    if (saved && ui.actions.openMindmaps) ui.actions.openMindmaps({ open: saved.screen === 'editor' ? { sourceKey: saved.sourceKey, id: saved.id } : null });
-    ui.subscribe(storeMap);
-  };
   // `ready` after every script of the page has run (they are all deferred, so they ran before DOMContentLoaded).
-  const ready = () => { if (started) return; started = true; restoreMap(); post('ready'); sendTitle(); };
+  const ready = () => { if (started) return; started = true; post('ready'); sendTitle(); };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', ready, { once: true });
   else win.setTimeout(ready, 0);
 
@@ -154,9 +132,8 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
   // Ctrl+Alt+Left / Right: the previous / next column; with Shift: this column one place left / right. Never a key for the terminal (xterm would send
   // it as a word move or a selection).
   win.addEventListener('keydown', event => {
-    // Cmd/Ctrl+Shift+Enter: maximize this column or restore the columns (the top page decides). While the mind map view is open it takes the key
-    // itself (scripts/mindmap/app.js), so a topic being edited or an open dialog keeps it; it never reaches the terminal.
-    if (maximizeKey(event) && !ui.get().mindmapView) {
+    // Cmd/Ctrl+Shift+Enter: maximize this column or restore the columns (the top page decides); it never reaches the terminal.
+    if (maximizeKey(event)) {
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat) post('maximize');
@@ -180,8 +157,6 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
     // An action of the column's header (the top page draws it in place of this page's header).
     const action = readAction(data);
     if (action) { engage(); runAction(ui, action); return; }
-    // The top page maximized this (mind map) column or restored the columns: the map's Maximize button and its Escape follow.
-    if (data.event === 'maximized') { if (ui.actions.setMindmapMaximized) ui.actions.setMindmapMaximized(data.on === true); return; }
     // The peek card of this column's tile asks for the last lines of the terminal shown.
     if (data.event === 'peek') { post('peek', { lines: ui.actions.paneTail ? ui.actions.paneTail(PEEK_LINES) : [] }); return; }
     if (data.event === 'open' && typeof data.sourceKey === 'string' && data.taskId != null && ui.actions.paneOpen) {

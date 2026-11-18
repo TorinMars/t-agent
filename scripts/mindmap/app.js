@@ -4,7 +4,6 @@ import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
 import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
 import { buildXmind, parseXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
-import { maximizeKey } from '../h5-shell/columns.mjs';
 
 const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 // The services whose maps are listed (`sources` of the mount options, in list order): { key, label, base, online }. `base` is where that service's maps are
@@ -18,6 +17,9 @@ const OFFLINE_CODES = new Set(['REMOTE_OFFLINE', 'REMOTE_CONNECTION_FAILED']);
 const DRAFT_MAX = 1500000; // characters; a larger map is not kept in the browser (a retry still has it in memory)
 const KEEPALIVE_MAX = 60000; // bytes the browser allows in a request that outlives the page
 const FLUSH_WAIT_MS = 3000;
+const FOLD_KEY = 'h5-mindmap-list-folded'; // '1': the list of the Mind maps tab is folded away (per device)
+const readFolded = () => { try { return localStorage.getItem(FOLD_KEY) === '1'; } catch { return false; } };
+const writeFolded = on => { try { if (on) localStorage.setItem(FOLD_KEY, '1'); else localStorage.removeItem(FOLD_KEY); } catch { /* not remembered */ } };
 const CODE_MESSAGES = {
   MINDMAP_NOT_FOUND: 'This map no longer exists',
   INVALID_MINDMAP: 'The service refused this map because its content is not valid',
@@ -145,15 +147,12 @@ function download(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-// A mind map column of the multi-column view (`inColumn`, see "Mind maps" in docs/design/mind-maps.md): the editor's bar has Maximize (`#mm-maximize`, and
-// Cmd/Ctrl+Shift+Enter anywhere in the view unless a topic is being edited or a dialog is open), which calls `onMaximize` (the top page toggles);
-// while `maximized`, Escape in the editor (not editing a topic, no dialog) and in the list restores the columns instead of leaving. `onView` hears what
-// the view shows ({ screen: 'list' } or { screen: 'editor', sourceKey, id, title }), so the column remembers it; `open` ({ sourceKey, id }) is opened
-// as soon as its service is listed. `canFocus()` false: nothing is focused by the view itself (a column that a reload brought back).
-export function mountApp(root, {
-  onClose, notify = () => {}, onLayers = () => {}, sources: given, onView = () => {}, open: openGiven = null, inColumn = false, maximized: maximizedGiven = false,
-  onMaximize = () => {}, canFocus = () => true,
-}) {
+// `split`: the Mind maps tab of the multi-column view (see "Mind maps tab" in docs/design/mind-maps.md). The list of maps (search, New map, the maps of
+// every service) stays on the left, about 280px, and the open map fills the rest; a button in the map's bar folds the list away (remembered per
+// device, FOLD_KEY). There is no Close and no Back to the list: the navigation rail of the view is the way out. Escape in the editor (no topic edited,
+// no dialog) moves the keyboard to the open map's row. The view takes keys only while its tab is shown (`active`, `setActive`) and only those meant
+// for it (on its own elements, or on the page's body), since the rail and the columns' headers are on the same page.
+export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}, sources: given, split = false, active: activeGiven = true }) {
   let disposed = false;
   let screen = 'list';
   let current = null; // { id, src, title, editor, saver, ... } the open map and the service it is on
@@ -165,17 +164,29 @@ export function mountApp(root, {
   let createOn = LOCAL_KEY; // "Create on": the service a new or imported map goes to
   let importTarget = null;
   let dialog = null; // the open dialog: { close }
-  let maximized = Boolean(maximizedGiven);
-  let pendingOpen = openGiven && openGiven.sourceKey && openGiven.id ? { sourceKey: String(openGiven.sourceKey), id: String(openGiven.id) } : null;
+  let active = split ? activeGiven !== false : true;
+  let listFolded = split && readFolded();
+  let query = ''; // the search of the split list
   const say = (text, kind) => notify(text, kind);
-  const report = () => onView(screen === 'editor' && current
-    ? { screen: 'editor', sourceKey: current.src.key, id: current.id, title: current.title }
-    : { screen: 'list', title: '' });
+  // Whether a key or clipboard event is the view's: always in the full-window view; in the tab only while it is shown and the event is on its own
+  // elements (or on nothing in particular: the page's body).
+  const owns = event => {
+    if (!split) return true;
+    if (!active) return false;
+    const target = event && event.target;
+    return !target || target === document.body || target === document.documentElement || root.contains(target);
+  };
 
   root.replaceChildren();
   root.classList.add('mm');
-  root.setAttribute('role', 'dialog');
-  root.setAttribute('aria-modal', 'true');
+  root.classList.toggle('mm-split', split);
+  if (split) {
+    root.setAttribute('role', 'region');
+    root.removeAttribute('aria-modal');
+  } else {
+    root.setAttribute('role', 'dialog');
+    root.setAttribute('aria-modal', 'true');
+  }
   root.setAttribute('aria-label', tr('Mind maps'));
 
   // ── Layers for the back gesture: closing the view, leaving the editor, closing a dialog ──
@@ -204,6 +215,7 @@ export function mountApp(root, {
     };
     const dismiss = () => { close(); if (onDismiss) onDismiss(); };
     function onKey(e) {
+      if (!owns(e) && !box.contains(e.target)) return;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); return; }
       if (e.key !== 'Tab') return;
       const focusable = [...box.querySelectorAll('button, input, textarea, a[href]')].filter(n => !n.disabled);
@@ -248,13 +260,18 @@ export function mountApp(root, {
   const createSelect = el('select', { id: 'mm-create-on', class: 'mm-select', 'aria-label': tr('Create on'), onChange: () => { createOn = createSelect.value; } });
   const createRow = el('label', { class: 'mm-on', hidden: true }, el('span', { class: 'mm-on-label', text: tr('Create on') }), createSelect);
   let createSig = '';
-  const listView = el('section', { class: 'mm-view mm-list' },
+  // The search of the split list: the maps whose title contains the text (any case), on every service.
+  const searchInput = split ? el('input', { id: 'mm-search', class: 'mm-search-input', type: 'search', placeholder: tr('Search'), 'aria-label': tr('Search mind maps'),
+    autocomplete: 'off', spellcheck: 'false', onInput: () => { query = searchInput.value.trim().toLowerCase(); renderList(); },
+    onKeydown: e => { if (e.key === 'Escape' && searchInput.value && !e.isComposing) { e.preventDefault(); e.stopPropagation(); searchInput.value = ''; query = ''; renderList(); } } }) : null;
+  const searchRow = split ? el('label', { class: 'mm-search' }, iconNode('search', 16), searchInput) : null;
+  const listView = el('section', { class: 'mm-view mm-list', ...(split ? { id: 'mm-list', 'aria-label': tr('Mind maps') } : {}) },
     el('header', { class: 'mm-top' },
-      iconButton('close', 'Close', () => closeAll(), { id: 'mm-close' }),
+      split ? null : iconButton('close', 'Close', () => closeAll(), { id: 'mm-close' }),
       el('h1', { class: 'mm-heading', text: tr('Mind maps') }),
       iconButton('Import', 'Import .xmind', () => { importTarget = createTarget(); fileInput.click(); }, { id: 'mm-import' }),
       iconButton('add', 'New map', () => { void createMap(); }, { id: 'mm-new' })),
-    createRow, rows, fileInput);
+    searchRow, createRow, rows, fileInput);
 
   const sourceByKey = key => sources.find(src => src.key === key) || null;
   const listOf = src => lists.get(src.key) || { status: 'loading', maps: [] };
@@ -307,7 +324,7 @@ export function mountApp(root, {
     const meta = [when ? when.toLocaleString() : '', sizeText(map.size)].filter(Boolean).join(' · ');
     const ref = `${src.key}|${map.id}`;
     return el('div', { class: 'mm-row', role: 'listitem', 'data-source': src.key, 'data-id': map.id, 'data-ref': ref },
-      el('button', { type: 'button', class: 'mm-row-open', 'data-part': 'open', onClick: () => { void openMap(src, map.id); } },
+      el('button', { type: 'button', class: 'mm-row-open', 'data-part': 'open', onClick: () => { void openFromList(src, map.id); } },
         el('span', { class: 'mm-row-title', translate: 'no', text: map.title || tr('Untitled map') }),
         el('span', { class: 'mm-row-meta', translate: 'no', text: meta })),
       iconButton('draftKeyboard', 'Rename', () => renameMap(src, map), { 'data-part': 'rename' }),
@@ -339,25 +356,33 @@ export function mountApp(root, {
       if (list.status === 'loading') section.append(note(tr('Loading...'), small));
       else if (list.status === 'error') section.append(note(messageFor(list.error, src), small), retry(src));
       else if (list.status === 'ready' && !list.maps.length) section.append(note(tr(alone ? 'No mind maps yet. Create one or import a .xmind file.' : 'No mind maps'), small));
-      else if (list.status === 'ready') section.append(el('div', { class: 'mm-section-rows', role: 'list' }, ...list.maps.map(map => mapRow(src, map))));
+      else if (list.status === 'ready') {
+        const maps = query ? list.maps.filter(map => String(map.title || tr('Untitled map')).toLowerCase().includes(query)) : list.maps;
+        if (maps.length) section.append(el('div', { class: 'mm-section-rows', role: 'list' }, ...maps.map(map => mapRow(src, map))));
+        else section.append(note(tr('No maps match'), small));
+      }
       return section; // offline: the header says so, and nothing else is shown
     }));
+    markCurrent();
     if (focus) {
       const row = [...rows.querySelectorAll('.mm-row')].find(node => node.dataset.ref === focus[0]);
       const button = row && row.querySelector(`[data-part="${focus[1]}"]`);
       if (button) button.focus();
     }
   }
-
-  // The map a mind map column showed before a reload, once the services are known: opened on its service, or the list when that service is not listed
-  // or offline (or the map is gone: openMap says so).
-  function openPending() {
-    if (!pendingOpen || !sources.length || disposed) return;
-    const want = pendingOpen;
-    pendingOpen = null;
-    const src = sourceByKey(want.sourceKey);
-    if (!src || !src.online) { report(); return; }
-    void openMap(src, want.id).then(() => { if (screen === 'list') report(); });
+  // The split list marks the row of the open map (and keeps its title in step with the editor's).
+  function markCurrent() {
+    if (!split) return;
+    const ref = current ? `${current.src.key}|${current.id}` : '';
+    for (const row of rows.querySelectorAll('.mm-row')) {
+      const open = row.querySelector('.mm-row-open');
+      row.toggleAttribute('data-current', row.dataset.ref === ref);
+      if (row.dataset.ref === ref) {
+        open.setAttribute('aria-current', 'true');
+        const title = row.querySelector('.mm-row-title');
+        if (title && current.title && title.textContent !== current.title) title.textContent = current.title;
+      } else open.removeAttribute('aria-current');
+    }
   }
 
   // The services listed changed (connected, removed, hidden or shown again, offline or back). A new one, or one that came back, is read; the rest keep their lists.
@@ -375,11 +400,24 @@ export function mountApp(root, {
       if (back && current && current.src.key === src.key && current.saver) current.saver.wake();
     }
     renderList();
-    openPending();
+  }
+
+  // The split view keeps one map open: before another one is shown, the open one is left (its edits saved, a short wait only). False when it is still
+  // leaving (a second click meanwhile).
+  async function makeRoom() {
+    if (!split || !current) return true;
+    await leaveEditor({ silent: true });
+    return !current;
+  }
+  async function openFromList(src, id) {
+    if (split && current && current.src.key === src.key && current.id === id) { if (current.editor) current.editor.focus(); return; }
+    if (!(await makeRoom())) return;
+    await openMap(src, id);
   }
 
   async function createMap() {
     const src = createTarget();
+    if (!(await makeRoom())) return;
     try {
       const title = tr('Untitled map');
       const created = await call('POST', src.base, { title });
@@ -387,6 +425,17 @@ export function mountApp(root, {
     } catch (error) { say(messageFor(error, src), 'error'); }
   }
   function renameMap(src, map) {
+    // The open map of the split view is renamed through its editor, which saves the title with the map (a rename of its own would raise the revision
+    // under the editor's save).
+    if (split && current && current.src.key === src.key && current.id === map.id) {
+      promptDialog(tr('Rename map'), current.title || '', tr('Rename'), value => {
+        const title = value.trim();
+        if (!title || !current || current.id !== map.id) return;
+        titleField.value = title;
+        commitTitle();
+      });
+      return;
+    }
     promptDialog(tr('Rename map'), map.title || '', tr('Rename'), async value => {
       const title = value.trim();
       if (!title || title === map.title) return;
@@ -401,6 +450,8 @@ export function mountApp(root, {
   }
   function deleteMap(src, map) {
     confirmDialog(tr('Delete map'), `${tr('Delete this map? This cannot be undone.')} ${map.title || ''}`, tr('Delete'), async () => {
+      // The open map of the split view is closed first, without saving it again.
+      if (split && current && current.src.key === src.key && current.id === map.id) await returnToList(true);
       try {
         await call('DELETE', `${src.base}/${encodeURIComponent(map.id)}`);
         clearDraft(src.key, map.id);
@@ -416,6 +467,7 @@ export function mountApp(root, {
     fileInput.value = '';
     if (!file) return;
     if (file.size > XMIND_LIMITS.file) { say(tr('This .xmind file is too large'), 'error'); return; }
+    if (!(await makeRoom())) return;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { doc, lost } = parseXmind(bytes, { parseXml: text => new DOMParser().parseFromString(text, 'text/xml') });
@@ -452,23 +504,46 @@ export function mountApp(root, {
     barButton('fit', 'fitWindow', 'Fit map', () => act('fit')));
   const exportButton = iconButton('export', 'Export .xmind', () => exportMap(), { id: 'mm-export' });
   const moreButton = iconButton('taskMore', 'More', () => openMore(), { id: 'mm-more' });
-  const apple = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
-  const maximizeButton = inColumn ? iconButton('maximize', 'Maximize', () => onMaximize(), { id: 'mm-maximize', 'aria-keyshortcuts': apple ? 'Meta+Shift+Enter' : 'Control+Shift+Enter', onPointerdown: e => e.preventDefault() }) : null;
-  function showMaximized() {
-    if (!maximizeButton) return;
-    const label = tr(maximized ? 'Restore' : 'Maximize');
-    maximizeButton.setAttribute('aria-label', label);
-    maximizeButton.title = label;
-    maximizeButton.dataset.maximized = maximized ? 'true' : 'false';
-    maximizeButton.firstChild.firstChild.setAttribute('d', PATHS[maximized ? 'restore' : 'maximize']);
-  }
-  showMaximized();
+  // The split view: fold the list away or bring it back (`aria-expanded`: whether the list is shown).
+  const foldButton = split ? iconButton('sidebarFold', 'Hide the map list', () => setFolded(!listFolded), { id: 'mm-list-toggle', 'aria-controls': 'mm-list' }) : null;
+  const emptyNote = split ? el('p', { class: 'mm-empty', text: tr('Open a mind map from the list, or create one.') }) : null;
   const editorView = el('section', { class: 'mm-view mm-editor', hidden: true },
     el('header', { class: 'mm-top' },
-      iconButton('back', 'Back to the list', () => { void leaveEditor(); }, { id: 'mm-back' }),
-      titleField, statusNode, maximizeButton, exportButton, moreButton),
-    canvas, bar);
+      split ? null : iconButton('back', 'Back to the list', () => { void leaveEditor(); }, { id: 'mm-back' }),
+      titleField, statusNode, emptyNote ? el('span', { class: 'mm-top-gap' }) : null, foldButton, exportButton, moreButton),
+    emptyNote, canvas, bar);
   root.append(listView, editorView);
+
+  // What is shown: the list or the editor (the full-window view), or the list beside the editor (split; the editor says how to start while no map is
+  // open, and the list can be folded away).
+  function layout() {
+    if (!split) {
+      listView.hidden = screen === 'editor';
+      editorView.hidden = screen !== 'editor';
+      return;
+    }
+    listView.hidden = listFolded;
+    editorView.hidden = false;
+    editorView.toggleAttribute('data-empty', !current);
+    const label = tr(listFolded ? 'Show the map list' : 'Hide the map list');
+    foldButton.setAttribute('aria-label', label);
+    foldButton.title = label;
+    foldButton.setAttribute('aria-expanded', listFolded ? 'false' : 'true');
+    foldButton.firstChild.firstChild.setAttribute('d', PATHS[listFolded ? 'sidebarUnfold' : 'sidebarFold']);
+    markCurrent();
+  }
+  function setFolded(on) {
+    listFolded = Boolean(on);
+    writeFolded(listFolded);
+    layout();
+  }
+  // Escape in the split editor: the keyboard goes to the open map's row (the map stays open), when the list is shown.
+  function focusList() {
+    if (listFolded) return;
+    const row = rows.querySelector('.mm-row-open[aria-current="true"]') || rows.querySelector('.mm-row-open');
+    (row || searchInput).focus();
+  }
+  layout();
 
   function act(name) { if (current && current.editor) current.editor.actions[name](); }
 
@@ -517,15 +592,13 @@ export function mountApp(root, {
       if (!doc) doc = map.data ? sanitizeDoc(map.data) : blankDoc(map.title);
     } catch (error) { say(messageFor(error), 'error'); return; }
     screen = 'editor';
-    listView.hidden = true;
-    editorView.hidden = false;
     titleField.value = map.title || '';
     setStatus('saved');
     pushLayers();
     canvas.replaceChildren();
     const state = { id: map.id, src: { key: src.key, label: src.label, local: src.local, base: src.base }, title: map.title || '', editor: null, saver: null, leaving: false };
     current = state;
-    report();
+    layout();
     void startEditor(state, map, doc, { restored, draftConflict });
   }
 
@@ -538,8 +611,8 @@ export function mountApp(root, {
         onSelection: () => { if (state === current) updateBar(); },
         onSaveNow: () => { if (state.saver) void state.saver.flush(); },
         onOpenInfo: kind => openInfo(state, kind),
-        onBack: () => { if (maximized) onMaximize(); else void leaveEditor(); }, // Escape: a maximized column is restored first
-        canFocus,
+        onBack: () => { if (split) focusList(); else void leaveEditor(); },
+        owns,
         isBlocked: () => Boolean(dialog),
         notify: text => say(text, 'error'),
       });
@@ -575,7 +648,7 @@ export function mountApp(root, {
     if (value === current.title) return;
     current.title = value;
     if (current.saver) current.saver.touch();
-    report();
+    markCurrent();
   }
 
   // The copy goes to the service of the original.
@@ -666,17 +739,16 @@ export function mountApp(root, {
     current = null;
     canvas.replaceChildren();
     screen = 'list';
-    editorView.hidden = true;
-    listView.hidden = false;
+    layout();
     if (silent) return;
-    report();
     pushLayers();
     void loadList();
     const row = rows.querySelector('button, [tabindex]');
     (row || root.querySelector('#mm-new')).focus();
   }
 
-  async function leaveEditor({ thenClose = false } = {}) {
+  // `silent`: another map follows at once in the split view (the list is read again, the keyboard stays where it is).
+  async function leaveEditor({ thenClose = false, silent = false } = {}) {
     const state = current;
     if (!state || state.leaving) return;
     state.leaving = true;
@@ -687,6 +759,7 @@ export function mountApp(root, {
       if (state.saver.dirty && state.saver.state !== 'conflict') say(tr('Not saved yet. Your changes stay on this device and come back when you open this map again.'), 'warning');
     }
     if (thenClose) { await returnToList(true); pushLayers(); if (dialog) dialog.close(); onClose(); return; }
+    if (silent) { await returnToList(true); void loadList(); return; }
     await returnToList();
   }
 
@@ -711,9 +784,8 @@ export function mountApp(root, {
   const onPageHide = () => { if (current && current.saver) void current.saver.flush({ keepalive: true }); };
   const onOnline = () => { if (current && current.saver) current.saver.wake(); };
   const onListKey = e => {
-    if (inColumn && maximizeKey(e) && !dialog && !(current && current.editor && current.editor.isEditing())) { e.preventDefault(); e.stopPropagation(); onMaximize(); return; }
-    if (dialog || screen !== 'list') return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (maximized) onMaximize(); else onClose(); }
+    if (split || dialog || screen !== 'list') return; // the tab has no Close: its rail is the way out
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
   };
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pagehide', onPageHide);
@@ -722,14 +794,19 @@ export function mountApp(root, {
 
   pushLayers();
   void loadList();
-  if (canFocus()) root.querySelector('#mm-new').focus();
-  openPending();
+  if (!split) root.querySelector('#mm-new').focus(); // the tab leaves the keyboard on its rail
 
   return {
     get busy() { return Boolean(current && current.saver && current.saver.dirty); },
-    flush: () => (current && current.saver ? current.saver.flush() : Promise.resolve()),
+    flush: options => (current && current.saver ? current.saver.flush(options) : Promise.resolve()),
     setSources: list => { if (!disposed) setSources(list); },
-    setMaximized: on => { maximized = Boolean(on); showMaximized(); },
+    // The tab is shown or hidden: hidden, a topic being edited is committed and the map is saved now; the open map and the list stay as they are.
+    setActive: on => {
+      active = Boolean(on);
+      if (active || !current) return;
+      if (current.editor) current.editor.finishEdit();
+      if (current.saver) void current.saver.flush();
+    },
     destroy() {
       disposed = true;
       document.removeEventListener('visibilitychange', onVisibility);

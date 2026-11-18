@@ -1,12 +1,19 @@
 // The multi-column view (Columns.jsx): the rules without the page. Each column is an iframe of the same page in pane mode, `/h5?pane=<id>`; the top
-// page only keeps the list of column ids, in order, and whether the view is on. See "Multi-column view" in docs/design/page-shell-and-columns.md.
+// page only keeps the list of column ids, in order, whether the view is on and which tab of its navigation rail is shown. See "Multi-column view" in
+// docs/design/page-shell-and-columns.md.
 
-export const STORAGE_KEY = 'h5-columns'; // { on: boolean, ids: [id, ...] }, one per device
+export const STORAGE_KEY = 'h5-columns'; // { on: boolean, ids: [id, ...], tab: 'columns' | 'maps' }, one per device
 export const MAX_COLUMNS = 12;
+// The navigation rail of the view (NAV_WIDTH px on the left, full height): the Update button, then the two tabs, "Columns" (the strip) and "Mind maps"
+// (a whole mind map page), and at the bottom the switch that leaves the view. The tab shown is remembered with the layout.
+export const NAV_WIDTH = 72; // px
+export const TABS = ['columns', 'maps'];
+export const readTab = value => (TABS.includes(value) ? value : 'columns');
 // The width of a column: up to VISIBLE_COLUMNS columns share the strip's visible width evenly; with more, each one is a quarter of that width and the
-// strip scrolls sideways (nothing is squeezed). Never narrower than MIN_COLUMN_WIDTH, so a narrow window fits fewer and scrolls earlier.
+// strip scrolls sideways (nothing is squeezed). Never narrower than MIN_COLUMN_WIDTH, so a narrow window fits fewer and scrolls earlier. 340px keeps
+// four columns side by side at 1440px next to the navigation rail (1368px of strip: four of 342px).
 export const VISIBLE_COLUMNS = 4;
-export const MIN_COLUMN_WIDTH = 360; // px
+export const MIN_COLUMN_WIDTH = 340; // px
 // The minimum width of each column (its `flex-basis` and `min-width`) for a strip whose visible width is stripWidth px.
 export const minColumnWidth = stripWidth => {
   const width = Number(stripWidth);
@@ -20,7 +27,7 @@ export const columnWidth = (stripWidth, count) => {
   return Number.isFinite(width) && width > 0 ? Math.max(min, width / n) : min;
 };
 export const MESSAGE_TYPE = 't-agent-pane';
-export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step', 'move', 'maximize', 'peek']);
+export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step', 'move', 'maximize', 'peek', 'mindmaps']);
 export const PEEK_LINES = 6;
 const AGENTS = new Set(['claude', 'codex']);
 const SCROLL_MAX = 10000; // px of one forwarded sideways scroll
@@ -41,8 +48,10 @@ export function canOfferColumns(search, framed) {
   try { return !new URLSearchParams(search || '').has('pane'); } catch { return false; }
 }
 
-// The number of columns the first use opens: as many as fit at MIN_COLUMN_WIDTH, at least 2 and at most VISIBLE_COLUMNS (4 from 1440px).
+// The number of columns the first use opens: as many as fit at MIN_COLUMN_WIDTH, at least 2 and at most VISIBLE_COLUMNS. `width` is the strip's
+// width (the window less the navigation rail, `stripWidthOf`): 4 from a 1432px window, 3 from 1092px.
 export const defaultCount = width => Math.max(2, Math.min(VISIBLE_COLUMNS, Math.floor((Number(width) || 0) / MIN_COLUMN_WIDTH)));
+export const stripWidthOf = windowWidth => Math.max(0, (Number(windowWidth) || 0) - NAV_WIDTH);
 
 // A new short id that is not taken: 6 characters of [a-z0-9].
 export function newId(taken = [], random = Math.random) {
@@ -55,17 +64,30 @@ export function newId(taken = [], random = Math.random) {
   throw new Error('No free column id');
 }
 
-// The stored layout, cleaned: only valid, distinct ids, at most MAX_COLUMNS. Anything unreadable is the default (off, no ids yet).
+// The stored layout, cleaned: only valid, distinct ids, at most MAX_COLUMNS, and the tab of the rail ('columns' unless 'maps' was stored, so a layout
+// written before the rail existed opens on the columns). Anything unreadable is the default (off, no ids yet, the columns tab).
 export function readLayout(raw) {
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
   const ids = [];
   for (const id of (data && Array.isArray(data.ids) ? data.ids : [])) if (isPaneId(id) && !ids.includes(id) && ids.length < MAX_COLUMNS) ids.push(id);
-  return { on: Boolean(data && data.on === true), ids };
+  return { on: Boolean(data && data.on === true), ids, tab: readTab(data && data.tab) };
 }
-export const writeLayout = layout => JSON.stringify({ on: Boolean(layout.on), ids: layout.ids.slice(0, MAX_COLUMNS) });
+export const writeLayout = layout => JSON.stringify({ on: Boolean(layout.on), ids: layout.ids.slice(0, MAX_COLUMNS), tab: readTab(layout.tab) });
 
-// The ids to show when the view is turned on: the stored ones, or on first use the default number of new ones.
+// Mind map columns (v2.133.0 to v2.134.x) are gone: a mind map has its own tab now. Such a column was a pane that remembered its mind map view under
+// `pane:<id>:h5-mindmap` (LEGACY_MAP_KEY). On load the top page drops every column that has that key, and forgets its keys (`dropped`); the other
+// columns keep their order. `isMapColumn(id)` says whether the key is stored. With no column left, the view opens its default columns.
+export const LEGACY_MAP_KEY = 'h5-mindmap';
+export const legacyMapKeyOf = paneId => `pane:${paneId}:${LEGACY_MAP_KEY}`;
+export function dropMapColumns(ids, isMapColumn) {
+  const kept = [];
+  const dropped = [];
+  for (const id of ids) (isMapColumn(id) ? dropped : kept).push(id);
+  return { ids: dropped.length ? kept : ids, dropped };
+}
+
+// The ids to show when the view is turned on: the stored ones, or on first use the default number of new ones (`width`: the strip's width).
 export function columnsFor(ids, width, random = Math.random) {
   if (ids.length) return ids.slice(0, MAX_COLUMNS);
   const made = [];
@@ -94,16 +116,16 @@ export function mountOrder(mounted, ids) {
   return [...kept, ...ids.filter(id => !kept.includes(id))];
 }
 
-// A message from a pane: { type: 't-agent-pane', paneId, event: 'ready' | 'focus' | 'title' | 'scroll-x' | 'step' | 'move' | 'maximize' | 'peek',
-// title?, session?, device?, map?, target?, agent?, sheet?, width?, dx?, step?, lines? }. 'title': the task and session shown, and the device of that
-// task when the pane's list tags it (`device`: { name, instanceId, local, offline }, kept only with a name or as this machine), the mind map the pane
-// shows (`map`: { title, screen: 'list' | 'editor' }, see "mind map columns" below), the terminal it shows (`target`: { sourceKey, taskId, terminalId },
-// for the state of its column), that terminal's agent ('claude', 'codex' or none), whether its task sheet is shown (`sheet`: true, else left out) and
+// A message from a pane: { type: 't-agent-pane', paneId, event: 'ready' | 'focus' | 'title' | 'scroll-x' | 'step' | 'move' | 'maximize' | 'peek' |
+// 'mindmaps', title?, session?, device?, target?, agent?, sheet?, width?, dx?, step?, lines? }. 'title': the task and session shown, and the device of
+// that task when the pane's list tags it (`device`: { name, instanceId, local, offline }, kept only with a name or as this machine), the terminal it
+// shows (`target`: { sourceKey, taskId, terminalId }, for the state of its column), that terminal's agent ('claude', 'codex' or none), whether its
+// task sheet is shown (`sheet`: true, else left out) and
 // its terminal width (`width`: { mode: 'fit' | 'wide', cols }, left out without a terminal): the column's header draws them; 'scroll-x': a sideways wheel or trackpad swipe inside the pane
 // that nothing in it scrolls (dx in px, nonzero, at most 10000 either way); 'step': Ctrl+Alt+Left / Right pressed inside the pane, 'move':
-// Ctrl+Alt+Shift+Left / Right (step -1 or 1); 'maximize': Cmd/Ctrl+Shift+Enter (or the mind map's Maximize button) in the pane, to maximize its
-// column or to restore the columns (a toggle);
-// 'peek': the answer to a peek request, the last lines of the pane's terminal (at most PEEK_LINES strings). Anything else is null.
+// Ctrl+Alt+Shift+Left / Right (step -1 or 1); 'maximize': Cmd/Ctrl+Shift+Enter in the pane, to maximize its column or to restore the columns (a
+// toggle); 'peek': the answer to a peek request, the last lines of the pane's terminal (at most PEEK_LINES strings); 'mindmaps': the person asked for
+// the mind maps inside the pane (its task sheet's Mind maps button): the top page shows its Mind maps tab. Anything else is null.
 // The caller checks the origin and that the sender is one of its own iframes (and that its id is this paneId).
 export function readPaneMessage(data) {
   if (!data || typeof data !== 'object' || data.type !== MESSAGE_TYPE || !isPaneId(data.paneId) || !PANE_EVENTS.has(data.event)) return null;
@@ -114,8 +136,6 @@ export function readPaneMessage(data) {
     message.session = text(data.session);
     const device = readDevice(data.device);
     if (device) message.device = device;
-    const map = readMapInfo(data.map);
-    if (map) message.map = map;
     const target = readTarget(data.target);
     if (target) message.target = target;
     if (AGENTS.has(data.agent)) message.agent = data.agent;
@@ -242,43 +262,7 @@ export function openMessage({ sourceKey, taskId, terminalId, conversationId } = 
 export const targetColumn = (ids, focus) => (focus && ids.includes(focus) ? focus : ids[0] || null);
 export const paneUrl = id => `/h5?pane=${encodeURIComponent(id)}`;
 
-// ── Mind map columns ──
-// A column shows a mind map when its pane has the mind map view open (the list of maps, or one map in the editor): the view is the pane's own
-// `#h5-mindmap`, a fixed layer of the pane's window, so it fills the column and never the top page. The pane says so in its `title` message (`map`),
-// and the tab draws the map icon and name. What a column shows is remembered by the pane itself, like its task and terminal: `pane:<id>:h5-mindmap`
-// (MAP_KEY under the pane's prefix) = { screen: 'list' } or { screen: 'editor', sourceKey, id }; a pane that starts with it opens the view again.
-// "Add mind map column" makes a new column at the end and writes { screen: 'list' } under its key before its iframe exists, so it starts on the list.
-// A map opened from the list of a column opens in that column (the one the person is using, so the focused one).
-export const MAP_KEY = 'h5-mindmap';
 const SOURCE_KEY = /^(local|remote:[1-9]\d*)$/;
-const MAP_ID = /^[A-Za-z0-9_-]{1,100}$/;
-export const mapKeyOf = paneId => `pane:${paneId}:${MAP_KEY}`;
-// What a column's pane remembers of its mind map view, cleaned; null for nothing usable (the column shows its task as usual).
-export function readMapColumn(raw) {
-  let data = null;
-  try { data = typeof raw === 'string' && raw ? JSON.parse(raw) : raw; } catch { return null; }
-  if (!data || typeof data !== 'object') return null;
-  if (data.screen === 'list') return { screen: 'list' };
-  if (data.screen === 'editor' && typeof data.sourceKey === 'string' && SOURCE_KEY.test(data.sourceKey) && typeof data.id === 'string' && MAP_ID.test(data.id)) return { screen: 'editor', sourceKey: data.sourceKey, id: data.id };
-  return null;
-}
-// The stored text of a view (what the mind map reports: { screen, sourceKey?, id?, title? }), or null when nothing is to be kept.
-export function writeMapColumn(view) {
-  const clean = readMapColumn(view);
-  return clean ? JSON.stringify(clean) : null;
-}
-// The `map` of a pane's title message: { title (the map's name, '' on the list), screen }; null when the pane shows no map.
-export function readMapInfo(value) {
-  if (!value || typeof value !== 'object' || (value.screen !== 'list' && value.screen !== 'editor')) return null;
-  return { title: typeof value.title === 'string' ? value.title.trim().slice(0, TEXT_MAX) : '', screen: value.screen };
-}
-// "Add mind map column": the new column (at the end, a fresh id) and the order with it; null when no column can be added (12 open already). `open`
-// are the open columns, `taken` every id still mounted (a column being closed keeps its id until it is gone).
-export function addMapColumn(open, taken = open, random = Math.random) {
-  if (!canAdd(open)) return null;
-  const id = newId(taken, random);
-  return { id, ids: [...taken, id] };
-}
 
 // The terminal a pane shows ({ sourceKey, taskId, terminalId }), or null.
 export function readTarget(value) {
@@ -295,10 +279,9 @@ export function readLines(value) {
 }
 
 // ── Maximize (one column fills the strip; the others become the rail) ──
-// `state.columns.maximized` is the id of the maximized column, or null. Any open column can be maximized, whatever it shows (a terminal, a chat, a
-// mind map), only while the strip is shown, and only one at a time. It is not stored: a reload shows the columns side by side again.
+// `state.columns.maximized` is the id of the maximized column, or null. Any open column can be maximized, whatever it shows (a terminal, a chat, the
+// task list), only while the strip is shown, and only one at a time. It is not stored: a reload shows the columns side by side again.
 export const RAIL_WIDTH = 72; // px
-export const isMapColumn = (columns, id) => Boolean(columns && columns.titles && columns.titles[id] && columns.titles[id].map);
 export function canMaximize(columns, id) {
   if (!columns || !columns.shown || !id) return false;
   return columns.ids.includes(id) && !(columns.closing || []).includes(id);
@@ -314,18 +297,18 @@ export function toggleMaximize(columns, id) {
 // The other open columns, in the order shown: the tiles of the rail.
 export const railColumns = (columns, maximized) => (columns ? columns.ids.filter(id => id !== maximized && !(columns.closing || []).includes(id)) : []);
 // Cmd+Shift+Enter (Ctrl+Shift+Enter elsewhere; either is taken): maximize the focused column or restore. Never with Alt, and never inside an IME
-// composition. A pane posts it as 'maximize' (pane.mjs; the mind map view of a pane posts it itself, since it knows when a topic is being edited).
+// composition. A pane posts it as 'maximize' (pane.mjs).
 export const maximizeKey = ({ key, ctrlKey = false, metaKey = false, shiftKey = false, altKey = false, isComposing = false, keyCode = 0 } = {}) => (
   key === 'Enter' && shiftKey && !altKey && (ctrlKey || metaKey) && !isComposing && keyCode !== 229
 );
 
 // The state of a column's tile: 'running' (green: the terminal runs, or a sub-agent of it), 'waiting' (orange: a T-Attention task of that terminal
-// waits for the person, or the terminal finished and was not seen yet), 'idle' (grey: anything else, a map column, a column with no terminal).
+// waits for the person, or the terminal finished and was not seen yet), 'idle' (grey: anything else, a column with no terminal).
 // `activity` is the top page's terminal activity, { sourceKey: { taskId: { terminalId: 'running' | 'done' } } } (h5.js `terminalActivity`); `items`
 // the T-Attention items of the top page (`state.attention.items`, tagged with their engine). `count` is the number of items that need the person, and
 // `question` the pending text of the newest of them ('' when none).
 export function columnStatus(info, { activity, items } = {}) {
-  const target = info && !info.map ? info.target : null;
+  const target = info ? info.target : null;
   if (!target) return { state: 'idle', count: 0, question: '' };
   const needs = (Array.isArray(items) ? items : []).filter(item => item && item.status === 'waiting_user' && (item.engine || 'local') === target.sourceKey && matchesTarget(item, target));
   needs.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
@@ -351,23 +334,16 @@ const pendingText = item => {
 // The English words of a tile's state (the page translates them): the label of the tile is "<name>, <agent> <state>".
 export const STATE_WORDS = { running: 'running', waiting: 'needs you', idle: 'idle' };
 export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
-// The short name of a column for its tile and peek: the map's name for a map column ('Mind maps' on the list), else the task (and the session),
-// else '' (the caller says "Column N").
-export function columnName(info) {
-  if (!info) return '';
-  if (info.map) return info.map.title || 'Mind maps';
-  return info.title || '';
-}
+// The short name of a column for its tile and peek: the task, else '' (the caller says "Column N").
+export const columnName = info => (info && info.title) || '';
 
 // ── The header of a column and the column list of the bar ──
 // The words of a column's state in the column list ("focused" wins over the others) and in the header's label.
 export const LIST_WORDS = { focused: 'focused', running: 'running', waiting: 'needs you', idle: 'idle' };
 export const listState = (status, focused) => (focused ? 'focused' : status.state);
-// The name a column's header shows: { title, session } (the map's name and no session for a map column; 'Mind maps' on its list), both '' before
-// the pane said them.
+// The name a column's header shows: { title, session }, both '' before the pane said them.
 export function headerName(info) {
   if (!info) return { title: '', session: '' };
-  if (info.map) return { title: info.map.title || 'Mind maps', session: '' };
   return { title: info.title || '', session: info.title ? info.session || '' : '' };
 }
 // The accessible name of a column's header: "<task>, <session>, <state>" (e.g. "SELF-TAGENT, main dev, needs you"); `name` is the shown title when the
@@ -388,3 +364,17 @@ export function summarize(ids, statusOf) {
   }
   return { running, waiting, first };
 }
+
+// ── The navigation rail ──
+// The arrow keys move the focus between the rail's destinations (Up / Left: the previous, Down / Right: the next, wrapping; Home / End: the first and
+// the last); Tab reaches each of them and Enter or Space opens one (they are buttons). Returns the index to focus, or -1 for another key.
+export function railKey(key, index, count) {
+  if (!(count > 0)) return -1;
+  if (key === 'ArrowDown' || key === 'ArrowRight') return (index + 1) % count;
+  if (key === 'ArrowUp' || key === 'ArrowLeft') return (index - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return -1;
+}
+// The red badge of the "Columns" destination: the number of open columns that need the person, the same count as the bar's "N needs you" chip.
+export const needsCount = (ids, statusOf) => summarize(ids, statusOf).waiting;

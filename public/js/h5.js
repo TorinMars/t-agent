@@ -115,6 +115,7 @@
   let listReady = false; // both the services and what is hidden are known: until then the list says "Loading…", so a hidden device never flashes by
   let mindmap = null; // the open mind map view (see "Mind maps" below); here because publishSources tells it when the services change
   let mindmapSourcesSent = '';
+  let mindmapTab = null; // the Mind maps tab of the multi-column view: { view, sent } (see "Mind maps" below)
   // The sources of the list, in list order. At least one device always stays visible. A source without a name is the remembered one, assumed before the list of services has answered.
   function listedSources() {
     const named = sources.filter(item => item === LOCAL || item.label);
@@ -1765,7 +1766,7 @@
     const current = terminalId ? terminals.find(entry => entry.terminal_id === terminalId) : null;
     const agent = (current && current.agent) || null; // the kind of the current terminal, as the task list shows it: picks the saved commands presets
     if (ui.get().terminalAgent !== agent) ui.set({ terminalAgent: agent });
-    // The terminal shown (none under a chat): a pane of the multi-column view tells its tab, so the rail of a maximized map column shows its state.
+    // The terminal shown (none under a chat): a pane of the multi-column view tells the top page, whose column header, rail tile and badge show its state.
     const target = task && terminalId && !agentChat ? { sourceKey: source.key, taskId: task.id, terminalId: String(terminalId) } : null;
     const shownBefore = ui.get().shownTarget || null;
     if (JSON.stringify(shownBefore) !== JSON.stringify(target)) ui.set({ shownTarget: target });
@@ -1834,12 +1835,11 @@
   // services and what is hidden are known, none: the view says "Loading…", so a hidden device's maps never flash by.
   const mindmapSources = () => (listReady ? listedSources() : []).map(from => ({ key: from.key, label: from.label, base: from.mindmapBase, online: from.status !== 'offline' }));
   function syncMindmapSources() {
-    if (!mindmap) return;
     const list = mindmapSources();
     const text = JSON.stringify(list);
-    if (text === mindmapSourcesSent) return; // `publishSources` runs on every selection; the view hears only of a real change
-    mindmapSourcesSent = text;
-    mindmap.setSources(list);
+    // `publishSources` runs on every selection; a view hears only of a real change
+    if (mindmap && text !== mindmapSourcesSent) { mindmapSourcesSent = text; mindmap.setSources(list); }
+    if (mindmapTab && text !== mindmapTab.sent) { mindmapTab.sent = text; mindmapTab.view.setSources(list); }
   }
   // The same height rule as fitViewport: visualViewport.height is believed only while something that raises a keyboard is focused (iOS Home Screen apps report wrong small heights).
   function fitMindmapView() {
@@ -1860,32 +1860,46 @@
     mindmapView.style.height = mindmapView.style.top = '';
     window.visualViewport?.removeEventListener('resize', fitMindmapView);
     window.visualViewport?.removeEventListener('scroll', fitMindmapView);
-    ui.set({ mindmapLayers: [], mindmapView: null });
+    ui.set({ mindmapLayers: [] });
   }
-  // `open`: { sourceKey, id } of a map to open at once (a mind map column that a reload brings back, pane.mjs). What the view shows is in
-  // `state.mindmapView` ({ screen: 'list' | 'editor', sourceKey?, id?, title }), from the start, so a pane remembers it before the bundle has loaded.
-  // In a pane the view is a mind map column of the multi-column view: its editor has a Maximize button (and Cmd/Ctrl+Shift+Enter), which asks the
-  // top page to maximize this column (or to restore the columns), and it takes the focus only once the person used this pane.
-  // While the top page shows its columns, its own view would be hidden under them: the map opens in a new column instead (Columns.jsx).
-  function openMindmaps({ open = null } = {}) {
+  // While the top page shows its columns, its own view would be hidden under them: the view's Mind maps tab is shown instead (Columns.jsx). A pane
+  // shows no mind map: it asks the top page for that tab.
+  function openMindmaps() {
     if (mindmap) return;
-    if (columnsShown() && ui.actions.addMapColumn) { ui.actions.addMapColumn(); return; }
+    if (PANE) { PANE.post('mindmaps'); return; }
+    if (columnsShown() && ui.actions.showColumnsTab) { ui.actions.showColumnsTab('maps'); return; }
     if (!isWide()) closeTasks();
     mindmapView.hidden = false;
     window.visualViewport?.addEventListener('resize', fitMindmapView);
     window.visualViewport?.addEventListener('scroll', fitMindmapView);
     const list = mindmapSources();
     mindmapSourcesSent = JSON.stringify(list);
-    ui.set({ mindmapView: open ? { screen: 'editor', sourceKey: open.sourceKey, id: open.id, title: '' } : { screen: 'list', title: '' } });
-    const column = PANE ? { inColumn: true, maximized: Boolean(ui.get().paneMaximized), onMaximize: () => PANE.post('maximize'), canFocus: () => PANE.engaged() } : {};
-    mindmap = MindMap.mount(mindmapView, {
-      onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }), sources: list,
-      onView: view => { if (mindmap) ui.set({ mindmapView: view }); }, open, ...column,
-    });
+    mindmap = MindMap.mount(mindmapView, { onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }), sources: list });
     fitMindmapView();
   }
   ui.actions.openMindmaps = openMindmaps;
-  ui.actions.setMindmapMaximized = on => { ui.set({ paneMaximized: on }); if (mindmap && mindmap.setMaximized) mindmap.setMaximized(on); };
+  // The Mind maps tab of the multi-column view (Columns.jsx `MapsTab`): the same view, mounted inside the tab's area right of the navigation rail
+  // (`split`: the list of maps beside the open map) instead of over the whole window. It is mounted the first time the tab is shown and stays while the
+  // view is shown, hidden when the Columns tab is (the open map and the list keep their state); `setActive` tells it whether its keys are its own.
+  // The full-window view of the normal page, if it is still open under the strip, is closed first: one editor at a time.
+  ui.actions.mountMindmapTab = (host, active = true) => {
+    if (!host || mindmapTab) return;
+    if (mindmap) { void mindmap.flush(); closeMindmaps(); }
+    const list = mindmapSources();
+    mindmapTab = { sent: JSON.stringify(list), view: null };
+    mindmapTab.view = MindMap.mount(host, { embedded: true, active, onClose: () => {}, notify: (message, kind) => tell(message, kind), sources: list });
+  };
+  ui.actions.unmountMindmapTab = () => {
+    if (!mindmapTab) return;
+    const { view } = mindmapTab;
+    mindmapTab = null;
+    void view.flush({ keepalive: true }); // the request starts at once; the draft stays on this device anyway
+    view.destroy();
+  };
+  ui.actions.setMindmapTabActive = on => { if (mindmapTab) mindmapTab.view.setActive(on); };
+  // A page that starts on the Mind maps tab drew the tab's element before this script ran: it is mounted now.
+  const waitingTab = document.getElementById('h5-columns-maps-view');
+  if (waitingTab) ui.actions.mountMindmapTab(waitingTab, Boolean(ui.get().columns && ui.get().columns.tab === 'maps'));
 
   // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal. The task sheet neither lists nor creates chats; a chat link opens one (`openChatFromLink`). ──
   const agentView = $('h5-agent');
@@ -2824,7 +2838,7 @@
     publishActivity();
   }
   // The running ('running', also a running sub-agent) and finished-not-seen ('done') terminals of every listed service, for the rail of a maximized
-  // mind map column (Columns.jsx, columns.mjs `columnStatus`): `state.terminalActivity` = { sourceKey: { taskId: { terminalId: state } } }. Only the
+  // column and the column headers (Columns.jsx, columns.mjs `columnStatus`): `state.terminalActivity` = { sourceKey: { taskId: { terminalId: state } } }. Only the
   // top page, which keeps the feeds; set only when it changed.
   function publishActivity() {
     if (PANE) return;

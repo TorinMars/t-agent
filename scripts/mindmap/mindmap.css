@@ -69,3 +69,34 @@
 .mm-key-row { display: flex; justify-content: space-between; gap: 12px; }
 .mm-key-row kbd { padding: 2px 6px; font: inherit; background: #1e1e1e; border-radius: 4px; }
 .mm-loading { margin: 40px; text-align: center; color: rgba(255, 255, 255, .7); font-size: 14px; }
+
+/* The Mind maps tab of the multi-column view (`split`): the list (280px) beside the open map, inside the tab's area right of the navigation rail. */
+.mm-split { display: flex; flex-direction: row; overflow: hidden; overscroll-behavior: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+.mm-split > .mm-view { padding: 0; }
+.mm-split > .mm-list { flex: 0 0 280px; width: 280px; min-width: 0; background: #1a1a1a; border-right: 1px solid rgba(255, 255, 255, .12); }
+.mm-split > .mm-editor { flex: 1 1 auto; min-width: 0; }
+.mm-split .mm-top { padding: 0 4px 0 8px; }
+.mm-split .mm-list .mm-heading { margin-left: 8px; font-size: 16px; }
+.mm-split .mm-icon { width: 40px; height: 40px; }
+.mm-search { flex: none; display: flex; align-items: center; gap: 8px; height: 36px; margin: 8px 12px; padding: 0 10px; border-radius: 4px; color: rgba(255, 255, 255, .6); background: rgba(255, 255, 255, .06); }
+.mm-search:focus-within { outline: 2px solid #90caf9; outline-offset: -2px; }
+.mm-search-input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; color: #fff; font: inherit; font-size: 14px; background: transparent; }
+.mm-search-input::placeholder { color: rgba(255, 255, 255, .5); }
+.mm-split .mm-rows { padding: 0 0 16px; }
+.mm-split .mm-row { padding: 0 4px 0 0; border-bottom: 0; }
+.mm-split .mm-row-open { min-height: 56px; border-radius: 0; padding: 6px 16px; }
+.mm-split .mm-row[data-current] { background: rgba(144, 202, 249, .12); box-shadow: inset 3px 0 0 #90caf9; }
+.mm-split .mm-row[data-current] .mm-row-open:hover { background: transparent; }
+.mm-split .mm-row-title { font-size: 14px; }
+.mm-split .mm-row-open[aria-current="true"] .mm-row-title { color: #90caf9; }
+@media (hover: hover) and (pointer: fine) {
+  .mm-split .mm-row .mm-icon { visibility: hidden; }
+  .mm-split .mm-row:hover .mm-icon, .mm-split .mm-row:focus-within .mm-icon { visibility: visible; }
+}
+.mm-split .mm-source { padding: 12px 16px 4px; }
+.mm-top-gap { display: none; }
+.mm-empty { display: none; }
+.mm-editor[data-empty] .mm-title, .mm-editor[data-empty] .mm-status, .mm-editor[data-empty] #mm-export, .mm-editor[data-empty] #mm-more,
+.mm-editor[data-empty] .mm-canvas, .mm-editor[data-empty] .mm-bar { display: none; }
+.mm-editor[data-empty] .mm-top-gap { display: block; flex: 1; }
+.mm-editor[data-empty] .mm-empty { display: block; flex: 1; margin: 0; padding: 48px 24px; color: rgba(255, 255, 255, .6); font-size: 14px; text-align: center; }

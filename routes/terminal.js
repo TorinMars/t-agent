@@ -17,9 +17,21 @@ const { processCwd, cwdInRoot } = require('../lib/terminal-cwd');
 const { peerFsSettings } = require('../services/peer-fs-settings');
 const { createPresence } = require('../lib/terminal-presence');
 const { reap, reapSync } = require('../services/terminal-reaper');
+const { sharedClock } = require('../lib/terminal-poll');
+
+// The statements of the hot paths (the terminal list, the activity helpers, the desktop window's lookups, the socket's access check) are
+// prepared once, at their first use, and reused: db.prepare compiles the SQL again on every call. Cold paths keep their inline db.prepare.
+const statements = new Map();
+function prepared(sql) {
+  let statement = statements.get(sql);
+  if (!statement) statements.set(sql, statement = db.prepare(sql));
+  return statement;
+}
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs name the implicit `default` terminal, which only older tasks have (lib/task-default-terminal.js).
 const sessions = new Map();
+// Shells taken out of `sessions` that wait for the reaper's look at the process table before they are killed (endShells).
+const ending = new Set();
 // Close codes the browser uses to tell "someone else is using this terminal" from a lost connection.
 const TERMINAL_IN_USE_CLOSE = 4009;
 const TERMINAL_TAKEN_CLOSE = 4010;
@@ -224,8 +236,8 @@ function realDir(dir) {
 // shell starts (before that it follows the task). Answers the configured directory (null when neither the terminal nor the task has one).
 function terminalWorkDir(task, id) {
   const row = id === 'default'
-    ? db.prepare('SELECT work_dir FROM task_default_terminal_dirs WHERE task_id = ?').get(task.id)
-    : db.prepare('SELECT work_dir FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, id);
+    ? prepared('SELECT work_dir FROM task_default_terminal_dirs WHERE task_id = ?').get(task.id)
+    : prepared('SELECT work_dir FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, id);
   return (row && row.work_dir) || task.work_dir || null;
 }
 
@@ -250,6 +262,7 @@ function bindReportedSession(taskId, id, report) {
   if (live) live.currentAgentSessionId = sessionId;
   if (rebind) db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(sessionId, taskId, id);
   if (rebind || running !== sessionId) activityStream.notify(); // the sub-agent count now follows the new session
+  if (rebind) sessionNames.delete(Number(taskId)); // the terminal's name now follows the new session
   return 204;
 }
 
@@ -281,14 +294,14 @@ function terminalId(value) {
 function sessionKey(taskId, id = 'default') { return `${Number(taskId)}:${id}`; }
 
 function defaultRemoved(taskId) {
-  return Boolean(db.prepare('SELECT 1 FROM task_default_terminal_removed WHERE task_id = ?').get(taskId));
+  return Boolean(prepared('SELECT 1 FROM task_default_terminal_removed WHERE task_id = ?').get(taskId));
 }
 
 function assertTerminal(taskId, value) {
   const id = terminalId(value);
   const exists = id === 'default'
     ? !defaultRemoved(taskId)
-    : db.prepare('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+    : prepared('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
   if (!exists) {
     throw Object.assign(new Error('TERMINAL_NOT_FOUND'), { statusCode: 404 });
   }
@@ -304,8 +317,9 @@ const MAX_TERMINAL_TITLE = 40;
 // A Codex session only gets an id once it has a first message, so it is bound here: the oldest unbound Codex terminal takes the oldest unclaimed
 // session of the terminal's own directory that started after the terminal did. Sessions are read per directory: each terminal keeps the
 // directory it was started in (terminalWorkDir), which may differ from the task's current one.
-function withAgentSessions(taskId, rows) {
-  const meta = db.prepare("SELECT t.terminal_id, t.agent, t.agent_session_id, t.agent_started_at, t.title_custom, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.agent IS NOT NULL ORDER BY t.rowid").all(taskId);
+// `names` (a Map, optional) gets terminal id -> session name for every terminal that shows its session's name.
+function withAgentSessions(taskId, rows, names) {
+  const meta = prepared("SELECT t.terminal_id, t.agent, t.agent_session_id, t.agent_started_at, t.title_custom, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.agent IS NOT NULL ORDER BY t.rowid").all(taskId);
   if (!meta.length) return rows;
   const lists = new Map();
   const sessionsOf = (agent, dir) => {
@@ -328,20 +342,39 @@ function withAgentSessions(taskId, rows) {
     if (!item) return row;
     if (item.title_custom) return { ...row, agent: item.agent }; // a name the person gave (at creation or by a rename) wins over the session's name
     const session = item.agent_session_id && sessionsOf(item.agent, item.work_dir).find(entry => entry.id === item.agent_session_id);
+    if (session && names) names.set(row.terminal_id, session.title);
     return { ...row, agent: item.agent, title: session ? session.title : row.title };
   });
+}
+
+// The session names of a task's agent terminals as its last terminal listing found them: task id -> { at, names: Map(terminal id -> name) }.
+// The desktop window's activity list (liveTerminalActivity, read every 5 s) takes the names from here instead of the agents' session files,
+// and asks for a new listing only when they are older than SESSION_NAMES_MS; the page's own listings (every 8 s while its task list is open)
+// keep them fresh for free. At most SESSION_NAMES_MAX tasks, the oldest listing dropped first.
+const SESSION_NAMES_MS = 15000;
+const SESSION_NAMES_MAX = 200;
+const sessionNames = new Map();
+function rememberSessionNames(taskId, names) {
+  const key = Number(taskId);
+  sessionNames.delete(key);
+  sessionNames.set(key, { at: Date.now(), names });
+  if (sessionNames.size > SESSION_NAMES_MAX) sessionNames.delete(sessionNames.keys().next().value);
 }
 
 // Each row also has work_dir: the terminal's own directory (terminalWorkDir), so the page can resolve file links against it and show it
 // when it is not the task's current one.
 // The rows are in the order the person put them in (setTerminalOrder); terminals that order does not name (new ones) come after, oldest first.
 function listTerminals(taskId) {
-  const stored = db.prepare('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
-  const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ?').get(taskId) || { id: taskId, work_dir: null };
-  const defaultDir = defaultRemoved(taskId) ? null : terminalWorkDir(task, 'default');
-  return withAgentSessions(taskId, inStoredOrder(taskId, [...(defaultRemoved(taskId) ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir }]), ...db.prepare(
+  const stored = prepared('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
+  const task = prepared('SELECT id, work_dir FROM tasks WHERE id = ?').get(taskId) || { id: taskId, work_dir: null };
+  const removed = defaultRemoved(taskId);
+  const defaultDir = removed ? null : terminalWorkDir(task, 'default');
+  const names = new Map();
+  const rows = withAgentSessions(taskId, inStoredOrder(taskId, [...(removed ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir }]), ...prepared(
     "SELECT terminal_id, title, work_dir FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
-  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]));
+  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]), names);
+  rememberSessionNames(taskId, names);
+  return rows;
 }
 
 // The order of a task's terminals, as the person dragged them (PUT …/tasks/:id/terminals/order, see "Terminal order" in DESIGN.md). One system_state
@@ -353,7 +386,7 @@ const MAX_TERMINAL_ID = 128;
 const orderKey = taskId => `terminal_order_v1:${Number(taskId)}`;
 
 function storedOrder(taskId) {
-  const row = db.prepare('SELECT value FROM system_state WHERE key = ?').get(orderKey(taskId));
+  const row = prepared('SELECT value FROM system_state WHERE key = ?').get(orderKey(taskId));
   if (!row) return [];
   try {
     const value = JSON.parse(row.value);
@@ -672,6 +705,47 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   return s;
 }
 
+// Takes a terminal's live session out of the map: from this moment the terminal has no shell for every caller (the activity, the page, and
+// a new connection starts a new shell). Answers the session, or null when the terminal has none. Its shell still runs: endShells() ends it.
+function detachSession(taskId, id, reason) {
+  const key = sessionKey(taskId, id);
+  const session = sessions.get(key);
+  if (!session) return null;
+  sessions.delete(key);
+  endAttentionToken(taskId, id);
+  activityStream.notify();
+  session.snapshot.dispose();
+  session.stopShellWatch?.();
+  session.stopFlowWatch?.();
+  session.activity?.stop();
+  const activeWs = session.ws;
+  session.ws = null;
+  if (activeWs && activeWs.readyState === 1) activeWs.close(1000, reason);
+  return session;
+}
+
+// Ends the shells of detached sessions. pty.kill() only sends SIGHUP to the shell, and Codex in the foreground ignores it and keeps its
+// session lock, so the foreground jobs are ended first (services/terminal-reaper.js). The reaper must see the process table while the shells
+// still run; it reads one table for all of them without blocking the server, and the shells are killed as soon as their foreground groups
+// got SIGTERM (at once for shells that have no process id). Until then the sessions wait in `ending`, so a server that exits meanwhile still
+// ends them (shutdownTerminals). A reaper that settles without having said so does not leave a shell behind either.
+function endShells(list) {
+  const live = list.filter(Boolean);
+  if (!live.length) return;
+  for (const session of live) ending.add(session);
+  const kill = () => {
+    for (const session of live) {
+      if (!ending.delete(session)) continue; // killed already
+      try { session.pty.kill(); } catch {}
+    }
+  };
+  try {
+    const pending = reap(live.map(session => session.pty && session.pty.pid), { signalled: kill });
+    if (pending && typeof pending.then === 'function') pending.then(kill, kill);
+    else kill();
+  } catch { kill(); }
+}
+
 /**
  * Terminate the task's server-side PTY. restart-workdir: the next connection creates a brand-new shell in the
  * terminal's own directory (terminalWorkDir: the task work_dir when the terminal was created); close also ends the shell (the history lives in memory only, so every action leaves the next terminal empty); delete also removes the terminal record (the default terminal is marked removed instead).
@@ -685,25 +759,8 @@ function controlSession(taskId, action, requestedTerminalId) {
   }
 
   const selectedId = assertTerminal(id, requestedTerminalId);
-  const key = sessionKey(id, selectedId);
-  const session = sessions.get(key);
-  if (session) {
-    sessions.delete(key);
-    endAttentionToken(id, selectedId);
-    activityStream.notify();
-    session.snapshot.dispose();
-    session.stopShellWatch?.();
-    session.stopFlowWatch?.();
-    session.activity?.stop();
-
-    const activeWs = session.ws;
-    session.ws = null;
-    // pty.kill() only sends SIGHUP to the shell, and Codex in the foreground ignores it and keeps its session lock, so end the
-    // foreground job first. reap() reads the process table synchronously, while the shell still runs; the rest goes on in the background.
-    try { reap([session.pty.pid]).catch(() => {}); } catch {}
-    try { session.pty.kill(); } catch {}
-    if (activeWs && activeWs.readyState === 1) activeWs.close(1000, `terminal ${action}`);
-  }
+  const session = detachSession(id, selectedId, `terminal ${action}`);
+  endShells([session]);
 
   if (action === 'delete' && selectedId === 'default') {
     db.prepare('INSERT OR IGNORE INTO task_default_terminal_removed (task_id) VALUES (?)').run(id);
@@ -790,6 +847,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   }
   s.ws = ws;
   s.wsClientId = clientId;
+  sharedClock.wake(); // someone is watching: the terminals are polled at full speed again
 
   s.ready = false;
   // proto=2: control messages are binary frames; every text frame is terminal input (see public/js/terminal-protocol.js).
@@ -816,7 +874,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
       ws.close(1008, 'Authentication required');
       return false;
     }
-    if (!db.prepare('SELECT 1 FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login)) {
+    if (!prepared('SELECT 1 FROM tasks WHERE id = ? AND user_id = ?').get(taskId, sessionUser.login)) {
       ws.close(1008, 'task not found');
       return false;
     }
@@ -887,16 +945,24 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   });
 }
 
-/** Activity of every live terminal of the given tasks: { [taskId]: { [terminalId]: state } }. */
+// Whether listTerminals would list this terminal: the default terminal unless it was removed, a row that is not a legacy phone shell (h5-...).
+function isListedTerminal(taskId, id) {
+  if (id === 'default') return !defaultRemoved(taskId);
+  return !id.startsWith('h5-') && Boolean(prepared('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id));
+}
+
+/** Activity of every live terminal of the given tasks: { [taskId]: { [terminalId]: state } } (idle terminals are left out).
+ *  Read from the live shells: only a shell can be busy, so no terminal list and no agent session file is read (this runs for every open
+ *  activity stream on every change). A shell that is not idle counts when its terminal is still listed (one row lookup). */
 function activitySnapshot(taskIds) {
+  const wanted = new Set();
+  for (const taskId of taskIds) wanted.add(Number(taskId));
   const result = {};
-  for (const taskId of taskIds) {
-    for (const item of listTerminals(taskId)) {
-      const session = sessions.get(sessionKey(taskId, item.terminal_id));
-      const state = session && session.activity ? session.activity.state() : 'idle';
-      if (state === 'idle') continue;
-      (result[taskId] ||= {})[item.terminal_id] = state;
-    }
+  for (const s of sessions.values()) {
+    if (!wanted.has(s.taskId)) continue;
+    const state = s.activity ? s.activity.state() : 'idle';
+    if (state === 'idle' || !isListedTerminal(s.taskId, s.terminalId)) continue;
+    (result[s.taskId] ||= {})[s.terminalId] = state;
   }
   return result;
 }
@@ -908,7 +974,7 @@ function subagentSnapshot(taskIds, home) {
   const result = {};
   const wanted = taskIds ? new Set(taskIds.map(String)) : null; // null: every task (the push stream's shared refresh)
   // The sub-agent logs live under the directory the terminal's Claude runs in (its own directory, not the task's current one).
-  const rows = db.prepare("SELECT t.task_id, t.terminal_id, t.agent_session_id, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.agent = 'claude' AND t.agent_session_id IS NOT NULL").all();
+  const rows = prepared("SELECT t.task_id, t.terminal_id, t.agent_session_id, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.agent = 'claude' AND t.agent_session_id IS NOT NULL").all();
   for (const row of rows) {
     const live = sessions.get(sessionKey(row.task_id, row.terminal_id));
     if ((wanted && !wanted.has(String(row.task_id))) || !live) continue;
@@ -941,7 +1007,7 @@ function updateIdleTerminals() {
   for (const s of sessions.values()) {
     if (s.exiting) continue;
     const foreground = foregroundCommand(s.pty);
-    const row = s.terminalId === 'default' ? null : db.prepare('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
+    const row = s.terminalId === 'default' ? null : prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
     const agent = (row && row.agent) || null;
     terminals.push({
       state: s.activity ? s.activity.state() : 'idle',
@@ -962,7 +1028,23 @@ const activityStream = createActivityStream({
   activity: activitySnapshot,
   subagents: () => subagentSnapshot(null),
 });
-function serveActivityStream(req, res, taskIds) { activityStream.serve(req, res, taskIds); }
+function serveActivityStream(req, res, taskIds) {
+  activityStream.serve(req, res, taskIds);
+  sharedClock.wake();
+}
+
+// Whether someone is looking at this server's terminals: a page has a terminal open (its WebSocket is attached), an activity stream is open,
+// or the desktop window read the activity a moment ago (it reads it every 5 s). While nobody is, the clock that polls every terminal
+// (lib/terminal-poll.js) runs every 2 s instead of every 500 ms; the first watcher brings the full speed back at once (sharedClock.wake()).
+// Hook reports and PTY output still reach the trackers the moment they happen, so only what a poll decides comes later.
+const WIDGET_WATCH_MS = 15000;
+let widgetReadAt = 0;
+function watched() {
+  if (activityStream.size() > 0 || Date.now() - widgetReadAt < WIDGET_WATCH_MS) return true;
+  for (const s of sessions.values()) if (s.ws && s.ws.readyState === 1) return true;
+  return false;
+}
+sharedClock.watchedBy(watched);
 
 function acknowledgeActivity(taskId, requestedTerminalId) {
   const id = assertTerminal(taskId, requestedTerminalId);
@@ -994,7 +1076,7 @@ function terminalInfo(taskId, requestedTerminalId) {
   let agent = null;
   if (Number.isInteger(Number(taskId)) && Number(taskId) > 0 && typeof requestedTerminalId === 'string' && requestedTerminalId !== 'default') {
     try {
-      const row = db.prepare('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId);
+      const row = prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId);
       agent = (row && row.agent) || null;
     } catch { agent = null; }
   }
@@ -1023,8 +1105,12 @@ function sendToTerminal(taskId, requestedTerminalId, text, { enterDelayMs = REPL
 
 // The live terminals of every task that are not idle, for the window's activity list: [{ task_id, task_title, terminal_id, title, agent, state, since }],
 // state 'running' | 'waiting' (done at a permission prompt: awaitingAnswer) | 'done' (finished, not acknowledged yet); since: ms of the last state change.
-// The title and agent are the ones the task's terminal list shows (listTerminals: an agent terminal is named after its session).
+// The title and agent are the ones the task's terminal list shows (listTerminals: an agent terminal is named after its session). They are read
+// from the terminal's own row; only the name of an agent session comes from the last terminal listing (sessionNames), which is made again here
+// when it is older than SESSION_NAMES_MS, so a call inside that time reads no session file and lists no folder.
 function liveTerminalActivity() {
+  widgetReadAt = Date.now();
+  sharedClock.wake();
   const byTask = new Map();
   for (const s of sessions.values()) {
     if (!s.pty || s.startupError || s.exiting || !s.activity) continue;
@@ -1035,18 +1121,41 @@ function liveTerminalActivity() {
   }
   const out = [];
   for (const [taskId, live] of byTask) {
-    const task = db.prepare('SELECT title FROM tasks WHERE id = ?').get(taskId);
+    const task = prepared('SELECT title FROM tasks WHERE id = ?').get(taskId);
     if (!task) continue;
     let rows = [];
-    try { rows = listTerminals(taskId); } catch { rows = []; }
-    const listed = new Map(rows.map(row => [row.terminal_id, row]));
-    for (const { s, state } of live) {
-      const row = listed.get(s.terminalId);
-      if (!row) continue; // a legacy phone shell (h5-...) or a terminal deleted meanwhile
-      out.push({ task_id: String(taskId), task_title: task.title || '', terminal_id: s.terminalId, title: row.title || '', agent: row.agent || null, state, since: s.activity.since() });
-    }
+    try { rows = live.map(({ s }) => listedTerminal(taskId, s.terminalId)); } catch { rows = []; }
+    const names = rows.some(row => row && row.follows) ? currentSessionNames(taskId) : null;
+    live.forEach(({ s, state }, index) => {
+      const row = rows[index];
+      if (!row) return; // a legacy phone shell (h5-...) or a terminal deleted meanwhile
+      const title = (row.follows && names && names.get(s.terminalId)) || row.title;
+      out.push({ task_id: String(taskId), task_title: task.title || '', terminal_id: s.terminalId, title: title || '', agent: row.agent || null, state, since: s.activity.since() });
+    });
   }
   return out;
+}
+
+// One terminal as the terminal list shows it, without its session: { title, agent, follows }, or null when the list does not have it.
+// `follows`: an agent terminal the person did not name, which shows its session's name when that is known.
+function listedTerminal(taskId, id) {
+  if (id === 'default') {
+    if (defaultRemoved(taskId)) return null;
+    const stored = prepared('SELECT title FROM task_default_terminal_titles WHERE task_id = ?').get(taskId);
+    return { title: stored ? stored.title : 'Terminal 1', agent: null, follows: false };
+  }
+  if (id.startsWith('h5-')) return null;
+  const row = prepared('SELECT title, agent, title_custom FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+  return row ? { title: row.title, agent: row.agent || null, follows: Boolean(row.agent) && !row.title_custom } : null;
+}
+
+// The session names of a task's agent terminals, at most SESSION_NAMES_MS old (a Map; empty when the listing fails).
+function currentSessionNames(taskId) {
+  const known = sessionNames.get(Number(taskId));
+  if (known && Date.now() - known.at < SESSION_NAMES_MS) return known.names;
+  try { listTerminals(taskId); } catch { return new Map(); }
+  const fresh = sessionNames.get(Number(taskId));
+  return fresh ? fresh.names : new Map();
 }
 
 // True while a page shows this terminal in the foreground (see lib/terminal-presence.js); false for an unknown terminal. With `since` (a time in
@@ -1062,22 +1171,30 @@ function isLocalTerminal(taskId, requestedTerminalId) {
   if (!Number.isInteger(Number(taskId)) || Number(taskId) < 1 || typeof requestedTerminalId !== 'string' || !requestedTerminalId) return false;
   if (sessions.has(sessionKey(taskId, requestedTerminalId))) return true;
   if (requestedTerminalId === 'default') return false; // every task has one: the id alone says nothing
-  try { return Boolean(db.prepare('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId)); } catch { return false; }
+  try { return Boolean(prepared('SELECT 1 FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId)); } catch { return false; }
 }
 const presenceSnapshot = () => presence.snapshot();
 
+// Closes every shell of a task (legacy phone-only shells included: they are not listed any more, but one may still run). The shells are
+// taken from the live sessions, so no terminal list and no session file is read, and one look at the process table serves all of them.
 function closeTaskTerminals(taskId) {
-  // Legacy phone-only shells are not listed any more, but one may still be running.
-  const phone = db.prepare("SELECT terminal_id FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) = 'h5-'").all(taskId);
-  for (const item of [...listTerminals(taskId), ...phone]) controlSession(taskId, 'close', item.terminal_id);
+  const prefix = `${Number(taskId)}:`;
+  const closed = [];
+  for (const [key, session] of [...sessions]) {
+    if (key.startsWith(prefix)) closed.push(detachSession(session.taskId, session.terminalId, 'terminal close'));
+  }
+  sessionNames.delete(Number(taskId));
+  endShells(closed);
 }
 
-// On server exit (signal, update restart): end every terminal's foreground job (see controlSession), then the shells. Synchronous, so it
-// works inside process.on('exit'); idempotent and never throws.
+// On server exit (signal, update restart): end every terminal's foreground job (see endShells), then the shells; the shells of terminals
+// closed a moment ago that still wait for the reaper are included. Synchronous, so it works inside process.on('exit'); idempotent and
+// never throws.
 function shutdownTerminals() {
   try {
-    const live = [...sessions.values()];
+    const live = [...sessions.values(), ...ending];
     sessions.clear();
+    ending.clear();
     reapSync(live.map(session => session.pty && session.pty.pid));
     for (const session of live) { try { session.pty.kill(); } catch {} }
   } catch {}

@@ -2,7 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
-const { foregroundGroups, readProcessTable, reapSync, reap } = require('../services/terminal-reaper');
+const childProcess = require('node:child_process');
+const { foregroundGroups, readProcessTable, readProcessTableAsync, reapSync, reap } = require('../services/terminal-reaper');
 
 const row = (pid, ppid, pgid, tpgid) => `${pid} ${ppid} ${pgid} ${tpgid}`;
 const esrch = () => Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
@@ -114,6 +115,84 @@ test('reap resolves at once when nothing needs reaping and never rejects', async
   assert.deepEqual(await reap([100], { kill: never, table: () => null }), { groups: [], killed: [] });
   const gone = () => { throw esrch(); };
   assert.deepEqual(await reap([100], { kill: gone, table: () => row(100, 1, 100, 200) }), { groups: [200], killed: [] });
+});
+
+test('reap reads the table without blocking: nothing is signalled before it arrives, and the shells may be killed only after the SIGTERMs', async () => {
+  const keep = setTimeout(() => {}, 5000);
+  try {
+    const ps = [row(100, 1, 100, 200), row(101, 1, 101, 300)].join('\n');
+    const { kill, calls } = fakeKill(new Set([200, 300]), { 200: ['SIGTERM'] });
+    const order = [];
+    let deliver;
+    let tables = 0;
+    const table = () => { tables += 1; return new Promise(resolve => { deliver = resolve; }); };
+    const pending = reap([100, 101], { graceMs: 30, kill, table, signalled: () => order.push(`signalled after ${calls.length} signals`) });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [], 'the table has not arrived: no signal yet');
+    assert.deepEqual(order, [], 'and the caller must not kill the shells yet (their rows name the foreground groups)');
+    deliver(ps);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, [[-200, 'SIGTERM'], [-300, 'SIGTERM']]);
+    assert.deepEqual(order, ['signalled after 2 signals'], 'told once, right after the SIGTERMs and before the grace period');
+    assert.deepEqual(await pending, { groups: [200, 300], killed: [300] });
+    assert.deepEqual(order, ['signalled after 2 signals']);
+    assert.equal(tables, 1, 'one table for both shells');
+  } finally {
+    clearTimeout(keep);
+  }
+});
+
+test('reap reads one table for any number of shells', async () => {
+  let tables = 0;
+  const shells = Array.from({ length: 12 }, (_, index) => 100 + index);
+  const ps = shells.map(pid => row(pid, 1, pid, pid + 1000)).join('\n');
+  const { kill, calls } = fakeKill(new Set(), {});
+  const result = await reap(shells, { kill, table: async () => { tables += 1; return ps; } });
+  assert.equal(tables, 1, 'before: one table per terminal when a task was closed');
+  assert.deepEqual(result.groups, shells.map(pid => pid + 1000));
+  assert.equal(calls.length, 12);
+});
+
+test('reap always tells the caller, also with no process id, no table, a failing table or a failing callback', async () => {
+  const never = () => assert.fail('must not run');
+  const told = [];
+  const tell = name => () => told.push(name);
+  // Shells without a process id (not started, a stand-in): no table is read and the caller is told before reap() returns.
+  const none = reap([undefined, null, 0, -5, 'x'], { kill: never, table: never, signalled: tell('no pid') });
+  assert.deepEqual(told, ['no pid']);
+  assert.deepEqual(await none, { groups: [], killed: [] });
+  const empty = reap([], { kill: never, table: never, signalled: tell('empty') });
+  assert.deepEqual(told, ['no pid', 'empty']);
+  await empty;
+  assert.deepEqual(await reap([100], { kill: never, table: async () => null, signalled: tell('no table') }), { groups: [], killed: [] });
+  assert.deepEqual(await reap([100], { kill: never, table: () => Promise.reject(new Error('ps failed')), signalled: tell('rejected') }), { groups: [], killed: [] });
+  assert.deepEqual(await reap([100], { kill: never, table: () => { throw new Error('ps failed'); }, signalled: tell('thrown') }), { groups: [], killed: [] });
+  assert.deepEqual(told, ['no pid', 'empty', 'no table', 'rejected', 'thrown']);
+  const gone = () => { throw esrch(); };
+  assert.deepEqual(await reap(['100'], { kill: gone, table: () => row(100, 1, 100, 200), signalled: () => { throw new Error('callback failed'); } }), { groups: [200], killed: [] });
+});
+
+test('reap by default reads the table in the background and never with spawnSync', { skip: process.platform === 'win32' }, async t => {
+  const sync = t.mock.method(childProcess, 'spawnSync');
+  const background = t.mock.method(childProcess, 'execFile');
+  let told = 0;
+  // The shell is this process: its row is there, and its foreground group is its own or the server's, so nothing is signalled.
+  const pending = reap([process.pid], { kill: () => assert.fail('nothing to signal'), signalled: () => { told += 1; } });
+  assert.equal(told, 0, 'reap() returned before the table was read');
+  assert.deepEqual(await pending, { groups: [], killed: [] });
+  assert.equal(told, 1);
+  assert.equal(sync.mock.callCount(), 0, 'the event loop was never blocked (before: spawnSync with a 1.5 s limit)');
+  assert.equal(background.mock.callCount(), 1);
+  assert.deepEqual(background.mock.calls[0].arguments.slice(0, 2), ['ps', ['-axo', 'pid=,ppid=,pgid=,tpgid=']]);
+});
+
+test('readProcessTableAsync gives the same table as readProcessTable', { skip: process.platform === 'win32' }, async () => {
+  const text = await readProcessTableAsync();
+  assert.equal(typeof text, 'string');
+  const mine = text.split('\n').map(l => l.trim().split(/\s+/).map(Number)).find(cols => cols[0] === process.pid);
+  assert.ok(mine, 'the table has a row for this process');
+  assert.equal(mine.length, 4);
+  assert.equal(mine[1], process.ppid);
 });
 
 test('readProcessTable lists the current process', { skip: process.platform === 'win32' }, () => {

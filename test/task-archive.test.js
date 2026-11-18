@@ -112,6 +112,11 @@ const archive = id => call('POST', `${local}/api/tasks/${id}/archive`);
 const restore = id => call('POST', `${local}/api/tasks/${id}/restore`);
 const titles = rows => rows.map(item => item.title);
 const liveSessionCount = () => shells.filter(item => !item.killed).length;
+// A closed shell is killed once the reaper has read the process table (the fake PTY has a real process id, so a real table is read, without blocking).
+const until = async (check, what) => {
+  for (let turn = 0; turn < 300 && !check(); turn += 1) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(check(), what);
+};
 
 class Socket extends EventEmitter {
   readyState = 1;
@@ -176,7 +181,7 @@ test('archive really ends the live terminals, and an archived task starts no she
   assert.equal(shells.length, before + 1);
   const pty = shells.at(-1);
   await archive(task.id);
-  assert.equal(pty.killed, true, 'the shell was killed');
+  await until(() => pty.killed, 'the shell was killed');
   assert.equal(socket.code, 1000, 'the open socket was closed');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(task.id, created.terminal_id).n, 1);
 
@@ -208,7 +213,7 @@ test('an older task with the implicit default terminal is closed and refused too
   attach(task, 'default');
   assert.equal(shells.length, before + 1);
   await archive(task.id);
-  assert.equal(shells.at(-1).killed, true);
+  await until(() => shells.at(-1).killed, 'the shell was killed');
   assert.equal(attach(task, 'default').reason, 'TASK_ARCHIVED');
   assert.equal(shells.length, before + 1);
 });
@@ -427,7 +432,7 @@ test('agent chats: the running turn stops, the queue stays and is not sent, new 
   assert.equal(chat.activity().queued, 1, 'the queue counts again');
 });
 
-test('no shell is left running by this file', () => {
+test('no shell is left running by this file', async () => {
   for (const item of db.prepare('SELECT id FROM tasks').all()) terminal.closeTaskTerminals(item.id);
-  assert.equal(liveSessionCount(), 0);
+  await until(() => liveSessionCount() === 0, 'every shell was killed');
 });

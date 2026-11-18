@@ -87,10 +87,15 @@
 | Wheel strip spring (full-screen program): up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the spring thumb, 14px (direction marks inside the thin strip, not buttons) |
 | Terminal width switch (header, Fit / Wide) | column-width | not looked up (Ant Design `ColumnWidthOutlined`, the same outline as in collection 9402) | `columnWidth` in `Icons.jsx`, 22px |
 | Multi-column view switch (header of a wide screen, and the first button of the strip's bar) | project | 4765975 | `columns` in `Icons.jsx`, 22px in the header, 20px in the bar; a board with three columns |
-| Add column (multi-column view bar) | plus | 7834345 | `add`, 18px |
-| Close column (bar above each column) | close | 4767096 | `close`, 14px |
+| Add column ("+ Column", multi-column view bar) | plus | 7834345 | `add`, 14px, the start icon of the text button |
+| Close column (header of each column) | close | 4767096 | `close`, 14px |
+| Drag grip (header of each column, pointer input only, decorative) | holder | not looked up (Ant Design `HolderOutlined`, the same outline as in collection 9402) | `holder` in `Icons.jsx`, 14px |
+| Opens a menu or sheet below ("Project · session ▾" of a column header, "N columns ▾" of the bar; decorative) | down | not looked up (Ant Design `DownOutlined`, the same icon as in collection 9402) | `down` in `Icons.jsx`, 12px |
+| Column actions ("⋯" of a column header) | ellipsis | 4767094 | `taskMore`, 18px |
+| Terminal width (column header) | column-width | not looked up (Ant Design `ColumnWidthOutlined`) | `columnWidth`, 18px |
+| Maximize / Restore a column (column header) | expand / compress | not looked up (Ant Design `ExpandOutlined` / `CompressOutlined`) | `maximize` / `restore`, 16px |
 | Add mind map column (multi-column view bar) | apartment | 5756280 | `mindmap`, 18px, the same icon as the mind map entry |
-| Mind map column tab (multi-column view bar, decorative) | apartment | 5756280 | `mindmap`, 14px, before the map name |
+| Mind map column (its header and the column list, decorative) | apartment | 5756280 | `mindmap`, 14px, before the map name |
 | Maximize a column (mind map editor bar) | expand | not looked up (Ant Design `ExpandOutlined`, the same outline as in collection 9402) | `maximize` in `Icons.jsx`; `fullscreen` is already Fit map |
 | Restore the columns (mind map editor bar while maximized, top of the rail) | compress | not looked up (Ant Design `CompressOutlined`, the same outline as in collection 9402) | `restore` in `Icons.jsx`, 20px in the rail |
 | Terminal on-screen keyboard: letters, digits, symbols, `123`, `ABC`, `#+=`, Space | none | none | text labels (the layer keys are named "Numbers and symbols", "Letters", "More symbols") |

@@ -10,12 +10,18 @@
 // Scrolling (1440x900, 5 columns): each column is a quarter of the strip (360px), the strip overflows with its own scrollbar and edge shadows only where columns are hidden; a sideways wheel inside a pane scrolls the strip and a
 // vertical one does not; Shift+wheel over the top bar scrolls it; Ctrl+Alt+Right inside a pane moves the focus and scrolls, and never reaches the
 // terminal; a new column is scrolled into view; 12 columns, not 13; with reduced motion the strip scrolls at once.
-// Tabs (1440x900): one per column in the top bar with the device tag and the names from the panes; a tab click focuses its column; a tab held or
-// dragged with the mouse reorders the tabs and the columns (the columns slide, no pane is reloaded, their DOM order never changes), the order is stored
-// and back after a reload; Escape; Ctrl+Alt+Shift+Left / Right from the top page and from inside a pane; 12 tabs scroll on one line; close from a tab.
-// A touch screen at 1280x800 (tap, a moving finger, a held finger). Reduced motion: moves are instant.
-// H5_SHOT_DIR=<dir> saves screenshots of the header switch, of the strip at 1920x1080, of 5 overflowing columns at 1440x900, of the tab row and of a
-// tab mid-drag (2x) there, and of the top bar with the Update button's red dot (columns-update-bar.png, 2x).
+// Headers (1440x900): no tab strip; one header per column right above its pane with the device tag and the names from the panes (the panes draw no
+// header of their own); a click on a header focuses its column; the actions show on hover or keyboard focus (the focused column always shows "⋯" and
+// close); "Project · session ▾" opens and closes that pane's task sheet; every item of the "⋯" menu (terminal width both ways, the width choices,
+// maximize and restore, rename with the field focused in the pane, restart asking first, reload of that pane only, close); running and needs you from
+// the terminal activity, the bar's summary and "1 needs you" focusing that column; the column list with state words, choosing a column; a header held
+// or dragged with the mouse reorders the columns (a lifted copy and a line where it lands, the columns slide on the drop, no pane is reloaded, their DOM
+// order never changes), the order is stored and back after a reload; Escape; Ctrl+Alt+Shift+Left / Right from the top page and from inside a pane;
+// 12 columns in the list, the last one chosen; close from a header. A touch screen at 1280x800 (44px headers with "⋯" and close always shown, tap, a
+// moving finger, a held finger). Reduced motion: moves are instant.
+// H5_SHOT_DIR=<dir> saves screenshots of the header switch, of the strip at 1920x1080, of 5 overflowing columns at 1440x900, of the headers, of a
+// column that needs the person, of the "⋯" menu, of the column list, of a header mid-drag (2x), of the touch headers, and of the top bar with the
+// Update button's red dot (columns-update-bar.png, 2x).
 // Update (1440x900): #h5-columns-update is the first button of the top bar, left of the switch, with the header updater's red dot; it opens the same
 // dialog above the strip and gets the focus back; opening the columns adds no second update-status poll; the header button still works.
 const { chromium } = require('playwright');
@@ -162,12 +168,22 @@ async function shownTerminal(page, name) {
 }
 
 
-// ── Tabs and reordering ──
-const tabIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId));
+// ── Column headers and reordering ──
 const domIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns .h5-column')].map(el => el.dataset.paneId));
 // The shown columns from left to right as laid out (offsetLeft in the strip: a slide in progress does not count).
 const placeIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns .h5-column')].filter(el => el.offsetParent).sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId));
-const tabOf = id => `#h5-columns-tabs .h5-column-tab[data-pane-id="${id}"]`;
+// The headers in the order they are seen: each is inside its column, so they follow the columns.
+const headIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns .h5-column-head')].filter(el => el.offsetParent).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left).map(el => el.dataset.paneId));
+const headOf = id => `#h5-columns .h5-column-head[data-pane-id="${id}"]`;
+const actOf = (id, action) => `${headOf(id)} [data-action="${action}"]`;
+// Which of a header's action buttons are drawn (display is not none).
+const shownActs = (page, id) => page.evaluate(sel => [...document.querySelectorAll(`${sel} .h5-column-act`)].filter(el => getComputedStyle(el).display !== 'none').map(el => el.dataset.action), headOf(id));
+// A column closed from its header: the pointer goes over the header (its actions show on hover), then on its close button.
+async function closeFromHeader(page, id) {
+  await page.locator(headOf(id)).scrollIntoViewIfNeeded();
+  await page.locator(`${headOf(id)} .h5-column-dot`).hover();
+  await page.locator(actOf(id, 'close')).click();
+}
 // A mark in each pane's window and a count of iframe loads: a pane that was reloaded (its iframe moved in the DOM, or loaded again) loses its mark.
 const markPanes = page => page.evaluate(() => {
   window.paneLoads = 0;
@@ -190,10 +206,10 @@ const watchMoves = page => page.evaluate(() => {
   tick();
 });
 const movedColumns = page => page.evaluate(() => { cancelAnimationFrame(window.moveWatch); return [...window.columnMoves].sort(); });
-const settled = page => page.waitForFunction(() => !document.querySelector('.h5-column-tab-float') && document.getAnimations().filter(a => a.playState === 'running' && a.effect && a.effect.target && a.effect.target.closest && a.effect.target.closest('.h5-column, .h5-column-tab')).length === 0, null, { timeout: 3000 });
-// A mouse press on a tab, an optional hold, a move along the row to x in steps, and the release (`midway` runs before it).
+const settled = page => page.waitForFunction(() => !document.querySelector('.h5-column-head-float') && document.getAnimations().filter(a => a.playState === 'running' && a.effect && a.effect.target && a.effect.target.closest && a.effect.target.closest('.h5-column')).length === 0, null, { timeout: 3000 });
+// A mouse press on a header (on its state dot, not a button), an optional hold, a move along the strip to x in steps, and the release (`midway` runs before it).
 async function mouseDrag(page, id, toX, { hold = false, steps = 12, midway } = {}) {
-  const box = await page.locator(tabOf(id)).boundingBox();
+  const box = await page.locator(`${headOf(id)} .h5-column-dot`).boundingBox();
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
   await page.mouse.move(x, y);
@@ -203,12 +219,14 @@ async function mouseDrag(page, id, toX, { hold = false, steps = 12, midway } = {
   if (midway) await midway();
   await page.mouse.up();
 }
-const tabCenter = async (page, id) => { const box = await page.locator(tabOf(id)).boundingBox(); return box.x + box.width / 2; };
+const columnCenter = async (page, id) => { const box = await page.locator(headOf(id)).boundingBox(); return box.x + box.width / 2; };
 const said = page => page.locator('#h5-columns-live').textContent();
-// The panes say their task and session; wait until every given tab shows a name from its pane.
+// The panes say their task and session; wait until every given header shows a session from its pane.
 async function panesNamed(page, ids) {
-  await page.waitForFunction(list => list.every(id => { const el = document.querySelector(`#h5-columns-tabs .h5-column-tab[data-pane-id="${id}"] .h5-column-tab-name`); return el && el.textContent.includes(' · '); }), ids, { timeout: 10000 });
+  await page.waitForFunction(list => list.every(id => document.querySelector(`#h5-columns .h5-column-head[data-pane-id="${id}"] .h5-column-session`)), ids, { timeout: 10000 });
 }
+const headName = (page, id) => page.evaluate(sel => { const el = document.querySelector(sel); return [el.querySelector('.h5-column-title'), el.querySelector('.h5-column-session')].filter(Boolean).map(node => node.textContent).join(' '); }, headOf(id));
+const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneInbox || []).filter(([pane, data]) => pane === own && data.event === kind).map(([, data]) => data), [id, event]);
 
 (async () => {
   // Scrollbars are drawn (headless Chromium hides them by default), so the strip's own scrollbar takes its place as on a real screen.
@@ -248,17 +266,21 @@ async function panesNamed(page, ids) {
       assert.equal(await page.locator('#h5-columns-toggle').getAttribute('aria-pressed'), 'true');
       assert.equal(await page.locator('#h5-columns-toggle').getAttribute('title'), 'Multi-column view');
       assert.equal(await page.locator('#h5-columns-add').getAttribute('aria-label'), 'Add column');
-      assert.equal(await page.locator('.h5-column-tab-close').first().getAttribute('title'), 'Close column');
-      // The tabs are in the top bar; a column has no bar of its own (the iframe starts at the column's top).
+      assert.equal(await page.locator('.h5-column-head [data-action="close"]').first().getAttribute('title'), 'Close column');
+      // No tab strip: each column has one header, drawn by the top page at the column's top, right above its iframe.
       const fit = await page.evaluate(() => {
         const strip = document.getElementById('h5-columns-strip');
         const column = document.querySelector('.h5-column');
-        return { scroll: strip.scrollWidth, client: strip.clientWidth, left: strip.scrollLeft, width: column.getBoundingClientRect().width, bar: document.getElementById('h5-columns-bar').getBoundingClientRect().bottom, top: column.getBoundingClientRect().top, frame: column.querySelector('iframe').getBoundingClientRect().top, ownBars: document.querySelectorAll('.h5-column-bar').length, snap: getComputedStyle(strip).scrollSnapType };
+        const head = column.querySelector(':scope > .h5-column-head');
+        return { scroll: strip.scrollWidth, client: strip.clientWidth, left: strip.scrollLeft, width: column.getBoundingClientRect().width, bar: document.getElementById('h5-columns-bar').getBoundingClientRect().bottom, top: column.getBoundingClientRect().top, headTop: head.getBoundingClientRect().top, headBottom: head.getBoundingClientRect().bottom, headHeight: head.getBoundingClientRect().height, frame: column.querySelector('iframe').getBoundingClientRect().top, heads: document.querySelectorAll('.h5-column .h5-column-head').length, tabs: document.querySelectorAll('#h5-columns-tabs, .h5-column-tab').length, snap: getComputedStyle(strip).scrollSnapType };
       });
       assert.ok(fit.scroll > fit.client + 50, `${label}: five columns do not fit: the strip scrolls (${JSON.stringify(fit)})`);
       assert.ok(Math.abs(fit.width - minWidth) <= 1, `${label}: each stays a quarter of the strip, ${minWidth} (${fit.width})`);
       await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1; }, null, { timeout: 3000 });
-      assert.ok(fit.bar <= fit.frame + 0.5 && Math.abs(fit.frame - fit.top) <= 0.5 && fit.ownBars === 0, `${label}: the tabs are above the panes and a column has no bar of its own (${JSON.stringify(fit)})`);
+      assert.ok(fit.bar <= fit.top + 0.5 && Math.abs(fit.headTop - fit.top) <= 0.5 && Math.abs(fit.headBottom - fit.frame) <= 0.5, `${label}: the header is at the column's top, right above its pane (${JSON.stringify(fit)})`);
+      assert.equal(fit.heads, 5, `${label}: one header per column`);
+      assert.equal(fit.tabs, 0, `${label}: no tab strip`);
+      assert.equal(fit.headHeight, 38, `${label}: a 38px header with a mouse`);
       assert.equal(fit.snap, 'none', `${label}: no snapping (a small sideways scroll stays where it is)`);
       await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       // No focus is taken on load by the top page: it calls no focus on an iframe. (The page inside each iframe is today the normal page, which
@@ -277,7 +299,8 @@ async function panesNamed(page, ids) {
       let b = await box(1);
       await page.mouse.click(b.x + b.width / 2, b.y + 120);
       await page.waitForFunction(id => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === id; }, ids[1], { timeout: 3000 });
-      assert.equal(await page.locator('.h5-column[data-focused] .h5-column-outline').count(), 1, `${label}: the focused column has its outline`);
+      assert.equal(await page.locator('.h5-column[data-focused] > .h5-column-head[data-focused]').count(), 1, `${label}: the focused column's header is picked out`);
+      assert.equal(await page.locator('.h5-column-outline').count(), 0, `${label}: no outline around the column any more`);
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), ids[1], `${label}: its iframe has the focus`);
       b = await box(4);
       await page.mouse.click(b.x + 60, b.y + 120); // the fifth column is partly hidden: a click on what shows of it focuses it
@@ -287,16 +310,17 @@ async function panesNamed(page, ids) {
       assert.equal(await page.locator('.h5-column[data-focused]').count(), 1, `${label}: one focused column`);
 
       // Messages: a pane about itself is read; one about another column, one from the top page and one from a foreign origin are ignored.
-      const nameOf = index => page.locator('.h5-column-tab-name').nth(index).textContent();
-      assert.equal(await nameOf(0), 'Column 1');
+      const nameOf = index => page.locator('.h5-column-head .h5-column-title').nth(index).textContent();
+      // (A new pane has said that it shows no task yet: "Choose a task", where a pane that said nothing would be "Column N".)
+      assert.match(await nameOf(0), /^(Column 1|Choose a task)$/);
       await paneFrame(page, ids[0]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'title', title: 'Fix login', session: 'Terminal 1' }, location.origin), ids[0]);
-      await page.waitForFunction(() => document.querySelector('.h5-column-tab-name').textContent === 'Fix login · Terminal 1', null, { timeout: 3000 });
+      await page.waitForFunction(() => document.querySelector('.h5-column-head .h5-column-title').textContent === 'Fix login' && document.querySelector('.h5-column-head .h5-column-session').textContent === '\u00b7 Terminal 1', null, { timeout: 3000 });
       assert.equal(await page.locator('#h5-columns iframe').first().getAttribute('title'), 'Column 1: Fix login · Terminal 1');
       await paneFrame(page, ids[0]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'title', title: 'Spoofed' }, location.origin), ids[1]);
       await page.evaluate(id => window.postMessage({ type: 't-agent-pane', paneId: id, event: 'title', title: 'From the top' }, location.origin), ids[1]);
       await paneFrame(page, ids[0]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'ready' }, location.origin), ids[0]);
       await page.waitForFunction(id => document.querySelector(`.h5-column[data-pane-id="${id}"][data-ready]`), ids[0], { timeout: 3000 });
-      assert.equal(await nameOf(1), 'Column 2', `${label}: a message about another column, or from the top page, is ignored`);
+      assert.match(await nameOf(1), /^(Column 2|Choose a task)$/, `${label}: a message about another column, or from the top page, is ignored`);
       // A pane's own 'focus' message is read. The real focus is still in the fifth column (clicked above), and the top page's own check of its active
       // element (every 300 ms) may not have seen that yet: when it does, it rightly moves the focus back to the fifth column. That check must have
       // nothing left to report, so the focus leaves the iframes first (a person using the first column would have moved it there too).
@@ -315,8 +339,8 @@ async function panesNamed(page, ids) {
       await foreign.waitForLoadState();
       for (const event of ['title', 'focus', 'ready']) await foreign.evaluate(([id, kind]) => parent.postMessage({ type: 't-agent-pane', paneId: id, event: kind, title: 'Evil' }, '*'), [ids[2], event]);
       await paneFrame(page, ids[1]).evaluate(id => parent.postMessage({ type: 't-agent-pane', paneId: id, event: 'title', title: 'Write docs' }, location.origin), ids[1]);
-      await page.waitForFunction(() => document.querySelectorAll('.h5-column-tab-name')[1].textContent === 'Write docs', null, { timeout: 3000 });
-      assert.equal(await nameOf(2), 'Column 3', `${label}: a foreign origin's title is ignored`);
+      await page.waitForFunction(() => document.querySelectorAll('.h5-column-head .h5-column-title')[1].textContent === 'Write docs', null, { timeout: 3000 });
+      assert.match(await nameOf(2), /^(Column 3|Choose a task)$/, `${label}: a foreign origin's title is ignored`);
       assert.equal(await page.locator(`.h5-column[data-pane-id="${ids[2]}"][data-ready]`).count(), 0, `${label}: and its ready`);
       assert.equal(await page.evaluate(() => document.querySelector('.h5-column[data-focused]').dataset.paneId), ids[0], `${label}: and its focus`);
 
@@ -341,7 +365,7 @@ async function panesNamed(page, ids) {
       assert.ok(scroll.scroll >= 6 * minWidth - 2 && scroll.scroll > scroll.client + 50, `${label}: six columns do not fit: the strip scrolls sideways (${JSON.stringify(scroll)})`);
       assert.ok(Math.abs(scroll.width - minWidth) <= 1, `${label}: each a quarter of the strip (${scroll.width})`);
       await page.waitForFunction(() => { const strip = document.getElementById('h5-columns-strip'); return strip.scrollLeft >= strip.scrollWidth - strip.clientWidth - 1; }, null, { timeout: 3000 }); // the new one's smooth scroll ended
-      // A sideways wheel over the top bar (beside the tabs) moves the strip and it stays where it was moved (no snapping back).
+      // A sideways wheel over the top bar moves the strip and it stays where it was moved (no snapping back).
       await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       await page.waitForTimeout(300);
       const bar = await page.locator('#h5-columns-bar').boundingBox();
@@ -358,7 +382,7 @@ async function panesNamed(page, ids) {
         await frame.evaluate(own => window.addEventListener('message', event => { if (event.data && event.data.type === 't-agent-pane') parent.forgets.push([own, event.data.event, event.origin]); }), id);
       }
       await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
-      await page.locator(`.h5-column-tab[data-pane-id="${six[1]}"] .h5-column-tab-close`).click();
+      await closeFromHeader(page, six[1]);
       await waitFrames(page, 5);
       assert.deepEqual(await frameIds(page), six.filter(id => id !== six[1]));
       assert.deepEqual(await page.evaluate(() => window.forgets), [[six[1], 'forget', ORIGIN]], `${label}: the closed pane got 'forget' from this origin`);
@@ -367,11 +391,12 @@ async function panesNamed(page, ids) {
       // Close down to one: the last one cannot be closed.
       while ((await frameIds(page)).length > 1) {
         const left = await frameIds(page);
-        await page.locator(`.h5-column-tab[data-pane-id="${left.at(-1)}"] .h5-column-tab-close`).click();
+        await closeFromHeader(page, left.at(-1));
         await waitFrames(page, left.length - 1);
       }
-      assert.equal(await page.locator('.h5-column-tab-close').isDisabled(), true, `${label}: the last column cannot be closed (its tab's close button is disabled)`);
-      await page.locator('.h5-column-tab-close').click({ force: true });
+      await page.locator('.h5-column-head .h5-column-dot').hover();
+      assert.equal(await page.locator('.h5-column-head [data-action="close"]').isDisabled(), true, `${label}: the last column cannot be closed (its header's close button is disabled)`);
+      await page.locator('.h5-column-head [data-action="close"]').click({ force: true });
       await page.waitForTimeout(400);
       assert.deepEqual(await frameIds(page), [six[0]]);
       const one = await frameIds(page);
@@ -454,7 +479,7 @@ async function panesNamed(page, ids) {
       await page.mouse.wheel(0, 300);
       await page.waitForTimeout(500);
       assert.equal((await stripState(page)).left, 0, `${label}: a vertical wheel inside a pane leaves the strip alone`);
-      // Shift+wheel over the top bar (beside the tabs) scrolls the strip.
+      // Shift+wheel over the top bar scrolls the strip.
       const bar1 = await page.locator('#h5-columns-bar').boundingBox();
       await page.mouse.move(bar1.x + bar1.width - 20, bar1.y + bar1.height / 2);
       await page.keyboard.down('Shift');
@@ -518,102 +543,224 @@ async function panesNamed(page, ids) {
       await context.close();
     }
 
-    // ── 1440x900: tabs at the top (device tag and names from the panes), tap to focus, hold-drag to reorder with the mouse, keys, reload, overflow ──
+    // ── 1440x900: one header per column (device tag and names from the panes), the actions and their visibility, the "⋯" menu, the column list and
+    // "needs you", hold-drag of a header to reorder with the mouse, keys, reload, twelve columns ──
     {
-      const label = 'tabs 1440x900';
+      const label = 'headers 1440x900';
       const ids4 = ['c1', 'c2', 'c3', 'c4'];
       const storage = { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids4 }) };
       for (const id of ids4) { storage[`pane:${id}:h5-task:local`] = id === 'c2' ? '2' : '1'; storage[`pane:${id}:h5-terminal:local:${id === 'c2' ? 2 : 1}`] = id === 'c2' ? 'd1' : 'default'; }
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, storage, tags: true, scale: SHOTS ? 2 : 1 });
       await waitFrames(page, 4);
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
-      assert.deepEqual(await tabIds(page), ids4, `${label}: one tab per column, in column order`);
-      assert.equal(await page.locator('#h5-columns-tabs').getAttribute('aria-label'), 'Column tabs');
-      assert.equal(await page.locator('#h5-columns-tabs').getAttribute('role'), 'list');
-      const bar = await page.evaluate(() => [...document.getElementById('h5-columns-bar').children].map(el => el.id || el.className.split(' ')[0]));
-      assert.deepEqual(bar.slice(0, 4), ['h5-columns-update', 'h5-columns-toggle', 'h5-columns-tabs', 'h5-columns-add'], `${label}: Update, the switch, the tabs, then Add column (${bar})`);
+      assert.deepEqual(await headIds(page), ids4, `${label}: one header per column, in column order`);
+      assert.equal(await page.locator('#h5-columns-tabs, .h5-column-tab').count(), 0, `${label}: no tab strip`);
+      const bar = await page.evaluate(() => [...document.getElementById('h5-columns-bar').querySelectorAll('[id]')].map(el => el.id).filter(id => id.startsWith('h5-columns-')));
+      assert.deepEqual(bar.filter(id => !id.endsWith('-dot')), ['h5-columns-update', 'h5-columns-toggle', 'h5-columns-list', 'h5-columns-add', 'h5-columns-add-map'], `${label}: Update, the switch, the column list, then + Column and Add mind map column (${bar})`);
+      assert.equal(await page.locator('#h5-columns-list').textContent(), '4 columns');
+      // The pane hides its own page header: the column's header is the only one.
+      for (const id of ids4) assert.equal(await paneFrame(page, id).locator('.h5-header, #h5-open-tasks, #h5-refresh').count(), 0, `${label}: the pane ${id} draws no header of its own`);
       // The device tag (the pane's own title message, from its tagged task row) and "task · session".
       await panesNamed(page, ids4);
-      const tab1 = await page.evaluate(sel => {
-        const el = document.querySelector(sel);
-        const tag = el.querySelector('.h5-device-tag');
-        return { tag: tag ? tag.textContent : null, name: el.querySelector('.h5-column-tab-name').textContent, width: el.getBoundingClientRect().width, close: el.querySelector('.h5-column-tab-close').getAttribute('aria-label') };
-      }, tabOf('c1'));
-      assert.equal(tab1.tag, 'MacBook', `${label}: the tab has the device tag of the pane's task (${JSON.stringify(tab1)})`);
-      assert.equal(tab1.name, 'Fix login · Terminal 1', `${label}: and its task and session`);
-      assert.equal(tab1.close, 'Close column');
-      assert.equal(await page.locator(`${tabOf('c2')} .h5-column-tab-name`).textContent(), 'Write docs · Docs shell');
-      // A remote device as a pane would say it (another engine name, its own colour).
+      assert.equal(await page.locator(`${headOf('c1')} .h5-device-tag`).textContent(), 'MacBook', `${label}: the header has the device tag of the pane's task`);
+      assert.equal(await headName(page, 'c1'), 'Fix login · Terminal 1');
+      assert.equal(await headName(page, 'c2'), 'Write docs · Docs shell');
+      assert.equal(await page.locator(headOf('c1')).getAttribute('aria-label'), 'Fix login, Terminal 1, idle', `${label}: the header is labelled with the column's task, session and state`);
+      // A remote device as a pane would say it (another engine name, its own colour); a long name is cut with an ellipsis.
       await paneFrame(page, 'c4').evaluate(() => parent.postMessage({ type: 't-agent-pane', paneId: 'c4', event: 'title', title: 'Deploy the very long named service to production', session: 'Release shell', device: { name: 'K01', instanceId: 'k01-instance', local: false } }, location.origin));
-      await page.waitForFunction(sel => { const tag = document.querySelector(`${sel} .h5-device-tag`); return tag && tag.textContent === 'K01'; }, tabOf('c4'), { timeout: 3000 });
-      const widths = await page.evaluate(() => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.getBoundingClientRect().width));
-      assert.ok(widths.every(w => w >= 90 - 0.5 && w <= 220 + 0.5), `${label}: tabs are 90 to 220px wide (${widths})`);
-      assert.ok(widths[3] > 219, `${label}: a long name is cut at the widest tab (${widths[3]})`);
-      assert.equal(await page.locator(`${tabOf('c4')} .h5-column-tab-name`).evaluate(el => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis'), true, `${label}: with an ellipsis`);
-      // All four columns are in view: every tab is underlined; none is focused yet.
-      await page.waitForFunction(() => document.querySelectorAll('#h5-columns-tabs .h5-column-tab[data-in-view]').length === 4, null, { timeout: 3000 });
-      assert.equal(await page.locator('.h5-column-tab[data-focused]').count(), 0, `${label}: no tab picked out before a column is focused`);
-      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.waitForTimeout(600); await page.screenshot({ path: path.join(SHOTS, 'columns-tabs-1440x900.png'), clip: { x: 0, y: 0, width: 1440, height: 120 } }); }
+      await page.waitForFunction(sel => { const tag = document.querySelector(`${sel} .h5-device-tag`); return tag && tag.textContent === 'K01'; }, headOf('c4'), { timeout: 3000 });
+      assert.equal(await page.locator(`${headOf('c4')} .h5-column-title`).evaluate(el => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis'), true, `${label}: a long name is cut with an ellipsis`);
+      assert.equal(await page.locator('.h5-column-head[data-focused]').count(), 0, `${label}: no header picked out before a column is focused`);
 
-      // A click on a tab focuses its column (outline, the tab picked out, the frame has the keyboard).
-      await page.locator(`${tabOf('c3')} .h5-column-tab-main`).click();
+      // Visibility with a mouse: an unfocused header shows no action until hovered; the focused one always shows "⋯" and close; keyboard focus
+      // inside a header shows them all.
+      await page.mouse.move(700, 600);
+      assert.deepEqual(await shownActs(page, 'c3'), [], `${label}: an unfocused header without hover shows no action`);
+      await page.locator(`${headOf('c3')} .h5-column-dot`).hover();
+      assert.deepEqual(await shownActs(page, 'c3'), ['width', 'maximize', 'more', 'close'], `${label}: hover shows fit, maximize, "⋯" and close`);
+      for (const action of ['width', 'maximize', 'more', 'close']) {
+        const button = page.locator(actOf('c3', action));
+        assert.equal(await button.getAttribute('aria-label'), await button.getAttribute('title'), `${label}: ${action} has aria-label = title`);
+      }
+      assert.equal(await page.locator(actOf('c3', 'maximize')).getAttribute('title'), 'Maximize');
+      await page.locator(`${headOf('c3')} .h5-column-dot`).click(); // a click on the header focuses its column and moves the keyboard into it
       await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 'c3'; }, null, { timeout: 3000 });
-      assert.equal(await page.locator(`${tabOf('c3')}[data-focused]`).count(), 1, `${label}: the focused column's tab is picked out`);
-      assert.equal(await page.locator(`${tabOf('c3')} .h5-column-tab-main`).getAttribute('aria-current'), 'true');
-      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), 'c3', `${label}: a click on a tab moves the keyboard into its column`);
-      const look = await page.evaluate(sel => getComputedStyle(document.querySelector(sel)).boxShadow, tabOf('c3'));
-      assert.ok(/inset/.test(look), `${label}: the focused tab has its outline (${look})`);
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), 'c3', `${label}: a click on a header moves the keyboard into its column`);
+      await page.mouse.move(700, 600);
+      assert.deepEqual(await shownActs(page, 'c3'), ['more', 'close'], `${label}: the focused column always shows "⋯" and close`);
+      const look = await page.evaluate(sel => ({ line: getComputedStyle(document.querySelector(sel), '::before').backgroundColor, other: getComputedStyle(document.querySelector('.h5-column-head[data-pane-id="c1"]'), '::before').backgroundColor }), headOf('c3'));
+      assert.notEqual(look.line, look.other, `${label}: the focused header has its primary top line (${JSON.stringify(look)})`);
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('.h5-column[data-pane-id="c1"] iframe')).filter === 'brightness(0.9)', null, { timeout: 3000 }).catch(() => {});
+      assert.equal(await page.locator('.h5-column[data-pane-id="c1"] iframe').evaluate(el => getComputedStyle(el).filter), 'brightness(0.9)', `${label}: an unfocused column is dimmed`);
+      assert.equal(await page.locator('.h5-column[data-pane-id="c3"] iframe').evaluate(el => getComputedStyle(el).filter), 'none', `${label}: the focused one is not`);
+      await page.locator(`${headOf('c1')} .h5-column-switch`).focus();
+      assert.deepEqual(await shownActs(page, 'c1'), ['width', 'maximize', 'more', 'close'], `${label}: keyboard focus inside a header shows its actions`);
 
-      // Hold-drag with the mouse (a move of more than 4px picks it up): c1 to the place of c3.
+      // "Project · session ▾" opens that column's task sheet: the message reaches its pane, whose sheet opens with the keyboard in it.
+      await page.locator(`${headOf('c2')} .h5-column-switch`).click();
+      await paneFrame(page, 'c2').waitForFunction(() => window.H5UI.get().tasksOpen === true, null, { timeout: 3000 });
+      assert.deepEqual(await inbox(page, 'c2', 'tasks'), [{ type: 't-agent-pane', event: 'tasks', toggle: true }], `${label}: the pane got the tasks message`);
+      await page.waitForFunction(sel => document.querySelector(sel).getAttribute('aria-expanded') === 'true', `${headOf('c2')} .h5-column-switch`, { timeout: 3000 });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), 'c2', `${label}: the keyboard is in that column`);
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-column[data-focused]').dataset.paneId), 'c2');
+      await page.locator(`${headOf('c2')} .h5-column-switch`).click(); // a second press hides it again
+      await paneFrame(page, 'c2').waitForFunction(() => window.H5UI.get().tasksOpen === false, null, { timeout: 3000 });
+
+      // The "⋯" menu: every item, and what each does.
+      const openMenu = async id => {
+        await page.locator(`${headOf(id)} .h5-column-dot`).hover();
+        await page.locator(actOf(id, 'more')).click();
+        await page.locator('#h5-column-menu [role="menu"]').waitFor();
+      };
+      const pickItem = async action => { await page.locator(`#h5-column-menu [data-action="${action}"]`).click(); await page.locator('#h5-column-menu').waitFor({ state: 'hidden' }); };
+      await openMenu('c1');
+      const items = await page.evaluate(() => [...document.querySelectorAll('#h5-column-menu [role="menuitem"], #h5-column-menu hr')].map(el => (el.tagName === 'HR' ? '-' : el.textContent)));
+      assert.deepEqual(items, ['Switch task or session…', 'Wide terminal', `Maximize${process.platform === 'darwin' ? '⌘⇧↩' : 'Ctrl+Shift+Enter'}`, '-', 'Rename session', 'Restart session', 'Reload column', '-', 'Close column'], `${label}: the menu items (${items})`);
+      if (SHOTS) await page.waitForTimeout(500); // (the menu grows in)
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-menu-1440x900.png'), clip: { x: 0, y: 0, width: 720, height: 420 } });
+      await pickItem('width');
+      await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide', null, { timeout: 3000 });
+      await page.waitForFunction(sel => document.querySelector(sel).getAttribute('aria-pressed') === 'true', actOf('c1', 'width'), { timeout: 3000 });
+      await openMenu('c1');
+      assert.equal(await page.locator('#h5-column-menu [data-action="width"]').textContent(), 'Fit the terminal width', `${label}: a wide terminal offers Fit`);
+      await pickItem('width');
+      await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'fit', null, { timeout: 3000 });
+      // The header's width button switches it too, and a right click on it gives the choices of the normal header.
+      await page.locator(`${headOf('c1')} .h5-column-dot`).hover();
+      await page.locator(actOf('c1', 'width')).click();
+      await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide', null, { timeout: 3000 });
+      await page.locator(actOf('c1', 'width')).click({ button: 'right' });
+      await page.locator('#h5-column-width-menu [role="menuitem"]').first().waitFor();
+      await page.locator('#h5-column-width-menu [data-cols="200"]').click();
+      await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide' && window.H5UI.get().terminalWidth.cols === 200, null, { timeout: 3000 });
+      await page.evaluate(() => document.querySelector('#h5-columns iframe[data-pane-id="c1"]').contentWindow.H5UI.actions.setTerminalWidth({ mode: 'fit', cols: 160 }));
+      // Maximize (and Restore) from the menu: the single entry point of the columns.
+      await openMenu('c1');
+      await pickItem('maximize');
+      await page.waitForFunction(() => window.H5UI.get().columns.maximized === 'c1', null, { timeout: 3000 });
+      await openMenu('c1');
+      assert.match(await page.locator('#h5-column-menu [data-action="maximize"]').textContent(), /^Restore columns/);
+      await pickItem('maximize');
+      await page.waitForFunction(() => window.H5UI.get().columns.maximized === null, null, { timeout: 3000 });
+      // The header's maximize button.
+      await page.locator(`${headOf('c4')} .h5-column-dot`).hover();
+      await page.locator(actOf('c4', 'maximize')).click();
+      await page.waitForFunction(() => window.H5UI.get().columns.maximized === 'c4', null, { timeout: 3000 });
+      await page.locator('#h5-columns-restore').click();
+      await page.waitForFunction(() => window.H5UI.get().columns.maximized === null, null, { timeout: 3000 });
+      // Rename: the pane's task sheet opens with the name field of its session, holding the keyboard; Escape cancels.
+      await openMenu('c1');
+      await pickItem('rename');
+      const pane1 = paneFrame(page, 'c1');
+      await pane1.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-term-rename-input' && document.activeElement.value === 'Terminal 1', null, { timeout: 3000 });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), 'c1', `${label}: rename moves the keyboard into the column`);
+      await page.keyboard.press('Escape');
+      await pane1.waitForFunction(() => !document.getElementById('h5-term-rename-input'), null, { timeout: 3000 });
+      // Restart: the pane asks first, as the row's menu does; answered with Cancel, nothing is restarted.
+      const asked = [];
+      const onDialog = dialog => { asked.push(dialog.message()); void dialog.dismiss(); };
+      page.on('dialog', onDialog);
+      await openMenu('c1');
+      await pickItem('restart');
+      await page.waitForFunction(() => true);
+      for (let i = 0; i < 40 && !asked.length; i += 1) await page.waitForTimeout(50);
+      page.off('dialog', onDialog);
+      assert.equal(asked.length, 1, `${label}: restart asks first`);
+      assert.match(asked[0], /This ends the terminal/);
+      // Reload column: only that pane's page loads again.
+      await markPanes(page);
+      await openMenu('c4');
+      await pickItem('reload');
+      await page.waitForFunction(() => window.paneLoads === 1, null, { timeout: 8000 });
+      assert.equal(await page.evaluate(() => document.querySelector('#h5-columns iframe[data-pane-id="c4"]').contentWindow.paneMark), undefined, `${label}: the column's page was loaded again`);
+      assert.equal(await page.evaluate(() => document.querySelector('#h5-columns iframe[data-pane-id="c1"]').contentWindow.paneMark), 'mark-c1', `${label}: the others were not`);
+      await page.waitForFunction(() => document.querySelector('#h5-columns iframe[data-pane-id="c4"]').contentWindow.H5Pane, null, { timeout: 10000 });
+
+      // States: running and needs you from the top page's terminal activity; the bar sums them up and "1 needs you" goes to that column.
+      await page.evaluate(() => window.H5UI.actions.focusColumn('c1'));
+      await page.evaluate(() => window.H5UI.set({ terminalActivity: { local: { 1: { default: 'running' }, 2: { d1: 'done' } } } }));
+      await page.waitForFunction(() => document.querySelector('.h5-column-head[data-pane-id="c2"]').dataset.state === 'waiting', null, { timeout: 3000 });
+      assert.equal(await page.locator('#h5-columns-summary').textContent(), '3 running', `${label}: the bar counts the running columns`);
+      assert.equal(await page.locator('#h5-columns-needs').textContent(), '1 needs you');
+      assert.equal(await page.locator(headOf('c2')).getAttribute('aria-label'), 'Write docs, Docs shell, needs you');
+      assert.equal(await page.locator(`${headOf('c2')} .h5-column-needs`).textContent(), 'Needs you', `${label}: the header says it`);
+      const tint = await page.evaluate(sel => getComputedStyle(document.querySelector(sel), '::before').backgroundColor, headOf('c2'));
+      assert.equal(tint, 'rgb(255, 167, 38)', `${label}: and has an orange top line (${tint})`);
+      if (SHOTS) { await page.mouse.move(700, 600); await page.waitForTimeout(300); await page.screenshot({ path: path.join(SHOTS, 'columns-needs-you-1440x900.png'), clip: { x: 0, y: 0, width: 1440, height: 160 } }); }
+      await page.locator('#h5-columns-needs').click();
+      await page.waitForFunction(() => document.querySelector('.h5-column[data-focused]').dataset.paneId === 'c2', null, { timeout: 3000 });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), 'c2', `${label}: "1 needs you" focuses that column`);
+      // The column list: every column with its state word; choosing one focuses it.
+      await page.locator('#h5-columns-list').click();
+      await page.locator('#h5-columns-list-menu [role="menu"]').waitFor();
+      const listed = await page.evaluate(() => [...document.querySelectorAll('#h5-columns-list-menu .h5-columns-list-item')].map(el => [el.dataset.paneId, el.querySelector('.h5-columns-list-state').textContent]));
+      assert.deepEqual(listed, [['c1', 'running'], ['c2', 'focused'], ['c3', 'running'], ['c4', 'running']], `${label}: the column list (${JSON.stringify(listed)})`);
+      if (SHOTS) await page.waitForTimeout(500); // (the menu grows in)
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-list-1440x900.png'), clip: { x: 0, y: 0, width: 720, height: 320 } });
+      await page.locator('#h5-columns-list-menu .h5-columns-list-item[data-pane-id="c3"]').click();
+      await page.waitForFunction(() => document.querySelector('.h5-column[data-focused]').dataset.paneId === 'c3' && document.activeElement && document.activeElement.dataset.paneId === 'c3', null, { timeout: 3000 });
+      await page.evaluate(() => window.H5UI.set({ terminalActivity: {} }));
+      await page.locator('#h5-columns-list-menu').waitFor({ state: 'detached' }); // (its closing menu still covers the page for a moment)
+      if (SHOTS) { await page.mouse.move(700, 600); await page.waitForTimeout(300); await page.screenshot({ path: path.join(SHOTS, 'columns-headers-1440x900.png'), clip: { x: 0, y: 0, width: 1440, height: 160 } }); }
+
+      // Hold-drag of a header with the mouse (a move of more than 4px picks it up): c1 to the place of c3.
       await markPanes(page);
       await watchMoves(page);
       const focusCalls = await page.evaluate(() => window.frameFocusCalls);
       let mid = null;
-      await mouseDrag(page, 'c1', (await tabCenter(page, 'c3')) + 10, {
+      await mouseDrag(page, 'c1', (await columnCenter(page, 'c3')) + 10, {
         midway: async () => {
           await page.waitForTimeout(250);
-          mid = await page.evaluate(() => ({
-            float: Boolean(document.querySelector('#h5-columns .h5-column-tab-float .h5-column-tab-float-lifted')),
-            slot: [...document.querySelectorAll('.h5-column-tab[data-drag-slot]')].map(el => el.dataset.paneId),
-            shifted: [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].filter(el => el.style.transform && el.style.transform !== 'none' && !el.hasAttribute('data-drag-slot')).map(el => el.dataset.paneId),
-            dragging: document.getElementById('h5-columns-tabs').hasAttribute('data-dragging'),
-          }));
-          if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-tab-drag-1440x900.png'), clip: { x: 0, y: 0, width: 1440, height: 120 } });
+          mid = await page.evaluate(() => {
+            const line = document.querySelector('#h5-columns-strip > .h5-column-drop-line');
+            const c3 = document.querySelector('.h5-column[data-pane-id="c3"]');
+            return {
+              float: Boolean(document.querySelector('#h5-columns .h5-column-head-float .h5-column-head-float-lifted')),
+              slot: [...document.querySelectorAll('.h5-column[data-drag-slot]')].map(el => el.dataset.paneId),
+              line: Boolean(line && !line.hidden) && Math.abs(new DOMMatrix(getComputedStyle(line).transform).m41 + 1.5 - (c3.offsetLeft + c3.offsetWidth)) <= 2,
+              frames: getComputedStyle(document.querySelector('#h5-columns iframe')).pointerEvents,
+              moved: [...document.querySelectorAll('#h5-columns .h5-column')].filter(el => el.style.transform).length,
+            };
+          });
+          if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-drag-1440x900.png'), clip: { x: 0, y: 0, width: 1440, height: 300 } });
         },
       });
-      assert.deepEqual(mid, { float: true, slot: ['c1'], shifted: ['c2', 'c3'], dragging: true }, `${label}: mid-drag: a lifted copy, the dashed slot, the passed tabs slid away (${JSON.stringify(mid)})`);
+      assert.deepEqual(mid, { float: true, slot: ['c1'], line: true, frames: 'none', moved: 0 }, `${label}: mid-drag: a lifted copy of the header, the dimmed place, the line where it lands, no pointer to the panes, no column moved yet (${JSON.stringify(mid)})`);
       const after1 = ['c2', 'c3', 'c1', 'c4'];
-      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === want, after1.join(), { timeout: 3000 });
+      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === want, after1.join(), { timeout: 3000 });
       await settled(page);
-      assert.deepEqual(await tabIds(page), after1, `${label}: the drop reorders the tabs`);
+      assert.deepEqual(await headIds(page), after1, `${label}: the drop reorders the headers`);
       assert.deepEqual(await placeIds(page), after1, `${label}: and the columns`);
       assert.deepEqual(await frameIds(page), after1);
       assert.deepEqual((await stored(page)).ids, after1, `${label}: the new order is stored`);
       assert.deepEqual(await domIds(page), ids4, `${label}: the columns' elements were not moved in the DOM (only their CSS order)`);
       assert.deepEqual(await movedColumns(page), ['c1', 'c2', 'c3'], `${label}: the columns that changed place slid there (FLIP)`);
       assert.equal(await panesKept(page), true, `${label}: no pane was reloaded (each window and its mark survived)`);
-      assert.equal(await page.evaluate(() => window.frameFocusCalls), focusCalls, `${label}: the click after the drag was swallowed (no tab click moved the focus)`);
+      assert.equal(await page.evaluate(() => window.frameFocusCalls), focusCalls, `${label}: the click after the drag was swallowed`);
       assert.equal(await page.evaluate(() => document.querySelector('.h5-column[data-focused]').dataset.paneId), 'c1', `${label}: the moved column has the focus`);
       assert.match(await said(page), /^Column moved to position 3 of 4$/);
-      // Border: the first column shown has no left border, the others have one.
-      assert.deepEqual(await page.evaluate(order => order.map(id => getComputedStyle(document.querySelector(`.h5-column[data-pane-id="${id}"]`)).borderLeftWidth), after1), ['0px', '1px', '1px', '1px']);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#h5-columns iframe')).pointerEvents), 'auto', `${label}: the panes take the pointer again`);
+      // Border: the first column shown has no left border, the others a plain divider.
+      const borders = await page.evaluate(order => order.map(id => { const style = getComputedStyle(document.querySelector(`.h5-column[data-pane-id="${id}"]`)); return [style.borderLeftWidth, style.borderLeftColor]; }), after1);
+      assert.deepEqual(borders.map(([width]) => width), ['0px', '1px', '1px', '1px']);
+      assert.equal(borders[1][1], 'rgba(255, 255, 255, 0.12)', `${label}: the divider is the theme's divider colour (${borders[1][1]})`);
 
-      // A mouse held still for 400ms picks the tab up too: c4 to the front.
+      // A mouse held still for 400ms picks the header up too: c4 to the front.
       await watchMoves(page);
       let held = null;
       {
-        const box = await page.locator(tabOf('c4')).boundingBox();
+        const box = await page.locator(`${headOf('c4')} .h5-column-dot`).boundingBox();
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
         await page.waitForTimeout(550);
-        held = await page.evaluate(() => Boolean(document.querySelector('.h5-column-tab-float')));
-        const to = (await page.locator(tabOf('c2')).boundingBox()).x + 10;
+        held = await page.evaluate(() => Boolean(document.querySelector('.h5-column-head-float')));
+        const to = (await page.locator(headOf('c2')).boundingBox()).x + 10;
         for (let index = 1; index <= 14; index += 1) { await page.mouse.move(box.x + box.width / 2 + ((to - box.x - box.width / 2) * index) / 14, box.y + box.height / 2); await page.waitForTimeout(16); }
         await page.mouse.up();
       }
-      assert.equal(held, true, `${label}: a mouse held still picks the tab up`);
+      assert.equal(held, true, `${label}: a mouse held still picks the header up`);
       const after2 = ['c4', 'c2', 'c3', 'c1'];
-      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === want, after2.join(), { timeout: 3000 });
+      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === want, after2.join(), { timeout: 3000 });
       await settled(page);
       assert.deepEqual(await placeIds(page), after2, `${label}: held and dragged to the front`);
       assert.deepEqual(await movedColumns(page), ['c1', 'c2', 'c3', 'c4'], `${label}: every column slid`);
@@ -624,9 +771,9 @@ async function panesNamed(page, ids) {
       await page.keyboard.press('Control+Alt+ArrowRight');
       await page.waitForFunction(() => document.querySelector('.h5-column[data-focused]').dataset.paneId === 'c2', null, { timeout: 3000 });
 
-      // Escape puts a dragged tab back.
+      // Escape puts a dragged column back.
       {
-        const box = await page.locator(tabOf('c2')).boundingBox();
+        const box = await page.locator(`${headOf('c2')} .h5-column-dot`).boundingBox();
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
         for (let index = 1; index <= 10; index += 1) { await page.mouse.move(box.x + box.width / 2 + 30 * index, box.y + box.height / 2); await page.waitForTimeout(16); }
@@ -634,7 +781,7 @@ async function panesNamed(page, ids) {
         await page.mouse.up();
       }
       await settled(page);
-      assert.deepEqual(await tabIds(page), after2, `${label}: Escape puts the tab back`);
+      assert.deepEqual(await placeIds(page), after2, `${label}: Escape puts the column back`);
       assert.equal(await said(page), 'Reorder cancelled');
 
       // Keys: Ctrl+Alt+Shift+Right from the top page moves the focused column (c2) one place right; the keyboard stays where it was.
@@ -643,23 +790,23 @@ async function panesNamed(page, ids) {
       await watchMoves(page);
       await page.keyboard.press('Control+Alt+Shift+ArrowRight');
       const after3 = ['c4', 'c3', 'c2', 'c1'];
-      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === want, after3.join(), { timeout: 3000 });
+      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === want, after3.join(), { timeout: 3000 });
       await settled(page);
       assert.deepEqual(await placeIds(page), after3, `${label}: Ctrl+Alt+Shift+Right moved the focused column`);
       assert.deepEqual(await movedColumns(page), ['c2', 'c3'], `${label}: the two columns slid`);
       assert.equal(await said(page), 'Column moved to position 3 of 4', `${label}: and the move is said`);
       assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-columns-add', `${label}: the keyboard stayed on the top page`);
-      // A tab button with the keyboard focus keeps it when its column moves (React moves the tab's element).
-      await page.locator(`${tabOf('c2')} .h5-column-tab-main`).focus();
+      // A header button with the keyboard focus keeps it when its column moves.
+      await page.locator(`${headOf('c2')} .h5-column-switch`).focus();
       await page.keyboard.press('Control+Alt+Shift+ArrowLeft');
-      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === 'c4,c2,c3,c1', null, { timeout: 3000 });
+      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === 'c4,c2,c3,c1', null, { timeout: 3000 });
       await settled(page);
-      assert.equal(await page.evaluate(() => document.activeElement.closest('.h5-column-tab')?.dataset.paneId), 'c2', `${label}: the moved tab keeps the keyboard focus`);
+      assert.equal(await page.evaluate(() => document.activeElement.closest('.h5-column-head')?.dataset.paneId), 'c2', `${label}: the moved header keeps the keyboard focus`);
       // At an end it stays.
       await page.evaluate(() => window.H5UI.actions.focusColumn('c4'));
       await page.keyboard.press('Control+Alt+Shift+ArrowLeft');
       await page.waitForTimeout(100);
-      assert.deepEqual(await tabIds(page), ['c4', 'c2', 'c3', 'c1'], `${label}: the first column cannot move further left`);
+      assert.deepEqual(await placeIds(page), ['c4', 'c2', 'c3', 'c1'], `${label}: the first column cannot move further left`);
       assert.equal(await said(page), 'Column moved to position 1 of 4');
       // From inside a pane: its own column moves, and the key never reaches its terminal.
       const frame3 = await page.locator('#h5-columns iframe[data-pane-id="c3"]').boundingBox();
@@ -670,7 +817,7 @@ async function panesNamed(page, ids) {
       const typedBefore = await typed();
       await page.keyboard.press('Control+Alt+Shift+ArrowRight');
       const after4 = ['c4', 'c2', 'c1', 'c3'];
-      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === want, after4.join(), { timeout: 3000 });
+      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === want, after4.join(), { timeout: 3000 });
       await settled(page);
       assert.deepEqual(await placeIds(page), after4, `${label}: Ctrl+Alt+Shift+Right inside a pane moved its column`);
       assert.equal(await typed(), typedBefore, `${label}: the key never reached the pane's terminal`);
@@ -678,97 +825,92 @@ async function panesNamed(page, ids) {
       assert.equal(await panesKept(page), true, `${label}: no pane reloaded by any of the moves`);
       assert.deepEqual(await domIds(page), ids4, `${label}: the DOM order never changed`);
 
-      // Reload: the order comes back (tabs and columns), with the same ids.
+      // Reload: the order comes back (headers and columns), with the same ids.
       await page.reload();
       await waitFrames(page, 4);
-      assert.deepEqual(await tabIds(page), after4, `${label}: after a reload the tabs keep the order`);
+      assert.deepEqual(await headIds(page), after4, `${label}: after a reload the headers keep the order`);
       assert.deepEqual(await placeIds(page), after4, `${label}: and the columns`);
       assert.deepEqual(await domIds(page), after4, `${label}: (a fresh page creates them in that order)`);
 
-      // Twelve columns: the tab row does not wrap, it scrolls sideways itself; a tap on a tab of a column out of view focuses it and scrolls it in.
+      // Twelve columns: the column list names all of them, also those out of view; choosing the last scrolls it whole into view and focuses it.
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
       while (!(await page.locator('#h5-columns-add').isDisabled())) await page.locator('#h5-columns-add').click();
       await waitFrames(page, 12);
-      const twelve = await tabIds(page);
+      const twelve = await placeIds(page);
       assert.equal(twelve.length, 12);
-      for (const id of twelve) { const f = paneFrame(page, id); if (f) await f.evaluate(own => parent.postMessage({ type: 't-agent-pane', paneId: own, event: 'title', title: `A task named ${own}`, session: 'Terminal 1' }, location.origin), id).catch(() => {}); }
-      await page.waitForFunction(() => document.querySelectorAll('#h5-columns-tabs .h5-column-tab-name').length === 12 && [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab-name')].every(el => el.textContent.includes(' · ')), null, { timeout: 10000 });
-      const row = await page.evaluate(() => { const el = document.getElementById('h5-columns-tabs'); return { scroll: el.scrollWidth, client: el.clientWidth, tops: [...new Set([...el.children].map(tab => tab.offsetTop))].length, add: document.getElementById('h5-columns-add').getBoundingClientRect().right }; });
-      assert.ok(row.scroll > row.client + 50, `${label}: 12 tabs overflow the tab row (${JSON.stringify(row)})`);
-      assert.equal(row.tops, 1, `${label}: on one line (no wrap)`);
-      assert.ok(row.add <= 1440, `${label}: Add column stays in view at the end (${row.add})`);
-      const inView = await page.evaluate(() => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab[data-in-view]')].map(el => el.dataset.paneId));
-      assert.ok(inView.length >= 3 && inView.length <= 5, `${label}: only the tabs of the columns in view are underlined (${inView})`);
-      // The last tab: the row scrolls to it, its column is focused and scrolled whole into view.
-      await page.evaluate(() => { const el = document.getElementById('h5-columns-tabs'); el.scrollLeft = el.scrollWidth; });
-      await page.waitForTimeout(100);
+      assert.equal(await page.locator('#h5-columns-list').textContent(), '12 columns');
       await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
-      await page.waitForTimeout(200);
+      await page.waitForTimeout(300);
+      await page.locator('#h5-columns-list').click();
+      await page.locator('#h5-columns-list-menu [role="menu"]').waitFor();
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#h5-columns-list-menu .h5-columns-list-item')].map(el => el.dataset.paneId)), twelve, `${label}: the list has every column in order`);
       const last = twelve.at(-1);
-      await page.locator(`${tabOf(last)} .h5-column-tab-main`).click();
-      await page.waitForFunction(id => { const strip = document.getElementById('h5-columns-strip'); const el = document.querySelector('.h5-column[data-focused]'); if (!el || el.dataset.paneId !== id) return false; const r = el.getBoundingClientRect(); const b = strip.getBoundingClientRect(); return r.left >= b.left - 1 && r.right <= b.right + 1; }, last, { timeout: 6000 }).catch(async error => {
-        console.log(`${label}: the tab's column`, last, await page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); const el = document.querySelector('.h5-column[data-focused]'); return { focus: el && el.dataset.paneId, box: el && JSON.stringify(el.getBoundingClientRect()), strip: JSON.stringify(strip.getBoundingClientRect()), left: strip.scrollLeft, max: strip.scrollWidth - strip.clientWidth, active: document.activeElement && (document.activeElement.dataset.paneId || document.activeElement.className) }; }));
-        throw error;
-      });
-      await page.waitForFunction(id => document.querySelector(`#h5-columns-tabs .h5-column-tab[data-pane-id="${id}"][data-in-view]`), last, { timeout: 3000 });
-      // The first tab, after the tab row was scrolled back by a vertical wheel over it.
-      const tabsBox = await page.locator('#h5-columns-tabs').boundingBox();
-      await page.mouse.move(tabsBox.x + 100, tabsBox.y + tabsBox.height / 2);
-      // (Once the strip and the tab row have stopped scrolling: a smooth scroll still going would carry on over the wheel's.)
-      await page.waitForFunction(() => new Promise(done => { const at = () => [document.getElementById('h5-columns-tabs').scrollLeft, document.getElementById('h5-columns-strip').scrollLeft].join(); const was = at(); setTimeout(() => done(at() === was), 250); }), null, { timeout: 5000 });
-      const rowBefore = await page.evaluate(() => document.getElementById('h5-columns-tabs').scrollLeft);
-      await page.mouse.wheel(0, -6000); // (at a device scale of 2 the page gets half)
-      await page.waitForFunction(() => document.getElementById('h5-columns-tabs').scrollLeft === 0, null, { timeout: 3000 }).catch(async error => {
-        console.log(`${label}: the tab row after the wheel`, await page.evaluate(() => { const el = document.getElementById('h5-columns-tabs'); return { left: el.scrollLeft, scroll: el.scrollWidth, client: el.clientWidth }; }));
-        throw error;
-      });
-      assert.ok(rowBefore > 0, `${label}: the tab row had scrolled to the last tab (${rowBefore})`);
-      // Close from a tab (a column out of view): it goes, the others stay.
-      await page.locator(`${tabOf(twelve[0])} .h5-column-tab-close`).click();
+      await page.locator(`#h5-columns-list-menu .h5-columns-list-item[data-pane-id="${last}"]`).click();
+      await page.waitForFunction(id => { const strip = document.getElementById('h5-columns-strip'); const el = document.querySelector('.h5-column[data-focused]'); if (!el || el.dataset.paneId !== id) return false; const r = el.getBoundingClientRect(); const b = strip.getBoundingClientRect(); return r.left >= b.left - 1 && r.right <= b.right + 1; }, last, { timeout: 6000 });
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.paneId), last, `${label}: and moves the keyboard into it`);
+      // Close from a header (a column out of view): it goes, the others stay.
+      await closeFromHeader(page, twelve[0]);
       await waitFrames(page, 11);
-      assert.deepEqual(await tabIds(page), twelve.slice(1));
-      assert.deepEqual((await stored(page)).ids, twelve.slice(1), `${label}: closed from its tab`);
+      assert.deepEqual(await placeIds(page), twelve.slice(1));
+      assert.deepEqual((await stored(page)).ids, twelve.slice(1), `${label}: closed from its header`);
       await context.close();
     }
 
-    // ── A touch screen at a wide size (1280x800): a finger held on a tab picks it up; a quick swipe scrolls the row; a tap focuses ──
+    // ── A touch screen at a wide size (1280x800): 44px headers with "⋯" and close always shown; a tap on a header focuses; a finger held on it
+    // picks it up; a moving finger does not ──
     {
       const label = 'touch 1280x800';
       const ids3 = ['p1', 'p2', 'p3'];
-      const { context, page } = await openPage(browser, { viewport: { width: 1280, height: 800 }, tablet: true, storage: { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids3 }) } });
+      const { context, page } = await openPage(browser, { viewport: { width: 1280, height: 800 }, tablet: true, storage: { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids3 }) }, scale: SHOTS ? 2 : 1 });
       await waitFrames(page, 3);
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.input), 'touch');
+      const heads = await page.evaluate(() => [...document.querySelectorAll('.h5-column-head')].map(el => ({
+        height: el.getBoundingClientRect().height, grip: Boolean(el.querySelector('.h5-column-grip')),
+        acts: [...el.querySelectorAll('.h5-column-act')].filter(b => getComputedStyle(b).display !== 'none').map(b => [b.dataset.action, Math.round(b.getBoundingClientRect().width), Math.round(b.getBoundingClientRect().height)]),
+      })));
+      for (const head of heads) assert.deepEqual(head, { height: 44, grip: false, acts: [['more', 44, 44], ['close', 44, 44]] }, `${label}: a 44px header, "⋯" and close always shown at 44px, fit and maximize only in the menu (${JSON.stringify(head)})`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-touch-1280x800.png'), clip: { x: 0, y: 0, width: 1280, height: 140 } });
       await markPanes(page);
       const cdp = await context.newCDPSession(page);
       const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
-      const centerOf = async id => { const box = await page.locator(tabOf(id)).boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
+      const centerOf = async id => { const box = await page.locator(`${headOf(id)} .h5-column-dot`).boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
       // A tap focuses the column.
       let at = await centerOf('p2');
       await touch('touchStart', at.x, at.y);
       await page.waitForTimeout(60);
       await touch('touchEnd');
       await page.waitForFunction(() => { const el = document.querySelector('.h5-column[data-focused]'); return el && el.dataset.paneId === 'p2'; }, null, { timeout: 3000 });
-      // A finger that moves at once does not pick the tab up.
+      // The menu offers fit and maximize there.
+      await page.locator(actOf('p2', 'more')).click();
+      await page.locator('#h5-column-menu [data-action="maximize"]').waitFor();
+      const itemHeight = await page.locator('#h5-column-menu [data-action="width"]').evaluate(el => el.offsetHeight); // (the menu may still be growing in)
+      assert.ok(itemHeight >= 44, `${label}: menu items are 44px high (${itemHeight})`);
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-column-menu').waitFor({ state: 'hidden' });
+      // A finger that moves at once does not pick the header up.
       at = await centerOf('p1');
       await touch('touchStart', at.x, at.y);
       for (let index = 1; index <= 6; index += 1) { await touch('touchMove', at.x + 8 * index, at.y); await page.waitForTimeout(16); }
-      const quick = await page.evaluate(() => Boolean(document.querySelector('.h5-column-tab-float')));
+      const quick = await page.evaluate(() => Boolean(document.querySelector('.h5-column-head-float')));
       await touch('touchEnd');
-      assert.equal(quick, false, `${label}: a moving finger never picks a tab up`);
+      assert.equal(quick, false, `${label}: a moving finger never picks a header up`);
       await page.waitForTimeout(300);
-      assert.deepEqual(await tabIds(page), ids3);
+      assert.deepEqual(await placeIds(page), ids3);
       // Held still for 400ms: picked up (and moved): p1 to the end.
+      await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
+      await page.waitForTimeout(200);
       await watchMoves(page);
       at = await centerOf('p1');
-      const to = (await centerOf('p3')).x + 10;
+      const to = (await columnCenter(page, 'p3')) + 10;
       await touch('touchStart', at.x, at.y);
       await page.waitForTimeout(550);
-      const picked = await page.evaluate(() => Boolean(document.querySelector('.h5-column-tab-float')));
+      const picked = await page.evaluate(() => Boolean(document.querySelector('.h5-column-head-float')));
       for (let index = 1; index <= 14; index += 1) { await touch('touchMove', at.x + ((to - at.x) * index) / 14, at.y); await page.waitForTimeout(16); }
       await touch('touchEnd');
-      assert.equal(picked, true, `${label}: a finger held still picks the tab up`);
+      assert.equal(picked, true, `${label}: a finger held still picks the header up`);
       const after = ['p2', 'p3', 'p1'];
-      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === want, after.join(), { timeout: 3000 });
+      await page.waitForFunction(want => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === want, after.join(), { timeout: 3000 });
       await settled(page);
       assert.deepEqual(await placeIds(page), after, `${label}: the columns follow`);
       assert.deepEqual(await movedColumns(page), ['p1', 'p2', 'p3'], `${label}: and slide`);
@@ -789,24 +931,28 @@ async function panesNamed(page, ids) {
         return { left: strip.scrollLeft, max: strip.scrollWidth - strip.clientWidth };
       });
       assert.ok(jump.max > 0 && Math.abs(jump.left - jump.max) <= 1, `${label}: scrolled to the last column in the same frame (${JSON.stringify(jump)})`);
-      // A move is instant: no column or tab slides, and the order is there at once.
+      // A move is instant: no column slides, and the order is there at once.
       await page.evaluate(() => document.getElementById('h5-columns-strip').scrollTo({ left: 0 }));
       await page.evaluate(() => window.H5UI.actions.focusColumn('r1'));
       await watchMoves(page);
       await page.locator('#h5-columns-add').focus();
       await page.keyboard.press('Control+Alt+Shift+ArrowRight');
-      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].map(el => el.dataset.paneId).join() === 'r2,r1,r3,r4,r5', null, { timeout: 3000 });
+      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === 'r2,r1,r3,r4,r5', null, { timeout: 3000 });
       await page.waitForTimeout(300);
       assert.deepEqual(await movedColumns(page), [], `${label}: the columns jump to their places`);
       assert.deepEqual(await placeIds(page), ['r2', 'r1', 'r3', 'r4', 'r5']);
-      // A dragged tab: the others jump out of the way (no transition).
-      const box = await page.locator(tabOf('r3')).boundingBox();
+      // A dragged header: its copy follows without a transition and the columns jump to their new places on the drop.
+      await watchMoves(page);
+      const box = await page.locator(`${headOf('r3')} .h5-column-dot`).boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
-      for (let index = 1; index <= 8; index += 1) { await page.mouse.move(box.x + box.width / 2 - 20 * index, box.y + box.height / 2); await page.waitForTimeout(16); }
-      const instant = await page.evaluate(() => [...document.querySelectorAll('#h5-columns-tabs .h5-column-tab')].filter(el => el.style.transform).map(el => el.style.transition));
+      for (let index = 1; index <= 8; index += 1) { await page.mouse.move(box.x + box.width / 2 - 40 * index, box.y + box.height / 2); await page.waitForTimeout(16); }
+      const instant = await page.evaluate(() => document.querySelector('.h5-column-head-float') && document.querySelector('.h5-column-head-float').style.transition);
       await page.mouse.up();
-      assert.ok(instant.length > 0 && instant.every(value => value === 'none'), `${label}: the tabs move without a transition (${instant})`);
+      assert.equal(instant, 'none', `${label}: the lifted copy moves without a transition (${instant})`);
+      await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns .h5-column')].sort((a, b) => a.offsetLeft - b.offsetLeft).map(el => el.dataset.paneId).join() === 'r2,r3,r1,r4,r5', null, { timeout: 3000 });
+      await page.waitForTimeout(300);
+      assert.deepEqual(await movedColumns(page), [], `${label}: the columns jump after a drop`);
       await context.close();
       // Without it the same step is smooth: nothing has moved yet in the same frame.
       const normal = await openPage(browser, { viewport: { width: 1440, height: 900 }, storage: { ...REMEMBERED, 'h5-columns': JSON.stringify({ on: true, ids: ids5 }) } });
@@ -867,7 +1013,7 @@ async function panesNamed(page, ids) {
       assert.ok(narrow.widths.every(w => Math.abs(w - 360) <= 1), `${label} -> 1000: each 360px (${narrow.widths})`);
       while ((await frameIds(page)).length > 3) {
         const left = await frameIds(page);
-        await page.locator(`.h5-column-tab[data-pane-id="${left.at(-1)}"] .h5-column-tab-close`).click();
+        await closeFromHeader(page, left.at(-1));
         await waitFrames(page, left.length - 1);
       }
       narrow = await widthsBecome(page, 360);
@@ -903,13 +1049,11 @@ async function panesNamed(page, ids) {
       await button.waitFor({ state: 'visible' });
       const bar = await page.evaluate(() => {
         const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, mid: (r.top + r.bottom) / 2, width: r.width, height: r.height }; };
-        const tabs = document.getElementById('h5-columns-tabs');
         return {
           first: document.getElementById('h5-columns-bar').firstElementChild.id, second: document.getElementById('h5-columns-bar').children[1].id,
-          bar: rect('h5-columns-bar'), update: rect('h5-columns-update'), toggle: rect('h5-columns-toggle'), tabs: rect('h5-columns-tabs'), add: rect('h5-columns-add'),
+          bar: rect('h5-columns-bar'), update: rect('h5-columns-update'), toggle: rect('h5-columns-toggle'), list: rect('h5-columns-list'), add: rect('h5-columns-add'),
           icon: (() => { const r = document.querySelector('#h5-columns-update svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
           toggleIcon: (() => { const r = document.querySelector('#h5-columns-toggle svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
-          tabsScroll: tabs.scrollWidth, tabsClient: tabs.clientWidth,
           dot: !document.getElementById('h5-columns-update-dot').querySelector('.MuiBadge-badge').classList.contains('MuiBadge-invisible'),
         };
       });
@@ -918,8 +1062,7 @@ async function panesNamed(page, ids) {
       assert.ok(bar.update.right <= bar.toggle.left + 0.5 && bar.update.left >= bar.bar.left, `${label}: left of the switch (${JSON.stringify(bar)})`);
       assert.ok(Math.abs(bar.update.mid - bar.toggle.mid) <= 0.5 && Math.abs(bar.update.height - bar.toggle.height) <= 0.5, `${label}: as tall as the switch and on its line (${JSON.stringify(bar)})`);
       assert.ok(Math.abs(bar.icon.width - bar.toggleIcon.width) <= 0.5 && Math.abs(bar.icon.width - 20) <= 0.5, `${label}: a 20px icon like the switch's (${JSON.stringify(bar.icon)})`);
-      assert.ok(bar.toggle.right <= bar.tabs.left + 0.5 && bar.tabs.right <= bar.add.left + 0.5 && bar.add.right <= bar.bar.right + 0.5, `${label}: the tabs and Add column still fit after it (${JSON.stringify(bar)})`);
-      assert.ok(bar.tabsScroll <= bar.tabsClient + 1, `${label}: four tabs fit without scrolling (${bar.tabsScroll} > ${bar.tabsClient})`);
+      assert.ok(bar.toggle.right <= bar.list.left + 0.5 && bar.list.right <= bar.add.left + 0.5 && bar.add.right <= bar.bar.right + 0.5, `${label}: the column list and + Column still fit after it (${JSON.stringify(bar)})`);
       assert.equal(await button.getAttribute('aria-label'), 'Update');
       assert.equal(await button.getAttribute('title'), 'Update');
       assert.equal(await button.getAttribute('aria-haspopup'), 'dialog');

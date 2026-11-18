@@ -36,6 +36,9 @@ export function Header({ ui }) {
   const fold = state.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar';
   const refresh = t('Refresh the page');
   const tag = state.tag;
+  // A column of the multi-column view: the top page draws the column's header (Columns.jsx `ColumnHeader`) and acts on this page by messages
+  // (pane.mjs), so the page's own header would only say the same things twice.
+  if (state.pane) return null;
   return (
     <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-header" sx={{ flex: '0 0 auto', borderBottom: 1, borderColor: 'divider' }}>
       <Toolbar variant="dense" disableGutters sx={{ px: 1, gap: 1, minHeight: 44 }}>
@@ -70,8 +73,7 @@ export function Header({ ui }) {
         <IconButton id="h5-refresh" {...named(refresh)} onClick={() => ui.actions.refresh()}>
           <RefreshIcon />
         </IconButton>
-        {/* A pane of the multi-column view has no updater: the top page checks, reloads and so reloads its columns (pane.mjs). */}
-        {state.pane ? null : <UpdateButton ui={ui} />}
+        <UpdateButton ui={ui} />
       </Toolbar>
     </AppBar>
   );

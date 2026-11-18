@@ -1,10 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
+import Divider from '@mui/material/Divider';
 import GlobalStyles from '@mui/material/GlobalStyles';
 import IconButton from '@mui/material/IconButton';
-import { alpha } from '@mui/material/styles';
-import { named, t } from './common.jsx';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import { alpha, getOverlayAlpha } from '@mui/material/styles';
+import { Pill, named, t } from './common.jsx';
+import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { DeviceTag } from './TaskDrawer.jsx';
 import { ColumnsUpdateButton } from './Update.jsx';
@@ -15,20 +20,21 @@ import {
   STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnMove, columnStep, columnsFor, forgetMessage, hiddenEdges, minColumnWidth, mountOrder,
   moveColumn, openMessage, paneUrl, readLayout, readPaneMessage, revealLeft, shiftColumn, sidewaysDelta, stepTarget, tagOf, targetColumn, writeLayout,
   AGENT_NAMES, MESSAGE_TYPE, RAIL_WIDTH, STATE_WORDS, addMapColumn, canMaximize, columnName, columnStatus, keptMaximized, mapKeyOf, maximizeKey,
-  railColumns, toggleMaximize, writeMapColumn,
+  railColumns, toggleMaximize, writeMapColumn, LIST_WORDS, actionMessage, headerLabel, headerName, listState, summarize,
 } from './columns.mjs';
 
 // The multi-column view of a wide screen: the top page shows a row of iframes of itself in pane mode (`/h5?pane=<id>`), each a whole copy of the page
-// with its own header, terminal, draft box and tool row, and the person goes back to the normal view with the same button. The top page keeps one
+// with its own terminal, draft box and tool row under one header that the top page draws (`ColumnHeader`; the pane hides its own page header), and the
+// person goes back to the normal view with the same button. The top page keeps one
 // activity feed, one notifier and one updater; while the strip is shown its own terminal is hidden and holds no socket (h5.js, `columns.shown`).
 // The rules (ids, order, the message format) are in columns.mjs; "Multi-column view" in docs/design/page-shell-and-columns.md.
 //
 // state.columns: null on a page that never offers the view (a pane, or any page inside a frame), else
 //   { enabled (the person's choice, remembered), shown (enabled and the screen is wide), ids (in order), focus (an id or null),
-//     titles ({ id: { title, session, device?, map?, target?, agent? } } from the panes), ready ({ id: true } once the pane said so), closing ([id] being
+//     titles ({ id: { title, session, device?, map?, target?, agent?, sheet, width } } from the panes), ready ({ id: true } once the pane said so), closing ([id] being
 //     closed), maximized (the id of a mind map column that fills the strip, or null; not stored), tails ({ id: [line] }, the last lines a pane sent
 //     for the peek card of its tile) }
-// `ids` is the order the person sees (the tabs, the columns from left to right, the keys, storage). The columns' elements never follow it: each keeps the
+// `ids` is the order the person sees (the column list, the columns and their headers from left to right, the keys, storage). The columns' elements never follow it: each keeps the
 // place in the DOM it was created at (`mountOrder`) and is shown at its place by the CSS `order` property, since moving an iframe's element reloads its page.
 
 const CLOSE_DELAY_MS = 250; // a closed column stays mounted (hidden) this long, so its pane receives 'forget' before its iframe goes away
@@ -162,19 +168,30 @@ export function startColumns(ui) {
     revealColumn(id);
   };
   ui.actions.scrollColumns = dx => { if (get() && get().shown) scrollStrip(dx); };
-  // A tab tapped or clicked: that column takes the focus and is scrolled into view; a pointer click also moves the keyboard into its frame (a key press on
-  // the tab leaves the focus on the tab).
+  // A column chosen (its header clicked, the column list, "1 needs you"): that column takes the focus and is scrolled into view; `focusFrame` also moves
+  // the keyboard into its frame.
   ui.actions.showColumn = (id, { focusFrame = false } = {}) => {
     const now = get();
     if (!now || !now.shown || !openOf(now).includes(id)) return;
-    if (now.maximized && now.maximized !== id) { ui.actions.restoreColumns({ focus: id }); return; } // another column's tab: back to the strip
+    if (now.maximized && now.maximized !== id) { ui.actions.restoreColumns({ focus: id }); return; } // another column chosen: back to the strip
     if (now.focus !== id) put({ focus: id });
     if (focusFrame) { const frame = frameOf(id); try { if (frame) frame.focus(); } catch { /* gone */ } }
     revealColumn(id);
   };
-  // A new place for a column (a tab dropped, Ctrl+Alt+Shift+Left / Right): the order is saved at once, the tabs and the columns slide to their places
-  // (useFlipX), the column keeps (or takes) the focus and is scrolled into view, and the move is said. A tab with the keyboard focus that React moved
-  // in the DOM lost it: it gets it back.
+  // An action of a column's header that works inside its pane (columns.mjs `actionMessage`): the column takes the focus, and for the task sheet, rename
+  // and restart (they need the keyboard, or ask a question) the keyboard goes into its frame first. The message waits for the frame's page like `open`.
+  ui.actions.columnAction = (id, event, options = {}) => {
+    const now = get();
+    const message = actionMessage(event, options);
+    if (!now || !now.shown || !message || !openOf(now).includes(id)) return;
+    if (now.focus !== id) put({ focus: id });
+    if (event === 'tasks' || event === 'rename' || event === 'restart') { const frame = frameOf(id); try { if (frame) frame.focus(); } catch { /* gone */ } }
+    pending.set(id, [...(pending.get(id) || []), message]);
+    deliver(id);
+  };
+  // A new place for a column (a header dropped, Ctrl+Alt+Shift+Left / Right): the order is saved at once, the columns slide to their places
+  // (useFlipX), the column keeps (or takes) the focus and is scrolled into view, and the move is said. An element with the keyboard focus that lost it
+  // gets it back.
   const reorder = (id, next) => {
     const now = get();
     const open = openOf(now);
@@ -200,7 +217,7 @@ export function startColumns(ui) {
     reorder(which, shiftColumn(openOf(now), which, step));
   };
   window.addEventListener('keydown', event => {
-    // Cmd/Ctrl+Shift+Enter on the top page (a tab, the rail): maximize the focused column, or restore. Inside a column the pane posts 'maximize'.
+    // Cmd/Ctrl+Shift+Enter on the top page (a header, the rail): maximize the focused column, or restore. Inside a column the pane posts 'maximize'.
     if (get() && get().shown && maximizeKey(event) && (get().maximized || canMaximize(get(), get().focus))) {
       event.preventDefault();
       event.stopPropagation();
@@ -260,7 +277,7 @@ export function startColumns(ui) {
     else if (message.event === 'maximize') ui.actions.toggleMaximize(id);
     else if (message.event === 'peek') put({ tails: { ...get().tails, [id]: message.lines } });
     else {
-      const info = { title: message.title, session: message.session, device: message.device || null, map: message.map || null, target: message.target || null, agent: message.agent || '' };
+      const info = { title: message.title, session: message.session, device: message.device || null, map: message.map || null, target: message.target || null, agent: message.agent || '', sheet: message.sheet === true, width: message.width || null };
       put({ titles: { ...get().titles, [id]: info } });
     }
   });
@@ -298,106 +315,248 @@ const EDGE = { position: 'absolute', top: 0, width: 32, pointerEvents: 'none', z
 
 const HIDE_PAGE = { 'html[data-columns] #h5-app, html[data-columns] #h5-tasks, html[data-columns] #h5-attention-sheet, html[data-columns] #h5-agent, html[data-columns] #h5-mindmap': { display: 'none !important' } };
 
-// The tabs of the strip's top bar (#h5-columns-tabs, after the switch, "Add column" at its end): one per column, in the order the columns are shown,
-// each the device tag of the pane's task (when its list tags it, the same DeviceTag as the task list and the pane's header), its task and session
-// ("Column N" before the pane said them) and its close button. The focused column's tab is picked out (a tint and a primary outline, as the column's own
-// outline), the tabs of the columns scrolled into view have a light underline. A tap or click on a tab focuses its column and scrolls it into view.
-// The row never wraps: it scrolls sideways itself (no scrollbar: a wheel, a swipe, and the focused tab is scrolled into it). A tab held (useTabDrag)
-// is dragged along the row to give its column a new place.
-const TAB_MIN = 90;
-const TAB_MAX = 220;
-const TAB_HEIGHT = 30;
+// One header per column, drawn by the top page right above the column's iframe (`ColumnHeader`, `.h5-column-head`): the drag grip (pointer input),
+// the state dot (green running, orange needs you, grey idle: `columnStatus`, from the top page's terminal activity and T-Attention), the device tag of
+// the pane's task (the same DeviceTag as the task list) and "Project · session ▾", which opens that column's task sheet (a message to its pane; the
+// pane hides its own page header). On the right: "Needs you" and an orange tint and top line while the column waits for the person, else the agent
+// of a running terminal; then the actions: fit / wide terminal width, maximize, the "⋯" menu (`ColumnMenu`, everything the header does and more) and
+// close. With a mouse, fit and maximize (and on unfocused columns also "⋯" and close) show on hover or keyboard focus inside the header; in touch input
+// mode "⋯" and close are always shown with 44px targets and fit and maximize live in the menu. The focused column has a 2px primary top line and a
+// lighter header (a higher MD2 elevation overlay); the other columns' pages are slightly dimmed. Holding the header drags the column to a new place
+// (useTabDrag in tab-drag.jsx). See "Multi-column view" in docs/design/page-shell-and-columns.md.
+const HEAD_HEIGHT = 38;
+const HEAD_TOUCH = 44;
 const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
-const tabLook = (theme, focused, inView) => {
-  const shadows = [];
-  if (focused) shadows.push(`inset 0 0 0 1px ${theme.palette.primary.main}`);
-  if (inView) shadows.push(`inset 0 -2px 0 ${focused ? theme.palette.primary.main : 'rgba(255,255,255,0.32)'}`);
-  return shadows.length ? shadows.join(', ') : 'none';
-};
-// The drag of a tab: its place is an empty dashed slot, the copy under the pointer is lifted (as the rows of the lists, list-drag.jsx DRAG_SX).
-const TAB_DRAG_SX = theme => ({
-  '& .h5-column-tab[data-drag-slot]': { backgroundColor: 'transparent', boxShadow: 'none' },
-  '& .h5-column-tab[data-drag-slot] > *': { opacity: 0, pointerEvents: 'none' },
-  '& .h5-column-tab[data-drag-slot]::before': {
-    content: '""', position: 'absolute', inset: 0, borderRadius: '6px', pointerEvents: 'none',
-    border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.6)}`, backgroundColor: alpha(theme.palette.primary.main, 0.1),
-  },
-  '& .h5-column-tab-float': { position: 'fixed', left: 0, top: 0, zIndex: 5, pointerEvents: 'none', willChange: 'transform' },
-  '& .h5-column-tab-float-body': {
-    height: '100%', borderRadius: '6px', backgroundColor: theme.palette.background.paper, backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12))',
-    boxShadow: 'none', transformOrigin: '50% 50%', transition: `transform ${SETTLE_MS}ms ease-out, box-shadow ${SETTLE_MS}ms ease-out`,
-  },
-  '& .h5-column-tab-float-body > .h5-column-tab': { height: '100%', maxWidth: 'none' },
-  '& .h5-column-tab-float-lifted': { transform: 'scale(1.04)', boxShadow: `${theme.shadows[8]}, 0 0 0 1px ${alpha(theme.palette.primary.main, 0.45)}` },
-  '& .h5-column-tab-float .h5-device-tag': { borderColor: 'currentColor', borderStyle: 'solid' },
-  '@media (prefers-reduced-motion: reduce)': { '& .h5-column-tab-float-body': { transition: 'none' } },
-});
-const tabsOf = row => [...row.querySelectorAll('.h5-column-tab[data-pane-id]')];
+const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+const MAXIMIZE_KEYS = APPLE ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
+const WIDE_CHOICES = [120, 160, 200];
+// The MD2 dark theme shows elevation as a white overlay on the surface (1dp 5%, 4dp 9%, ...): `getOverlayAlpha` is MUI's own table.
+const overlay = dp => `linear-gradient(${alpha('#fff', Number(getOverlayAlpha(dp)))}, ${alpha('#fff', Number(getOverlayAlpha(dp)))})`;
+// The state dot: the theme's success, warning and disabled colours (green 400, orange 400 and 38% white in the dark theme).
+const STATE_COLORS = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
+const STATUS_KEYS = ['attention', 'terminalActivity'];
 const columnsOf = strip => [...strip.querySelectorAll(':scope > .h5-column')];
 const paneKey = el => el.dataset.paneId;
-
-function ColumnTabs({ columns, open, inView, ui, hostRef }) {
-  const row = useRef(null);
-  const drag = useTabDrag(row, hostRef, { drop: (id, index) => ui.actions.moveColumnTo(id, index), say });
-  useFlipX(row, { items: tabsOf, key: paneKey, takeDropped: drag.takeDropped, busy: drag.busy });
-  // The focused tab is scrolled into the row.
-  const focus = columns.focus;
-  const order = open.join(',');
-  useEffect(() => {
-    const el = row.current;
-    const tab = focus && el ? el.querySelector(`.h5-column-tab[data-pane-id="${focus}"]`) : null;
-    if (!tab) return;
-    const left = revealLeft({ left: tab.offsetLeft, width: tab.offsetWidth, scrollLeft: el.scrollLeft, clientWidth: el.clientWidth });
-    if (left !== null) el.scrollTo({ left, behavior: reducedMotion() ? 'auto' : 'smooth' });
-  }, [focus, order]);
-  const closable = canClose(open);
+// The status of every column, from the top page's terminal activity and T-Attention items (read only while the strip is shown: these parts are mounted
+// only then, so an activity push in the normal view draws nothing of the strip).
+function useStatusOf(ui, columns) {
+  const live = useStoreKeys(ui, STATUS_KEYS);
+  return id => columnStatus(columns.titles[id], { activity: live.terminalActivity, items: live.attention && live.attention.items });
+}
+// The name of a column as its header and the column list show it: { title, session, shown (what is drawn when the pane said nothing), map, tag }.
+function nameOf(columns, id, index) {
+  const info = columns.titles[id];
+  const map = info && info.map ? info.map : null;
+  const { title, session } = headerName(info);
+  const fallback = info ? t('Choose a task') : t(`Column ${index + 1}`);
+  return { info, map, title, session, shown: map && !map.title ? t('Mind maps') : title || fallback, tag: !map && info && info.device ? tagOf(info.device) : null };
+}
+const Dot = ({ state, className }) => (
+  <Box component="span" aria-hidden="true" className={className} data-state={state} sx={{ width: 8, height: 8, borderRadius: '50%', flex: '0 0 auto', bgcolor: STATE_COLORS[state] }} />
+);
+// "Project · session" (or the map's name with its small "map" tag), cut with an ellipsis; the task is the stronger of the two.
+function ColumnName({ name, size = 13 }) {
   return (
-    <Box id="h5-columns-tabs" ref={row} role="list" aria-label={t('Column tabs')}
-      sx={{ flex: '0 1 auto', minWidth: 0, position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', py: '3px', overflowX: 'auto', overflowY: 'hidden', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
-      {open.map((id, index) => {
-        const info = columns.titles[id];
-        const label = t(`Column ${index + 1}`);
-        const map = info && info.map ? info.map : null; // a mind map column: the map icon, the map's name (or "Mind maps" on the list) and a "map" tag
-        const name = map ? map.title : info && info.title ? [info.title, info.session].filter(Boolean).join(' · ') : '';
-        const tag = !map && info && info.device ? tagOf(info.device) : null;
-        const focused = columns.focus === id;
-        const seen = inView.includes(id);
-        const shown = name || (map ? t('Mind maps') : label);
-        return (
-          <Box key={id} role="listitem" className="h5-column-tab" data-pane-id={id} data-focused={focused ? '' : undefined} data-in-view={seen ? '' : undefined}
-            data-kind={map ? 'map' : undefined} data-maximized={columns.maximized === id ? '' : undefined} {...drag.hold()}
-            sx={theme => ({
-              flex: '0 0 auto', minWidth: TAB_MIN, maxWidth: TAB_MAX, height: TAB_HEIGHT, boxSizing: 'border-box', position: 'relative', display: 'flex', alignItems: 'center',
-              borderRadius: '6px', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
-              color: focused ? theme.palette.text.primary : theme.palette.text.secondary, backgroundColor: focused ? theme.palette.action.selected : 'transparent',
-              boxShadow: tabLook(theme, focused, seen), transition: 'background-color 120ms ease-out', '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
-              '@media (hover: hover)': { '&:hover': { backgroundColor: focused ? theme.palette.action.selected : theme.palette.action.hover } },
-            })}>
-            <ButtonBase className="h5-column-tab-main" disableRipple aria-current={focused ? 'true' : undefined} title={map ? `${shown} (${t('map')})` : name || label}
-              aria-keyshortcuts="Control+Alt+Shift+ArrowLeft Control+Alt+Shift+ArrowRight"
-              onClick={event => ui.actions.showColumn(id, { focusFrame: event.detail > 0 })}
-              sx={theme => ({
-                flex: '1 1 auto', minWidth: 0, height: '100%', justifyContent: 'flex-start', gap: 0.75, pl: 1, pr: 0.25, borderRadius: '6px',
-                fontSize: 12, fontWeight: focused ? 600 : 500, color: 'inherit', '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 },
-              })}>
-              {tag ? <DeviceTag device={tag} /> : null}
-              {map ? <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flex: '0 0 auto', color: 'primary.light' }}><Icon name="mindmap" size={14} /></Box> : null}
-              <Box component="span" className="h5-column-tab-name" translate={name ? 'no' : undefined}
-                sx={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{shown}</Box>
-              {map ? (
-                <Box component="span" className="h5-column-tab-kind"
-                  sx={{ flex: '0 0 auto', px: 0.5, fontSize: 10, lineHeight: '14px', fontWeight: 600, borderRadius: '4px', color: 'primary.light', border: 1, borderColor: 'currentColor' }}>
-                  {t('map')}
-                </Box>
-              ) : null}
-            </ButtonBase>
-            <IconButton className="h5-column-tab-close" size="small" {...named(t('Close column'))} disabled={!closable} onClick={() => ui.actions.closeColumn(id)} sx={{ flex: '0 0 auto', p: 0.5, mr: 0.25 }}>
-              <Icon name="close" size={14} />
-            </IconButton>
-          </Box>
-        );
-      })}
+    <>
+      {name.map ? <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flex: '0 0 auto', color: 'primary.light' }}><Icon name="mindmap" size={14} /></Box> : null}
+      <Box component="span" className="h5-column-title" translate={name.title ? 'no' : undefined}
+        sx={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: size, fontWeight: 600 }}>{name.shown}</Box>
+      {name.session ? (
+        <Box component="span" className="h5-column-session" translate="no"
+          sx={{ flex: '0 100 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: size, color: 'text.secondary' }}>{`· ${name.session}`}</Box>
+      ) : null}
+      {name.map ? (
+        <Box component="span" className="h5-column-kind"
+          sx={{ flex: '0 0 auto', px: 0.5, fontSize: 10, lineHeight: '14px', fontWeight: 600, borderRadius: '4px', color: 'primary.light', border: 1, borderColor: 'currentColor' }}>
+          {t('map')}
+        </Box>
+      ) : null}
+    </>
+  );
+}
+
+function ColumnHeader({ id, index, columns, closable, touch, ui, drag, onMenu, onWidthMenu, menuOpen }) {
+  const statusOf = useStatusOf(ui, columns);
+  const status = statusOf(id);
+  const name = nameOf(columns, id, index);
+  const { info } = name;
+  const focused = columns.focus === id;
+  const waiting = status.state === 'waiting';
+  const maximized = columns.maximized === id;
+  const width = info && info.width ? info.width : null;
+  const wide = Boolean(width && width.mode === 'wide');
+  const agent = info && !info.map && status.state === 'running' && AGENT_NAMES[info.agent] ? AGENT_NAMES[info.agent] : '';
+  const label = headerLabel(name.map ? null : info, [t(STATE_WORDS[status.state]), focused ? t('focused') : ''].filter(Boolean).join(', '), name.shown);
+  const sheetLabel = t('Switch task or session');
+  const maximizeLabel = maximized ? t('Restore columns') : t('Maximize');
+  const act = { className: 'h5-column-act', size: 'small' };
+  // A click on the header itself (not on one of its buttons) focuses the column and moves the keyboard into it.
+  const onClick = event => { if (!event.target.closest || !event.target.closest('button')) ui.actions.showColumn(id, { focusFrame: true }); };
+  return (
+    <Box className="h5-column-head" role="group" aria-label={label} data-pane-id={id} data-state={status.state} data-focused={focused ? '' : undefined}
+      data-kind={name.map ? 'map' : undefined} data-menu={menuOpen ? '' : undefined} onClick={onClick} {...drag.hold()}
+      sx={theme => ({
+        flex: '0 0 auto', position: 'relative', height: HEAD_HEIGHT, [TOUCH]: { height: HEAD_TOUCH, pr: 0 }, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
+        gap: 1, pl: 1.25, pr: 0.5, borderBottom: 1, borderColor: waiting ? alpha(theme.palette.warning.main, 0.24) : 'divider',
+        userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', cursor: touch ? 'default' : 'grab',
+        bgcolor: 'background.paper',
+        backgroundImage: waiting
+          ? `linear-gradient(${alpha(theme.palette.warning.main, 0.1)}, ${alpha(theme.palette.warning.main, 0.1)}), ${overlay(focused ? 4 : 1)}`
+          : overlay(focused ? 4 : 1),
+        // The top line: primary on the focused column, orange on a column that needs the person (2px, inside the header).
+        '&::before': { content: '""', position: 'absolute', left: 0, right: 0, top: 0, height: 2, pointerEvents: 'none',
+          bgcolor: focused ? theme.palette.primary.main : waiting ? theme.palette.warning.main : 'transparent' },
+        // Pointer input: the actions show on hover or keyboard focus inside the header (or while its menu is open); the focused column always shows
+        // "⋯" and close. Touch input: "⋯" and close are always there, fit and maximize are only in the menu (not drawn at all).
+        '& .h5-column-act': { display: 'none' },
+        '&:hover .h5-column-act, &:focus-within .h5-column-act, &[data-menu] .h5-column-act': { display: 'inline-flex' },
+        '&[data-focused] .h5-column-act[data-keep], html[data-input="touch"] & .h5-column-act[data-keep]': { display: 'inline-flex' },
+        '&:hover .h5-column-hint, &:focus-within .h5-column-hint, &[data-menu] .h5-column-hint': { display: 'none' },
+      })}>
+      {touch ? null : (
+        <Box component="span" className="h5-column-grip" aria-hidden="true" title={t('Drag to reorder')} sx={{ display: 'inline-flex', flex: '0 0 auto', color: 'text.disabled', ml: -0.5 }}>
+          <Icon name="holder" size={14} />
+        </Box>
+      )}
+      <Dot state={status.state} className="h5-column-dot" />
+      {name.tag ? <DeviceTag device={name.tag} /> : null}
+      <ButtonBase className="h5-column-switch" aria-haspopup="dialog" aria-expanded={Boolean(info && info.sheet)} title={sheetLabel}
+        aria-label={`${[name.title || name.shown, name.session].filter(Boolean).join(' · ')}, ${sheetLabel}`}
+        onClick={() => ui.actions.columnAction(id, 'tasks', { toggle: true })}
+        sx={theme => ({
+          flex: '0 1 auto', minWidth: 0, height: 28, [TOUCH]: { height: 40 }, display: 'flex', alignItems: 'center', gap: 0.75, px: 0.75, borderRadius: '6px', color: 'text.primary',
+          '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } }, '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 },
+        })}>
+        <ColumnName name={name} />
+        <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flex: '0 0 auto', color: 'text.secondary' }}><Icon name="down" size={12} /></Box>
+      </ButtonBase>
+      <Box sx={{ flex: '1 1 0', minWidth: 0 }} />
+      {waiting ? <Pill className="h5-column-needs" label={t('Needs you')} tone="warning" sx={{ flex: '0 0 auto', height: 22, px: 1, fontSize: 12, fontWeight: 600 }} /> : null}
+      {!waiting && agent ? <Box component="span" className="h5-column-hint" sx={{ flex: '0 0 auto', fontSize: 12, color: 'text.secondary', whiteSpace: 'nowrap' }}>{agent}</Box> : null}
+      <Box className="h5-column-actions" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 0.25, [TOUCH]: { gap: 0 } }}>
+        {touch ? null : (
+          <IconButton {...act} data-action="width" {...named(t('Wide terminal'))} aria-pressed={wide} disabled={!width}
+            sx={wide ? { color: 'primary.light' } : undefined}
+            onClick={() => ui.actions.columnAction(id, 'width')} onContextMenu={event => { event.preventDefault(); if (width) onWidthMenu(id, event.currentTarget); }}>
+            <Icon name="columnWidth" size={18} />
+          </IconButton>
+        )}
+        {touch ? null : (
+          <IconButton {...act} data-action="maximize" {...named(maximizeLabel)} aria-keyshortcuts="Meta+Shift+Enter Control+Shift+Enter" aria-pressed={maximized}
+            onClick={() => ui.actions.toggleMaximize(id)}>
+            <Icon name={maximized ? 'restore' : 'maximize'} size={16} />
+          </IconButton>
+        )}
+        <IconButton {...act} data-keep="" data-action="more" {...named(t('Column actions'))} aria-haspopup="menu" aria-expanded={menuOpen}
+          onClick={event => onMenu(id, event.currentTarget)}>
+          <Icon name="taskMore" size={18} />
+        </IconButton>
+        <IconButton {...act} data-keep="" data-action="close" {...named(t('Close column'))} disabled={!closable} onClick={() => ui.actions.closeColumn(id)}>
+          <Icon name="close" size={14} />
+        </IconButton>
+      </Box>
     </Box>
+  );
+}
+
+// The "⋯" menu of a column: everything its header does, so nothing needs a mouse or a hover. Items that act inside the pane move the keyboard
+// there (the menu then gives the focus back to nothing on the top page: `disableRestoreFocus`).
+function ColumnMenu({ menu, columns, ui, onClose }) {
+  const [restore, setRestore] = useState(true);
+  const id = menu ? menu.id : null;
+  const info = id ? columns.titles[id] : null;
+  const width = info && info.width ? info.width : null;
+  const terminal = Boolean(info && !info.map && info.target);
+  const open = id ? openOf(columns) : [];
+  const maximized = Boolean(id && columns.maximized === id);
+  useEffect(() => { if (menu) setRestore(true); }, [menu]);
+  const run = (into, action) => { if (into) setRestore(false); onClose(); setTimeout(action, 0); };
+  const item = { sx: { minHeight: 36, fontSize: 14, gap: 2, [TOUCH]: { minHeight: 44 } } };
+  return (
+    <Menu id="h5-column-menu" anchorEl={menu ? menu.anchor : null} open={Boolean(menu)} onClose={onClose} disableRestoreFocus={!restore}
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      slotProps={{ paper: { sx: { minWidth: 240 } }, list: { 'aria-label': t('Column actions') } }}>
+      <MenuItem {...item} data-action="tasks" onClick={() => run(true, () => ui.actions.columnAction(id, 'tasks'))}>{t('Switch task or session…')}</MenuItem>
+      <MenuItem {...item} data-action="width" disabled={!width} onClick={() => run(false, () => ui.actions.columnAction(id, 'width', { mode: width && width.mode === 'wide' ? 'fit' : 'wide' }))}>
+        {width && width.mode === 'wide' ? t('Fit the terminal width') : t('Wide terminal')}
+      </MenuItem>
+      <MenuItem {...item} data-action="maximize" onClick={() => run(false, () => ui.actions.toggleMaximize(id))}>
+        <Box component="span" sx={{ flex: '1 1 auto' }}>{maximized ? t('Restore columns') : t('Maximize')}</Box>
+        <Box component="span" sx={{ fontSize: 12, color: 'text.secondary' }}>{MAXIMIZE_KEYS}</Box>
+      </MenuItem>
+      <Divider />
+      <MenuItem {...item} data-action="rename" disabled={!terminal} onClick={() => run(true, () => ui.actions.columnAction(id, 'rename'))}>{t('Rename session')}</MenuItem>
+      <MenuItem {...item} data-action="restart" disabled={!terminal} onClick={() => run(true, () => ui.actions.columnAction(id, 'restart'))}>{t('Restart session')}</MenuItem>
+      <MenuItem {...item} data-action="reload" onClick={() => run(false, () => ui.actions.columnAction(id, 'reload'))}>{t('Reload column')}</MenuItem>
+      <Divider />
+      <MenuItem {...item} data-action="close" disabled={!canClose(open)} onClick={() => run(false, () => ui.actions.closeColumn(id))} sx={{ ...item.sx, color: 'error.main' }}>{t('Close column')}</MenuItem>
+    </Menu>
+  );
+}
+
+// The width choices of a column's terminal (a right click on its width button), as the normal header's long press: Fit, or 120 / 160 / 200 columns.
+function WidthMenu({ menu, columns, ui, onClose }) {
+  const info = menu ? columns.titles[menu.id] : null;
+  const width = info && info.width ? info.width : null;
+  const wide = Boolean(width && width.mode === 'wide');
+  const pick = options => { onClose(); ui.actions.columnAction(menu.id, 'width', options); };
+  return (
+    <Menu id="h5-column-width-menu" anchorEl={menu ? menu.anchor : null} open={Boolean(menu)} onClose={onClose} slotProps={{ list: { 'aria-label': t('Wide terminal') } }}>
+      <MenuItem selected={!wide} onClick={() => pick({ mode: 'fit' })} sx={{ minHeight: 36, [TOUCH]: { minHeight: 44 } }}>{t('Fit to screen')}</MenuItem>
+      {WIDE_CHOICES.map(cols => (
+        <MenuItem key={cols} selected={wide && width.cols === cols} data-cols={cols} onClick={() => pick({ mode: 'wide', cols })} sx={{ minHeight: 36, [TOUCH]: { minHeight: 44 } }}>
+          {t(`${cols} columns, scroll sideways`)}
+        </MenuItem>
+      ))}
+    </Menu>
+  );
+}
+
+// The bar's part about the columns: "N columns ▾" (#h5-columns-list) opens the list of every open column (#h5-columns-list-menu, also those scrolled
+// out of view) with its state dot, device tag, task · session and state word; choosing one scrolls it into view and moves the keyboard into it. Then
+// how many run (#h5-columns-summary) and, when any needs the person, "N needs you" (#h5-columns-needs), which goes to the first of them.
+function ColumnSummary({ columns, open, ui }) {
+  const statusOf = useStatusOf(ui, columns);
+  const [anchor, setAnchor] = useState(null);
+  const [restore, setRestore] = useState(true);
+  const sum = summarize(open, statusOf);
+  const go = id => { setRestore(false); setAnchor(null); setTimeout(() => ui.actions.showColumn(id, { focusFrame: true }), 0); };
+  const count = open.length === 1 ? t('1 column') : t(`${open.length} columns`);
+  return (
+    <>
+      <Button id="h5-columns-list" size="small" color="inherit" variant="outlined" aria-haspopup="menu" aria-expanded={Boolean(anchor)} aria-controls={anchor ? 'h5-columns-list-menu' : undefined}
+        title={t('All columns')} endIcon={<Icon name="down" size={12} />}
+        onClick={event => { setRestore(true); setAnchor(event.currentTarget); }}
+        sx={{ flex: '0 0 auto', height: 28, minWidth: 0, px: 1.25, fontSize: 13, fontWeight: 600, borderColor: 'divider', '& .MuiButton-endIcon': { ml: 0.75, color: 'text.secondary' } }}>
+        {count}
+      </Button>
+      <Menu id="h5-columns-list-menu" anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)} disableRestoreFocus={!restore}
+        slotProps={{ paper: { sx: { width: 360, maxWidth: 'calc(100vw - 16px)' } }, list: { 'aria-label': t('All columns') } }}>
+        {open.map((id, index) => {
+          const name = nameOf(columns, id, index);
+          const status = statusOf(id);
+          const state = listState(status, columns.focus === id);
+          return (
+            <MenuItem key={id} className="h5-columns-list-item" data-pane-id={id} data-state={state} selected={columns.focus === id} onClick={() => go(id)}
+              sx={{ minHeight: 40, gap: 1, [TOUCH]: { minHeight: 44 } }}>
+              <Dot state={status.state} />
+              {name.tag ? <DeviceTag device={name.tag} /> : null}
+              <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 0.75 }}><ColumnName name={name} /></Box>
+              <Box component="span" className="h5-columns-list-state"
+                sx={{ flex: '0 0 auto', fontSize: 12, color: state === 'focused' ? 'primary.light' : state === 'waiting' ? 'warning.light' : 'text.secondary' }}>
+                {t(LIST_WORDS[state])}
+              </Box>
+            </MenuItem>
+          );
+        })}
+      </Menu>
+      {sum.running ? <Box component="span" id="h5-columns-summary" sx={{ flex: '0 0 auto', fontSize: 12, color: 'text.secondary', whiteSpace: 'nowrap' }}>{t(`${sum.running} running`)}</Box> : null}
+      {sum.first ? (
+        <Pill id="h5-columns-needs" tone="warning" onClick={() => ui.actions.showColumn(sum.first, { focusFrame: true })}
+          label={<><Dot state="waiting" />{sum.waiting === 1 ? t('1 needs you') : t(`${sum.waiting} need you`)}</>}
+          sx={{ flex: '0 0 auto', height: 24, gap: 0.75, fontSize: 12 }} />
+      ) : null}
+    </>
   );
 }
 
@@ -407,7 +566,6 @@ function ColumnTabs({ columns, open, inView, ui, hostRef }) {
 // person. Hovering a tile or focusing it shows its peek card beside it: task and session, agent and state, the pending question or the last lines
 // of the terminal (asked from that pane), and "Open column". A click on a tile (or Open column) restores the columns and focuses that one.
 // Escape in the rail closes the peek, else restores. The columns behind the tiles stay mounted and connected (see ColumnStrip).
-const STATE_COLORS = { running: '#66bb6a', waiting: '#ffa726', idle: 'rgba(255,255,255,0.38)' };
 const RAIL_KEYS = ['columns', 'attention', 'terminalActivity'];
 const PEEK_DELAY_MS = 250;
 const PEEK_WIDTH = 300;
@@ -542,24 +700,46 @@ function PeekCard({ id, top, info, status, name, lines, onOpen, onEnter, onLeave
   );
 }
 
-const STRIP_KEYS = ['columns', 'wide', 'pane', 'updateDot'];
+const STRIP_KEYS = ['columns', 'wide', 'pane', 'updateDot', 'input'];
+// The drag of a column by its header: its place is dimmed with a dashed outline, a lifted copy of the header follows the pointer and a primary line
+// shows where it lands (tab-drag.jsx); the iframes take no pointer events meanwhile, so the pointer is never lost to a page under it.
+const DRAG_SX = theme => ({
+  '& .h5-column[data-drag-slot] > iframe': { opacity: 0.55 },
+  '& .h5-column[data-drag-slot]::after': {
+    content: '""', position: 'absolute', inset: 0, pointerEvents: 'none', border: `1.5px dashed ${alpha(theme.palette.primary.main, 0.6)}`,
+  },
+  '& .h5-column-drop-line': { position: 'absolute', top: 0, bottom: 0, left: 0, width: 3, borderRadius: '2px', zIndex: 4, pointerEvents: 'none', bgcolor: 'primary.main' },
+  '& .h5-column-head-float': { position: 'fixed', left: 0, top: 0, zIndex: 5, pointerEvents: 'none', willChange: 'transform' },
+  '& .h5-column-head-float-body': {
+    height: '100%', overflow: 'hidden', borderRadius: '4px', bgcolor: 'background.paper', backgroundImage: overlay(8),
+    boxShadow: 'none', transformOrigin: '50% 50%', transition: `transform ${SETTLE_MS}ms ease-out, box-shadow ${SETTLE_MS}ms ease-out`,
+  },
+  '& .h5-column-head-float-body > .h5-column-head': { height: '100%' },
+  '& .h5-column-head-float-lifted': { transform: 'scale(1.02)', boxShadow: `${theme.shadows[8]}, 0 0 0 1px ${alpha(theme.palette.primary.main, 0.45)}` },
+  '@media (prefers-reduced-motion: reduce)': { '& .h5-column-head-float-body': { transition: 'none' } },
+});
+const NO_FRAME_POINTER = { 'html[data-column-drag] #h5-columns iframe': { pointerEvents: 'none' } };
+
 export function ColumnStrip({ ui }) {
   const state = useStoreKeys(ui, STRIP_KEYS);
   countRender('ColumnStrip');
   const columns = state.columns;
   const shown = Boolean(columns && columns.shown);
+  const touch = state.input === 'touch';
   const root = useRef(null);
   const strip = useRef(null);
   const count = useRef(0);
   const mounted = useRef([]);
   const [edges, setEdges] = useState({ overflow: false, left: false, right: false });
-  const [inView, setInView] = useState('');
+  const [menu, setMenu] = useState(null); // the "⋯" menu: { id, anchor }
+  const [widthMenu, setWidthMenu] = useState(null); // the width choices: { id, anchor }
   // The strip's visible width, observed: each column is at least a quarter of it (and at least MIN_COLUMN_WIDTH; minColumnWidth in columns.mjs), so
   // up to four share it evenly and more scroll sideways. Before the first measurement the window's width stands in for it.
   const [stripWidth, setStripWidth] = useState(() => window.innerWidth);
   const columnWidth = minColumnWidth(stripWidth);
   const maximized = shown ? columns.maximized : null;
   const wasMaximized = useRef(null);
+  const drag = useTabDrag(strip, root, { drop: (id, index) => ui.actions.moveColumnTo(id, index), say });
   // Back from a maximized column: the strip's sideways scroll comes back as it was (the widths need nothing: the strip has its full width again and
   // the width it had was never measured anew while the rail took part of it).
   useLayoutEffect(() => {
@@ -591,10 +771,11 @@ export function ColumnStrip({ ui }) {
   }, [shown, ui]);
   const open = columns ? openOf(columns) : [];
   const order = open.join(',');
-  // A new order slides the columns to their places (their elements stay where they are in the DOM; only their CSS `order` changed).
-  useFlipX(strip, { items: columnsOf, key: paneKey });
-  // Whether the columns overflow, which edges hide some (the edge shadows and `data-overflow`) and which columns are in view (at least half of one, the
-  // underline of its tab): on scroll, on a resize, and when the columns or their order change.
+  // A new order slides the columns to their places (their elements stay where they are in the DOM; only their CSS `order` changed). Nothing slides while
+  // a header is being dragged.
+  useFlipX(strip, { items: columnsOf, key: paneKey, busy: drag.busy });
+  // Whether the columns overflow and which edges hide some (the edge shadows and `data-overflow`): on scroll, on a resize, and when the columns or
+  // their order change.
   useLayoutEffect(() => {
     const el = strip.current;
     if (!shown || !el) return undefined;
@@ -604,12 +785,6 @@ export function ColumnStrip({ ui }) {
       if (el.clientWidth > 0 && !el.hasAttribute('data-maximized')) setStripWidth(el.clientWidth);
       const next = { overflow: el.scrollWidth > el.clientWidth + 1, ...hiddenEdges(el) };
       setEdges(now => (now.overflow === next.overflow && now.left === next.left && now.right === next.right ? now : next));
-      const view = columnsOf(el).filter(column => {
-        if (!column.offsetParent || column.hasAttribute('data-railed')) return false;
-        const overlap = Math.min(column.offsetLeft + column.offsetWidth, el.scrollLeft + el.clientWidth) - Math.max(column.offsetLeft, el.scrollLeft);
-        return overlap > 0 && overlap >= Math.min(column.offsetWidth, el.clientWidth) / 2 - 1;
-      }).map(paneKey).sort().join(',');
-      setInView(now => (now === view ? now : view));
     };
     const soon = () => { if (!frame) frame = requestAnimationFrame(measure); };
     measure();
@@ -624,23 +799,15 @@ export function ColumnStrip({ ui }) {
     count.current = open.length;
     if (grew) revealColumn(open[open.length - 1]);
   }, [open.length]);
-  // A column that takes the focus (a click, a tab, the keys, an open request) is scrolled whole into view when part of it is hidden.
+  // A column that takes the focus (a click, the column list, the keys, an open request) is scrolled whole into view when part of it is hidden.
   const focus = columns ? columns.focus : null;
   useEffect(() => { if (shown && focus) revealColumn(focus); }, [shown, focus]);
-  // A wheel over the top bar: over the tabs while they overflow, it scrolls the tabs (a vertical wheel too; a sideways one natively); elsewhere a sideways
-  // wheel or Shift+wheel scrolls the strip (inside a pane the pane forwards it, pane.mjs).
+  // A sideways wheel or Shift+wheel over the top bar or a column's header scrolls the strip (inside a pane the pane forwards it, pane.mjs).
   useEffect(() => {
     const el = root.current;
     if (!shown || !el) return undefined;
     const onWheel = event => {
-      if (!event.target.closest || !event.target.closest('#h5-columns-bar')) return;
-      const tabs = event.target.closest('#h5-columns-tabs');
-      if (tabs && tabs.scrollWidth > tabs.clientWidth + 1) {
-        if (Math.abs(event.deltaX) >= Math.abs(event.deltaY) || event.shiftKey || event.ctrlKey || event.metaKey) return;
-        event.preventDefault();
-        tabs.scrollLeft += event.deltaMode === 1 ? event.deltaY * 40 : event.deltaY;
-        return;
-      }
+      if (!event.target.closest || !event.target.closest('#h5-columns-bar, .h5-column-head')) return;
       const dx = sidewaysDelta(event, window.innerWidth);
       if (!dx) return;
       event.preventDefault();
@@ -649,25 +816,33 @@ export function ColumnStrip({ ui }) {
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [shown]);
+  // A menu whose column went away closes.
+  useEffect(() => { if (menu && !open.includes(menu.id)) setMenu(null); if (widthMenu && !open.includes(widthMenu.id)) setWidthMenu(null); }, [order]);
   if (!shown) return null;
   // The columns' elements in the order they were created (never moved: an iframe moved in the DOM reloads), each shown at its place by `order`.
   mounted.current = mountOrder(mounted.current, columns.ids);
-  const viewed = inView ? inView.split(',') : [];
+  const closable = canClose(open);
   const shadow = side => ({ ...EDGE, [side]: 0, bottom: edges.overflow ? SCROLLBAR : 0, opacity: edges[side] ? 1 : 0,
     borderLeft: side === 'left' ? '1px solid rgba(255,255,255,0.22)' : 0, borderRight: side === 'right' ? '1px solid rgba(255,255,255,0.22)' : 0,
     background: `linear-gradient(to ${side === 'left' ? 'right' : 'left'}, rgba(255,255,255,0.13), rgba(255,255,255,0))` });
   return (
     <Box id="h5-columns" ref={root} role="region" aria-label={t('Multi-column view')}
-      sx={theme => ({ position: 'fixed', inset: 0, zIndex: 1250, display: 'flex', flexDirection: 'column', bgcolor: '#121212', color: 'text.primary', ...TAB_DRAG_SX(theme) })}>
+      sx={theme => ({ position: 'fixed', inset: 0, zIndex: 1250, display: 'flex', flexDirection: 'column', bgcolor: 'background.default', color: 'text.primary', ...DRAG_SX(theme) })}>
       <GlobalStyles styles={HIDE_PAGE} />
       <GlobalStyles styles={STRIP_SCROLLBAR} />
-      <Box id="h5-columns-bar" sx={{ flex: '0 0 auto', minHeight: 36, display: 'flex', alignItems: 'center', gap: 0.5, px: 0.5, bgcolor: '#212121', borderBottom: 1, borderColor: 'divider' }}>
+      <GlobalStyles styles={NO_FRAME_POINTER} />
+      {/* The app bar of the view (MD2 dense app bar, the colour of the page's own header): the app's actions, then the columns. */}
+      <Box id="h5-columns-bar" sx={theme => ({ flex: '0 0 auto', minHeight: 40, [TOUCH]: { minHeight: 48 }, display: 'flex', alignItems: 'center', gap: 1, px: 0.75,
+        bgcolor: theme.palette.grey[900], borderBottom: 1, borderColor: 'divider' })}>
         <ColumnsUpdateButton state={state} ui={ui} />
         <ColumnsToggle state={state} ui={ui} inBar />
-        <ColumnTabs columns={columns} open={open} inView={viewed} ui={ui} hostRef={root} />
-        <IconButton id="h5-columns-add" size="small" {...named(t('Add column'))} disabled={!canAdd(open)} onClick={() => ui.actions.addColumn()} sx={{ flex: '0 0 auto' }}>
-          <Icon name="add" size={18} />
-        </IconButton>
+        <Divider orientation="vertical" flexItem sx={{ my: 1.25, mx: 0.25 }} />
+        <ColumnSummary columns={columns} open={open} ui={ui} />
+        <Box sx={{ flex: '1 1 auto' }} />
+        <Button id="h5-columns-add" size="small" color="inherit" aria-label={t('Add column')} title={t('Add column')} disabled={!canAdd(open)} onClick={() => ui.actions.addColumn()}
+          startIcon={<Icon name="add" size={14} />} sx={{ flex: '0 0 auto', height: 30, px: 1.25, fontSize: 13, fontWeight: 600, bgcolor: 'action.selected', '&:hover': { bgcolor: 'action.focus' } }}>
+          {t('Column')}
+        </Button>
         <IconButton id="h5-columns-add-map" size="small" {...named(t('Add mind map column'))} disabled={!canAdd(open)} onClick={() => ui.actions.addMapColumn()} sx={{ flex: '0 0 auto' }}>
           <Icon name="mindmap" size={18} />
         </IconButton>
@@ -684,21 +859,27 @@ export function ColumnStrip({ ui }) {
             const info = columns.titles[id];
             const label = t(`Column ${place + 1}`);
             const name = info && info.map ? info.map.title || t('Mind maps') : info && info.title ? [info.title, info.session].filter(Boolean).join(' · ') : '';
-            // While a map column is maximized it fills the strip; every other column stays mounted at the width it had, out of sight under it
+            // While a column is maximized it fills the strip; every other column stays mounted at the width it had, out of sight under it
             // (`visibility: hidden`, not `display: none`: its page keeps its layout and size, its socket and its messages).
             const railed = Boolean(maximized && id !== maximized && !closing);
             const look = maximized === id ? { flex: '1 1 auto', minWidth: 0, borderLeft: 0 }
               : railed ? { position: 'absolute', top: 0, bottom: 0, left: 0, boxSizing: 'border-box', width: frozen.widths.get(id) || columnWidth, borderLeft: place > 0 ? 1 : 0, visibility: 'hidden', pointerEvents: 'none' }
                 : { flex: `1 0 ${columnWidth}px`, minWidth: columnWidth, borderLeft: place > 0 ? 1 : 0 };
+            // The pages of the columns that are not focused are slightly dimmed (while one is focused); their text stays readable.
+            const dim = Boolean(columns.focus && !focused && !closing);
             return (
               <Box key={id} className="h5-column" data-pane-id={id} data-focused={focused ? '' : undefined} data-ready={columns.ready[id] ? '' : undefined}
                 data-maximized={maximized === id ? '' : undefined} data-railed={railed ? '' : undefined} aria-hidden={railed ? 'true' : undefined}
                 onPointerDown={() => ui.actions.focusColumn(id)} style={{ order: closing ? MAX_ORDER : place }}
-                sx={{ display: closing ? 'none' : 'flex', flexDirection: 'column', position: 'relative', borderColor: 'divider', ...look }}>
-                <Box component="iframe" src={paneUrl(id)} title={name ? `${label}: ${name}` : label} data-pane-id={id}
+                sx={{ display: closing ? 'none' : 'flex', flexDirection: 'column', position: 'relative', ...look, borderColor: 'divider' /* after `look`: its border shorthand would reset the colour */ }}>
+                {closing ? null : (
+                  <ColumnHeader id={id} index={place} columns={columns} closable={closable} touch={touch} ui={ui} drag={drag}
+                    menuOpen={Boolean(menu && menu.id === id)} onMenu={(which, anchor) => setMenu({ id: which, anchor })} onWidthMenu={(which, anchor) => setWidthMenu({ id: which, anchor })} />
+                )}
+                <Box component="iframe" src={paneUrl(id)} title={name ? `${label}: ${name}` : label} data-pane-id={id} data-dim={dim ? '' : undefined}
                   allow="clipboard-read; clipboard-write; microphone; screen-wake-lock" onLoad={event => ui.actions.columnLoaded(id, event.currentTarget)}
-                  sx={{ flex: '1 1 auto', minHeight: 0, width: '100%', border: 0, display: 'block', bgcolor: '#121212' }} />
-                {focused ? <Box aria-hidden="true" className="h5-column-outline" sx={{ position: 'absolute', inset: 0, pointerEvents: 'none', boxShadow: theme => `inset 0 0 0 1px ${theme.palette.primary.main}` }} /> : null}
+                  sx={{ flex: '1 1 auto', minHeight: 0, width: '100%', border: 0, display: 'block', bgcolor: 'background.default',
+                    filter: dim ? 'brightness(0.9)' : 'none', transition: 'filter 120ms ease-out', '@media (prefers-reduced-motion: reduce)': { transition: 'none' } }} />
               </Box>
             );
           })}
@@ -706,6 +887,8 @@ export function ColumnStrip({ ui }) {
         <Box aria-hidden="true" className="h5-columns-edge" data-side="left" data-shown={edges.left ? '' : undefined} sx={shadow('left')} />
         <Box aria-hidden="true" className="h5-columns-edge" data-side="right" data-shown={edges.right ? '' : undefined} sx={shadow('right')} />
       </Box>
+      <ColumnMenu menu={menu} columns={columns} ui={ui} onClose={() => setMenu(null)} />
+      <WidthMenu menu={widthMenu} columns={columns} ui={ui} onClose={() => setWidthMenu(null)} />
       <Box id="h5-columns-live" aria-live="polite" aria-atomic="true" sx={VISUALLY_HIDDEN} />
     </Box>
   );

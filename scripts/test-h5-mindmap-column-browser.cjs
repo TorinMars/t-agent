@@ -1,6 +1,6 @@
 // Mind map columns and the maximized column of the multi-column view (scripts/h5-shell/Columns.jsx, columns.mjs, pane.mjs, scripts/mindmap/app.js),
 // in real Chromium at 1440x900 with every route mocked (/api/mindmaps in memory, as scripts/test-h5-mindmap-browser.cjs does):
-// - "Add mind map column" makes a third column whose pane starts on the map list; the map fills that column only (not the window), its tab shows
+// - "Add mind map column" makes a third column whose pane starts on the map list; the map fills that column only (not the window), its header shows
 //   the map icon, the name and the "map" tag; a map opened from that list opens in that column and the pane remembers it;
 // - Maximize in the map's bar: the map column fills the strip, the other two become rail tiles (state dot, name, red count, labels); their iframes
 //   stay mounted at their old width, not reloaded and still connected (a title message from a hidden pane updates its tile, a peek gets its lines);
@@ -135,10 +135,10 @@ async function run() {
     await page.waitForFunction(id => document.querySelector(`#h5-columns .h5-column[data-pane-id="${id}"][data-ready]`), mapId, { timeout: 15000 });
     const mapFrame = paneFrame(page, mapId);
     await mapFrame.locator('.mm-row[data-id="m1"]').waitFor({ timeout: 15000 });
-    const tab = page.locator(`.h5-column-tab[data-pane-id="${mapId}"]`);
-    await page.waitForFunction(id => document.querySelector(`.h5-column-tab[data-pane-id="${id}"]`)?.dataset.kind === 'map', mapId, { timeout: 5000 });
-    assert.equal(await tab.locator('.h5-column-tab-name').textContent(), 'Mind maps');
-    assert.equal(await tab.locator('.h5-column-tab-kind').textContent(), 'map');
+    const tab = page.locator(`.h5-column-head[data-pane-id="${mapId}"]`);
+    await page.waitForFunction(id => document.querySelector(`.h5-column-head[data-pane-id="${id}"]`)?.dataset.kind === 'map', mapId, { timeout: 5000 });
+    assert.equal(await tab.locator('.h5-column-title').textContent(), 'Mind maps');
+    assert.equal(await tab.locator('.h5-column-kind').textContent(), 'map');
     assert.equal(await tab.locator('svg').count() >= 1, true, 'the map icon');
     // The map fills its column, not the window; the top page's own view stays closed.
     const box = await page.locator(`#h5-columns .h5-column[data-pane-id="${mapId}"] iframe`).boundingBox();
@@ -151,7 +151,7 @@ async function run() {
     // A map opened from the column's list opens in that column; the pane remembers it.
     await mapFrame.locator('.mm-row[data-id="m1"] .mm-row-open').click();
     await mapFrame.locator('.me-tpc').first().waitFor({ timeout: 10000 });
-    await page.waitForFunction(id => document.querySelector(`.h5-column-tab[data-pane-id="${id}"] .h5-column-tab-name`)?.textContent === 'Plan', mapId, { timeout: 5000 });
+    await page.waitForFunction(id => document.querySelector(`.h5-column-head[data-pane-id="${id}"] .h5-column-title`)?.textContent === 'Plan', mapId, { timeout: 5000 });
     assert.equal(await page.evaluate(id => localStorage.getItem(`pane:${id}:h5-mindmap`), mapId), '{"screen":"editor","sourceKey":"local","id":"m1"}');
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'mindmap-column.png') }); }
 
@@ -263,7 +263,7 @@ async function run() {
     const again = paneFrame(page, mapId);
     await again.locator('.me-tpc').first().waitFor({ timeout: 15000 });
     assert.equal(await again.locator('.mm-title').inputValue(), 'Plan');
-    await page.waitForFunction(id => document.querySelector(`.h5-column-tab[data-pane-id="${id}"]`)?.dataset.kind === 'map', mapId, { timeout: 5000 });
+    await page.waitForFunction(id => document.querySelector(`.h5-column-head[data-pane-id="${id}"]`)?.dataset.kind === 'map', mapId, { timeout: 5000 });
     await page.waitForTimeout(300);
     assert.equal(await page.evaluate(() => window.frameFocusCalls), 0, 'no frame focused on load');
     assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.tagName), 'IFRAME', 'the restored map took no focus');

@@ -1892,9 +1892,10 @@
   const chatApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body), patch: (url, body) => api('PATCH', url, body), del: url => api('DELETE', url) };
   let agentChat = null;
   // The chat fills the screen below the page header (task name and settings), the same header the terminal has, and follows the
-  // visual viewport so the on-screen keyboard never covers the composer.
+  // visual viewport so the on-screen keyboard never covers the composer. A pane has no header of its own (the column's header is the top page's).
   function fitAgentView() {
-    const top = document.querySelector('.h5-header').getBoundingClientRect().bottom;
+    const header = document.querySelector('.h5-header');
+    const top = header ? header.getBoundingClientRect().bottom : 0;
     const viewport = window.visualViewport;
     const visible = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
     // The same rule as fitViewport: without a keyboard a small reading is not believed.
@@ -3997,6 +3998,34 @@
       else if (isShown(from, item.id)) closeTasks();
       else selectTask(from, item);
       return true;
+    };
+    // The actions of the column's header (drawn by the top page in place of this page's header; pane.mjs `runAction`). The task sheet: the drawer
+    // under 900px, the sidebar from there; `toggle` (the header's "Project · session" button) hides a sheet that is shown.
+    ui.actions.paneTasks = ({ toggle = false } = {}) => {
+      const shown = isWide() ? !ui.get().sidebarCollapsed : ui.get().tasksOpen;
+      if (toggle && shown) { if (isWide()) ui.actions.toggleSidebar(); else closeTasks(); return; }
+      ui.actions.openTasks();
+    };
+    // The terminal shown (none under a chat or with no task): Rename and Restart act on it as its row's menu does.
+    const shownRow = () => (task && terminalId && !agentChat ? terminals.find(entry => entry.terminal_id === terminalId) || null : null);
+    // Rename: the task sheet opens with the name field in place of the session's row (the field the row's menu shows).
+    ui.actions.paneRename = () => {
+      const row = shownRow();
+      if (!row) return false;
+      ui.actions.openTasks();
+      menuRow = row;
+      menuScope = { from: source, taskId: task.id, row };
+      menuRuns = [];
+      menuCreate = -1;
+      menuQuick = [];
+      ui.set({ menu: { title: row.title, items: [], rename: { kind: 'terminal', id: row.terminal_id, task: taskRef(source, task.id) }, renameValue: row.title, naming: false, task: null, name: '', anchor: null } });
+      return true;
+    };
+    // Restart in the working directory, with the row menu's confirmation.
+    ui.actions.paneRestart = () => {
+      const row = shownRow();
+      if (!row) return false;
+      return restartTerminal({ from: source, taskId: task.id, row });
     };
   }
   (async () => {

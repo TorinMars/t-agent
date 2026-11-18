@@ -369,3 +369,47 @@ test('the state of a rail tile: running, needs you (with the count and the quest
   assert.equal(columnName({ map: { title: '', screen: 'list' } }), 'Mind maps');
   assert.equal(columnName(null), '');
 });
+
+test('pane title messages carry whether the task sheet is shown and the terminal width, for the column header', async () => {
+  const { readPaneMessage, readWidth } = await load();
+  const base = { type: 't-agent-pane', paneId: 'a1', event: 'title', title: 'Fix', session: 'T1' };
+  assert.deepEqual(readPaneMessage({ ...base, sheet: true, width: { mode: 'wide', cols: 160 } }), { paneId: 'a1', event: 'title', title: 'Fix', session: 'T1', sheet: true, width: { mode: 'wide', cols: 160 } });
+  assert.deepEqual(readPaneMessage({ ...base, sheet: 'yes', width: { mode: 'huge' } }), { paneId: 'a1', event: 'title', title: 'Fix', session: 'T1' }, 'only true and a known mode are kept');
+  assert.deepEqual(readWidth({ mode: 'fit', cols: 'x' }), { mode: 'fit', cols: 0 });
+  assert.deepEqual(readWidth({ mode: 'wide', cols: 5000 }), { mode: 'wide', cols: 0 });
+  assert.equal(readWidth(null), null);
+});
+
+test('header actions for a pane: only the agreed events, read back the same way', async () => {
+  const { actionMessage, readAction } = await load();
+  assert.deepEqual(actionMessage('tasks', { toggle: true }), { type: 't-agent-pane', event: 'tasks', toggle: true });
+  assert.deepEqual(actionMessage('tasks'), { type: 't-agent-pane', event: 'tasks' });
+  assert.deepEqual(actionMessage('width'), { type: 't-agent-pane', event: 'width' }, 'no mode: switch Fit <-> Wide');
+  assert.deepEqual(actionMessage('width', { mode: 'wide', cols: 160 }), { type: 't-agent-pane', event: 'width', mode: 'wide', cols: 160 });
+  for (const event of ['rename', 'restart', 'reload']) assert.deepEqual(actionMessage(event), { type: 't-agent-pane', event });
+  assert.equal(actionMessage('forget'), null, 'forget and open have their own builders');
+  assert.equal(actionMessage('delete'), null);
+  assert.deepEqual(readAction(actionMessage('tasks', { toggle: true })), { event: 'tasks', toggle: true });
+  assert.deepEqual(readAction(actionMessage('tasks')), { event: 'tasks', toggle: false });
+  assert.deepEqual(readAction(actionMessage('width', { mode: 'fit' })), { event: 'width', mode: 'fit' });
+  assert.deepEqual(readAction({ type: 't-agent-pane', event: 'width', mode: 'odd', cols: 3 }), { event: 'width' });
+  assert.equal(readAction({ type: 'other', event: 'rename' }), null);
+  assert.equal(readAction({ type: 't-agent-pane', event: 'open' }), null);
+  assert.equal(readAction(null), null);
+});
+
+test('the column header names its column and the bar sums up the states', async () => {
+  const { headerName, headerLabel, summarize, listState, LIST_WORDS } = await load();
+  assert.deepEqual(headerName(null), { title: '', session: '' });
+  assert.deepEqual(headerName({ title: 'SELF-TAGENT', session: 'main dev' }), { title: 'SELF-TAGENT', session: 'main dev' });
+  assert.deepEqual(headerName({ title: '', session: 'stray' }), { title: '', session: '' }, 'no session without a task');
+  assert.deepEqual(headerName({ title: 'x', session: 'y', map: { title: '', screen: 'list' } }), { title: 'Mind maps', session: '' });
+  assert.equal(headerLabel({ title: 'SELF-TAGENT', session: 'main dev' }, 'needs you', 'Column 1'), 'SELF-TAGENT, main dev, needs you');
+  assert.equal(headerLabel(null, 'idle', 'Column 2'), 'Column 2, idle');
+  const states = { a: 'running', b: 'waiting', c: 'idle', d: 'waiting', e: 'running' };
+  assert.deepEqual(summarize(['a', 'b', 'c', 'd', 'e'], id => ({ state: states[id] })), { running: 2, waiting: 2, first: 'b' });
+  assert.deepEqual(summarize(['d', 'b'], id => ({ state: states[id] })).first, 'd', 'the first in the order shown');
+  assert.deepEqual(summarize([], () => ({ state: 'idle' })), { running: 0, waiting: 0, first: null });
+  assert.equal(listState({ state: 'waiting' }, true), 'focused');
+  assert.equal(LIST_WORDS[listState({ state: 'waiting' }, false)], 'needs you');
+});

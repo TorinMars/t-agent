@@ -8,7 +8,11 @@
 //   on `{ type: 't-agent-pane', event: 'forget' }` from its parent window on this origin (answered with `forgotten`); `{ ..., event: 'open', sourceKey,
 //   taskId, terminalId?, conversationId? }` from there opens that task and terminal as a tap in the list would, or that agent chat as a `?openChat=` link
 //   would (h5.js `ui.actions.paneOpen`); `maximized` ({ on }) tells the pane's mind map that its column is maximized, `peek` asks for the last lines
-//   of the terminal (answered with `peek` { lines });
+//   of the terminal (answered with `peek` { lines }); the actions of the column's header, which the top page draws in place of this page's own header
+//   (hidden in a pane, Header.jsx): `tasks` ({ toggle? }) shows (or hides) the task sheet, `width` ({ mode?, cols? }) sets or switches the terminal
+//   width, `rename` and `restart` act on the session shown as its row's menu does (restart asks first), `reload` loads this page again (h5.js
+//   `ui.actions.paneTasks`, `paneRename`, `paneRestart`, `setTerminalWidth`, `toggleTerminalWidth`, `refresh`); each one counts as the person using
+//   this column (`engaged`), since it is;
 // - a mind map column: the pane remembers its mind map view under `pane:<id>:h5-mindmap` and opens it again on start (see "mind map columns" in
 //   columns.mjs);
 // - a sideways wheel or trackpad swipe (or Shift+wheel) that nothing inside the pane can scroll is posted as `scroll-x` ({ dx }) and the top page
@@ -17,7 +21,7 @@
 //   maximized, or the columns restored); none of them reaches the terminal (see "Multi-column view" in docs/design/page-shell-and-columns.md);
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
-import { MAP_KEY, PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readMapColumn, sidewaysDelta, writeMapColumn } from './columns.mjs';
+import { MAP_KEY, PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readAction, readDevice, readMapColumn, sidewaysDelta, writeMapColumn } from './columns.mjs';
 
 export const PANE_ID = /^[a-z0-9]{1,16}$/;
 export const PANE_MESSAGE = 't-agent-pane';
@@ -84,19 +88,22 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
   });
   win.H5Pane = pane;
 
-  // The task and session shown (the header's two lines) and, when the task list tags the shown task, its device (the header's engine tag; the column's
-  // tab draws the same tag), once the page has started and on every change.
+  // The task and session shown and, when the task list tags the shown task, its device (else the name of a remote service as a device without a
+  // colour), whether the task sheet is shown and the terminal width: the column's header in the top page draws them (this page's own header is hidden),
+  // once the page has started and on every change.
   let started = false;
   let title = null;
   const sendTitle = () => {
     const state = ui.get();
     const row = state.taskList && Array.isArray(state.taskList.tasks) ? state.taskList.tasks.find(item => item.selected && item.device) : null;
-    const device = deviceOfRow(row);
+    const device = deviceOfRow(row) || (state.sourceLabel ? readDevice({ name: state.sourceLabel, local: false }) : null);
+    const sheet = state.wide ? !state.sidebarCollapsed : Boolean(state.tasksOpen);
+    const width = state.terminalWidth ? { mode: state.terminalWidth.mode === 'wide' ? 'wide' : 'fit', cols: state.terminalWidth.cols || 0 } : null;
     const view = state.mindmapView;
     const map = view ? { title: view.title || '', screen: view.screen } : null;
     const target = state.shownTarget || null;
     const agent = state.terminalAgent || '';
-    const next = { title: state.taskName || '', session: state.sessionName || '', ...(device ? { device } : {}), ...(map ? { map } : {}), ...(target ? { target } : {}), ...(agent ? { agent } : {}) };
+    const next = { title: state.taskName || '', session: state.sessionName || '', ...(device ? { device } : {}), ...(map ? { map } : {}), ...(target ? { target } : {}), ...(agent ? { agent } : {}), ...(sheet ? { sheet } : {}), ...(width ? { width } : {}) };
     const key = JSON.stringify(next);
     if (title === key) return;
     title = key;
@@ -170,6 +177,9 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
     if (!data || data.type !== PANE_MESSAGE) return;
     if (data.paneId !== undefined && data.paneId !== id) return;
     if (data.event === 'forget') { pane.forget(); post('forgotten'); return; }
+    // An action of the column's header (the top page draws it in place of this page's header).
+    const action = readAction(data);
+    if (action) { engage(); runAction(ui, action); return; }
     // The top page maximized this (mind map) column or restored the columns: the map's Maximize button and its Escape follow.
     if (data.event === 'maximized') { if (ui.actions.setMindmapMaximized) ui.actions.setMindmapMaximized(data.on === true); return; }
     // The peek card of this column's tile asks for the last lines of the terminal shown.
@@ -181,4 +191,16 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
     }
   });
   return pane;
+}
+
+// What an action of the column's header does in this page: the same actions as this page's own header and the session row's menu.
+function runAction(ui, action) {
+  const run = (name, ...args) => { const fn = ui.actions[name]; if (typeof fn === 'function') void Promise.resolve(fn(...args)).catch(() => { /* told by the action itself */ }); };
+  if (action.event === 'tasks') run('paneTasks', { toggle: action.toggle });
+  else if (action.event === 'width') {
+    if (action.mode) run('setTerminalWidth', { mode: action.mode, ...(action.cols ? { cols: action.cols } : {}) });
+    else run('toggleTerminalWidth');
+  } else if (action.event === 'rename') run('paneRename');
+  else if (action.event === 'restart') run('paneRestart');
+  else if (action.event === 'reload') run('refresh');
 }

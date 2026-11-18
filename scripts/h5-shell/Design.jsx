@@ -21,17 +21,21 @@ import { ImageViewer } from './ImageViewer.jsx';
 
 // The Markdown renderer the app ships (the /share/:token pages use the same files). They are loaded the first time the sheet shows a
 // document, from this server; mermaid (about 5 MB) only when the document has a diagram. Keep the versions in step with scripts/vendor-libs.json.
+// Each is asked for by the hash of its content when the page carries it (window.TAAsset, put there by lib/static-assets.js), so it is cached for a
+// year; without it (a page that was not served that way, as in most browser tests) the plain address is used, which is revalidated each time.
 const MARKED_SRC = '/vendor/marked/marked-15.0.12.min.js';
 const MARKDOWN_VIEW_SRC = '/js/markdown-view.js';
 const MARKDOWN_CSS = '/css/markdown.css';
 const MERMAID_SRC = '/vendor/mermaid/mermaid-12.1.0.min.js';
 
+const assetUrl = path => (typeof window.TAAsset === 'function' ? window.TAAsset(path) : path);
 const loads = new Map();
 function loadOnce(src, css = false) {
   if (!loads.has(src)) {
     const done = new Promise((resolve, reject) => {
       const node = document.createElement(css ? 'link' : 'script');
-      if (css) { node.rel = 'stylesheet'; node.href = src; } else node.src = src;
+      const url = assetUrl(src);
+      if (css) { node.rel = 'stylesheet'; node.href = url; } else node.src = url;
       node.onload = resolve;
       node.onerror = () => reject(new Error(`Could not load ${src}`));
       document.head.append(node);

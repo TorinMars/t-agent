@@ -6,18 +6,18 @@
 // `sources`: the services whose maps are listed, in the order of the task list: [{ key, label, base, online }] (`base`: `/api/mindmaps` or
 // `/api/remote-servers/:id/mindmaps`). An empty list: not known yet. `setSources` gives the view a new list when the services change.
 const MindMap = (() => {
-  // The bundle sits next to this script (same ?v= release query, so it is cached like the other scripts).
-  const BUNDLE_URL = (() => {
-    const script = document.currentScript;
-    return script && script.src ? script.src.replace(/mindmap\.js/, 'mindmap-ui.js') : '/js/mindmap-ui.js';
-  })();
+  // The bundle is asked for by the hash of its own content, which the page carries (window.TAAsset, put there by lib/static-assets.js), so it is
+  // cached for a year like the page's other scripts. Without it (a page that was not served that way, as in most browser tests) the plain address is
+  // used, which is revalidated each time.
+  const BUNDLE_PATH = '/js/mindmap-ui.js';
+  const assetUrl = path => (typeof window.TAAsset === 'function' ? window.TAAsset(path) : path);
   let bundle = null;
   function loadBundle() {
     if (typeof MindMapUI !== 'undefined') return Promise.resolve(MindMapUI);
     if (!bundle) {
       bundle = new Promise((resolve, reject) => {
         const script = document.createElement('script');
-        script.src = BUNDLE_URL;
+        script.src = assetUrl(BUNDLE_PATH);
         script.onload = () => resolve(MindMapUI);
         script.onerror = () => { bundle = null; reject(new Error('The mind map view could not be loaded')); };
         document.head.append(script);

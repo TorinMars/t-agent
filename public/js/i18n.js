@@ -162,14 +162,15 @@
     let cookieZh = false;
     try { cookieZh = COOKIE.test(document.cookie); } catch { /* cookies blocked */ }
     if (cookieZh !== (lang === 'zh')) writeCookie(lang);
-    // Chinese, but the page came without the dictionaries: fetch them, and translate the page again as each one arrives.
+    // Chinese, but the page came without the dictionaries: fetch them, and translate the page again as each one arrives. They are asked for by the
+    // hash of their content when the page carries it (window.TAAsset, lib/static-assets.js: cached for a year), else by their plain address.
     const DICTIONARIES = ['/js/i18n-zh-ui.js', '/js/i18n-zh-server.js', '/js/i18n-zh-extra.js'];
     const loadDictionaries = () => {
       let pending = 0;
       afterAdd = () => { if (!pending) pending = setTimeout(() => { pending = 0; walk(document.documentElement); }, 0); };
       for (const src of DICTIONARIES) {
         const script = document.createElement('script');
-        script.src = src;
+        script.src = typeof window.TAAsset === 'function' ? window.TAAsset(src) : src;
         script.async = false;
         document.head.append(script);
       }

@@ -82,6 +82,12 @@ html[data-voice-off] #h5-actions { --h5-rest-width: 308px; --h5-rest-gaps: 6; }
 @keyframes h5-pulse { 50% { box-shadow: 0 0 8px 1px rgba(144, 202, 249, .6); } }
 .h5-keys { user-select: none; -webkit-user-select: none; }
 
+/* The marks of the agents that agent-chat.js draws in the lists of terminals and chats and in the chat itself. They are here because agent-chat.css is
+   loaded with the chat bundle, when the first chat is opened (public/js/agent-chat.js). */
+.agent-chat-mark { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.agent-chat-bubble { position: absolute; right: -5px; bottom: -3px; width: 9px; height: 9px; fill: currentColor; }
+.agent-logo { display: block; width: 1em; height: 1em; fill: currentColor; }
+
 /* Agent chat: a view over the terminal, below the page header; its top and height are set by fitAgentView so the on-screen keyboard never covers the composer. */
 .h5-agent { position: fixed; top: 0; left: 0; right: 0; height: 100dvh; z-index: 108; width: 100%; background: var(--h5-bg);
   padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }

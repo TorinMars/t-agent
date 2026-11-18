@@ -9,7 +9,8 @@ const vm = require('node:vm');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness({ hidden = false, permission = 'default' } = {}) {
   const counts = { constructed: 0, requested: 0, shown: 0, swListeners: 0, containerListeners: 0 };
-  const document = { hidden, currentScript: null, hasFocus: () => !hidden };
+  // querySelector: the chat's style sheet counts as already linked, so loadStyle() adds no <link> to this fake page.
+  const document = { hidden, currentScript: null, hasFocus: () => !hidden, querySelector: () => ({}) };
   let mounted;
   const serviceWorker = {
     addEventListener() { counts.swListeners += 1; },

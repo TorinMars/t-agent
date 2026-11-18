@@ -84,11 +84,12 @@ async function openPage(browser, { status = statusOf(), pollMs = 150, autoAnswer
     return json({ error: 'not mocked' }, 404);
   });
   await page.goto(`${ORIGIN}/h5`);
-  await page.locator('#h5-update').waitFor();
+  await page.locator('#h5-update').waitFor({ state: 'attached' }); // the updater, in the navigation rail (hidden on a phone)
   await waitFor(() => server.reads >= 2, 'the first reads of update-status'); // the baseline is taken
   return { context, page, server };
 }
-const openDialog = async page => { await page.locator('#h5-update').click(); await page.locator('#h5-update-dialog [role="dialog"]').waitFor(); };
+// On a phone the update dialog opens from the header's More menu (Header.jsx `MoreMenu`).
+const openDialog = async page => { await page.locator('#h5-header-more').click(); await page.locator('#h5-header-update').click(); await page.locator('#h5-update-dialog [role="dialog"]').waitFor(); };
 const closeDialog = async page => { await page.locator('#h5-update-dismiss').click(); await page.locator('#h5-update-dialog').waitFor({ state: 'detached' }).catch(() => {}); await page.waitForFunction(() => !document.querySelector('.MuiModal-root:not(.MuiModal-hidden)')); };
 const text = async (page, id) => (await page.locator(id).textContent());
 const toAutoUpdated = server => {

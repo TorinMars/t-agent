@@ -152,7 +152,8 @@ async function openSidebar(page, touch) {
 }
 async function openSettingsGroup(page, touch, id) {
   await openSidebar(page, touch);
-  await page.locator('#h5-tasks-settings').click();
+  // A phone: the Settings row below the task list; a computer: Settings in the navigation rail.
+  await page.locator(touch ? '#h5-tasks-settings' : '#h5-nav-settings').click();
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none');
   await page.locator(`#h5-set-${id} .MuiAccordionSummary-root`).click();
@@ -170,7 +171,8 @@ async function checkUpdateModal(page, label, touch) {
   assert.equal(await page.locator('#h5-update-dot .MuiBadge-dot.MuiBadge-invisible').count(), 0, `${label}: the red dot is shown`);
   // The phone opens with the task sheet (no task was open before); close it first.
   if (touch) { await page.locator('#h5-close-tasks').tap(); await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open')); }
-  await page.locator('#h5-update').click();
+  // A computer: the rail's Update button; a phone: Update in the header's More menu.
+  if (touch) { await page.locator('#h5-header-more').tap(); await page.locator('#h5-header-update').tap(); } else await page.locator('#h5-update').click();
   await page.locator('#h5-update-now').waitFor();
   assert.equal(await page.locator('#h5-update-install').textContent(), 'Git fast-forward update');
   assert.equal(await page.locator('#h5-update-interval').textContent(), '60 min');
@@ -208,7 +210,7 @@ async function checkUpdateModal(page, label, touch) {
   server.afterApply = null;
   // restart_pending: the hint with the restart commands of every install type.
   server.update = { ...server.update, status: 'restart_pending', message: 'Code updated; restart the service to apply it' };
-  await page.locator('#h5-update').click();
+  if (touch) { await page.locator('#h5-header-more').tap(); await page.locator('#h5-header-update').tap(); } else await page.locator('#h5-update').click();
   await page.locator('#h5-update-restart').waitFor();
   const restart = await page.locator('#h5-update-restart').textContent();
   for (const command of ['pm2 restart t-agent', 'launchctl kickstart -k gui/$(id -u)/com.tagent.client', 'sudo systemctl restart t-agent']) assert.ok(restart.includes(command), `${label}: ${command}`);
@@ -219,7 +221,7 @@ async function checkUpdateModal(page, label, touch) {
   await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
   // Up to date: no dot after the next check.
   server.update = { ...server.update, status: 'current', remote_version: '2.87.12', message: '' };
-  await page.locator('#h5-update').click();
+  if (touch) { await page.locator('#h5-header-more').tap(); await page.locator('#h5-header-update').tap(); } else await page.locator('#h5-update').click();
   await page.locator('#h5-update-state', { hasText: 'Already up to date' }).waitFor();
   await page.waitForFunction(() => !document.getElementById('h5-update').dataset.attention);
   await page.keyboard.press('Escape');
@@ -434,7 +436,7 @@ async function checkTasks(page, label, touch) {
       for (const run of [checkUpdateModal, checkEngines, checkTasks]) {
         server = freshServer();
         const { context, page } = await openPage(browser, { viewport, touch });
-        await page.locator('#h5-update').waitFor();
+        await page.locator('#h5-update').waitFor({ state: 'attached' }); // in the navigation rail (hidden on a phone)
         await run(page, label, touch);
         await context.close();
       }

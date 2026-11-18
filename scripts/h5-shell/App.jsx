@@ -6,7 +6,7 @@ import { Header } from './Header.jsx';
 import { TaskDialog } from './TaskDialogs.jsx';
 import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
-import { ColumnStrip } from './Columns.jsx';
+import { ColumnStrip, NavRail } from './Columns.jsx';
 import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
@@ -81,7 +81,8 @@ export function App({ ui }) {
       if (chat) chat.inert = false;
     };
   }, [tasksModal]);
-  // The wide layout's folded sidebar and the right side panel (T-Attention) change the page's side offsets in h5.css.
+  // The wide layout's folded sidebar and the right side panel (T-Attention) change the page's side offsets in h5.css (with the navigation rail, which sets
+  // `data-nav-rail` itself: left to right, the rail, the task list, then the header, terminal and bottom row; "Page layout" in docs/design/page-navigation.md).
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute('data-sidebar-collapsed', folded);
     document.documentElement.toggleAttribute('data-side-panel', sidePanel);
@@ -98,6 +99,8 @@ export function App({ ui }) {
         <BottomArea ui={ui} />
       </div>
       <TaskDrawer ui={ui} />
+      {/* The navigation rail of the wide layout, in the single view and above the columns view (Columns.jsx). */}
+      <NavRail ui={ui} />
       <Lazy open={open.settings}><Whole ui={ui} part={SettingsDrawer} /></Lazy>
       <Lazy open={open.menu}><Part ui={ui} keys={TERM_MENU_KEYS} part={TermMenu} /></Lazy>
       <Lazy open={open.copy}><Part ui={ui} keys={COPY_KEYS} part={CopyDialog} /></Lazy>

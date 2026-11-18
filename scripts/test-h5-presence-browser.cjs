@@ -214,8 +214,8 @@ async function pick(page, name) {
     // ── The multi-column view: each pane reports for its own terminal; the activity of any column counts for all ──
     {
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, phone: false });
-      await page.locator('#h5-columns-open').waitFor();
-      await page.locator('#h5-columns-open').click();
+      await page.locator('#h5-nav-columns').waitFor();
+      await page.locator('#h5-nav-columns').click();
       // First use at 1440px: four columns (floor(1440 / 360); columns.mjs defaultCount). The first two are used below.
       await page.waitForFunction(() => document.querySelectorAll('#h5-columns iframe').length === 4
         && [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app') && el.contentWindow.H5Pane));

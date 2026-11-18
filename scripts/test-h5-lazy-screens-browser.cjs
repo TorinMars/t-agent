@@ -67,14 +67,14 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       await context.close();
     }
 
-    // 2. Computer: hovering the Settings button asks for the chunk before the click.
+    // 2. Computer: hovering the Settings button of the navigation rail asks for the chunk before the click.
     {
       const { context, page, errors, chunks } = await openPage(browser, { viewport: { width: 1280, height: 800 }, touch: false });
       assert.ok(!chunks.includes('screen-settings'));
-      await page.locator('#h5-tasks-settings').hover();
+      await page.locator('#h5-nav-settings').hover();
       await page.waitForFunction(() => performance.getEntriesByType('resource').some(entry => /\/js\/chunks\/screen-settings-/.test(entry.name)));
       assert.equal(await page.locator('#h5-settings').count(), 0, 'only fetched, not drawn');
-      await page.locator('#h5-tasks-settings').click();
+      await page.locator('#h5-nav-settings').click();
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
       assert.equal(chunks.filter(name => name === 'screen-settings').length, 1);
       assert.deepEqual(errors, []);

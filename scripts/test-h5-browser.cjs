@@ -1423,13 +1423,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(Math.round(chatBox.y), Math.round(headBox.y + headBox.height), 'the chat starts below the header');
     assert.equal(await page.locator('.h5-header').evaluate(el => el === document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20) || el.contains(document.elementFromPoint(el.getBoundingClientRect().x + 20, el.getBoundingClientRect().y + 20))), true, 'the header is not covered by the chat');
     assert.equal(await page.locator('#h5-agent .ac-text strong').textContent(), 'there');
-    // The Material UI drawer reveals the conversation's left edge on the right without resizing it.
+    // The MD2 modal drawer lies over the conversation (with its scrim), which neither moves nor changes its size.
     await page.locator('#h5-open-tasks').tap();
     await page.waitForTimeout(400);
     const drawer = await page.locator('#h5-tasks > .h5-sheet-panel').boundingBox();
     const shiftedChat = await page.locator('#h5-agent').boundingBox();
-    assert.ok(drawer.width > 390 * .7 && drawer.width < 390 * .85, 'the sidebar leaves room for the conversation');
-    assert.ok(Math.abs(shiftedChat.x - drawer.width) < 1, 'the conversation begins at the sidebar edge');
+    assert.ok(Math.abs(drawer.width - Math.min(320, 390 - 56)) < 1, 'the drawer is min(320px, 100vw - 56px) wide');
+    assert.ok(Math.abs(shiftedChat.x) < 1, 'the conversation stays where it is');
     assert.ok(Math.abs(shiftedChat.width - chatBox.width) < 1, 'and keeps its original width');
     assert.equal(await page.locator('#h5-agent').getAttribute('aria-hidden'), 'true', 'it is hidden from assistive technology while the drawer is open');
     assert.equal(await page.locator('#h5-agent').evaluate(node => node.inert), true);
@@ -1704,16 +1704,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-session-name').textContent(), 'Docs terminal');
     await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 'h5-docs');
 
-    // Settings: the gear at the bottom of the task sidebar opens a sheet with the language toggle and the PC one-click update; the header has no settings button.
+    // Settings: the Settings row below the task list opens a sheet with the language toggle; the header has no settings button.
     assert.equal(await page.locator('#h5-open-settings').count(), 0, 'the header has no settings button');
-    // The Update button stands right of the refresh button; it opens a modal that checks, shows both versions, and offers the update.
-    // Both boxes are read in one step (the activity counter can still move the row).
-    await page.waitForFunction(() => {
-      const refresh = document.getElementById('h5-refresh').getBoundingClientRect();
-      const update = document.getElementById('h5-update').getBoundingClientRect();
-      return update.left >= refresh.right - 1 && Math.abs(update.top - refresh.top) < 2 && Math.abs(update.width - refresh.width) < 1 && update.right <= innerWidth;
-    }, null, { timeout: 5000 });
-    await page.locator('#h5-update').click();
+    // On a phone, Update is in the header's More menu (with Refresh the page); it opens a modal that checks, shows both versions, and offers the update.
+    const openUpdate = async () => { await page.locator('#h5-header-more').click(); await page.locator('#h5-header-update').click(); };
+    await page.locator('#h5-header-more').click();
+    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-refresh', 'h5-header-update'], 'More: Refresh the page, Update');
+    await page.locator('#h5-header-update').click();
     await page.locator('#h5-update-dialog [role="dialog"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-modal'), 'true');
     assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-labelledby'), 'h5-update-title');
@@ -1723,29 +1720,31 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(calls.includes('POST /api/system/apply-update'), false, 'opening the modal only checks');
     await page.keyboard.press('Escape');
     await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
-    assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-update', 'focus returns to the Update button');
-    await page.locator('#h5-update').click();
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-header-more', 'focus returns to the More button');
+    await openUpdate();
     await page.locator('#h5-update-close').click();
     await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
-    await page.locator('#h5-update').click();
+    await openUpdate();
     await page.locator('#h5-update-now').waitFor();
     await page.mouse.click(5, 5); // tap outside
     await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
     // Up to date and a failed check.
     for (const [mode, selector, text] of [['current', '#h5-update-state', 'Already up to date'], ['error', '#h5-update-state[role="alert"]', 'REMOTE_DOWN']]) {
       checkMode = mode;
-      await page.locator('#h5-update').click();
+      await openUpdate();
       await page.locator(selector).filter({ hasText: text }).waitFor();
       await page.keyboard.press('Escape');
       await page.locator('#h5-update-dialog').waitFor({ state: 'detached' });
     }
     checkMode = 'available';
     await page.evaluate(() => { window.beforeRefresh = true; });
+    await page.locator('#h5-header-more').click();
     await Promise.all([page.waitForEvent('load'), page.locator('#h5-refresh').click()]);
-    await page.waitForSelector('#h5-refresh');
+    await page.waitForSelector('#h5-header-more');
     assert.equal(await page.evaluate(() => window.beforeRefresh === true), false, 'the page was loaded again');
     await page.locator('#h5-open-tasks').tap();
     assert.equal(await page.locator('#h5-tasks-settings svg').count(), 1, 'a gear icon');
+    assert.equal(await page.locator('#h5-tasks-settings').textContent(), 'Settings', 'a labelled row');
     await page.locator('#h5-tasks-settings').tap();
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');
@@ -1765,7 +1764,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // The settings sheet has no updater any more: the Update button's modal does the whole flow.
     assert.equal(await page.locator('#h5-settings #h5-update-check, #h5-settings #h5-update-log, #h5-settings #h5-update-hint').count(), 0, 'no updater in Settings');
     await page.goto(`${ORIGIN}/h5`); // back to the plain page (no sheets open)
-    await page.locator('#h5-update').click();
+    await page.locator('#h5-header-more').click();
+    await page.locator('#h5-header-update').click();
     await page.locator('#h5-update-now').click();
     // Update now starts the update at once and shows the live log; the page reloads when the service is back.
     await page.waitForFunction(() => (document.getElementById('h5-update-log') || {}).textContent === 'npm ci');
@@ -1822,13 +1822,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const wide = await openPage(browser, { viewport: { width: 1440, height: 900 } });
     await wide.page.locator('#h5-tasks').waitFor({ state: 'visible' });
     const sheetBox = await wide.page.locator('#h5-tasks').boundingBox();
-    assert.deepEqual([sheetBox.width, sheetBox.x], [320, 0]);
+    assert.deepEqual([sheetBox.width, sheetBox.x], [304, 72], 'right of the 72px navigation rail');
     await openTask(wide.page, 'Fix login', 'click');
     assert.equal(await wide.page.locator('#h5-tasks').isVisible(), true, 'the sidebar stays after a task is chosen');
     assert.equal(await wide.page.locator('#h5-close-tasks').isHidden(), true, 'the sidebar has no close button');
     assert.equal(await wide.page.evaluate(() => document.getElementById('h5-app').inert), false, 'the page beside the sidebar stays usable');
     const appBox = await wide.page.locator('#h5-app').boundingBox();
-    assert.deepEqual([appBox.width, appBox.x], [1120, 320]);
+    assert.deepEqual([appBox.width, appBox.x], [1064, 376]);
     assert.equal(await wide.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await wide.page.waitForFunction(() => window.sockets.length === 1);
     await wide.page.evaluate(() => window.sockets[0].emit(JSON.stringify({ type: 'history', data: 'x', cols: 80, rows: 24 })));
@@ -1846,7 +1846,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await wide.page.keyboard.press('Escape');
     await wide.page.locator('#h5-session-menu').waitFor({ state: 'detached' });
     // Settings are a sheet from the bottom with the page dimmed; a click beside the sheet closes it.
-    await wide.page.locator('#h5-tasks-settings').click();
+    await wide.page.locator('#h5-nav-settings').click(); // Settings in the navigation rail
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });
     await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none'); // the slide-in has finished
     const panelBox = await wide.page.locator('#h5-settings .h5-sheet-panel').boundingBox();

@@ -179,8 +179,8 @@ function measure(min) {
       await check('design-sheet');
       await page.locator('#h5-design-close').tap();
       await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
-      // The update dialog (an update is available).
-      await page.locator('#h5-update').tap();
+      // The update dialog (an update is available), from the header's More menu.
+      await page.locator('#h5-header-more').tap(); await page.locator('#h5-header-update').tap();
       await page.locator('#h5-update-now').waitFor();
       await check('update-dialog');
       await page.locator('#h5-update-dismiss').tap();

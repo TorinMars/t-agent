@@ -95,10 +95,11 @@ async function open(browser, w) {
   await page.addInitScript(activityStreamMock);
   await page.route(`${ORIGIN}/**`, route => serve(w, route));
   await page.goto(`${ORIGIN}/h5`);
-  await page.locator('#h5-update').waitFor();
+  await page.locator('#h5-update').waitFor({ state: 'attached' }); // the updater, in the navigation rail (hidden on a phone)
   return { context, page };
 }
-const openDialog = async page => { await page.locator('#h5-update').tap(); await page.locator('#h5-update-dialog [role="dialog"]').waitFor(); };
+// On a phone the update dialog opens from the header's More menu (Header.jsx `MoreMenu`).
+const openDialog = async page => { await page.locator('#h5-header-more').tap(); await page.locator('#h5-header-update').tap(); await page.locator('#h5-update-dialog [role="dialog"]').waitFor(); };
 const row = (page, id) => page.locator(`.h5-update-linked-row[data-engine="${id}"]`);
 const rowState = (page, id) => row(page, id).getAttribute('data-state');
 const rowText = (page, id) => row(page, id).locator('.h5-update-linked-state').textContent();

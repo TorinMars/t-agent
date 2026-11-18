@@ -12,8 +12,9 @@
   --h5-accent: #90caf9;
   --h5-pressed: #1976d2;
   --h5-danger: #f44336;
-  --h5-sidebar-width: 320px;
-  --h5-drawer-width: min(82vw, 360px);
+  --h5-nav-width: 0px; /* the navigation rail of the wide layout (72px while it is shown: html[data-nav-rail], Columns.jsx NavRail) */
+  --h5-sidebar-width: 304px; /* the permanent task list of the wide layout */
+  --h5-drawer-width: min(320px, calc(100vw - 56px)); /* the task drawer of a phone (an MD2 modal navigation drawer) */
   --h5-side-width: min(560px, 42vw); /* the T-Attention panel on the right of a wide screen */
 }
 * { box-sizing: border-box; }
@@ -110,11 +111,8 @@ html[data-voice-off] #h5-actions { --h5-rest-width: 308px; --h5-rest-gaps: 6; }
 .h5-agent .ac-box { padding: 3px 6px; border-radius: 20px; }
 .h5-agent .ac-input { min-height: 32px; padding: 5px 4px; }
 .h5-agent[hidden] { display: none; }
-.h5-app, .h5-agent { transition: transform .25s ease-out, border-radius .25s ease-out; }
-body.h5-tasks-open .h5-app, body.h5-tasks-open .h5-agent { transform: translateX(var(--h5-drawer-width)); }
-body.h5-tasks-open .h5-app { border-radius: 28px 0 0 28px; overflow: hidden; }
-body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden; }
-@media (prefers-reduced-motion: reduce) { .h5-app, .h5-agent { transition: none; } }
+/* The task drawer of a phone lies over the page with its scrim (body.h5-tasks-open marks it open; App.jsx makes the page inert meanwhile): the page
+   does not move. */
 
 /* Copy text: a snapshot of the terminal as plain text that the browser can select with its own handles. Same font, size, letter spacing (none: the dialog inherits MUI's 0.15px, which made a full-width row about 8px wider) and side padding as the terminal and no
    wrapping of its own: one terminal row is one line, so the layout matches. */
@@ -143,13 +141,18 @@ body.h5-tasks-open .h5-agent { border-bottom-left-radius: 28px; overflow: hidden
 .vo-arc { position: absolute; left: -10%; right: -10%; bottom: 0; height: 17vh; display: flex; align-items: flex-start; justify-content: center; padding-top: 26px; border-radius: 50% 50% 0 0 / 38px 38px 0 0; background: #8a8a8d; color: #111; font-size: 17px; transition: background .12s; }
 .vo-overlay:not([data-zone="send"]) .vo-arc { background: #3a3a3c; color: #aaa; }
 
-/* Responsive layout.
+/* Responsive layout ("Page layout" in docs/design/page-navigation.md).
    - Phone (under 900px): the page fills the window; the task list slides over it (a Material UI temporary drawer).
-   - Wide (900px and up, a computer or a landscape tablet): the task list is a permanent sidebar (a permanent drawer) and the terminal or chat fills the rest;
-     the keys and the composer are limited to 960px. h5.js (`isWide`) and the shell use the same breakpoint. */
+   - Wide (900px and up, a computer or a landscape tablet), left to right: the navigation rail (72px; not in a pane), the task list as a permanent
+     sidebar (304px, foldable), then the header, the terminal or chat and the bottom row; the keys and the composer are limited to 960px. h5.js
+     (`isWide`) and the shell use the same breakpoint. */
 @media (min-width: 900px) {
-  .h5-app { inset: 0 0 auto var(--h5-sidebar-width); width: auto; }
-  .h5-agent { left: var(--h5-sidebar-width); width: auto; }
+  html[data-nav-rail] { --h5-nav-width: 72px; }
+  .h5-app { inset: 0 0 auto calc(var(--h5-nav-width) + var(--h5-sidebar-width)); width: auto; }
+  .h5-agent { left: calc(var(--h5-nav-width) + var(--h5-sidebar-width)); width: auto; }
+  /* The mind maps over the whole window (a page without the columns view) leave the rail visible. `!important`: mindmap.js puts the view's
+     position (left: 0) in its style attribute when it mounts. */
+  html[data-nav-rail] #h5-mindmap { left: var(--h5-nav-width) !important; }
   .h5-bottom { width: 100%; max-width: 960px; margin-inline: auto; }
   .h5-copy-text { font-size: 13px; padding: 8px 16px; }
   /* The sidebar folded away (header button): the page and the chat take the whole width. */

@@ -4,8 +4,8 @@
 
 export const STORAGE_KEY = 'h5-columns'; // { on: boolean, ids: [id, ...], tab: 'columns' | 'maps' }, one per device
 export const MAX_COLUMNS = 12;
-// The navigation rail of the view (NAV_WIDTH px on the left, full height): the Update button, then the two tabs, "Columns" (the strip) and "Mind maps"
-// (a whole mind map page), and at the bottom the switch that leaves the view. The tab shown is remembered with the layout.
+// The navigation rail of the page (NAV_WIDTH px on the left, full height, wide layout only, in the single view and in the columns view alike):
+// Sessions, Columns, Attention and Mind maps, then Update and Settings at the bottom. The tab of the columns view is remembered with the layout.
 export const NAV_WIDTH = 72; // px
 export const TABS = ['columns', 'maps'];
 export const readTab = value => (TABS.includes(value) ? value : 'columns');
@@ -375,6 +375,23 @@ export function railKey(key, index, count) {
   if (key === 'Home') return 0;
   if (key === 'End') return count - 1;
   return -1;
+}
+// The destinations of the rail, top to bottom (Update and Settings sit at its bottom). Columns and Mind maps are tabs of the columns view; a page that
+// cannot show that view (a framed page: `state.columns` is null) has no Columns destination and opens the mind maps over the whole window.
+// Attention is not a page: it shows or hides the T-Attention panel on the right.
+export const RAIL_DESTINATIONS = [
+  { view: 'sessions', id: 'h5-nav-sessions', icon: 'terminalKeyboard', label: 'Sessions' },
+  { view: 'columns', id: 'h5-nav-columns', icon: 'columns', label: 'Columns', needsColumns: true },
+  { view: 'attention', id: 'h5-nav-attention', icon: 'attention', label: 'Attention', toggle: true },
+  { view: 'maps', id: 'h5-nav-maps', icon: 'mindmap', label: 'Mind maps' },
+];
+export const railDestinations = canShowColumns => RAIL_DESTINATIONS.filter(item => canShowColumns || !item.needsColumns);
+// The destination that is the current page (`aria-current="page"`): Settings while it is open, else the tab of the columns view while it is shown,
+// else Sessions (the single view).
+export function railView({ settingsOpen = false, columns = null } = {}) {
+  if (settingsOpen) return 'settings';
+  if (columns && columns.shown) return readTab(columns.tab) === 'maps' ? 'maps' : 'columns';
+  return 'sessions';
 }
 // The red badge of the "Columns" destination: the number of open columns that need the person, the same count as the bar's "N needs you" chip.
 export const needsCount = (ids, statusOf) => summarize(ids, statusOf).waiting;

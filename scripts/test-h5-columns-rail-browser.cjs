@@ -141,15 +141,17 @@ async function run() {
     const nav = page.locator('#h5-columns-nav');
     assert.equal(await nav.evaluate(el => [el.tagName, el.getAttribute('aria-label')].join('|')), 'NAV|Views');
     assert.deepEqual(await rect(page, '#h5-columns-nav'), { x: 0, y: 0, w: 72, h: 900 }, '72px, the whole height');
-    const order = await nav.evaluate(el => [...el.querySelectorAll('#h5-columns-update, #h5-nav-columns, #h5-nav-maps, #h5-columns-toggle, hr')].map(node => node.id || node.tagName));
-    assert.deepEqual(order, ['h5-columns-update', 'HR', 'h5-nav-columns', 'h5-nav-maps', 'h5-columns-toggle'], 'Update, a divider, the two destinations, the switch');
-    assert.ok((await rect(page, '#h5-columns-toggle')).y > 800, 'the switch is at the bottom');
-    for (const id of ['h5-columns-update', 'h5-columns-toggle']) {
+    // The page's one rail (also in the single view, scripts/test-h5-nav-rail-browser.cjs): the destinations, then Update and Settings at the bottom.
+    const order = await nav.evaluate(el => [...el.querySelectorAll('.h5-nav-item, #h5-update')].map(node => node.id));
+    assert.deepEqual(order, ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps', 'h5-update', 'h5-nav-settings'], 'the destinations, then Update and Settings');
+    assert.ok((await rect(page, '#h5-nav-settings')).y > 800, 'Settings is at the bottom');
+    for (const id of ['h5-update', 'h5-nav-settings']) {
       const button = page.locator(`#${id}`);
       assert.equal(await button.getAttribute('aria-label'), await button.getAttribute('title'), `${id}: aria-label = title`);
     }
-    assert.equal(await page.locator('#h5-columns-toggle').getAttribute('aria-label'), 'Leave the columns view');
-    assert.equal(await page.locator('#h5-columns-bar #h5-columns-update, #h5-columns-bar #h5-columns-toggle, #h5-columns-add-map').count(), 0, 'no longer in the bar; no map column button');
+    assert.equal(await page.locator('#h5-columns-toggle, #h5-columns-update, #h5-columns-open').count(), 0, 'no leave switch and no second Update button any more');
+    assert.equal(await page.locator('#h5-columns-bar #h5-update, #h5-columns-bar .h5-nav-item, #h5-columns-add-map').count(), 0, 'not in the bar; no map column button');
+    assert.equal(await page.locator('#h5-nav-sessions').getAttribute('aria-current'), null, 'Sessions is not the current page in the columns view');
     assert.equal(await page.locator('#h5-nav-columns').getAttribute('aria-current'), 'page');
     assert.equal(await page.locator('#h5-nav-maps').getAttribute('aria-current'), null);
     const navColor = sel => page.locator(`${sel} .h5-nav-label`).evaluate(el => getComputedStyle(el).color);
@@ -171,13 +173,15 @@ async function run() {
     await shot(page, 'rail-badge.png', { x: 0, y: 0, width: 400, height: 200 });
 
     // ── Keyboard on the rail: Tab reaches each destination, arrows move, Enter opens ──
-    await page.locator('#h5-columns-update').focus();
+    await page.locator('#h5-nav-sessions').focus();
     await page.keyboard.press('Tab');
     assert.equal(await activeId(page), 'h5-nav-columns');
     await page.keyboard.press('Tab');
+    assert.equal(await activeId(page), 'h5-nav-attention');
+    await page.keyboard.press('Tab');
     assert.equal(await activeId(page), 'h5-nav-maps', 'each destination is a Tab stop');
     await page.keyboard.press('ArrowUp');
-    assert.equal(await activeId(page), 'h5-nav-columns', 'an arrow moves between them');
+    assert.equal(await activeId(page), 'h5-nav-attention', 'an arrow moves between them');
     await page.keyboard.press('ArrowDown');
     assert.equal(await activeId(page), 'h5-nav-maps');
     assert.equal((await columns(page)).tab, 'columns', 'a move does not open');
@@ -243,7 +247,7 @@ async function run() {
     const selectedBefore = await page.evaluate(() => document.querySelector('#h5-columns-maps .me-tpc.selected')?.textContent || '');
     await page.locator('#h5-nav-maps').focus();
     await page.keyboard.press('ArrowUp');
-    assert.equal(await activeId(page), 'h5-nav-columns');
+    assert.equal(await activeId(page), 'h5-nav-attention');
     assert.equal(await page.evaluate(() => document.querySelector('#h5-columns-maps .me-tpc.selected')?.textContent || ''), selectedBefore, 'the arrow did not move the map\'s selection');
     await page.keyboard.press('x');
     assert.equal(await page.locator('#input-box').count(), 0, 'a character on the rail opens no topic editor');
@@ -327,11 +331,12 @@ async function run() {
     await page.waitForFunction(() => document.querySelectorAll('#h5-columns .h5-column[data-ready]').length === 2, null, { timeout: 15000 });
     assert.equal(await page.locator('#h5-columns-tab').evaluate(el => getComputedStyle(el).visibility), 'hidden', 'the columns load behind the Mind maps tab');
 
-    // ── Leaving the view takes the rail away ──
-    await page.locator('#h5-columns-toggle').click();
+    // ── Sessions leaves the view; the rail stays, with Sessions current ──
+    await page.locator('#h5-nav-sessions').click();
     await page.waitForFunction(() => !document.getElementById('h5-columns'), null, { timeout: 3000 });
-    assert.equal(await page.locator('#h5-columns-nav').count(), 0, 'no rail in the normal view');
-    assert.equal(await page.locator('#h5-columns-open').getAttribute('aria-label'), 'Multi-column view');
+    assert.equal(await page.locator('#h5-columns-nav').isVisible(), true, 'the same rail in the single view');
+    assert.equal(await page.locator('#h5-nav-sessions').getAttribute('aria-current'), 'page');
+    assert.equal(await page.locator('#h5-nav-columns').getAttribute('aria-current'), null);
     await context.close();
   } finally {
     await browser.close();

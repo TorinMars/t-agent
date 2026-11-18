@@ -218,7 +218,8 @@ async function assertAligned(page, selector, label, x, width) {
 
 // Both sheets follow the terminal area on a wide screen, also while they are open.
 async function checkTerminalAlignment(browser) {
-  const SIDEBAR = 320;
+  const RAIL = 72; // the navigation rail
+  const SIDEBAR = RAIL + 304; // the rail and the task list
   const { context, page, errors } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
   const views = [
     { name: 'file tree', selector: '#h5-files-sheet .h5-files-panel', close: '#h5-files-close', open: () => openTree(page, 'click') },
@@ -233,7 +234,7 @@ async function checkTerminalAlignment(browser) {
     await assertAligned(page, view.selector, `${view.name}, sidebar open`, SIDEBAR, 1440 - SIDEBAR);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `pc-1440-aligned-${view.name.replace(' ', '-')}.png`) });
     await fold(true);
-    await assertAligned(page, view.selector, `${view.name}, sidebar folded while open`, 0, 1440);
+    await assertAligned(page, view.selector, `${view.name}, sidebar folded while open`, RAIL, 1440 - RAIL);
     await fold(false);
     await assertAligned(page, view.selector, `${view.name}, sidebar back while open`, SIDEBAR, 1440 - SIDEBAR);
     await page.setViewportSize({ width: 1100, height: 700 });
@@ -247,7 +248,7 @@ async function checkTerminalAlignment(browser) {
     // The real header button; the sheet opens where the terminal now is.
     await page.locator('#h5-sidebar-toggle').click();
     await open();
-    await assertAligned(page, view.selector, `${view.name}, opened with the sidebar folded`, 0, 1440);
+    await assertAligned(page, view.selector, `${view.name}, opened with the sidebar folded`, RAIL, 1440 - RAIL);
     await close();
     await page.locator('#h5-sidebar-toggle').click();
 

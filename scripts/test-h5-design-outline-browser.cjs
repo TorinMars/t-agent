@@ -357,9 +357,9 @@ async function checkIds(page) {
       assert.ok(Math.abs(geometry.nav.top - geometry.body.top) <= 1 && Math.abs(geometry.nav.bottom - geometry.body.bottom) <= 1, 'the column is as tall as the document view');
       assert.equal(geometry.scrolls, true, 'a long outline scrolls on its own');
 
-      // The narrowest wide window with the sidebar open: the sheet follows the terminal area and the column still fits beside the document.
+      // The narrowest wide window with the sidebar open (900 - the 72px rail - the 304px list = 524px): the sheet follows the terminal area and the column still fits beside the document.
       await page.setViewportSize({ width: 900, height: 800 });
-      await page.waitForFunction(() => Math.abs(document.querySelector('.h5-design-panel').getBoundingClientRect().width - 580) <= 0.5, null, { timeout: 3000 });
+      await page.waitForFunction(() => Math.abs(document.querySelector('.h5-design-panel').getBoundingClientRect().width - 524) <= 0.5, null, { timeout: 3000 });
       const narrowest = await page.evaluate(() => {
         const r = id => { const { left, right, width } = document.getElementById(id).getBoundingClientRect(); return { left, right, width }; };
         const { left, right, width } = document.querySelector('.h5-design-panel').getBoundingClientRect();
@@ -369,7 +369,7 @@ async function checkIds(page) {
       assert.ok(narrowest.nav.left >= narrowest.body.right - 1 && narrowest.nav.right <= narrowest.panel.right + 1, `900px: the column lies inside the sheet, right of the document (${JSON.stringify(narrowest)})`);
       assert.ok(narrowest.nav.width >= 140 && narrowest.nav.width <= 220 && narrowest.body.width >= 300, `900px: the document keeps most of the sheet (${JSON.stringify(narrowest)})`);
       await page.setViewportSize({ width: 1440, height: 900 });
-      await page.waitForFunction(() => Math.abs(document.querySelector('.h5-design-panel').getBoundingClientRect().width - 1120) <= 0.5, null, { timeout: 3000 });
+      await page.waitForFunction(() => Math.abs(document.querySelector('.h5-design-panel').getBoundingClientRect().width - 1064) <= 0.5, null, { timeout: 3000 });
 
       // A click jumps; the document scrolls, the outline column does not scroll the document view away.
       await page.locator(`#h5-design-outline-list [data-target="h5-doc-${CN}"]`).click();

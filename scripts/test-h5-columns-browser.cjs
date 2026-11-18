@@ -22,8 +22,8 @@
 // H5_SHOT_DIR=<dir> saves screenshots of the header switch, of the strip at 1920x1080, of 5 overflowing columns at 1440x900, of the headers, of a
 // column that needs the person, of the "⋯" menu, of the column list, of a header mid-drag (2x), of the touch headers, and of the top bar with the
 // Update button's red dot (columns-update-bar.png, 2x).
-// Update (1440x900): #h5-columns-update is the top button of the navigation rail, above the switch, with the header updater's red dot; it opens the same
-// dialog above the strip and gets the focus back; opening the columns adds no second update-status poll; the header button still works.
+// Update (1440x900): the page's one updater (#h5-update) sits near the bottom of the navigation rail, above Settings, in both views, with its red dot;
+// its dialog shows above the strip and gives the focus back; opening the columns adds no second update-status poll.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -237,10 +237,12 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       const label = '1440x900';
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await shownTerminal(page, 'Terminal 1');
-      const open = page.locator('#h5-columns-open');
-      assert.equal(await open.getAttribute('aria-label'), 'Multi-column view', `${label}: the switch has its aria-label`);
-      assert.equal(await open.getAttribute('title'), 'Multi-column view', `${label}: and the same title`);
-      assert.equal(await open.getAttribute('aria-pressed'), 'false');
+      // The way in is the Columns destination of the navigation rail (the header has no switch any more).
+      const open = page.locator('#h5-nav-columns');
+      assert.equal(await open.getAttribute('aria-label'), 'Columns', `${label}: the destination has its aria-label`);
+      assert.equal(await open.getAttribute('aria-current'), null);
+      assert.equal(await page.locator('#h5-nav-sessions').getAttribute('aria-current'), 'page');
+      assert.equal(await page.locator('#h5-columns-open').count(), 0, `${label}: no header switch`);
       assert.equal(await page.locator('#h5-columns').count(), 0, `${label}: the normal view at first`);
 
       // On: floor((1440 - 72) / 340) = 4 columns, each an iframe of /h5?pane=<id>, sharing the strip right of the navigation rail evenly (4 x 342) with
@@ -263,8 +265,8 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       assert.equal(await page.locator('#h5-tasks').isVisible(), false, `${label}: and its sidebar`);
       assert.deepEqual(await openTerminalSockets(page), [], `${label}: the top page closed its terminal socket`);
       assert.deepEqual(await stored(page), { on: true, ids, tab: 'columns' }, `${label}: mode, ids and the tab are remembered`);
-      assert.equal(await page.locator('#h5-columns-toggle').getAttribute('aria-label'), 'Leave the columns view');
-      assert.equal(await page.locator('#h5-columns-toggle').getAttribute('title'), 'Leave the columns view');
+      assert.equal(await page.locator('#h5-nav-sessions').getAttribute('aria-label'), 'Sessions', `${label}: Sessions leaves the view`);
+      assert.equal(await page.locator('#h5-nav-columns').getAttribute('aria-current'), 'page');
       assert.equal(await page.locator('#h5-columns-add').getAttribute('aria-label'), 'Add column');
       assert.equal(await page.locator('.h5-column-head [data-action="close"]').first().getAttribute('title'), 'Close column');
       // No tab strip: each column has one header, drawn by the top page at the column's top, right above its iframe.
@@ -289,7 +291,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       // The panes load (each is the page itself; the second agent makes it a pane).
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
       assert.equal(await page.locator('#h5-columns').count(), 1);
-      for (const id of ids) assert.equal(await paneFrame(page, id).locator('#h5-columns, #h5-columns-open').count(), 0, `${label}: a pane never offers columns of its own`);
+      for (const id of ids) assert.equal(await paneFrame(page, id).locator('#h5-columns, #h5-columns-nav').count(), 0, `${label}: a pane never offers columns of its own`);
       assert.deepEqual(await openTerminalSockets(page), [], `${label}: still no terminal socket in the top page`);
 
       // Focus: a click into the second column focuses it (outline), then a click into the fifth (partly hidden) moves it there.
@@ -405,14 +407,14 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       assert.equal(Math.round(width), 1440 - 72, `${label}: one column takes the whole width right of the navigation rail (${width})`);
 
       // Off: the normal view again, showing the same terminal, connected again; the ids stay for the next time.
-      await page.locator('#h5-columns-toggle').click();
+      await page.locator('#h5-nav-sessions').click();
       await page.locator('#h5-columns').waitFor({ state: 'detached' });
       await page.locator('#h5-app').waitFor({ state: 'visible' });
       await shownTerminal(page, 'Terminal 1');
       assert.equal(await page.locator('.h5-xterm:not([hidden])').count(), 1, `${label}: the terminal is shown again`);
       assert.equal((await openTerminalSockets(page)).length, 1, `${label}: one terminal socket again`);
       assert.deepEqual(await stored(page), { on: false, ids: one, tab: 'columns' });
-      await page.locator('#h5-columns-open').click();
+      await page.locator('#h5-nav-columns').click();
       await waitFrames(page, 1);
       assert.deepEqual(await frameIds(page), one, `${label}: on again, the same columns`);
       await page.waitForTimeout(100);
@@ -422,7 +424,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await page.setViewportSize({ width: 800, height: 900 });
       await page.locator('#h5-columns').waitFor({ state: 'detached' });
       await shownTerminal(page, 'Terminal 1');
-      assert.equal(await page.locator('#h5-columns-open').count(), 0, `${label}: no switch below the wide breakpoint`);
+      assert.equal(await page.locator('#h5-columns-nav').isVisible(), false, `${label}: no navigation rail below the wide breakpoint`);
       await page.setViewportSize({ width: 1440, height: 900 });
       await waitFrames(page, 1);
       assert.deepEqual(await frameIds(page), one);
@@ -970,7 +972,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       const { context, page } = await openPage(browser, { viewport: { width: 1920, height: 1080 } });
       await shownTerminal(page, 'Terminal 1');
       if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'columns-header-1920.png'), clip: { x: 1320, y: 0, width: 600, height: 60 } }); }
-      await page.locator('#h5-columns-open').click();
+      await page.locator('#h5-nav-columns').click();
       await waitFrames(page, 4);
       for (const src of await frameSrcs(page)) assert.match(src, PANE_URL);
       const fit = await widthsBecome(page, 462);
@@ -987,10 +989,10 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       // (The outline is checked in the 1440 case: here the pages inside the columns, still the normal page until pane mode, take the focus on load.)
       await page.waitForTimeout(500);
       assert.equal(await terminalSocketCount(page), 0, `${label}: the top page opened no terminal socket`);
-      await page.locator('#h5-columns-toggle').click();
+      await page.locator('#h5-nav-sessions').click();
       await shownTerminal(page, 'Terminal 1');
       assert.equal(await page.locator('#h5-agent').isVisible(), false, `${label}: the normal view did not open the chat`);
-      await page.locator('#h5-columns-open').click();
+      await page.locator('#h5-nav-columns').click();
       await waitFrames(page, 4);
       if (SHOTS) {
         await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
@@ -1033,101 +1035,84 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await context.close();
     }
 
-    // ── 1440x900: the Update button of the navigation rail (#h5-columns-update) and the one updater ──
+    // ── 1440x900: the Update button of the navigation rail (#h5-update, the page's one updater) in both views ──
     {
       const label = 'update';
       const status = over => ({ status: 'available', local_version: '1.0.0', remote_version: '2.0.0', boot_id: 'b1', install_type: 'git', is_update_admin: true, log: [], ...over });
       const { context, page, server } = await openPage(browser, { viewport: { width: 1440, height: 900 }, update: status(), scale: SHOTS ? 2 : 1 });
       await shownTerminal(page, 'Terminal 1');
+      const button = page.locator('#h5-update');
       await page.locator('#h5-update[data-attention="true"]').waitFor({ timeout: 5000 });
-      assert.equal(await page.locator('#h5-columns-update').count(), 0, `${label}: no bar button in the normal view`);
+      assert.equal(await page.locator('#h5-columns-update').count(), 0, `${label}: no second Update button`);
+      assert.ok(await page.evaluate(() => Boolean(document.getElementById('h5-update').closest('#h5-columns-nav'))), `${label}: in the navigation rail`);
       const reads = server.reads;
-      assert.ok(reads >= 1, `${label}: the header updater read the state (${reads})`);
-      await page.locator('#h5-columns-open').click();
+      assert.ok(reads >= 1, `${label}: the updater read the state (${reads})`);
+      await page.locator('#h5-nav-columns').click();
       await waitFrames(page, 4);
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
-      const button = page.locator('#h5-columns-update');
       await button.waitFor({ state: 'visible' });
       const bar = await page.evaluate(() => {
-        const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, mid: (r.left + r.right) / 2, width: r.width, height: r.height }; };
-        const nav = document.getElementById('h5-columns-nav');
+        const rect = el => { const r = (typeof el === 'string' ? document.getElementById(el) : el).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, mid: (r.left + r.right) / 2, width: r.width, height: r.height }; };
         return {
-          first: nav.firstElementChild.id, last: nav.lastElementChild.id,
-          nav: rect('h5-columns-nav'), update: rect('h5-columns-update'), toggle: rect('h5-columns-toggle'), list: rect('h5-columns-list'), add: rect('h5-columns-add'), barBox: rect('h5-columns-bar'),
-          icon: (() => { const r = document.querySelector('#h5-columns-update svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
-          toggleIcon: (() => { const r = document.querySelector('#h5-columns-toggle svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
-          dot: !document.getElementById('h5-columns-update-dot').querySelector('.MuiBadge-badge').classList.contains('MuiBadge-invisible'),
+          nav: rect('h5-columns-nav'), update: rect('h5-update'), settings: rect('h5-nav-settings'), list: rect('h5-columns-list'), add: rect('h5-columns-add'), barBox: rect('h5-columns-bar'),
+          icon: rect(document.querySelector('#h5-update svg')), settingsIcon: rect(document.querySelector('#h5-nav-settings svg')),
+          dot: !document.getElementById('h5-update-dot').querySelector('.MuiBadge-badge').classList.contains('MuiBadge-invisible'),
         };
       });
-      assert.equal(bar.first, 'h5-columns-update', `${label}: the Update button is the first in the navigation rail`);
-      assert.equal(bar.last, 'h5-columns-toggle', `${label}: the switch is the last`);
-      assert.ok(bar.update.top < bar.toggle.top && Math.abs(bar.update.mid - bar.nav.mid) <= 0.5 && Math.abs(bar.toggle.mid - bar.nav.mid) <= 0.5, `${label}: above the switch, both centred in the rail (${JSON.stringify(bar)})`);
-      assert.ok(Math.abs(bar.update.height - bar.toggle.height) <= 0.5 && bar.update.height >= 48, `${label}: as big as the switch, 48px targets (${JSON.stringify(bar)})`);
-      assert.ok(Math.abs(bar.icon.width - bar.toggleIcon.width) <= 0.5 && Math.abs(bar.icon.width - 22) <= 0.5, `${label}: a 22px icon like the switch's (${JSON.stringify(bar.icon)})`);
+      assert.ok(bar.update.top < bar.settings.top && Math.abs(bar.update.mid - bar.nav.mid) <= 0.5 && Math.abs(bar.settings.mid - bar.nav.mid) <= 0.5, `${label}: above Settings, both centred in the rail (${JSON.stringify(bar)})`);
+      assert.ok(Math.abs(bar.update.height - bar.settings.height) <= 0.5 && bar.update.height >= 48, `${label}: as big as Settings, 48px targets (${JSON.stringify(bar)})`);
+      assert.ok(Math.abs(bar.icon.width - bar.settingsIcon.width) <= 0.5 && Math.abs(bar.icon.width - 22) <= 0.5, `${label}: a 22px icon like Settings' (${JSON.stringify(bar.icon)})`);
       assert.ok(bar.barBox.left >= bar.nav.right - 0.5 && bar.list.left >= bar.barBox.left && bar.add.right <= bar.barBox.right + 0.5, `${label}: the column list and + Column in the bar right of the rail (${JSON.stringify(bar)})`);
       assert.equal(await button.getAttribute('aria-label'), 'Update');
       assert.equal(await button.getAttribute('title'), 'Update');
       assert.equal(await button.getAttribute('aria-haspopup'), 'dialog');
       assert.equal(await button.getAttribute('data-attention'), 'true', `${label}: an update is available: data-attention`);
       assert.ok(bar.dot, `${label}: and the red dot`);
-      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-update-bar.png'), clip: { x: 0, y: 0, width: 360, height: 200 } });
-      // One updater: the header's stays mounted under the strip (hidden), no second one is mounted and the panes read nothing.
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-update-bar.png'), clip: { x: 0, y: 600, width: 360, height: 300 } });
+      // One updater: the same element in both views, and the panes read nothing.
       await page.waitForTimeout(1500);
       assert.equal(server.reads, reads, `${label}: opening the columns starts no second poll of update-status`);
       assert.equal(server.paneReads, 0, `${label}: the panes do not read it`);
-      assert.equal(await page.locator('#h5-update').count(), 1, `${label}: one header updater`);
-      assert.equal(await page.locator('#h5-update').isVisible(), false, `${label}: hidden under the strip`);
+      assert.equal(await page.locator('#h5-update').count(), 1, `${label}: one updater`);
 
-      // A click opens the header updater's dialog above the strip; Close gives the focus back to the bar's button.
+      // A click opens its dialog above the strip; Close and Escape give the focus back to the button.
       const dialogOnTop = () => page.evaluate(() => {
         const paper = document.querySelector('#h5-update-dialog .MuiDialog-paper');
         const r = paper.getBoundingClientRect();
         const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return Boolean(hit && hit.closest('#h5-update-dialog')) && Number(getComputedStyle(document.getElementById('h5-update-dialog')).zIndex) > Number(getComputedStyle(document.getElementById('h5-columns')).zIndex);
+        return Boolean(hit && hit.closest('#h5-update-dialog')) && Number(getComputedStyle(document.getElementById('h5-update-dialog')).zIndex) > Number(getComputedStyle(document.getElementById('h5-columns-nav')).zIndex);
       });
       const checks = server.checks;
       await button.click();
       await page.locator('#h5-update-dialog').waitFor({ state: 'visible' });
       await page.locator('#h5-update-now').waitFor({ state: 'visible' });
       assert.equal(server.checks, checks + 1, `${label}: opening it checks for a new version`);
-      assert.ok(await dialogOnTop(), `${label}: the dialog is above the strip`);
+      assert.ok(await dialogOnTop(), `${label}: the dialog is above the strip and the rail`);
       assert.equal(await page.locator('#h5-update-latest').textContent(), '2.0.0');
       await page.locator('#h5-update-dismiss').click();
       await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
-      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-columns-update', `${label}: Close gives the focus back to the bar's button`);
-      // From the keyboard, and closed with Escape.
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-update', `${label}: Close gives the focus back to the button`);
       await page.keyboard.press('Enter');
       await page.locator('#h5-update-dialog').waitFor({ state: 'visible' });
       await page.locator('#h5-update-now').waitFor({ state: 'visible' });
       await page.keyboard.press('Escape');
       await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
-      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-columns-update', `${label}: Escape gives it back too`);
-      // A browser that does not focus a clicked button (Safari): nothing for MUI to restore, the focus still comes back to the bar's button.
-      await page.evaluate(() => { document.activeElement.blur(); document.getElementById('h5-columns-update').click(); });
-      await page.locator('#h5-update-now').waitFor({ state: 'visible' });
-      await page.locator('#h5-update-dismiss').click();
-      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
-      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-columns-update', `${label}: also when the click focused nothing`);
-      // Up to date: the check the dialog makes clears the dot of the bar's button (the one state the header updater keeps).
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-update', `${label}: Escape gives it back too`);
+      // Up to date: the check the dialog makes clears the dot.
       server.status = status({ status: 'current', remote_version: '1.0.0' });
       await button.click();
       await page.locator('#h5-update-dialog #h5-update-state').filter({ hasText: 'Already up to date' }).waitFor({ timeout: 5000 });
       await page.locator('#h5-update-dismiss').click();
       await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
       assert.equal(await button.getAttribute('data-attention'), null, `${label}: up to date: no data-attention`);
-      assert.ok(await page.evaluate(() => document.querySelector('#h5-columns-update-dot .MuiBadge-badge').classList.contains('MuiBadge-invisible')), `${label}: and no dot`);
+      assert.ok(await page.evaluate(() => document.querySelector('#h5-update-dot .MuiBadge-badge').classList.contains('MuiBadge-invisible')), `${label}: and no dot`);
       assert.equal(server.reads, reads, `${label}: still the one poll`);
 
-      // The normal view: the header button works as before (its dialog, its focus).
-      await page.locator('#h5-columns-toggle').click();
-      await page.locator('#h5-update').waitFor({ state: 'visible' });
-      assert.equal(await page.locator('#h5-columns-update').count(), 0, `${label}: the bar's button goes with the strip`);
-      assert.equal(await page.locator('#h5-update').getAttribute('data-attention'), null, `${label}: the header button shares the state`);
-      await page.locator('#h5-update').click();
-      await page.locator('#h5-update-dialog #h5-update-state').filter({ hasText: 'Already up to date' }).waitFor({ timeout: 5000 });
-      await page.locator('#h5-update-dismiss').click();
-      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
-      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-update', `${label}: the header dialog gives the focus back to #h5-update`);
+      // The single view: the same button, still visible in the rail.
+      await page.locator('#h5-nav-sessions').click();
+      await page.locator('#h5-columns').waitFor({ state: 'detached' });
+      assert.equal(await button.isVisible(), true, `${label}: the same updater in the single view`);
+      assert.equal(server.reads, reads, `${label}: and still the one poll`);
       await context.close();
     }
 
@@ -1137,12 +1122,14 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       const { context, page } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true, storage: on });
       await page.locator('#h5-app').waitFor({ state: 'visible' });
       await page.waitForTimeout(800);
-      assert.equal(await page.locator('#h5-columns, #h5-columns-open').count(), 0, 'phone: no strip and no switch');
+      assert.equal(await page.locator('#h5-columns').count(), 0, 'phone: no strip');
+      assert.equal(await page.locator('#h5-columns-nav').isVisible(), false, 'phone: no navigation rail');
       await context.close();
       const pane = await openPage(browser, { viewport: { width: 1440, height: 900 }, storage: on, url: '/h5?pane=a1' });
       await pane.page.locator('#h5-app').waitFor({ state: 'visible' });
       await pane.page.waitForTimeout(800);
-      assert.equal(await pane.page.locator('#h5-columns, #h5-columns-open').count(), 0, 'pane page: no strip and no switch');
+      assert.equal(await pane.page.locator('#h5-columns, #h5-nav-columns, #h5-nav-maps[data-tab]').count(), 0, 'a top-level ?pane= page: no strip and no Columns destination');
+      assert.equal(await pane.page.locator('#h5-nav-sessions').isVisible(), true, 'its navigation rail has the other destinations');
       await pane.context.close();
     }
 

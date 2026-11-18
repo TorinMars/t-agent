@@ -120,7 +120,9 @@ const openView = async (page, touch) => {
     }
     await page.locator('#h5-tasks-mindmap').tap();
   } else {
-    await page.locator('#h5-tasks-mindmap').click();
+    // The full-window view (a computer's Mind maps destination in the navigation rail opens the columns view's tab instead, see
+    // test-h5-columns-rail-browser.cjs; this view is what a page without the columns view shows).
+    await page.evaluate(() => window.H5UI.actions.openMindmaps());
   }
   await page.locator('#mm-new').waitFor();
 };

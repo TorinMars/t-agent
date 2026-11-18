@@ -50,7 +50,8 @@
 | [page-task-list.md](docs/design/page-task-list.md) | The task list and its sessions: rows, create dialogs, task and session order, the task menu, archived tasks, shared task order. | 49 KB |
 | [page-terminal-and-bottom-bar.md](docs/design/page-terminal-and-bottom-bar.md) | The terminal on the page (warm terminals, width, touch scrolling, wheel strip, copy), the bottom bar and its keys, the compact one-row bottom area of a column, the next-session button. | 60 KB |
 | [page-files-and-settings.md](docs/design/page-files-and-settings.md) | The design sheet and file viewer, the file tree, Settings / Devices / Update, voice input, back button and rename. | 55 KB |
-| [page-attention.md](docs/design/page-attention.md) | T-Attention on the page: the panel, rows, edit view, every engine in one list, plugins, marketplace, first-run guide. | 39 KB |
+| [page-dialogs.md](docs/design/page-dialogs.md) | The one dialog pattern of the page (title, content, actions, widths, full screen, Enter / Escape, errors) and the sheet headers. | 5 KB |
+| [page-attention.md](docs/design/page-attention.md) | T-Attention on the page: one design on both layouts, the panel, rows, edit view, every engine in one list, plugins, marketplace, first-run guide. | 42 KB |
 | [page-ui-icons.md](docs/design/page-ui-icons.md) | The icon library, self-drawn icons and the mapping table of every icon (update it when you add an icon). | 12 KB |
 | [page-bundles-and-tests.md](docs/design/page-bundles-and-tests.md) | How the page bundles and lazy chunks are built, bundle size and touch targets, the page tests. | 11 KB |
 | [toast.md](docs/design/toast.md) | The global notice function and how the page shows notices. | 3 KB |

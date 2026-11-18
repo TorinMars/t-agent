@@ -219,9 +219,9 @@ async function openPage(browser, apple) {
       const ring = () => page.evaluate(() => {
         const node = document.activeElement;
         const style = getComputedStyle(node);
-        return { outline: style.outlineStyle, width: style.outlineWidth, filled: node.classList.contains('MuiButton-contained') };
+        return { outline: style.outlineStyle, width: style.outlineWidth, selected: node.classList.contains('Mui-selected') };
       });
-      assert.deepEqual(await ring(), { outline: 'solid', width: '2px', filled: true }, `${label}: the focused option has a focus ring besides the highlight`);
+      assert.deepEqual(await ring(), { outline: 'solid', width: '2px', selected: true }, `${label}: the focused option has a focus ring besides the highlight (the selected list row)`);
       const steps = [['ArrowDown', 1, 'Codex session'], ['ArrowDown', 2, 'New Terminal'], ['ArrowDown', 0, 'Claude session'], ['ArrowUp', 2, 'New Terminal'], ['ArrowUp', 1, 'Codex session']];
       for (const [key, index, text] of steps) {
         await page.keyboard.press(key);

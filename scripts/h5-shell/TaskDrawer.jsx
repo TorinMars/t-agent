@@ -21,7 +21,8 @@ import MenuItem from '@mui/material/MenuItem';
 import NativeSelect from '@mui/material/NativeSelect';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
-import { DomIcon, api, deviceParts, deviceText, t, terminalMark } from './common.jsx';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { DialogError, DomIcon, api, deviceParts, deviceText, t, terminalMark } from './common.jsx';
 import { shortName, tagColor } from './task-order.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
@@ -97,14 +98,11 @@ const escapeCancels = ui => event => {
 };
 
 // The two create dialogs lie over the page like the task dialogs (TaskDialogs.jsx: a MUI Dialog, so the back gesture, Escape and a tap beside them close
-// them). They fill only the visible area (--h5-height follows the visual viewport, h5.js `fitViewport`), so with the on-screen keyboard up the dialog sits above
-// it; on a phone the margins are smaller, and only the fields scroll while the title and the buttons stay. The focused field is kept in view when the keyboard
-// opens or closes.
-const CREATE_DIALOG_SX = {
-  bottom: 'auto',
-  height: 'var(--h5-height, 100%)',
-  '& .MuiDialog-paper': { [TOUCH]: { m: 2, width: 'calc(100% - 32px)', maxHeight: 'calc(100% - 32px)' } },
-};
+// them), in the one dialog pattern of the theme ("One dialog pattern" in docs/design/page-dialogs.md). They fill only the visible area (--h5-height follows
+// the visual viewport, h5.js `fitViewport`), so with the on-screen keyboard up the dialog sits above it; only the fields scroll while the title and the
+// buttons stay. New session is a short centred dialog (16px margins on a phone, from the theme); New task, a longer form, is full screen on a phone. The
+// focused field is kept in view when the keyboard opens or closes.
+const CREATE_DIALOG_SX = { bottom: 'auto', height: 'var(--h5-height, 100%)' };
 const DIALOG_FORM_SX = { display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto' };
 function useFocusedInView(open) {
   useEffect(() => {
@@ -173,26 +171,27 @@ export function NewSessionDialog({ state, ui }) {
     <Dialog id="h5-new-session" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-new-session-title" sx={CREATE_DIALOG_SX}>
       {view ? (
         <Box component="form" id="h5-new-name" className="h5-menu-name" autoComplete="off" sx={DIALOG_FORM_SX} onSubmit={event => { event.preventDefault(); create(active); }}>
-          <DialogTitle id="h5-new-session-title" sx={{ pb: 0.5 }}>{t('New session')}</DialogTitle>
+          <DialogTitle id="h5-new-session-title">{t('New session')}</DialogTitle>
           <DialogContent>
-            <DialogContentText id="h5-new-session-task" variant="body2" translate="no" sx={{ overflowWrap: 'anywhere' }}>{view.taskTitle}</DialogContentText>
+            <DialogContentText id="h5-new-session-task" variant="body2" translate="no">{view.taskTitle}</DialogContentText>
             {view.service ? <Typography id="h5-new-session-service" variant="caption" component="p" color="text.secondary" translate="no" sx={{ overflowWrap: 'anywhere' }}>{view.service}</Typography> : null}
             <TextField
               id="h5-new-name-input" key={view.task} name="name" size="small" fullWidth autoFocus defaultValue={view.name} placeholder={t('Name (optional)')} disabled={busy}
-              onChange={event => ui.actions.menuName(event.target.value)} onKeyDown={fieldKey} sx={{ mt: 1.5 }}
-              slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: {
+              onChange={event => ui.actions.menuName(event.target.value)} onKeyDown={fieldKey} sx={{ mt: 2 }}
+              slotProps={{ htmlInput: {
                 maxLength: 40, enterKeyHint: 'go', autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Name (optional)'),
                 ...(active >= 0 ? { role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'h5-term-menu-actions', 'aria-autocomplete': 'none', 'aria-activedescendant': optionId(active) } : {}),
               } }}
             />
-            {view.sub ? <Typography id="h5-new-session-sub" variant="subtitle2" component="h3" color="text.secondary" sx={{ mt: 1.5 }}>{t(view.sub)}</Typography> : null}
-            <Box id="h5-term-menu-actions" className="h5-menu-actions" role={active >= 0 ? 'listbox' : 'group'} aria-label={t(view.sub || 'New session')} sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: view.sub ? 1 : 1.5 }}>
+            {view.sub ? <Typography id="h5-new-session-sub" variant="overline" component="h3" color="text.secondary" sx={{ display: 'block', mt: 2, mb: -1 }}>{t(view.sub)}</Typography> : null}
+            {/* The choices: an MD2 simple-dialog list, edge to edge; the highlighted one is the selected row. */}
+            <Box id="h5-term-menu-actions" className="h5-menu-actions" role={active >= 0 ? 'listbox' : 'group'} aria-label={t(view.sub || 'New session')} sx={{ display: 'flex', flexDirection: 'column', mt: 1, mx: -3 }}>
               {view.items.map((item, index) => {
                 const option = item.pick && active >= 0;
                 const on = option && index === active;
                 return (
-                  <Button
-                    key={`${index}:${item.label}`} variant={on ? 'contained' : 'outlined'} disableElevation fullWidth disabled={busy}
+                  <ListItemButton
+                    key={`${index}:${item.label}`} component="button" type="button" selected={on} disabled={busy}
                     className={[item.kind === 'danger' ? 'danger' : '', on ? 'h5-choice-on' : ''].filter(Boolean).join(' ') || undefined}
                     onClick={() => ui.actions.menuRun(index)}
                     {...(option ? {
@@ -200,22 +199,23 @@ export function NewSessionDialog({ state, ui }) {
                       onKeyDown: event => optionKey(event, index), onFocus: () => { if (!on) setAt(picks.indexOf(index)); },
                     } : {})}
                     sx={{
-                      justifyContent: 'flex-start', textAlign: 'left', overflowWrap: 'anywhere', minHeight: 40,
-                      // The focus ring stands outside the button, apart from the highlight (the filled button).
-                      '&:focus-visible, &.Mui-focusVisible': { outline: '2px solid', outlineColor: 'text.primary', outlineOffset: '2px' },
+                      width: '100%', flex: '0 0 auto', minHeight: 48, px: 3, border: 0, typography: 'body1', textAlign: 'left', overflowWrap: 'anywhere',
+                      color: item.kind === 'danger' ? 'error.light' : 'text.primary',
+                      // The focus ring stands inside the row, apart from the highlight (the selected row).
+                      '&:focus-visible, &.Mui-focusVisible': { outline: '2px solid', outlineColor: 'text.primary', outlineOffset: '-2px' },
                     }}
                   >
                     {item.kind === 'raw' ? item.label : t(item.label)}
-                  </Button>
+                  </ListItemButton>
                 );
               })}
             </Box>
             {active >= 0 ? <Typography id="h5-new-session-keys" variant="caption" component="p" color="text.secondary" sx={{ mt: 1, [TOUCH]: { display: 'none' } }}>{t('Enter to create · ↑↓ to choose')}</Typography> : null}
             {busy ? <Typography id="h5-new-session-busy" role="status" variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t('Creating…')}</Typography> : null}
-            {view.error ? <Typography id="h5-new-session-error" role="alert" variant="body2" color="error" sx={{ mt: 1, overflowWrap: 'anywhere' }}>{view.error}</Typography> : null}
+            {view.error ? <DialogError id="h5-new-session-error">{view.error}</DialogError> : null}
           </DialogContent>
           <DialogActions>
-            <Button id="h5-term-menu-cancel" className="h5-menu-cancel" color="inherit" disabled={busy} onClick={close}>{t('Cancel')}</Button>
+            <Button id="h5-term-menu-cancel" className="h5-menu-cancel" disabled={busy} onClick={close}>{t('Cancel')}</Button>
           </DialogActions>
         </Box>
       ) : null}
@@ -523,16 +523,18 @@ const slug = title => title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\u4e00-\u9f
 
 // The New task dialog, opened by "New task" at the end of the task list (h5.js `openNewTask`; `newTaskOpen` in the store). Every opening starts empty, on
 // this machine. Create makes the task (h5.js `createTask`); the dialog closes once it is made and the new task is opened. While it is being made nothing can
-// be pressed and the dialog does not close; a failure is a notice, and with a working directory the field says so too.
+// be pressed and the dialog does not close; a failure is a notice and an inline Alert, and with a working directory the field says so instead.
 export function NewTaskDialog({ state, ui }) {
   const open = Boolean(state.newTaskOpen);
+  const phone = useMediaQuery(theme => theme.breakpoints.down('sm'));
   const [title, setTitle] = useState('');
   const [workDir, setWorkDir] = useState('');
   const [dirError, setDirError] = useState('');
+  const [failed, setFailed] = useState(false); // the task was not created (no working directory to blame)
   const [base, setBase] = useState(null); // the folder new tasks of this machine go under (the user's setting, TASKS_BASE_DIR, else ~/tasks)
   const [on, setOn] = useState('local'); // "Create on": the service a new task is made on; this machine unless chosen
   useFocusedInView(open);
-  useEffect(() => { if (open) { setTitle(''); setWorkDir(''); setDirError(''); setOn('local'); } }, [open]);
+  useEffect(() => { if (open) { setTitle(''); setWorkDir(''); setDirError(''); setFailed(false); setOn('local'); } }, [open]);
   // The services a task can be made on: online and in the list. A choice that went offline or was hidden meanwhile falls back to this machine, or the first that is left.
   const targets = state.sources.filter(source => !source.offline && !source.hidden);
   const picked = targets.find(source => source.key === on) || targets.find(source => source.key === 'local') || targets[0];
@@ -553,27 +555,29 @@ export function NewTaskDialog({ state, ui }) {
     if (!value || state.creatingTask) return;
     if (dir && ui.actions.isAbsolutePath && !ui.actions.isAbsolutePath(dir)) { setDirError('Enter an absolute path'); return; }
     setDirError('');
-    if (!(await ui.actions.createTask(value, dir, onKey)) && dir) setDirError('The task was not created. Check the working directory.');
+    setFailed(false);
+    if (!(await ui.actions.createTask(value, dir, onKey))) { if (dir) setDirError('The task was not created. Check the working directory.'); else setFailed(true); }
   };
   const busy = state.creatingTask;
   const close = () => ui.actions.closeNewTask();
   return (
-    <Dialog id="h5-new-task-dialog" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-new-task-title-label" sx={CREATE_DIALOG_SX}>
+    <Dialog id="h5-new-task-dialog" open={open} onClose={close} fullWidth maxWidth="sm" fullScreen={phone} aria-labelledby="h5-new-task-title-label" sx={CREATE_DIALOG_SX}>
       <Box component="form" id="h5-new-task" className="h5-new-task" autoComplete="off" onSubmit={submit} sx={DIALOG_FORM_SX}>
-        <DialogTitle id="h5-new-task-title-label">{t('New task')}</DialogTitle>
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-          {state.sources.length > 1 ? (
-            <Box id="h5-new-task-on-row" component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, color: 'text.secondary', fontSize: 14 }}>
-              <span style={{ whiteSpace: 'nowrap' }}>{t('Create on')}</span>
-              <NativeSelect fullWidth value={onKey} inputProps={{ id: 'h5-new-task-on', 'aria-label': t('Create on') }} onChange={event => setOn(event.target.value)}>
-                {targets.map(source => <option key={source.key} value={source.key}>{deviceText(source)}</option>)}
-              </NativeSelect>
-            </Box>
-          ) : null}
+        <DialogTitle id="h5-new-task-title-label" sx={phone ? { pt: 'max(16px, env(safe-area-inset-top))' } : null}>{t('New task')}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <TextField
-            id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)} sx={{ mt: 0.5 }}
-            slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+            id="h5-new-task-title" autoFocus size="small" fullWidth placeholder={t('New task title')} value={title} onChange={event => setTitle(event.target.value)} sx={{ mt: 1 }}
+            slotProps={{ htmlInput: { maxLength: 200, enterKeyHint: 'done', 'aria-label': t('New task title') } }} // no floating label: its id would be the dialog title's
           />
+          {/* "Create on" comes after the title (the first field, with the focus): it decides the default working directory shown below it. */}
+          {state.sources.length > 1 ? (
+            <TextField
+              id="h5-new-task-on" className="h5-new-task-on-row" select size="small" fullWidth label={t('Create on')} value={onKey} onChange={event => setOn(event.target.value)}
+              slotProps={{ inputLabel: { shrink: true }, htmlInput: { 'aria-label': t('Create on') } }}
+            >
+              {targets.map(source => <option key={source.key} value={source.key}>{deviceText(source)}</option>)}
+            </TextField>
+          ) : null}
           <TextField
             id="h5-new-task-dir" size="small" fullWidth label={t('Working directory')} value={workDir} placeholder={defaultPath || t('Default folder')}
             onChange={event => { setWorkDir(event.target.value); setDirError(''); }} error={Boolean(dirError)}
@@ -581,11 +585,12 @@ export function NewTaskDialog({ state, ui }) {
             helperText={<span id="h5-new-task-dir-help">{dirError ? t(dirError) : target.local
               ? `${t('Leave empty to use the default:')} ${defaultPath || t('a folder named after the task under the tasks folder')}`
               : t('Absolute path on the remote engine. Leave empty to use a folder named after the task under that engine’s tasks folder.')}</span>}
-            slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Working directory'), style: { paddingTop: 7, paddingBottom: 7 } } }}
+            slotProps={{ inputLabel: { shrink: true }, htmlInput: { autoCapitalize: 'off', spellCheck: false, 'aria-label': t('Working directory') } }}
           />
+          {failed ? <DialogError id="h5-new-task-error" sx={{ mt: 0 }}>{t('The task was not created.')}</DialogError> : null}
         </DialogContent>
-        <DialogActions>
-          <Button id="h5-new-task-cancel" color="inherit" onClick={close} disabled={busy}>{t('Cancel')}</Button>
+        <DialogActions sx={phone ? { pb: 'max(8px, env(safe-area-inset-bottom))' } : null}>
+          <Button id="h5-new-task-cancel" onClick={close} disabled={busy}>{t('Cancel')}</Button>
           <Button id="h5-new-task-create" type="submit" variant="contained" disabled={busy}>{t('Create')}</Button>
         </DialogActions>
       </Box>

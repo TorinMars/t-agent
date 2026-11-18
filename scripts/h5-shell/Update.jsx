@@ -130,6 +130,7 @@ const alreadyReloaded = version => {
   try { return JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]').includes(version); } catch { return true; }
 };
 
+const MONO = { typography: 'caption', fontFamily: 'ui-monospace, Menlo, monospace', wordBreak: 'break-all' };
 const Detail = ({ label, id, children }) => (
   <>
     <dt>{t(label)}</dt>
@@ -387,19 +388,19 @@ export function UpdateButton({ ui }) {
             <Box id="h5-update-state" role="status" sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}><CircularProgress size={20} /><span>{t('Checking for the latest version…')}</span></Box>
           ) : null}
           {shown ? (
-            <Box component="dl" id="h5-update-versions" sx={{ m: 0, mb: 1.5, display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 2, rowGap: 0.5, fontSize: 14 }}>
+            <Box component="dl" id="h5-update-versions" sx={{ m: 0, mb: 2, display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 2, rowGap: 0.5, typography: 'body2', '& dt': { color: 'text.secondary' } }}>
               <Detail label="Current version" id="h5-update-current">{shown.local_version || '?'}</Detail>
               <Detail label="Latest version" id="h5-update-latest">{shown.remote_version || '?'}</Detail>
               <Detail label="Status" id="h5-update-status">{t(statusLabel(shown.status))}</Detail>
               <Detail label="Install type" id="h5-update-install">{t(installLabel(shown.install_type))}</Detail>
               <Detail label="Last checked" id="h5-update-checked">{formatTime(shown.last_checked_at)}</Detail>
               {Number.isFinite(Number(shown.check_interval_seconds)) && shown.check_interval_seconds ? <Detail label="Check interval" id="h5-update-interval">{`${Number(shown.check_interval_seconds) / 60} ${t('min')}`}</Detail> : null}
-              <Detail label="GitHub version source" id="h5-update-source"><code style={{ fontSize: 12, wordBreak: 'break-all' }}>{shown.version_url || t('Not configured')}</code></Detail>
+              <Detail label="GitHub version source" id="h5-update-source"><Box component="code" sx={MONO}>{shown.version_url || t('Not configured')}</Box></Detail>
               {published ? <Detail label="Published" id="h5-update-published">{formatTime(published)}</Detail> : null}
             </Box>
           ) : null}
           {auto ? (
-            <Box id="h5-update-auto" sx={{ mb: 1.5 }}>
+            <Box id="h5-update-auto" sx={{ mb: 2 }}>
               <FormControlLabel
                 sx={{ ml: 0, mr: 0, width: '100%', justifyContent: 'space-between', '& .MuiFormControlLabel-label': { flex: '1 1 auto' } }}
                 labelPlacement="start"
@@ -416,10 +417,10 @@ export function UpdateButton({ ui }) {
           {view.phase === 'current' ? <Typography id="h5-update-state" role="status">{t('Already up to date')}</Typography> : null}
           {view.phase === 'restart' ? (
             <Box id="h5-update-restart" role="status" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-              <Typography id="h5-update-state" sx={{ fontWeight: 600 }}>{t(shown.message || 'Code updated; restart the service to apply it')}</Typography>
+              <Typography id="h5-update-state" sx={{ fontWeight: 500 }}>{t(shown.message || 'Code updated; restart the service to apply it')}</Typography>
               <Typography variant="body2">{t('Restart for your install type:')}</Typography>
               {RESTART_HELP.map(([kind, command]) => (
-                <Typography key={kind} variant="body2" component="div" className="h5-update-restart-command">{t(kind)}: <code style={{ userSelect: 'all', wordBreak: 'break-all' }}>{command}</code></Typography>
+                <Typography key={kind} variant="body2" component="div" className="h5-update-restart-command">{t(kind)}: <Box component="code" sx={{ ...MONO, userSelect: 'all' }}>{command}</Box></Typography>
               ))}
               <Typography variant="body2" color="text.secondary">{t('Restarting interrupts programs running in terminals.')}</Typography>
             </Box>
@@ -457,13 +458,14 @@ export function UpdateButton({ ui }) {
           ) : null}
           {view.phase === 'error' ? <Typography id="h5-update-state" role="alert" color="error">{t(view.message)}</Typography> : null}
           <LinkedList linked={linked} locked={view.phase === 'updating'} />
-          {log ? <Paper id="h5-update-log" component="pre" variant="outlined" ref={logNode} aria-label={t('Update log')} aria-live="off" sx={{ m: 0, mt: 1.5, p: 1, maxHeight: '30vh', overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{log}</Paper> : null}
+          {log ? <Paper id="h5-update-log" component="pre" variant="outlined" ref={logNode} aria-label={t('Update log')} aria-live="off" sx={{ ...MONO, m: 0, mt: 2, p: 1, maxHeight: '30vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{log}</Paper> : null}
         </DialogContent>
-        <DialogActions>
+        {/* The one dialog pattern: text buttons at the bottom right, the dismissive Close first, the confirming action last (a forced update in the warning colour). */}
+        <DialogActions sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+          <Button id="h5-update-dismiss" disabled={view.phase === 'updating'} onClick={close}>{t('Close')}</Button>
           {view.phase === 'error' && view.dirty && admin ? <Button id="h5-update-force-retry" onClick={() => { setForce(true); setView(previous => ({ ...previous, phase: 'available', forceOffered: true })); }}>{t('Choose force update…')}</Button> : null}
           {view.phase === 'error' || view.phase === 'restart' ? <Button id="h5-update-retry" onClick={() => void check()}>{t('Check again')}</Button> : null}
-          {offerNow ? <Button id="h5-update-now" variant="contained" color={forcing && updateHere ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(!updateHere ? 'Update the selected services' : forcing ? 'Force update now' : 'Update now')}</Button> : null}
-          <Button id="h5-update-dismiss" color="inherit" disabled={view.phase === 'updating'} onClick={close}>{t('Close')}</Button>
+          {offerNow ? <Button id="h5-update-now" color={forcing && updateHere ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(!updateHere ? 'Update the selected services' : forcing ? 'Force update now' : 'Update now')}</Button> : null}
         </DialogActions>
       </Dialog> : null}
     </>

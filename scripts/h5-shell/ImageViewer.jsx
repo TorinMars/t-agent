@@ -13,8 +13,8 @@ const TAP_TIME = 350; // ms: the longest tap, and the longest gap between the tw
 const DOUBLE_DISTANCE = 40; // px between the two taps of a double tap
 const PAN_STEP = 0.15; // an arrow key pans a zoomed view by this part of the stage
 
-const BAR_BUTTON = { width: 44, height: 44, color: '#fff', borderRadius: '22px', '&.Mui-disabled': { color: 'rgba(255, 255, 255, .35)' } };
-const BAR_TEXT = { ...BAR_BUTTON, fontSize: 14, fontWeight: 500, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }; // text labels sized like the icons
+const BAR_BUTTON = { width: 44, height: 44, color: 'common.white', borderRadius: '22px', '&.Mui-disabled': { color: 'rgba(255, 255, 255, .35)' } };
+const BAR_TEXT = { ...BAR_BUTTON, typography: 'button', textTransform: 'none', letterSpacing: 0, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }; // text labels sized like the icons
 
 // The natural width of `item.natural` (a number, or { w } / { width }), or 0.
 const naturalWidth = natural => (typeof natural === 'number' ? natural : (natural && (natural.w || natural.width)) || 0);
@@ -206,7 +206,7 @@ export function ImageViewer({ item, onClose }) {
   return (
     <Dialog
       fullScreen open={open} onClose={onClose} disableScrollLock aria-label={t('Image viewer')}
-      slotProps={{ paper: { id: 'h5-viewer', sx: { bgcolor: '#000', backgroundImage: 'none', overflow: 'hidden' } } }}
+      slotProps={{ paper: { id: 'h5-viewer', sx: { bgcolor: 'common.black', backgroundImage: 'none', overflow: 'hidden' } } }}
     >
       {item ? (
         <Box
@@ -224,14 +224,14 @@ export function ImageViewer({ item, onClose }) {
       ) : null}
       <IconButton
         id="h5-viewer-close" {...named(t('Close'))} onClick={onClose}
-        sx={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 8px)', right: 'calc(env(safe-area-inset-right) + 8px)', color: '#fff', bgcolor: 'rgba(0, 0, 0, .55)', '&:hover': { bgcolor: 'rgba(40, 40, 40, .8)' }, zIndex: 1 }}
+        sx={{ position: 'absolute', top: 'calc(env(safe-area-inset-top) + 8px)', right: 'calc(env(safe-area-inset-right) + 8px)', color: 'common.white', bgcolor: 'rgba(0, 0, 0, .55)', '&:hover': { bgcolor: 'rgba(40, 40, 40, .8)' }, zIndex: 1 }}
       >
         <Icon name="close" size={22} />
       </IconButton>
       {item ? (
         <Box
           id="h5-viewer-bar" role="toolbar" aria-label={t('Zoom')}
-          sx={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', bottom: 'calc(env(safe-area-inset-bottom) + 12px)', zIndex: 1, display: 'flex', alignItems: 'center', gap: '2px', p: '2px', maxWidth: 'calc(100% - 16px - env(safe-area-inset-left) - env(safe-area-inset-right))', borderRadius: '24px', bgcolor: 'rgba(0, 0, 0, .55)', color: '#fff', '& > *': { flex: '0 0 auto' } }}
+          sx={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', bottom: 'calc(env(safe-area-inset-bottom) + 12px)', zIndex: 1, display: 'flex', alignItems: 'center', gap: '2px', p: '2px', maxWidth: 'calc(100% - 16px - env(safe-area-inset-left) - env(safe-area-inset-right))', borderRadius: '24px', bgcolor: 'rgba(0, 0, 0, .55)', color: 'common.white', '& > *': { flex: '0 0 auto' } }}
         >
           <IconButton id="h5-viewer-zoom-out" {...named(t('Zoom out'))} onClick={() => zoomStep(-1)} disabled={view.s <= 1.001} sx={BAR_BUTTON}><Icon name="zoomOut" size={22} /></IconButton>
           <ButtonBase id="h5-viewer-zoom-level" {...named(t('Fit to screen'))} onClick={fit} sx={{ ...BAR_TEXT, width: 'auto', minWidth: 60, px: 1 }}>{`${percent}%`}</ButtonBase>

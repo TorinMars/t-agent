@@ -237,7 +237,7 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     assert.equal(socket.messages[0].token, 'tab_fixture');
     assert.equal(socket.messages[0].version, require('../manifest.json').version, 'hello carries the manifest version');
     assert.deepEqual(socket.messages[0].methods, methods);
-    assert.equal(methods.length, 25);
+    assert.equal(methods.length, 26);
     intervals.find(i => i.ms === 20000).fn();
     assert.equal(socket.messages.at(-1).type, 'ping');
     assert.equal((await dispatch('tabs.list')).tabs[0].how, 'handed');
@@ -467,6 +467,31 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     await assert.rejects(dispatch('net.start', {
       tab_id: 11
     }), /TAB_NOT_ALLOWED/);
+  });
+  await t.test('tabs.reveal brings a T-Agent page tab forward without a handed tab', async () => {
+    const focusedWindows = [];
+    const realUpdate = chrome.windows.update;
+    chrome.windows.update = async (id, p) => focusedWindows.push([id, p]);
+    for (const id of [11, 12]) tabs.get(id).active = false;
+    tabs.set(31, { id: 31, url: 'http://127.0.0.1:3000/h5?pane=1', groupId: -1, windowId: 4, lastAccessed: 900 });
+    tabs.set(32, { id: 32, url: 'http://127.0.0.1:3000/?x=1', groupId: -1, windowId: 2, lastAccessed: 500 });
+    tabs.set(33, { id: 33, url: 'http://127.0.0.1:3000/', groupId: -1, windowId: 3, lastAccessed: 700 });
+    tabs.set(34, { id: 34, url: 'http://127.0.0.1:3001/', groupId: -1, windowId: 3, lastAccessed: 999 });
+    try {
+      assert.deepEqual(await dispatch('tabs.reveal', { origin: 'http://127.0.0.1:3000' }), { focused: true, tab_id: 33 }, 'the one used last, never a column or another port');
+      assert.equal(tabs.get(33).active, true);
+      assert.deepEqual(focusedWindows.at(-1), [3, { focused: true }]);
+      tabs.get(33).active = false;
+      tabs.get(32).active = true;
+      assert.equal((await dispatch('tabs.reveal', { origin: 'http://127.0.0.1:3000' })).tab_id, 32, 'the front tab first');
+      assert.deepEqual(await dispatch('tabs.reveal', { origin: 'http://localhost:4000' }), { focused: false });
+      for (const origin of ['http://127.0.0.1:3000/', 'file:///tmp', 'chrome://settings', 42, undefined]) await assert.rejects(dispatch('tabs.reveal', { origin }), /BAD_PARAMS/);
+      assert.equal(injections.filter(i => [31, 32, 33].includes(i.target?.tabId)).length, 0, 'no page is read');
+    } finally {
+      chrome.windows.update = realUpdate;
+      for (const id of [31, 32, 33, 34]) tabs.delete(id);
+      tabs.get(11).active = true;
+    }
   });
   await t.test('revocation suppresses minute-alarm reconnect', async () => {
     await socket.onclose({

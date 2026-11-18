@@ -34,6 +34,9 @@ const METHODS = Object.freeze([
   'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select',
   'net.start', 'net.stop', 'net.list', 'net.get',
   'record.start', 'record.stop', 'debug.detach',
+  // Added in extension 1.0.3: bring the tab of a T-Agent page to the front (the desktop window's Open session, routes/attention-widget.js). An older
+  // extension does not list it in its hello, so command() answers UNKNOWN_METHOD and the caller falls back.
+  'tabs.reveal',
 ]);
 // Answers that the server redacts again unless the caller asked for `raw: true` (they carry headers, URLs and bodies).
 const REDACT_AGAIN = new Set(['net.list', 'net.get', 'page.fetch']);

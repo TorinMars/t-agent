@@ -275,7 +275,7 @@ const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h
       assert.equal(await page.locator('#h5-attention-sheet').count(), 0, 'the panel is drawn only when it is opened');
       assert.deepEqual(calls.map(call => `${call.method} ${call.path}`), ['GET /api/attention?include_done=1&limit=200'], 'the list is read once at start');
       assert.equal(await page.evaluate(() => window.streams.length), 1, 'the live stream is open');
-      assert.equal(await page.evaluate(() => window.streams[0].url), '/api/attention/stream');
+      assert.equal(await page.evaluate(() => window.streams[0].url), '/api/attention/stream?tab=1', 'the top page opens this machine\'s stream as an open page (Open session of the desktop window)');
 
       // Open: the Home view (an older server: no parent_id): Needs you (waiting_user, then review), Working, To do, then "Done: N" folded; the
       // order inside a section.

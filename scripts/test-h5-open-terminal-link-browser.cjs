@@ -2,6 +2,9 @@
 // Chromium at computer and phone size with mocked routes and sockets. A link selects that task on that service (this machine or a connected one) and shows
 // that terminal, over the task the page remembered; the parameter is taken out of the address at once (other parameters stay), so a reload shows the page
 // as usual. A task or terminal that is not there, or a link that is not one, shows the normal page and "That terminal is not available any more".
+// The same without a new tab: the desktop window's Open session pushes `open-terminal` over the page's T-Attention stream (`/api/attention/stream?tab=1`,
+// a fake EventSource here; scripts/h5-shell/attention-feed.mjs), and the open page switches task and terminal in place, without a reload. On `hello` the
+// page reports that it is seen (POST /api/attention/stream/seen).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,7 +25,7 @@ const ROWS = {
 async function openPage(browser, wide, query) {
   const context = await browser.newContext(wide ? { viewport: { width: 1440, height: 900 } } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
-  const state = { errors: [] };
+  const state = { errors: [], seen: [] };
   page.on('pageerror', error => state.errors.push(error.message));
   await page.addInitScript(() => {
     // The page remembers task 1 of this machine and its terminal: a link wins over it.
@@ -39,6 +42,17 @@ async function openPage(browser, wide, query) {
     };
     window.WebSocket.OPEN = 1;
     window.WebSocket.CONNECTING = 0;
+    window.streams = [];
+    window.EventSource = class extends EventTarget {
+      constructor(url) { super(); this.url = url; this.readyState = 0; window.streams.push(this); setTimeout(() => { if (this.readyState !== 2) { this.readyState = 1; this.dispatchEvent(new Event('open')); } }, 0); }
+      close() { this.readyState = 2; }
+    };
+    window.push = (event, data) => {
+      const stream = window.streams.filter(s => s.readyState === 1 && s.url === '/api/attention/stream?tab=1').at(-1);
+      if (!stream) return false;
+      stream.dispatchEvent(new MessageEvent(event, { data: JSON.stringify(data) }));
+      return true;
+    };
   });
   await page.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
@@ -61,6 +75,8 @@ async function openPage(browser, wide, query) {
     if (/\/terminal-activity$/.test(p)) return json({});
     if (/\/terminal-subagents$/.test(p)) return json({});
     if (/\/terminal\/ack$/.test(p)) return json({ success: true });
+    if (p === '/api/attention' && method === 'GET') return json({ items: [] });
+    if (p === '/api/attention/stream/seen' && method === 'POST') { state.seen.push(route.request().postDataJSON()); return json({ ok: true }); }
     return json({ error: 'not mocked' }, 404);
   });
   await page.goto(`${ORIGIN}/h5${query}`);
@@ -105,6 +121,33 @@ async function notThere(browser, wide, query) {
   await context.close();
 }
 
+// A page loaded as usual (the remembered task 1, terminal h1) is told by its stream to show other terminals: it switches in place, never reloads.
+async function pushed(browser, wide) {
+  const { context, page, state, label } = await openPage(browser, wide, '');
+  const pushedLabel = `${label} pushed`;
+  await waitShown(page, 'h1');
+  await page.evaluate(() => { window.notReloaded = true; });
+  await page.waitForFunction(() => window.streams.some(s => s.readyState === 1 && s.url === '/api/attention/stream?tab=1'), null, { timeout: 8000 });
+  assert.equal(await page.evaluate(() => window.push('hello', { stream: 'page-1' })), true);
+  for (let i = 0; i < 50 && !state.seen.length; i += 1) await page.waitForTimeout(50);
+  assert.deepEqual(state.seen, [{ stream: 'page-1' }], `${pushedLabel}: a visible page says it is seen`);
+  await page.evaluate(() => window.push('open-terminal', { engine: 'local', task_id: '2', terminal_id: 'a2' }));
+  await waitShown(page, 'a2');
+  assert.equal(await page.locator('#h5-session-name').textContent(), 'Claude 2', `${pushedLabel}: the header names it`);
+  assert.ok((await socketTo(page)).includes('/terminal/ws 2:a2'), `${pushedLabel}: that terminal is connected`);
+  await page.evaluate(() => window.push('open-terminal', { engine: 'remote:7', task_id: '5', terminal_id: 'r2' }));
+  await waitShown(page, 'r2');
+  assert.ok((await socketTo(page)).includes('/api/remote-servers/7/terminal/ws 5:r2'), `${pushedLabel}: on the connected service`);
+  if (!wide) assert.equal(await page.locator('#h5-tasks').isVisible(), false, `${pushedLabel}: a phone shows the terminal, not the task sheet`);
+  assert.equal(await notice(page).count(), 0, `${pushedLabel}: no notice`);
+  await page.evaluate(() => window.push('open-terminal', { engine: 'local', task_id: '2', terminal_id: 'gone' }));
+  await notice(page).filter({ hasText: GONE }).waitFor({ state: 'visible', timeout: 8000 });
+  assert.equal(await shownId(page), 'r2', `${pushedLabel}: a terminal that is not there leaves the page as it is`);
+  assert.equal(await page.evaluate(() => window.notReloaded === true && location.search === ''), true, `${pushedLabel}: no reload, no link in the address`);
+  assert.deepEqual(state.errors, [], `${pushedLabel}: no page errors`);
+  await context.close();
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
@@ -116,6 +159,7 @@ async function notThere(browser, wide, query) {
         query: '?keep=1&openTerminal=remote:7:5:r2', terminal: 'r2', socket: '/api/remote-servers/7/terminal/ws 5:r2', session: 'main dev', store: ['h5-terminal:remote:7:5', 'r2'], rest: '?keep=1',
       });
       for (const query of ['?openTerminal=local:2:gone', '?openTerminal=local:99:a1', '?openTerminal=remote:8:5:r2', '?openTerminal=nonsense']) await notThere(browser, wide, query);
+      await pushed(browser, wide);
     }
     console.log('h5 open terminal link: ok');
   } finally {

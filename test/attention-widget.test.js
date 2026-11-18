@@ -325,7 +325,7 @@ test('every action goes to the engine of its key', async () => {
 
 test('strings: the list in widgets/macos/strings.json, in English or from the Chinese dictionary', async () => {
   const list = readStringList();
-  for (const text of ['Needs you', 'Finished ({1})', 'Could not load {1}', 'Nothing needs you', 'Quit']) assert.ok(list.includes(text), text);
+  for (const text of ['Needs you', 'Could not load {1}', '+{1} more', 'Nothing needs you', 'Quit']) assert.ok(list.includes(text), text);
   const words = createDictionary()();
   const missing = list.filter(text => typeof words[text] !== 'string');
   assert.deepEqual(missing, [], 'every string of the window has a Chinese translation in public/js/i18n-zh-*.js');
@@ -333,13 +333,13 @@ test('strings: the list in widgets/macos/strings.json, in English or from the Ch
   let answer = await call('GET', `${base}/strings`, undefined, AUTH);
   assert.equal(answer.body.lang, 'en');
   assert.equal(answer.body.strings['Needs you'], 'Needs you');
-  assert.equal(answer.body.strings['Finished ({1})'], 'Finished ({1})');
+  assert.equal(answer.body.strings['Could not load {1}'], 'Could not load {1}');
   settings.save({ language: 'zh' });
   answer = await call('GET', `${base}/strings`, undefined, AUTH);
   assert.equal(answer.body.lang, 'zh');
   assert.equal(answer.body.strings['Needs you'], words['Needs you']);
-  assert.match(answer.body.strings['Finished ({1})'], /\{1\}/, 'the placeholder stays');
-  assert.notEqual(answer.body.strings['Finished ({1})'], 'Finished ({1})');
+  assert.match(answer.body.strings['Could not load {1}'], /\{1\}/, 'the placeholder stays');
+  assert.notEqual(answer.body.strings['Could not load {1}'], 'Could not load {1}');
   // 'auto' follows the page's language, which the settings read learns from its cookie.
   settings.save({ language: 'auto' });
   assert.equal((await call('GET', `${base}/strings`, undefined, AUTH)).body.lang, 'en');

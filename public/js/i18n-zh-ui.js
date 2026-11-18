@@ -1700,7 +1700,6 @@ I18n.add({
   // The T-Attention desktop window (macOS): its own words (widgets/macos/strings.json, served by GET /api/attention/widget/strings) and its settings
   // card (scripts/h5-shell/AttentionWidgetSettings.jsx).
   "Done: {1}": "已完成：{1}", // also the page's T-Attention list (Attention.jsx)
-  "Finished ({1})": "已结束（{1}）",
   "No matches": "没有匹配的任务",
   "Waits for your confirmation": "等你确认",
   "Quit": "退出",

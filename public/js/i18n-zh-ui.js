@@ -1699,6 +1699,7 @@ I18n.add({
   "Enter the other client’s address and a pairing code made there under “Let other clients connect to this one”. Only this side sees the other.": "填写另一个客户端的地址，以及在那边“让其他客户端连接到这台”里生成的配对码。只有这一边能看到另一边。",
   // The T-Attention desktop window (macOS): its own words (widgets/macos/strings.json, served by GET /api/attention/widget/strings) and its settings
   // card (scripts/h5-shell/AttentionWidgetSettings.jsx).
+  "Done: {1}": "已完成：{1}", // also the page's T-Attention list (Attention.jsx)
   "Finished ({1})": "已结束（{1}）",
   "No matches": "没有匹配的任务",
   "Waits for your confirmation": "等你确认",

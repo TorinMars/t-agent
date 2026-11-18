@@ -186,7 +186,7 @@ test('items: this machine and the connected services in one list, a failing engi
   assert.deepEqual(parent, {
     key: `remote:${laptopId}:1`, engine: `remote:${laptopId}`, id: 1, parent_key: null, title: 'Remote parent', status: 'waiting_user', custom_status: 'Blocked',
     result: null, attention_reason: 'Approve', pending: 'Allow rm?', link_url: 'https://example.test/pr/1', link_label: 'The PR', priority: 'high', due_date: '2026-12-01', sort_order: 50,
-    updated_at: '2026-11-02T00:00:00.000Z', created_at: '2026-11-01T00:00:00.000Z',
+    updated_at: '2026-11-02T00:00:00.000Z', created_at: '2026-11-01T00:00:00.000Z', session: null,
   });
   assert.equal(byKey.get(`remote:${laptopId}:2`).parent_key, `remote:${laptopId}:1`);
   // The link of a task, null when it has none (a remote item without the fields, or an empty one).

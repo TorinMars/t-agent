@@ -188,3 +188,26 @@ test('parsePs groups the foreground process of every terminal and ignores backgr
   assert.deepEqual(result.get('ttys002'), ['zsh']);
   assert.equal(result.has('ttys999'), false);
 });
+
+test('since() is the time of the last state change: the start until the first one, unchanged by a repeated state', async () => {
+  const pty = { process: 'claude' };
+  const tracker = createActivityTracker(pty, '/bin/bash', () => {}, HOOKED);
+  try {
+    const started = Date.now();
+    assert.equal(tracker.since(), started, 'never changed: the start');
+    await tick(50);
+    tracker.report('start');
+    assert.equal(tracker.since(), started + 50);
+    await tick(30);
+    tracker.report('start'); // still running: no change
+    assert.equal(tracker.since(), started + 50);
+    tracker.report('attention');
+    assert.equal(tracker.state(), 'done');
+    assert.equal(tracker.awaitingAnswer(), true);
+    assert.equal(tracker.since(), started + 80);
+    await tick(20);
+    tracker.acknowledge();
+    assert.equal(tracker.state(), 'idle');
+    assert.equal(tracker.since(), started + 100);
+  } finally { tracker.stop(); }
+});

@@ -980,6 +980,75 @@ function liveTerminalIds(taskId) {
   return ids;
 }
 
+// The T-Attention desktop window (routes/attention-widget.js; "T-Attention desktop window (macOS)" in DESIGN.md) reads and writes this machine's
+// terminals through the three functions below.
+const liveSession = (taskId, requestedTerminalId) => {
+  if (!Number.isInteger(Number(taskId)) || Number(taskId) < 1 || typeof requestedTerminalId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(requestedTerminalId)) return null;
+  const s = sessions.get(sessionKey(taskId, requestedTerminalId));
+  return s && s.pty && !s.startupError && !s.exiting ? s : null;
+};
+
+// What the window shows about a terminal named by an item's context.tagent: { agent: 'claude' | 'codex' | null (the task_terminals row), live (its shell runs) }.
+function terminalInfo(taskId, requestedTerminalId) {
+  const live = Boolean(liveSession(taskId, requestedTerminalId));
+  let agent = null;
+  if (Number.isInteger(Number(taskId)) && Number(taskId) > 0 && typeof requestedTerminalId === 'string' && requestedTerminalId !== 'default') {
+    try {
+      const row = db.prepare('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId);
+      agent = (row && row.agent) || null;
+    } catch { agent = null; }
+  }
+  return { agent, live };
+}
+
+// A reply typed in the window, sent to a live terminal as the person would paste it: a bracketed paste (ESC[200~ ... ESC[201~, line breaks as \r, other
+// control characters removed so the text cannot end the paste itself), then Enter on its own after enterDelayMs (Codex takes keys that come quickly after
+// each other as a paste burst, so an Enter in the same write would be part of the text). False when the terminal has no live shell.
+const REPLY_ENTER_DELAY_MS = 150;
+function sendToTerminal(taskId, requestedTerminalId, text, { enterDelayMs = REPLY_ENTER_DELAY_MS } = {}) {
+  const s = liveSession(taskId, requestedTerminalId);
+  if (!s) return false;
+  const body = String(text).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').replace(/\n/g, '\r');
+  const key = sessionKey(taskId, requestedTerminalId);
+  const type = data => {
+    s.activity?.noteInput();
+    noteTerminalInput(`local:${key}`);
+    s.pty.write(data);
+  };
+  type(`\x1b[200~${body}\x1b[201~`);
+  const timer = setTimeout(() => { if (sessions.get(key) === s && !s.exiting) type('\r'); }, enterDelayMs);
+  timer.unref?.();
+  return true;
+}
+
+// The live terminals of every task that are not idle, for the window's activity list: [{ task_id, task_title, terminal_id, title, agent, state, since }],
+// state 'running' | 'waiting' (done at a permission prompt: awaitingAnswer) | 'done' (finished, not acknowledged yet); since: ms of the last state change.
+// The title and agent are the ones the task's terminal list shows (listTerminals: an agent terminal is named after its session).
+function liveTerminalActivity() {
+  const byTask = new Map();
+  for (const s of sessions.values()) {
+    if (!s.pty || s.startupError || s.exiting || !s.activity) continue;
+    const state = s.activity.state();
+    if (state === 'idle') continue;
+    if (!byTask.has(s.taskId)) byTask.set(s.taskId, []);
+    byTask.get(s.taskId).push({ s, state: state === 'done' && s.activity.awaitingAnswer() ? 'waiting' : state });
+  }
+  const out = [];
+  for (const [taskId, live] of byTask) {
+    const task = db.prepare('SELECT title FROM tasks WHERE id = ?').get(taskId);
+    if (!task) continue;
+    let rows = [];
+    try { rows = listTerminals(taskId); } catch { rows = []; }
+    const listed = new Map(rows.map(row => [row.terminal_id, row]));
+    for (const { s, state } of live) {
+      const row = listed.get(s.terminalId);
+      if (!row) continue; // a legacy phone shell (h5-...) or a terminal deleted meanwhile
+      out.push({ task_id: String(taskId), task_title: task.title || '', terminal_id: s.terminalId, title: row.title || '', agent: row.agent || null, state, since: s.activity.since() });
+    }
+  }
+  return out;
+}
+
 // True while a page shows this terminal in the foreground (see lib/terminal-presence.js); false for an unknown terminal. With `since` (a time in
 // ms): also true when it was in the foreground at some moment since then (a delayed notification asks whether the person could see it meanwhile).
 function isTerminalForeground(taskId, requestedTerminalId, since) {
@@ -1014,4 +1083,4 @@ function shutdownTerminals() {
   } catch {}
 }
 
-module.exports = { terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot };
+module.exports = { terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity };

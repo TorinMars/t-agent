@@ -516,7 +516,22 @@ enum RowAction: String {
     }
 
     var isPrimary: Bool { self == .confirm }
+
+    /// The SF Symbol of its icon button in a row.
+    var symbolName: String {
+        switch self {
+        case .confirm: return "checkmark.circle.fill"
+        case .reject: return "xmark.circle"
+        case .handled: return "checkmark.circle"
+        case .link: return "link"
+        case .session: return "terminal"
+        case .reply: return "arrowshape.turn.up.left"
+        }
+    }
 }
+
+/// The side of a row's icon buttons, and the height of a row's title line when it has any.
+let rowIconSize: CGFloat = 18
 
 /// Review rows are confirmed or rejected; a row waiting for the user is marked handled.
 func rowActions(for item: WidgetItem) -> [RowAction] {
@@ -983,17 +998,57 @@ final class DragView: HoverView {
     }
 }
 
+/// A template SF Symbol at the size of the panel's icons; nil before macOS 11 or when the system lacks the symbol (the
+/// button then shows its text instead).
+func symbolImage(_ name: String, pointSize: CGFloat = 12) -> NSImage? {
+    guard symbolsAvailable else { return nil }
+    if #available(macOS 11.0, *) {
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
+        let sized = image.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)) ?? image
+        sized.isTemplate = true
+        return sized
+    }
+    return nil
+}
+
+/// --self-test turns this off to check the text fallback of the icon buttons.
+var symbolsAvailable = true
+
+/// `image` drawn in `color` (a template image keeps only its shape), at draw time so the colour follows the appearance.
+func tintedImage(_ image: NSImage, _ color: NSColor) -> NSImage {
+    NSImage(size: image.size, flipped: false) { rect in
+        image.draw(in: rect)
+        color.set()
+        rect.fill(using: .sourceAtop)
+        return true
+    }
+}
+
 /// A small button in the panel. It draws itself because the panel is rarely key, and a system default button is
-/// drawn without its colour in a window that is not key.
+/// drawn without its colour in a window that is not key. With a symbol (and macOS 11 or later) it is an icon button:
+/// the symbol only, in `tint` or the secondary label colour, a faint rounded square under the pointer, and `label` as
+/// its tooltip and accessibility label. Without one it is a text button: `label` on a grey or `tint` filled pill.
 class PanelButton: NSButton {
-    var label: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    var label: String {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+            if icon != nil { toolTip = label }
+            setAccessibilityLabel(label)
+        }
+    }
     private let tint: NSColor?
     private let fontSize: CGFloat
+    /// The symbol of an icon button; nil for a text button.
+    let icon: NSImage?
+    var iconSize = NSSize(width: 20, height: 20)
+    private var hovered = false { didSet { needsDisplay = true } }
 
-    init(label: String, tint: NSColor? = nil, fontSize: CGFloat = 11) {
+    init(label: String, tint: NSColor? = nil, fontSize: CGFloat = 11, symbol: String? = nil, symbolSize: CGFloat = 12) {
         self.label = label
         self.tint = tint
         self.fontSize = fontSize
+        self.icon = symbol.flatMap { symbolImage($0, pointSize: symbolSize) }
         super.init(frame: .zero)
         title = label
         isBordered = false
@@ -1001,13 +1056,27 @@ class PanelButton: NSButton {
         focusRingType = .none
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityLabel(label)
+        if icon != nil {
+            toolTip = label
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                           owner: self, userInfo: nil))
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    var isIcon: Bool { icon != nil }
+
     override var isEnabled: Bool { didSet { needsDisplay = true } }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseEntered(with event: NSEvent) { if isIcon { hovered = true } }
+    override func mouseExited(with event: NSEvent) { if isIcon { hovered = false } }
+    override func viewDidHide() {
+        hovered = false
+        super.viewDidHide()
+    }
 
     private func labelText(alpha: CGFloat) -> NSAttributedString {
         let color: NSColor = tint == nil ? .labelColor : .white
@@ -1018,10 +1087,23 @@ class PanelButton: NSButton {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: ceil(labelText(alpha: 1).size().width) + 18, height: 20)
+        if isIcon { return iconSize }
+        return NSSize(width: ceil(labelText(alpha: 1).size().width) + 18, height: 20)
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if let icon = icon {
+            if isEnabled && (hovered || isHighlighted) {
+                NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.16 : 0.09).setFill()
+                NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+            }
+            let color = (tint ?? NSColor.secondaryLabelColor).withAlphaComponent(isEnabled ? 1 : 0.35)
+            let size = icon.size
+            let rect = NSRect(x: ((bounds.width - size.width) / 2).rounded(), y: ((bounds.height - size.height) / 2).rounded(),
+                              width: size.width, height: size.height)
+            tintedImage(icon, color).draw(in: rect)
+            return
+        }
         let strength: CGFloat = isEnabled ? (isHighlighted ? 0.7 : 1) : 0.4
         let fill = tint?.withAlphaComponent(strength) ?? NSColor.labelColor.withAlphaComponent(0.12 * strength)
         fill.setFill()
@@ -1032,22 +1114,26 @@ class PanelButton: NSButton {
     }
 }
 
-/// A button in a task row.
+/// A button in a task row: an icon at the right end of the row's title line (`icon` true), or a text button (the
+/// bubble's buttons, and the rows when the system has no symbols).
 final class ActionButton: PanelButton {
     let rowAction: RowAction
     var onPress: () -> Void = {}
     var onRelease: () -> Void = {}
     var contextMenu: () -> NSMenu? = { nil }  // the row's menu, so a right click on a button still opens it
 
-    init(_ rowAction: RowAction) {
+    init(_ rowAction: RowAction, icon: Bool = false) {
         self.rowAction = rowAction
-        super.init(label: rowAction.label, tint: rowAction.isPrimary ? .controlAccentColor : nil)
+        super.init(label: rowAction.label, tint: rowAction.isPrimary ? .controlAccentColor : nil,
+                   symbol: icon ? rowAction.symbolName : nil)
+        iconSize = NSSize(width: rowIconSize, height: rowIconSize)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: super.intrinsicContentSize.width - 4, height: 18)
+        if isIcon { return super.intrinsicContentSize }
+        return NSSize(width: super.intrinsicContentSize.width - 4, height: 18)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { contextMenu() }
@@ -1114,9 +1200,87 @@ final class EnginePill: NSView {
     }
 }
 
+/// A small round dot drawn in a colour (the section headers).
+final class DotView: NSView {
+    let color: NSColor
+
+    init(color: NSColor, side: CGFloat = 7) {
+        self.color = color
+        super.init(frame: NSRect(x: 0, y: 0, width: side, height: side))
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: side).isActive = true
+        heightAnchor.constraint(equalToConstant: side).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        color.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+    }
+}
+
+/// The colour of each section's dot: the colours of the emoji the headers had (red, green, yellow, white), and teal
+/// for "Working now" as its rows' running dots.
+func sectionColor(_ section: Section) -> NSColor {
+    switch section {
+    case .needs: return .systemRed
+    case .working: return .systemGreen
+    case .todo: return .systemYellow
+    case .done: return .systemGray
+    }
+}
+
+/// A section header: a colour dot, the name and a muted count ("Needs you  4"). The name is the first text field, which
+/// the offscreen checks read as the line's text.
+final class SectionHeaderView: NSView {
+    let titleField: NSTextField
+    let countField: NSTextField
+    let dot: DotView
+
+    init(title: String, count: Int?, color: NSColor, width: CGFloat, muted: Bool = false) {
+        titleField = NSTextField(labelWithString: title)
+        countField = NSTextField(labelWithString: count.map { String($0) } ?? "")
+        dot = DotView(color: color)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        titleField.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleField.textColor = muted ? .secondaryLabelColor : .labelColor
+        titleField.lineBreakMode = .byTruncatingTail
+        countField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        countField.textColor = .tertiaryLabelColor
+        for field in [titleField, countField] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.setAccessibilityElement(false)
+        }
+        addSubview(titleField)  // first: what the offscreen checks read as the line's text
+        addSubview(dot)
+        addSubview(countField)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: width),
+            heightAnchor.constraint(equalToConstant: 18),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            dot.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
+            titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countField.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 5),
+            countField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
+            countField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(count.map { title + ", " + String($0) } ?? title)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+}
+
 let dragThreshold: CGFloat = 4
 
-/// One task row in the detail panel: a press followed by movement drags it, a plain click does nothing.
+/// One task row in the detail panel: a press followed by movement drags it, a plain click does nothing. Its icon
+/// buttons show all the time when `actionsAlwaysShown` (the Needs you section, or VoiceOver running), else only while
+/// the pointer is over the row. Hidden or not, every action stays in the row's context menu and in its accessibility
+/// custom actions, so it is reachable without a mouse.
 final class TaskRowView: NSView {
     var actionButtons: [ActionButton] = []
     var onPress: () -> Void = {}
@@ -1125,17 +1289,41 @@ final class TaskRowView: NSView {
     var onDragEnd: () -> Void = {}
     var onRelease: () -> Void = {}
     var contextMenu: () -> NSMenu? = { nil }
+    var actionsAlwaysShown = true { didSet { updateActionVisibility() } }
+    private(set) var hovered = false
     private var startPoint: NSPoint?
     private var active = false
 
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override func mouseEntered(with event: NSEvent) { setHovered(true) }
+    override func mouseExited(with event: NSEvent) { setHovered(false) }
+
+    func setHovered(_ on: Bool) {
+        guard on != hovered else { return }
+        hovered = on
+        updateActionVisibility()
+    }
+
+    func updateActionVisibility() {
+        let shown = actionsAlwaysShown || hovered
+        actionButtons.forEach { $0.isHidden = !shown }
+    }
+
     // The label and the engine tag must not take the press, or the panel would not pass it through without
-    // activation. A button takes its own press even when disabled, so a press on it never starts a drag.
+    // activation. A shown button takes its own press even when disabled, so a press on it never starts a drag.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard frame.contains(point) else { return nil }
         let local = convert(point, from: superview)
-        return actionButtons.first { $0.convert($0.bounds, to: self).contains(local) } ?? self
+        return actionButtons.first { !$0.isHidden && $0.convert($0.bounds, to: self).contains(local) } ?? self
     }
 
     /// The link and session buttons stay on: opening them does not touch the task.
@@ -1633,13 +1821,42 @@ func roundedMask(radius: CGFloat) -> NSImage {
     return image
 }
 
+/// How much of the window background colour lies over the blur: what is behind the window (a terminal full of text)
+/// shows only as a faint tint and never competes with the panel's own text.
+let backgroundVeil: CGFloat = 0.86
+
+/// The veil over the blur: the window background colour of the current appearance at backgroundVeil, in the same
+/// rounded shape (resolved at draw time, so it follows light and dark).
+final class BackgroundVeilView: NSView {
+    let radius: CGFloat
+
+    init(radius: CGFloat) {
+        self.radius = radius
+        super.init(frame: .zero)
+        autoresizingMask = [.width, .height]
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.withAlphaComponent(backgroundVeil).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+    }
+}
+
+/// The background of the pill, the panel, its forms and the bubble: the blur of the menu material with the veil on it.
 func makeBackground(radius: CGFloat) -> NSVisualEffectView {
     let view = NSVisualEffectView()
-    view.material = .popover
+    view.material = .menu
     view.blendingMode = .behindWindow
     view.state = .active
     view.maskImage = roundedMask(radius: radius)
     view.autoresizingMask = [.width, .height]
+    let veil = BackgroundVeilView(radius: radius)
+    veil.frame = view.bounds
+    view.addSubview(veil)
     return view
 }
 
@@ -1672,7 +1889,7 @@ func renderView(_ view: NSView, to path: String, background: NSColor) -> Bool {
 let widgetHeight: CGFloat = 26
 let widgetMinWidth: CGFloat = 38
 let widgetSize = NSSize(width: widgetMinWidth, height: widgetHeight)
-let detailWidth: CGFloat = 288
+let detailWidth: CGFloat = 312
 let detailPadding: CGFloat = 10
 let detailMaxHeight: CGFloat = 440
 let screenMargin: CGFloat = 8
@@ -1728,7 +1945,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let insertionLine = NSView()
     private let toast = NSView()
     private let toastLabel = NSTextField(labelWithString: "")
-    private let plusButton = PanelButton(label: "+", fontSize: 15)
+    private let plusButton = PanelButton(label: "+", fontSize: 15, symbol: "plus", symbolSize: 13)
 
     private var overlay: OverlayView?  // the open form or confirmation; holds the panel
     private var menuOpen = false  // holds the panel while a context menu is showing
@@ -1765,6 +1982,11 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var requestHook: ((URLRequest, @escaping (Data?, Int) -> Void) -> Void)?
     /// Opens a task's link in the default browser; --self-test and --render-sample replace it so nothing is opened.
     var openURL: (URL) -> Void = { url in _ = NSWorkspace.shared.open(url) }
+    /// Whether every row shows its icon buttons without the pointer over it: while VoiceOver runs. --self-test sets it.
+    var alwaysShowRowActions: () -> Bool = { NSWorkspace.shared.isVoiceOverEnabled }
+    /// Brings the default browser to the front without opening anything (Open session switched a page there, and the
+    /// browser extension could not focus its tab). --self-test and --render-sample replace it.
+    var activateBrowser: () -> Void = { activateDefaultBrowser() }
 
     // The notice bubble beside the window.
     private let bubble = makePanel(size: NSSize(width: bubbleWidth, height: 80))
@@ -2095,77 +2317,81 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return field
     }
 
-    private func addRow(_ row: Row, after spacing: CGFloat) {
+    /// One row: the title on its own line (one line, an ellipsis when it does not fit), then at its right end the
+    /// row's icon buttons and the engine tag; under it, smaller and muted, the custom status and what is pending (or
+    /// why it needs you, or its result), at most two lines. A sub-task is indented under its parent with a "\u{2514}".
+    /// The full title and second line are the row's tooltip and accessibility label.
+    private func addRow(_ row: Row, after spacing: CGFloat, actionsAlwaysShown: Bool) {
         let fullWidth = detailWidth - detailPadding * 2
         let view = TaskRowView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.widthAnchor.constraint(equalToConstant: fullWidth).isActive = true
-        var fieldWidth = fullWidth
-        var pill: EnginePill?
-        if let tag = row.tag {
-            let made = EnginePill(tag)
-            fieldWidth -= made.intrinsicContentSize.width + 6
-            pill = made
-        }
         let key = row.key
-        let actionButtons = rowButtons(row).map { $0 == .link ? makeLinkButton(row) : makeActionButton($0, key) }
-        let buttonsWidth = actionButtons.reduce(0) { $0 + $1.intrinsicContentSize.width } + CGFloat(max(actionButtons.count - 1, 0)) * 6
-        // The buttons sit beside the second line when the title takes one line and the second line leaves room for
-        // them; without a second line, beside a title that leaves room for them (left of the engine tag); otherwise
-        // they take a line of their own under the text.
-        let titleWidth = lineWidth(rowText(row, titleOnly: true))
-        let inline = !actionButtons.isEmpty && !row.detail.isEmpty && titleWidth <= fieldWidth
-            && lineWidth(rowText(row, detailOnly: true)) + 8 + buttonsWidth <= fullWidth
-        let besideTitle = !actionButtons.isEmpty && row.detail.isEmpty && titleWidth + 8 + buttonsWidth <= fieldWidth
-        if besideTitle { fieldWidth -= buttonsWidth + 8 }
-        let field = makeField(rowText(row, raiseDetail: inline), width: fieldWidth)
-        view.addSubview(field)
+        let indent = rowIndent(row)
+        let actions = rowButtons(row)
+        let buttons = actions.map { $0 == .link ? makeLinkButton(row) : makeActionButton($0, key) }
+        view.actionButtons = buttons
+
+        let titleField = NSTextField(labelWithAttributedString: rowTitleText(row))
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.maximumNumberOfLines = 1
+        titleField.cell?.truncatesLastVisibleLine = true
+        titleField.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        titleField.setContentHuggingPriority(.init(1), for: .horizontal)
+        titleField.setAccessibilityElement(false)
+        var lineViews: [NSView] = [titleField]
+        lineViews += buttons
+        if let tag = row.tag { lineViews.append(EnginePill(tag)) }
+        let line = NSStackView(views: lineViews)
+        line.orientation = .horizontal
+        line.alignment = .centerY
+        line.spacing = 1
+        line.setCustomSpacing(6, after: titleField)
+        if let last = buttons.last, row.tag != nil { line.setCustomSpacing(5, after: last) }
+        line.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(line)
+        let lineHeight: CGFloat = buttons.isEmpty && row.tag == nil ? 16 : rowIconSize
         NSLayoutConstraint.activate([
-            field.topAnchor.constraint(equalTo: view.topAnchor, constant: besideTitle ? 1 : 0),
-            field.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            line.topAnchor.constraint(equalTo: view.topAnchor),
+            line.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            line.widthAnchor.constraint(equalToConstant: fullWidth),
+            line.heightAnchor.constraint(equalToConstant: lineHeight),
         ])
-        if let pill = pill {
-            view.addSubview(pill)
+        let second = rowSecondLine(row)
+        if second.isEmpty {
+            line.bottomAnchor.constraint(equalTo: view.bottomAnchor).isActive = true
+        } else {
+            let width = fullWidth - indent
+            let field = NSTextField(wrappingLabelWithString: second)
+            field.font = .systemFont(ofSize: 11)
+            field.textColor = .secondaryLabelColor
+            field.maximumNumberOfLines = 2
+            field.lineBreakMode = .byWordWrapping  // two lines at most, the second cut with an ellipsis
+            field.cell?.truncatesLastVisibleLine = true
+            field.preferredMaxLayoutWidth = width
+            field.setAccessibilityElement(false)
+            field.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(field)
             NSLayoutConstraint.activate([
-                pill.topAnchor.constraint(equalTo: view.topAnchor, constant: besideTitle ? 1 : 0),  // centred on the buttons
-                pill.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                view.bottomAnchor.constraint(greaterThanOrEqualTo: pill.bottomAnchor),
+                field.topAnchor.constraint(equalTo: line.bottomAnchor, constant: 0),
+                field.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: indent),
+                field.widthAnchor.constraint(equalToConstant: width),
+                field.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             ])
         }
-        if actionButtons.isEmpty {
-            field.bottomAnchor.constraint(equalTo: view.bottomAnchor).isActive = true
-        } else {
-            view.actionButtons = actionButtons
-            let buttons = rowButtonStack(view.actionButtons, width: fullWidth)
-            view.addSubview(buttons)
-            if besideTitle {
-                NSLayoutConstraint.activate([
-                    buttons.topAnchor.constraint(equalTo: view.topAnchor),
-                    buttons.trailingAnchor.constraint(equalTo: pill?.leadingAnchor ?? view.trailingAnchor, constant: pill == nil ? 0 : -6),
-                    view.bottomAnchor.constraint(greaterThanOrEqualTo: buttons.bottomAnchor),
-                    view.bottomAnchor.constraint(greaterThanOrEqualTo: field.bottomAnchor),
-                ])
-                let hug = view.bottomAnchor.constraint(equalTo: buttons.bottomAnchor)
-                hug.priority = .defaultLow
-                hug.isActive = true
-            } else if inline {
-                NSLayoutConstraint.activate([
-                    buttons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                    buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                    buttons.topAnchor.constraint(greaterThanOrEqualTo: pill?.bottomAnchor ?? view.topAnchor, constant: 2),
-                    field.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
-                ])
-                let hug = view.bottomAnchor.constraint(equalTo: field.bottomAnchor)
-                hug.priority = .defaultLow
-                hug.isActive = true
-            } else {
-                NSLayoutConstraint.activate([
-                    buttons.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 4),
-                    buttons.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                    buttons.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                ])
+        let full = (row.title.isEmpty ? "\u{2013}" : row.title) + (second.isEmpty ? "" : "\n" + second)
+        view.toolTip = full
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.group)
+        view.setAccessibilityLabel(full.replacingOccurrences(of: "\n", with: ". "))
+        view.setAccessibilityCustomActions(actions.map { action in
+            NSAccessibilityCustomAction(name: action == .link ? L("Open link: {1}", row.linkTitle) : action.label) { [weak self] in
+                guard let self = self else { return false }
+                self.performRowAction(key, action)
+                return true
             }
-        }
+        })
+        view.actionsAlwaysShown = actionsAlwaysShown || alwaysShowRowActions()
         view.onPress = { [weak self] in self?.rowPressed(key) }
         view.onDragBegin = { [weak self] in self?.rowDragBegan(key) }
         view.onDragMove = { [weak self] event in self?.rowDragMoved(event) }
@@ -2187,7 +2413,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func makeActionButton(_ action: RowAction, _ key: String) -> ActionButton {
-        let button = ActionButton(action)
+        let button = ActionButton(action, icon: true)
         button.target = self
         button.action = #selector(actionButtonClicked(_:))
         button.identifier = NSUserInterfaceItemIdentifier(key)
@@ -2204,67 +2430,44 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ])
     }
 
-    /// The width of text drawn on one line.
-    private func lineWidth(_ text: NSAttributedString) -> CGFloat {
-        ceil(text.boundingRect(with: NSSize(width: 10_000, height: 100), options: [.usesLineFragmentOrigin]).width)
+    /// The "\u{2514}" mark of a sub-task with its indent (three spaces a level beyond the first, at most three levels).
+    private func childPrefix(_ row: Row) -> NSAttributedString? {
+        guard row.isChild else { return nil }
+        return plain(String(repeating: "   ", count: min(row.depth, 3) - 1) + "\u{2514} ", color: .secondaryLabelColor)
     }
 
-    /// The text of a row: the title (with the custom status) and the second line. titleOnly and detailOnly give one
-    /// part, each with the indent of a sub-task, for measuring; raiseDetail drops the second line a little, to the
-    /// middle of buttons drawn beside it.
-    private func rowText(_ row: Row, titleOnly: Bool = false, detailOnly: Bool = false,
-                         raiseDetail: Bool = false) -> NSAttributedString {
-        if titleOnly || detailOnly {
-            var prefix = ""
-            if row.isChild { prefix = String(repeating: "   ", count: min(row.depth, 3) - 1) + "\u{2514} " }
-            if detailOnly { return plain(prefix + row.detail, size: 11) }
-            let title = NSMutableAttributedString(attributedString: plain(prefix + (row.title.isEmpty ? "\u{2013}" : row.title)))
-            if !row.custom.isEmpty { title.append(plain("  " + row.custom, size: 11)) }
-            return title
-        }
+    /// Where the title starts after the sub-task mark; the second line starts there too.
+    private func rowIndent(_ row: Row) -> CGFloat {
+        childPrefix(row).map { ceil($0.size().width) } ?? 0
+    }
+
+    /// The title line's text: the sub-task mark and the title, on one line.
+    private func rowTitleText(_ row: Row) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        var indent: CGFloat = 0
-        if row.isChild {
-            let prefix = plain(String(repeating: "   ", count: min(row.depth, 3) - 1) + "\u{2514} ", color: .secondaryLabelColor)
-            indent = ceil(prefix.size().width)
-            out.append(prefix)
-        }
+        if let prefix = childPrefix(row) { out.append(prefix) }
         out.append(plain(row.title.isEmpty ? "\u{2013}" : row.title))
-        if !row.custom.isEmpty {
-            out.append(plain("  " + row.custom, size: 11, color: .secondaryLabelColor))
-        }
-        let titleEnd = out.length
-        if !row.detail.isEmpty {
-            out.append(plain("\n" + row.detail, size: 11, color: .secondaryLabelColor))
-        }
-        if raiseDetail {
-            let lowered = NSMutableParagraphStyle()
-            lowered.paragraphSpacingBefore = 3
-            out.addAttribute(.paragraphStyle, value: lowered, range: NSRange(location: titleEnd, length: out.length - titleEnd))
-        }
-        if indent > 0 {  // wrapped title lines and the second line start under the title, not under the mark
-            let title = NSMutableParagraphStyle()
-            title.headIndent = indent
-            out.addAttribute(.paragraphStyle, value: title, range: NSRange(location: 0, length: titleEnd))
-            let detail = NSMutableParagraphStyle()
-            detail.firstLineHeadIndent = indent
-            detail.headIndent = indent
-            detail.paragraphSpacingBefore = raiseDetail ? 3 : 0
-            out.addAttribute(.paragraphStyle, value: detail, range: NSRange(location: titleEnd, length: out.length - titleEnd))
-        }
+        out.addAttribute(.paragraphStyle, value: truncating, range: NSRange(location: 0, length: out.length))
         return out
     }
 
+    /// The second line: the custom status, then what is pending, else why it needs you, else its result.
+    private func rowSecondLine(_ row: Row) -> String {
+        [row.custom, row.detail].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+    }
+
     private func addSection(_ title: String, _ rows: [Row], _ section: Section, empty: String) {
-        let header = addLine(plain(title, weight: .semibold))
+        let header = SectionHeaderView(title: title, count: rows.isEmpty ? nil : rows.count, color: sectionColor(section),
+                                       width: detailWidth - detailPadding * 2)
+        stack.addArrangedSubview(header)
+        stack.setCustomSpacing(rows.isEmpty ? 2 : 3, after: header)
         sectionHeaders[section] = header
         if rows.isEmpty {
-            addLine(plain(empty, color: .tertiaryLabelColor), after: 9)
+            addLine(plain(empty, size: 11, color: .tertiaryLabelColor), after: 10)
             return
         }
         sectionTitles[rows[0].key] = header
         for (index, row) in rows.enumerated() {
-            addRow(row, after: index == rows.count - 1 ? 9 : 4)
+            addRow(row, after: index == rows.count - 1 ? 10 : 5, actionsAlwaysShown: section == .needs)
         }
     }
 
@@ -2276,9 +2479,9 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addActivitySection()
         if let summary = summary {
             let shown = searchResult(summary)  // Part D: the rows the search field leaves
-            addSection("\u{1F534} " + L("Needs you"), shown.needs, .needs, empty: shown.empty ?? L("Nothing needs you"))
-            addSection("\u{1F7E2} " + L("Working"), shown.working, .working, empty: shown.empty ?? L("None"))
-            addSection("\u{1F7E1} " + L("To do"), shown.todo, .todo, empty: shown.empty ?? L("None"))
+            addSection(L("Needs you"), shown.needs, .needs, empty: shown.empty ?? L("Nothing needs you"))
+            addSection(L("Working"), shown.working, .working, empty: shown.empty ?? L("None"))
+            addSection(L("To do"), shown.todo, .todo, empty: shown.empty ?? L("None"))
             addFinishedGroup(shown, after: summary.failed.isEmpty ? 5 : 8)  // Part D: the Finished group
             for name in summary.failed {
                 addLine(plain(L("Could not load {1}", name), size: 11, color: .tertiaryLabelColor), after: 3)
@@ -2287,6 +2490,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             addLine(plain(problem ?? L("Could not reach T-Agent"), color: .secondaryLabelColor))
         }
         syncActionButtons()
+        updateHeading()  // Part D: "Tasks" and the count in the top row
         stack.layoutSubtreeIfNeeded()
         let listHeight = ceil(stack.fittingSize.height)
         contentHeight = listHeight + searchBarHeight  // Part D: the search field above the list
@@ -2626,9 +2830,39 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let hasLink = items.contains { $0.key == key && !$0.link.isEmpty }
         let hasSession = items.contains { $0.key == key && !($0.session?.openPath ?? "").isEmpty }
+        // The row's own actions (Confirm and Reject, or Handled and Reply), so they never need the icons: the icons of
+        // a row outside Needs you show only under the pointer.
+        let actions = (summaryRow(key).map(rowButtons) ?? []).filter { !$0.opensOnly }.map { action -> NSMenuItem in
+            let entry = item(action.label, #selector(rowActionItemClicked(_:)))
+            entry.identifier = NSUserInterfaceItemIdentifier(action.rawValue)
+            return entry
+        }
         return makeMenu((hasLink ? [item(L("Open link"), #selector(openLinkItemClicked(_:)))] : [])
                         + (hasSession ? [item(L("Open session"), #selector(openSessionItemClicked(_:)))] : [])
+                        + actions
                         + [item(L("Edit"), #selector(editItemClicked(_:))), item(L("Delete"), #selector(deleteItemClicked(_:)))])
+    }
+
+    /// The row of a key as the panel shows it now.
+    private func summaryRow(_ key: String) -> Row? {
+        guard let summary = summary else { return nil }
+        return (summary.needs + summary.working + summary.todo + summary.finished).first { $0.key == key }
+    }
+
+    @objc private func rowActionItemClicked(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String, let raw = sender.identifier?.rawValue,
+              let action = RowAction(rawValue: raw) else { return }
+        performRowAction(key, action)
+    }
+
+    /// What a row's icon button does, also from its menu and its accessibility actions.
+    fileprivate func performRowAction(_ key: String, _ action: RowAction) {
+        switch action {
+        case .link: openLink(key)
+        case .session: openSession(key)
+        case .reply: openReplyForm(key)
+        default: runAction(key, action)
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -2794,12 +3028,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func actionButtonClicked(_ sender: ActionButton) {
         guard let key = sender.identifier?.rawValue else { return }
-        switch sender.rowAction {
-        case .link: openLink(key)
-        case .session: openSession(key)
-        case .reply: openReplyForm(key)
-        default: runAction(key, sender.rowAction)
-        }
+        performRowAction(key, sender.rowAction)
     }
 
     /// Opens the link of a task as the list has it now, in the browser; nothing is sent to T-Agent.
@@ -3060,9 +3289,13 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// closes it. Not while a reply is being typed, so a stray click cannot lose it.
     private func bubbleClicked() {
         guard let notice = noticeQueue.current, !bubbleReply.active else { return }
-        let url = bubbleOpen(notice, item: bubbleItem(notice), base: api.base).url
+        let target = bubbleOpen(notice, item: bubbleItem(notice), base: api.base)
         dismissNotice()
-        if let url = url { openURL(url) }
+        if let session = target.session {
+            openTerminalPage(session)  // an open T-Agent page switches to it, as with Open session
+        } else if let url = target.url {
+            openURL(url)
+        }
     }
 
     /// Closes the shown notice; the next one waiting comes up.
@@ -3195,16 +3428,26 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rowViews[key]?.actionButtons.first { $0.rowAction == action }
     }
     func testRowHeight(_ key: String) -> CGFloat { rowViews[key]?.frame.height ?? 0 }
-    /// Whether the panel gives a press in the middle of the button to the button (and not to its row).
+    /// Whether the panel gives a press in the middle of the button to the button (and not to its row), with the
+    /// pointer over the row (the icons of a row outside Needs you show only then).
     func testButtonTakesPress(_ key: String, _ action: RowAction) -> Bool {
-        guard let button = testButton(key, action), let root = detail.contentView else { return false }
+        guard let button = testButton(key, action), let row = rowViews[key], let root = detail.contentView else { return false }
+        let wasHovered = row.hovered
+        row.setHovered(true)
+        defer { row.setHovered(wasHovered) }
+        row.layoutSubtreeIfNeeded()
         let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
         return root.hitTest(root.superview?.convert(point, from: nil) ?? point) === button
     }
-    /// Whether every button of the row lies inside the row, clear of the engine tag and of the other buttons.
+    /// Whether every button of the row lies inside the row, clear of the engine tag and of the other buttons, while they
+    /// show (the pointer over the row).
     func testButtonsInside(_ key: String) -> Bool {
         guard let row = rowViews[key] else { return false }
-        let pills = row.subviews.filter { $0 is EnginePill }.map { $0.frame }
+        let wasHovered = row.hovered
+        row.setHovered(true)
+        defer { row.setHovered(wasHovered) }
+        row.layoutSubtreeIfNeeded()
+        let pills = [testPill(key)].compactMap { $0 }.map { $0.convert($0.bounds, to: row) }
         let frames = row.actionButtons.map { $0.convert($0.bounds, to: row) }
         return frames.enumerated().allSatisfy { index, frame in
             frame.width > 0 && frame.minX >= 0 && frame.maxX <= row.bounds.width + 0.5 && frame.minY >= -0.5
@@ -3212,8 +3455,38 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 && !frames.enumerated().contains { $0.offset != index && $0.element.intersects(frame) }
         }
     }
-    func testHasPill(_ key: String) -> Bool { rowViews[key]?.subviews.contains { $0 is EnginePill } ?? false }
+    func testHasPill(_ key: String) -> Bool { testPill(key) != nil }
+    /// The engine tag of a row (it sits in the row's title line).
+    func testPill(_ key: String) -> EnginePill? {
+        guard let row = rowViews[key] else { return nil }
+        func find(_ view: NSView) -> EnginePill? {
+            if let pill = view as? EnginePill { return pill }
+            for child in view.subviews { if let found = find(child) { return found } }
+            return nil
+        }
+        return find(row)
+    }
+    func testRowView(_ key: String) -> TaskRowView? { rowViews[key] }
+    func testRowTooltip(_ key: String) -> String { rowViews[key]?.toolTip ?? "" }
+    /// The title field of a row: the first text field of its title line.
+    func testTitleField(_ key: String) -> NSTextField? {
+        (rowViews[key]?.subviews.first { $0 is NSStackView } as? NSStackView)?.arrangedSubviews.first as? NSTextField
+    }
+    /// The second line of a row, or nil.
+    func testSecondLine(_ key: String) -> NSTextField? { rowViews[key]?.subviews.first { $0 is NSTextField } as? NSTextField }
+    /// Whether the row's title is cut with an ellipsis (its one-line width is more than the field has).
+    func testTitleTruncated(_ key: String) -> Bool {
+        guard let field = testTitleField(key) else { return false }
+        rowViews[key]?.layoutSubtreeIfNeeded()
+        return field.attributedStringValue.size().width > field.frame.width + 1
+    }
     func testHolding() -> Bool { holdsPanel }
+    func testSectionHeader(_ section: Section) -> SectionHeaderView? { sectionHeaders[section] as? SectionHeaderView }
+    var testBackgroundVeiled: Bool {
+        guard let blur = detail.contentView?.subviews.first(where: { $0 is NSVisualEffectView }) as? NSVisualEffectView else { return false }
+        return blur.material == .menu && blur.subviews.contains { $0 is BackgroundVeilView } && backgroundVeil >= 0.8
+    }
+    var testPlusIsIcon: Bool { plusButton.isIcon }
     func testApply(_ newList: ItemList?) { apply(newList, problem: newList == nil ? L("Could not reach T-Agent") : nil) }
     func testClose() { closeOverlay() }
     func testStringsChanged() { stringsChanged() }
@@ -3231,6 +3504,9 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var testLines: [String] {
         stack.arrangedSubviews.compactMap { view in
             if let field = view as? NSTextField { return field.stringValue }
+            if let row = view as? TaskRowView, let key = rowViews.first(where: { $0.value === row })?.key {
+                return testTitleField(key)?.stringValue
+            }
             return (view.subviews.first { $0 is NSTextField } as? NSTextField)?.stringValue
         }
     }
@@ -3416,27 +3692,6 @@ func rowButtons(_ row: Row) -> [RowAction] {
         + (row.canReply && row.actions.contains(.handled) ? [.reply] : [])
 }
 
-/// The buttons of a row on one line, or, when they do not fit `width`, on two right-aligned lines: the ones that open
-/// something above the task's actions.
-func rowButtonStack(_ buttons: [ActionButton], width: CGFloat) -> NSStackView {
-    func line(_ views: [NSView]) -> NSStackView {
-        let stack = NSStackView(views: views)
-        stack.orientation = .horizontal
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        return stack
-    }
-    let total = buttons.reduce(0) { $0 + $1.intrinsicContentSize.width } + CGFloat(max(buttons.count - 1, 0)) * 6
-    let opening = buttons.filter { $0.rowAction.opensOnly }
-    guard total > width, !opening.isEmpty, opening.count < buttons.count else { return line(buttons) }
-    let stack = NSStackView(views: [line(opening), line(buttons.filter { !$0.rowAction.opensOnly })])
-    stack.orientation = .vertical
-    stack.alignment = .trailing
-    stack.spacing = 4
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    return stack
-}
-
 /// The buttons of a notice's bubble: those of its task's row (Confirm and Reject in review, Handled when it waits for
 /// the user, by the status the list has now), and Reply after Handled when the agent's terminal can take one. None for
 /// a direct or test message, or a task the list does not have.
@@ -3447,19 +3702,63 @@ func bubbleActions(_ notice: WidgetNotice, item: WidgetItem?) -> [RowAction] {
 }
 
 /// What a click on the bubble opens, and its tooltip: the task's link (the notice's target, which the server made from
-/// it), else the task's session, else the notice's target, else the T-Agent page.
-func bubbleOpen(_ notice: WidgetNotice, item: WidgetItem?, base: String) -> (url: URL?, tooltip: String) {
+/// it), else the task's session, else the notice's target, else the T-Agent page. `session` is the session's page path
+/// when that is what it opens (it then goes through openTerminalPage, like Open session).
+func bubbleOpen(_ notice: WidgetNotice, item: WidgetItem?, base: String) -> (url: URL?, tooltip: String, session: String?) {
     if notice.kind == "item", !notice.key.isEmpty, let item = item, item.key == notice.key {
         if !item.link.isEmpty {
-            if !notice.target.isEmpty { return (URL(string: notice.target), notice.target) }
-            if let url = linkTarget(item.link, base: base) { return (url, url.absoluteString) }
+            if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil) }
+            if let url = linkTarget(item.link, base: base) { return (url, url.absoluteString, nil) }
         }
         if let path = item.session?.openPath, !path.isEmpty, let url = linkTarget(path, base: base) {
-            return (url, L("Open session"))
+            return (url, L("Open session"), path)
         }
     }
-    if !notice.target.isEmpty { return (URL(string: notice.target), notice.target) }
-    return (URL(string: base + "/"), L("Open T-Agent"))
+    if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil) }
+    return (URL(string: base + "/"), L("Open T-Agent"), nil)
+}
+
+/// The terminal a page path names: "/?openTerminal=<engine>:<task id>:<terminal id>" with engine "local" or
+/// "remote:<id>" (the pattern the page itself accepts, public/js/h5.js); nil for anything else.
+func openTerminalTarget(_ path: String) -> (engine: String, taskId: String, terminalId: String)? {
+    let prefix = "/?openTerminal="
+    guard path.hasPrefix(prefix) else { return nil }
+    let value = String(path.dropFirst(prefix.count))
+    guard let regex = try? NSRegularExpression(pattern: "^(local|remote:[1-9][0-9]{0,14}):([1-9][0-9]{0,14}):([A-Za-z0-9_-]{1,64})$"),
+          let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)), match.numberOfRanges == 4,
+          let engine = Range(match.range(at: 1), in: value), let task = Range(match.range(at: 2), in: value),
+          let terminal = Range(match.range(at: 3), in: value) else { return nil }
+    return (String(value[engine]), String(value[task]), String(value[terminal]))
+}
+
+/// What the window does after POST /open-terminal: an open T-Agent page switched to the terminal (`focused`: the
+/// browser extension brought its tab to the front), or it opens the address as before (no page took it, an older
+/// server without the route, or any failure).
+enum OpenTerminalOutcome: Equatable {
+    case switched(focused: Bool)
+    case openURL
+}
+
+func openTerminalOutcome(code: Int, data: Data?) -> OpenTerminalOutcome {
+    guard (200..<300).contains(code), let data = data,
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let delivered = looseNumber(object["delivered"]), delivered >= 1 else { return .openURL }
+    return .switched(focused: jsonBool(object["focused"]) == true)
+}
+
+/// Brings the default browser (the app that opens http addresses) to the front without opening an address. Launching
+/// an app that already runs only activates it, which works for a background app on every macOS version.
+func activateDefaultBrowser() {
+    guard let probe = URL(string: "http://127.0.0.1/"), let app = NSWorkspace.shared.urlForApplication(toOpen: probe) else { return }
+    if #available(macOS 10.15, *) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        NSWorkspace.shared.openApplication(at: app, configuration: configuration, completionHandler: nil)
+    } else if let bundle = Bundle(url: app)?.bundleIdentifier,
+              let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first {
+        running.activate(options: [.activateIgnoringOtherApps])
+    }
 }
 
 /// The text of a reply as it is sent: trimmed; nil when empty or longer than the server takes.
@@ -3472,6 +3771,12 @@ extension WidgetAPI {
     /// POST /items/:key/reply { text }: the text goes to the agent's terminal as a paste, then Enter.
     func replyRequest(key: String, text: String) -> URLRequest {
         request("POST", itemPath(key) + "/reply", body: ["text": text])
+    }
+
+    /// POST /open-terminal { engine, task_id, terminal_id }: an open T-Agent page on this machine switches to that
+    /// terminal; the answer is { delivered, focused }.
+    func openTerminalRequest(engine: String, taskId: String, terminalId: String) -> URLRequest {
+        request("POST", "/api/attention/widget/open-terminal", body: ["engine": engine, "task_id": taskId, "terminal_id": terminalId])
     }
 }
 
@@ -3873,11 +4178,31 @@ extension WidgetController {
         refresh()
     }
 
-    /// Opens the agent's terminal of a task on this T-Agent's page; nothing is sent to T-Agent.
+    /// Opens the agent's terminal of a task on this T-Agent's page (openTerminalPage).
     fileprivate func openSession(_ key: String) {
-        guard let path = items.first(where: { $0.key == key })?.session?.openPath, !path.isEmpty,
-              let url = linkTarget(path, base: api.base) else { return }
-        openURL(url)
+        guard let path = items.first(where: { $0.key == key })?.session?.openPath, !path.isEmpty else { return }
+        openTerminalPage(path)
+    }
+
+    /// Shows a terminal on the T-Agent page without a new tab when one is open: POST /open-terminal tells the most
+    /// recently used T-Agent page of this machine to switch to it. When a page took it, the browser comes to the front
+    /// (the extension has focused that tab, else the default browser is activated, without opening an address). When
+    /// none did, or the server is older (404) or failed, the page path is opened in the browser as before.
+    func openTerminalPage(_ path: String) {
+        guard let url = linkTarget(path, base: api.base) else { return }
+        guard let target = openTerminalTarget(path) else {
+            openURL(url)
+            return
+        }
+        perform(api.openTerminalRequest(engine: target.engine, taskId: target.taskId, terminalId: target.terminalId)) { [weak self] data, code, _ in
+            guard let self = self else { return }
+            switch openTerminalOutcome(code: code, data: data) {
+            case .switched(let focused):
+                if !focused { self.activateBrowser() }
+            case .openURL:
+                self.openURL(url)
+            }
+        }
     }
 
     @objc fileprivate func openSessionItemClicked(_ sender: NSMenuItem) {
@@ -4138,6 +4463,8 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     }
     window.openURL = { opened.append($0.absoluteString) }
     window.announce = { _ in }
+    var browserRaised = 0
+    window.activateBrowser = { browserRaised += 1 }
     func answer(_ body: String, _ code: Int) {
         guard !waiting.isEmpty else { return }
         waiting.removeFirst()(Data(body.utf8), code)
@@ -4154,12 +4481,22 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
           && window.testButtonTitles("local:5") == ["Open link", "Open session"])
     check("row: four buttons on a waiting row with a link", window.testButtonTitles("local:6") == ["Open link", "Open session", "Handled", "Reply"])
     check("row: the buttons fit their rows", ["local:1", "remote:7:3", "local:4", "local:5", "local:6"].allSatisfy { window.testButtonsInside($0) })
-    check("row: Open session opens the terminal's page and sends nothing", window.testPressButton("local:4", .session)
-          && opened == [base + "/?openTerminal=local:4:t1"] && sent.isEmpty && !window.testHolding())
-    check("row menu: Open session after Open link", window.testMenuTitles("local:5") == ["Open link", "Open session", "Edit", "Delete", "Quit"]
-          && window.testMenuTitles("local:2") == ["Edit", "Delete", "Quit"])
+    check("row: Open session first asks T-Agent to switch an open page", window.testPressButton("local:4", .session)
+          && posts() == ["/api/attention/widget/open-terminal {\"engine\":\"local\",\"task_id\":\"4\",\"terminal_id\":\"t1\"}"]
+          && opened.isEmpty && !window.testHolding())
+    answer("{\"error\":\"NOT_FOUND\",\"message\":\"Not found\"}", 404)
+    check("row: an older server (404) opens the terminal's page as before", opened == [base + "/?openTerminal=local:4:t1"] && browserRaised == 0)
+    check("row menu: Open session after Open link, the row's actions before Edit",
+          window.testMenuTitles("local:5") == ["Open link", "Open session", "Edit", "Delete", "Quit"]
+          && window.testMenuTitles("local:2") == ["Confirm", "Reject", "Edit", "Delete", "Quit"]
+          && window.testMenuTitles("local:1") == ["Open session", "Handled", "Reply", "Edit", "Delete", "Quit"])
+    sent = []
     _ = window.testOpenFromRowMenu("remote:7:3", "Open session")
-    check("row menu: Open session opens it", opened.last == base + "/?openTerminal=remote:7:3:t1" && sent.isEmpty)
+    check("row menu: Open session asks for the remote terminal", posts()
+          == ["/api/attention/widget/open-terminal {\"engine\":\"remote:7\",\"task_id\":\"3\",\"terminal_id\":\"t1\"}"])
+    answer("{\"delivered\":0,\"focused\":false}", 200)
+    check("row menu: no page took it, so the page path opens", opened.last == base + "/?openTerminal=remote:7:3:t1" && opened.count == 2)
+    sent = []
     _ = window.testPressButton("local:1", .handled)
     check("row: Open session stays on while the row's action is out", window.testButtonsEnabled("local:1") == [true, false, false]
           && posts() == ["/api/attention/widget/items/local:1/handled {}"])
@@ -4296,7 +4633,12 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     window.testShowNotices([WidgetNotice(seq: 8, kind: "item", title: "Run", status: "working", key: "local:4", target: base + "/")])
     check("bubble click: the tooltip names the session", window.testBubbleView?.toolTip == "Open session" && window.testBubbleActions.isEmpty)
     window.testBubblePress()
-    check("bubble click: opens the session without a link", opened.last == base + "/?openTerminal=local:4:t1" && window.testBubbleTitle == nil)
+    check("bubble click: asks to switch an open page to the session", window.testBubbleTitle == nil
+          && posts() == ["/api/attention/widget/open-terminal {\"engine\":\"local\",\"task_id\":\"4\",\"terminal_id\":\"t1\"}"])
+    let openedBefore = opened.count
+    answer("{\"delivered\":1,\"focused\":false}", 200)
+    check("bubble click: a page took it, so the browser comes forward and nothing opens", opened.count == openedBefore && browserRaised == 1)
+    sent = []
     window.testShowNotices([WidgetNotice(seq: 9, kind: "item", title: "PR", status: "working", key: "local:5", target: "https://example.com/pr")])
     window.testBubblePress()
     check("bubble click: the task's link comes first", opened.last == "https://example.com/pr" && sent.isEmpty)
@@ -4522,38 +4864,54 @@ final class PanelSearchField: NSSearchField {
     }
 }
 
-/// The header of the Finished group: a disclosure triangle and the title; a click opens or closes the group.
+/// The header of the Finished group: a grey dot, the name, a muted count and a disclosure triangle at the right; a
+/// click opens or closes the group.
 final class DisclosureLine: NSView {
     let titleField: NSTextField
+    let countField: NSTextField
     let triangle = NSTextField(labelWithString: "")
     var onToggle: () -> Void = {}
     var enabled = true
 
-    init(title: NSAttributedString, expanded: Bool, width: CGFloat) {
-        titleField = NSTextField(labelWithAttributedString: title)
+    init(title: String, count: Int, expanded: Bool, width: CGFloat) {
+        titleField = NSTextField(labelWithString: title)
+        countField = NSTextField(labelWithString: String(count))
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        titleField.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleField.textColor = .secondaryLabelColor
         titleField.lineBreakMode = .byTruncatingTail
-        titleField.translatesAutoresizingMaskIntoConstraints = false
+        countField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        countField.textColor = .tertiaryLabelColor
+        let dot = DotView(color: sectionColor(.done))
+        for field in [titleField, countField, triangle] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.setAccessibilityElement(false)
+        }
         triangle.stringValue = expanded ? "\u{25BE}" : "\u{25B8}"
-        triangle.font = .systemFont(ofSize: 14)
-        triangle.textColor = .secondaryLabelColor
+        triangle.font = .systemFont(ofSize: 13)
+        triangle.textColor = .tertiaryLabelColor
         triangle.alignment = .right
-        triangle.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleField)  // first: what the offscreen checks read as the line's text
+        addSubview(dot)
+        addSubview(countField)
         addSubview(triangle)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: width),
-            titleField.leadingAnchor.constraint(equalTo: leadingAnchor),
-            titleField.topAnchor.constraint(equalTo: topAnchor),
-            titleField.bottomAnchor.constraint(equalTo: bottomAnchor),
-            titleField.trailingAnchor.constraint(lessThanOrEqualTo: triangle.leadingAnchor, constant: -6),
-            triangle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            heightAnchor.constraint(equalToConstant: 18),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            dot.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
+            titleField.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countField.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 5),
+            countField.firstBaselineAnchor.constraint(equalTo: titleField.firstBaselineAnchor),
+            countField.trailingAnchor.constraint(lessThanOrEqualTo: triangle.leadingAnchor, constant: -6),
+            triangle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
             triangle.centerYAnchor.constraint(equalTo: titleField.centerYAnchor),
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.disclosureTriangle)
-        setAccessibilityLabel(title.string)
+        setAccessibilityLabel(title + ", " + String(count))
         setAccessibilityExpanded(expanded)
     }
 
@@ -4595,6 +4953,11 @@ final class PartDState {
     var lastNeeds: Int?
     var finishedExpanded: Bool?  // nil until read from UserDefaults
     let searchField = PanelSearchField()
+    /// The magnifier left of +: opens the search field (as Cmd+F and the Ctrl+Option+T shortcut do).
+    let searchButton = PanelButton(label: L("Search"), symbol: "magnifyingglass", symbolSize: 13)
+    /// "Tasks" and the unfinished count, where the field is while the search is closed.
+    let heading = NSTextField(labelWithString: "")
+    var searchExpanded = false
     var query: String { searchField.stringValue.trimmed }
 }
 
@@ -4668,7 +5031,10 @@ extension WidgetController {
                 }
             }
         }
-        if focusSearch { detail.makeFirstResponder(partD.searchField) }
+        if focusSearch {
+            setSearchExpanded(true)
+            detail.makeFirstResponder(partD.searchField)
+        }
     }
 
     func unpinPanel() {
@@ -4676,9 +5042,12 @@ extension WidgetController {
         partD.pinned = false
         if let monitor = partD.clickMonitor { NSEvent.removeMonitor(monitor) }
         partD.clickMonitor = nil
+        partD.searchExpanded = false
         if !partD.searchField.stringValue.isEmpty {
             partD.searchField.stringValue = ""
             searchChanged()
+        } else {
+            setSearchExpanded(false)
         }
         if overlay == nil {
             let wasKey = detail.isKeyWindow
@@ -4704,6 +5073,7 @@ extension WidgetController {
         switch action {
         case .focusSearch:
             if !partD.pinned { pinPanel(focusSearch: false) }
+            setSearchExpanded(true)
             detail.makeFirstResponder(partD.searchField)
         case .clearSearch:
             partD.searchField.stringValue = ""
@@ -4733,16 +5103,72 @@ extension WidgetController {
             self.pinPanel(focusSearch: false)
         }
         let top = root.bounds.height
-        field.frame = NSRect(x: detailPadding, y: top - 6 - 22, width: detailWidth - detailPadding - 8 - 22 - 6, height: 22)
+        // The top row: "Tasks" and the count at the left (the field in its place while searching), the magnifier and +
+        // at the right.
+        let button = partD.searchButton
+        button.target = self
+        button.action = #selector(searchButtonClicked)
+        root.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.topAnchor.constraint(equalTo: root.topAnchor, constant: 6),
+            button.trailingAnchor.constraint(equalTo: plusButton.leadingAnchor, constant: -2),
+            button.widthAnchor.constraint(equalToConstant: 22),
+            button.heightAnchor.constraint(equalToConstant: 22),
+        ])
+        let heading = partD.heading
+        heading.lineBreakMode = .byTruncatingTail
+        heading.frame = NSRect(x: detailPadding, y: top - 6 - 20, width: detailWidth - detailPadding - 8 - 22 - 2 - 22 - 6, height: 18)
+        heading.autoresizingMask = [.minYMargin]
+        root.addSubview(heading)
+        field.frame = NSRect(x: detailPadding - 2, y: top - 6 - 22, width: detailWidth - detailPadding - 8 - 22 - 2 - 22 - 4, height: 22)
         field.autoresizingMask = [.minYMargin]
+        field.isHidden = true
         root.addSubview(field)
         scrollView.frame = NSRect(x: 0, y: 0, width: root.bounds.width, height: top - searchBarHeight)
+        updateHeading()
+    }
+
+    /// The heading's text: "Tasks" and the unfinished count, muted.
+    func updateHeading() {
+        let text = NSMutableAttributedString(string: L("Tasks"), attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.labelColor,
+        ])
+        if let summary = summary {
+            text.append(NSAttributedString(string: "  " + String(summary.unfinished), attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.tertiaryLabelColor,
+            ]))
+        }
+        text.addAttribute(.paragraphStyle, value: truncating, range: NSRange(location: 0, length: text.length))
+        partD.heading.attributedStringValue = text
+        partD.searchButton.label = L("Search")
+        partD.searchField.placeholderString = L("Search")
+        partD.searchField.setAccessibilityLabel(L("Search"))
+    }
+
+    /// The field shows in place of the heading while a search is open or has text.
+    func setSearchExpanded(_ on: Bool) {
+        let expanded = on || !partD.searchField.stringValue.isEmpty
+        partD.searchExpanded = expanded
+        partD.searchField.isHidden = !expanded
+        partD.heading.isHidden = expanded
+    }
+
+    /// The magnifier: opens the field with the keyboard in it; again on an empty field closes it.
+    @objc func searchButtonClicked() {
+        noteActivity()
+        if partD.searchExpanded && partD.searchField.stringValue.isEmpty {
+            setSearchExpanded(false)
+            unpinPanel()
+        } else if overlay == nil {
+            pinPanel(focusSearch: true)
+        }
     }
 
     @objc func searchFieldChanged() { searchChanged() }
 
     func searchChanged() {
         noteActivity()
+        setSearchExpanded(partD.pinned && partD.searchExpanded)  // open while it is being used or has text
         guard !rowDragActive else { return }
         rebuildDetail()
         if detail.isVisible { positionDetail() }
@@ -4778,15 +5204,14 @@ extension WidgetController {
     /// The header "Finished (N)" (the drop target that marks a task done) and, when open or while searching, its rows.
     func addFinishedGroup(_ shown: SearchResult, after spacing: CGFloat) {
         let open = shown.searching || finishedExpanded
-        let header = DisclosureLine(title: plain("\u{26AA} " + L("Finished ({1})", String(shown.finishedTotal)), color: .secondaryLabelColor),
-                                    expanded: open, width: detailWidth - detailPadding * 2)
+        let header = DisclosureLine(title: L("Finished"), count: shown.finishedTotal, expanded: open, width: detailWidth - detailPadding * 2)
         header.enabled = !shown.searching
         header.onToggle = { [weak self] in self?.toggleFinished() }
         stack.addArrangedSubview(header)
         sectionHeaders[.done] = header
         let rows = open ? shown.finished : []
-        stack.setCustomSpacing(rows.isEmpty ? spacing : 4, after: header)
-        for (index, row) in rows.enumerated() { addRow(row, after: index == rows.count - 1 ? spacing : 4) }
+        stack.setCustomSpacing(rows.isEmpty ? spacing : 3, after: header)
+        for (index, row) in rows.enumerated() { addRow(row, after: index == rows.count - 1 ? spacing : 5, actionsAlwaysShown: false) }
     }
 
     func toggleFinished() {
@@ -4891,6 +5316,10 @@ extension WidgetController {
         detail.contentView?.layoutSubtreeIfNeeded()
     }
     func testToggleFinished() { toggleFinished() }
+    var testSearchExpanded: Bool { partD.searchExpanded && !partD.searchField.isHidden && partD.heading.isHidden }
+    var testHeading: String { partD.heading.isHidden ? "" : partD.heading.stringValue }
+    func testSearchButton() { partD.searchButton.performClick(nil) }
+    var testSearchButtonIsIcon: Bool { partD.searchButton.isIcon }
     func testScrollToEnd() { scrollList(to: max(0, documentView.frame.height - scrollView.contentView.bounds.height)) }
     func testFinishedHeader() -> DisclosureLine? { sectionHeaders[.done] as? DisclosureLine }
     func testRowShown(_ key: String) -> Bool { rowViews[key] != nil }
@@ -5059,10 +5488,18 @@ func partDSelfTest(_ check: (String, Bool) -> Void) {
 
     // Search and the Finished group.
     window.loadForTest(sampleList())
-    check("search: the field sits above the list", window.testSearchBarAbove)
+    check("search: closed at first, the heading in its place", !window.testSearchExpanded && window.testHeading == "Tasks  11")
+    window.testSearchButton()
+    check("search: the magnifier opens the field above the list, with the keyboard", window.testSearchExpanded && window.testSearchBarAbove
+          && window.testPinned && window.testPanelAcceptsKey)
+    window.testSearchButton()
+    check("search: the magnifier on an empty field closes it", !window.testSearchExpanded && !window.testPinned)
+    check("search: Cmd+F opens it", window.performPanelKey(.focusSearch) && window.testSearchExpanded && window.testPinned)
+    _ = window.performPanelKey(.close)
+    check("search: closing the panel closes it", !window.testSearchExpanded && !window.testPinned)
     let header = window.testFinishedHeader()
-    check("finished: collapsed by default with its count", header?.titleField.stringValue == "\u{26AA} Finished (3)"
-          && header?.triangle.stringValue == "\u{25B8}" && !window.testRowShown("local:1") && window.testLines.contains("\u{26AA} Finished (3)"))
+    check("finished: collapsed by default with its count", header?.titleField.stringValue == "Finished" && header?.countField.stringValue == "3"
+          && header?.triangle.stringValue == "\u{25B8}" && !window.testRowShown("local:1") && window.testLines.contains("Finished"))
     window.testToggleFinished()
     check("finished: opens to its rows", window.testFinishedHeader()?.triangle.stringValue == "\u{25BE}" && window.testRowShown("local:1")
           && window.testRowShown("local:2") && window.testRowShown("remote:7:1"))
@@ -5073,7 +5510,7 @@ func partDSelfTest(_ check: (String, Bool) -> Void) {
     check("search: empty sections say so", window.testLines.filter { $0 == "No matches" }.count == 2)
     window.testSearch("broken")
     check("search: finds finished rows in the closed group", window.testRowShown("local:2") && !window.testRowShown("local:1")
-          && window.testFinishedHeader()?.titleField.stringValue == "\u{26AA} Finished (1)")
+          && window.testFinishedHeader()?.countField.stringValue == "1" && window.testSearchExpanded)
     window.testSearch("blocked")
     check("search: matches the custom status", window.testRowShown("local:20") && !window.testRowShown("local:21"))
     var withNotes = sampleList()
@@ -5090,9 +5527,9 @@ func partDSelfTest(_ check: (String, Bool) -> Void) {
     window.testDragCancel()
     window.testSearch("")
     check("search: cleared shows everything", window.testRowShown("local:20") && window.testRowShown("local:12"))
-    stringTable = ["Finished ({1})": "F{1}", "No matches": "NM"]
+    stringTable = ["Finished": "F", "No matches": "NM"]
     window.testSearch("zzz")
-    check("strings: the Finished header and the empty text come from the table", window.testLines.contains("\u{26AA} F0")
+    check("strings: the Finished header and the empty text come from the table", window.testLines.contains("F") && window.testFinishedHeader()?.countField.stringValue == "0"
           && window.testLines.contains("NM"))
     stringTable = [:]
     window.testSearch("")
@@ -5230,6 +5667,7 @@ func renderSample(_ dir: String) -> Never {
     save("unreachable-panel.png", controller.renderPanel((dir as NSString).appendingPathComponent("unreachable-panel.png"), dark: dark))
     save("unreachable-widget.png", controller.renderWidget((dir as NSString).appendingPathComponent("unreachable-widget.png"), dark: dark))
     renderActivitySample(controller, dir: dir, save: save)  // Part C
+    renderLookSamples(controller, dir: dir, save: save)  // Part F
     exit(controller.testOnScreen || written.isEmpty ? 1 : 0)
 }
 
@@ -5269,12 +5707,12 @@ func runSelfTest() -> Never {
     // Strings: the table, the English fallback and the placeholders.
     stringTable = [:]
     check("strings: a missing key falls back to the English text", L("Needs you") == "Needs you")
-    check("strings: placeholders are filled", L("Finished ({1})", "3") == "Finished (3)" && L("Could not load {1}", "K01") == "Could not load K01")
-    let parsed = parseStrings(Data("{\"lang\":\"zh\",\"strings\":{\"Needs you\":\"NY\",\"Finished ({1})\":\"D {1}!\",\"Edit\":\"\",\"x\":3}}".utf8))
+    check("strings: placeholders are filled", L("+{1} more", "3") == "+3 more" && L("Could not load {1}", "K01") == "Could not load K01")
+    let parsed = parseStrings(Data("{\"lang\":\"zh\",\"strings\":{\"Needs you\":\"NY\",\"+{1} more\":\"D {1}!\",\"Edit\":\"\",\"x\":3}}".utf8))
     check("strings: the answer is read", parsed?["Needs you"] == "NY" && parsed?["x"] == nil && parsed?.count == 3)
     stringTable = parsed ?? [:]
     check("strings: a translated key is used", L("Needs you") == "NY")
-    check("strings: a translated placeholder is filled", L("Finished ({1})", "4") == "D 4!")
+    check("strings: a translated placeholder is filled", L("+{1} more", "4") == "D 4!")
     check("strings: an empty translation falls back", L("Edit") == "Edit")
     check("strings: an unknown key falls back", L("Working") == "Working")
     check("strings: a broken answer is refused", parseStrings(Data("[1,2]".utf8)) == nil && parseStrings(Data("nope".utf8)) == nil)
@@ -5578,9 +6016,9 @@ func runSelfTest() -> Never {
     check("panel: count and badge", mouse.testCount == "13" && mouse.testBadge == "4")
     check("pill: one short line that fits the count and the badge", mouse.testWidgetHeight == widgetHeight
           && mouse.testWidgetWidth > widgetMinWidth && mouse.testWidgetWidth <= 80)
-    check("panel: section titles, the Finished header and the failed engine", mouse.testLines.contains("\u{1F534} Needs you")
-          && mouse.testLines.contains("\u{1F7E2} Working") && mouse.testLines.contains("\u{1F7E1} To do")
-          && mouse.testLines.contains("\u{26AA} Finished (3)") && mouse.testLines.contains("Could not load K02"))
+    check("panel: section titles, the Finished header and the failed engine", mouse.testLines.contains("Needs you")
+          && mouse.testLines.contains("Working") && mouse.testLines.contains("To do")
+          && mouse.testLines.contains("Finished") && mouse.testLines.contains("Could not load K02"))
     check("panel: rows carry an engine tag with two engines", mouse.testHasPill("local:4") && mouse.testHasPill("remote:7:2"))
     check("panel: the caption is the tooltip", mouse.testCaption == "Tasks" && mouse.testTooltip == "Tasks")
     check("panel: nothing was sent while loading", network.isEmpty)
@@ -5759,13 +6197,13 @@ func runSelfTest() -> Never {
     mouse.testRefresh()
     check("unreachable: a refused token says so", mouse.testLines == ["T-Agent did not accept the widget token"] && mouse.testCount == "\u{2013}")
     mouse.loadForTest(board)
-    stringTable = ["Needs you": "NY", "Finished ({1})": "D{1}", "Tasks": "TK", "Quit": "Q"]
+    stringTable = ["Needs you": "NY", "Finished": "D", "Tasks": "TK", "Quit": "Q"]
     mouse.testStringsChanged()
-    check("strings: the panel uses the loaded table", mouse.testLines.contains("\u{1F534} NY") && mouse.testLines.contains("\u{26AA} D3")
+    check("strings: the panel uses the loaded table", mouse.testLines.contains("NY") && mouse.testLines.contains("D")
           && mouse.testCaption == "TK" && mouse.testPanelMenuTitles() == ["Q"])
     stringTable = [:]
     mouse.testStringsChanged()
-    check("strings: the English text comes back without a table", mouse.testLines.contains("\u{1F534} Needs you") && mouse.testCaption == "Tasks")
+    check("strings: the English text comes back without a table", mouse.testLines.contains("Needs you") && mouse.testCaption == "Tasks")
     let empty = WidgetController(api: WidgetAPI(base: nil, token: nil), parentPID: nil, options: options)
     empty.requestHook = { _, _ in }
     empty.loadForTest(listOf([it("local:1", "todo")], engines: [EngineInfo(key: "local", name: "MacBook", local: true, colorIndex: 0)]))
@@ -5801,9 +6239,10 @@ func runSelfTest() -> Never {
           && links.testButton("local:2", .link)?.accessibilityLabel() == "Open link: /h5?task=2")
     check("link button: inside its row, clear of the tag and the other buttons",
           ["local:1", "local:2", "local:4", "remote:7:1", "local:6"].allSatisfy { links.testButtonsInside($0) })
-    check("link button: beside a short title the row stays one line", links.testRowHeight("local:4") <= links.testRowHeight("local:5") + 4
-          && links.testRowHeight("remote:7:1") <= links.testRowHeight("local:5") + 4)
-    check("link button: under a long title", links.testRowHeight("local:6") > links.testRowHeight("local:5") + 15)
+    check("link button: on the title line, whether the title is short or long", links.testRowHeight("local:4") == rowIconSize
+          && links.testRowHeight("remote:7:1") == rowIconSize && links.testRowHeight("local:6") == rowIconSize)
+    check("row: a long title stays on one line with an ellipsis, the full title in the tooltip", links.testTitleTruncated("local:6")
+          && !links.testTitleTruncated("local:4") && links.testRowTooltip("local:6") == longTitle)
     check("link button: the panel gives its press to the button, not the row", links.testButtonTakesPress("local:4", .link)
           && links.testButtonTakesPress("remote:7:1", .link) && links.testButtonTakesPress("local:1", .link))
     check("link button: a click opens the address", links.testPressButton("local:1", .link) && opened == ["https://example.com/pr/1"])
@@ -5837,7 +6276,7 @@ func runSelfTest() -> Never {
                             it("local:6", "todo", title: "No notes", notes: nil)])
     crud.loadForTest(crudBoard)
     check("menu: a row has Edit, Delete and Quit", crud.testMenuTitles("local:4") == ["Edit", "Delete", "Quit"])
-    check("menu: an action button opens the row's menu", crud.testButtonMenuTitles("local:3") == ["Edit", "Delete", "Quit"])
+    check("menu: an action button opens the row's menu", crud.testButtonMenuTitles("local:3") == ["Confirm", "Reject", "Edit", "Delete", "Quit"])
     check("menu: off a row only Quit", crud.testPanelMenuTitles() == ["Quit"])
     check("menu: the row takes the right click", crud.testHitAtRow("local:4") is TaskRowView)
     check("menu: the + button takes its click", crud.testPlusHit)
@@ -6152,6 +6591,7 @@ func runSelfTest() -> Never {
 
     partDSelfTest(check)
     runTickSelfTest(check)  // Part E
+    runLookSelfTest(check)  // Part F
     check("no window was put on screen", !mouse.testOnScreen && !crud.testOnScreen && !empty.testOnScreen && !links.testOnScreen
           && !bubbles.testOnScreen)
     print("\(passes) passed, \(failures) failed")
@@ -6632,14 +7072,18 @@ extension WidgetController {
         live.rows = []
         live.dirty = false
         guard showActivity, !live.terminals.isEmpty else { return }
-        addLine(plain("\u{26A1} " + L("Working now"), weight: .semibold))
+        let header = SectionHeaderView(title: L("Working now"), count: live.terminals.count, color: toneColor("teal"),
+                                       width: detailWidth - detailPadding * 2)
+        stack.addArrangedSubview(header)
+        stack.setCustomSpacing(3, after: header)
         let (shown, more) = activityPanelRows(live.terminals)
         let clock = now()
         for (index, terminal) in shown.enumerated() {
             let row = ActivityRowView(terminal: terminal, url: activityURL(terminal.openPath, base: api.base),
                                       width: detailWidth - detailPadding * 2)
             row.onClick = { [weak self, weak row] in
-                if let url = row?.url { self?.openURL(url) }
+                // An open T-Agent page switches to the terminal; else its address opens (openTerminalPage).
+                if let row = row, row.url != nil { self?.openTerminalPage(row.terminal.openPath) }
             }
             row.updateClock(clock)
             stack.addArrangedSubview(row)
@@ -6853,11 +7297,20 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     controller.pollActivity()  // the next tick moves the times on, and asks again
     check("panel: the times move on with each tick", controller.testActivityRows[0].stateField.stringValue == "Waiting for you  1h 0m"
           && requests.count == 2)
-    check("click: a row opens its terminal on T-Agent", controller.testPressActivityRow(0)
-          && opened == ["http://127.0.0.1:3999/?openTerminal=local:12:t3"])
+    var raised = 0
+    controller.activateBrowser = { raised += 1 }
+    check("click: a row first asks T-Agent to switch an open page", controller.testPressActivityRow(0) && opened.isEmpty
+          && requests.last?.httpMethod == "POST" && requests.last?.url?.path == "/api/attention/widget/open-terminal"
+          && requests.last?.httpBody.flatMap { String(data: $0, encoding: .utf8) } == "{\"engine\":\"local\",\"task_id\":\"12\",\"terminal_id\":\"t3\"}")
+    answers.removeLast()(Data("{\"delivered\":0,\"focused\":false}".utf8), 200)
+    check("click: no page took it, so it opens its terminal on T-Agent", opened == ["http://127.0.0.1:3999/?openTerminal=local:12:t3"])
+    let postsBefore = requests.filter { $0.httpMethod == "POST" }.count
     check("click: a row without a valid path opens nothing", controller.testPressActivityRow(3) && opened.count == 1
-          && controller.testActivityRows[3].accessibilityPerformPress() == false)
-    check("click: VoiceOver's press opens it too", controller.testActivityRows[0].accessibilityPerformPress() && opened.count == 2)
+          && controller.testActivityRows[3].accessibilityPerformPress() == false && requests.filter { $0.httpMethod == "POST" }.count == postsBefore)
+    check("click: VoiceOver's press asks too", controller.testActivityRows[0].accessibilityPerformPress()
+          && requests.filter { $0.httpMethod == "POST" }.count == postsBefore + 1)
+    answers.removeLast()(Data("{\"delivered\":1,\"focused\":true}".utf8), 200)
+    check("click: a page took it and the extension focused its tab: nothing opens, no browser activation", opened.count == 1 && raised == 0)
     let sevenTerminals = (0..<7).map { ActivityTerminal(taskID: String($0), taskTitle: "T\($0)", openPath: "/?openTerminal=local:\($0):t1") }
     reply(try! JSONSerialization.data(withJSONObject: ["terminals": sevenTerminals.map { ["task_id": $0.taskID, "task_title": $0.taskTitle,
                                                                                           "state": "running", "open_path": $0.openPath] }]))
@@ -7176,6 +7629,243 @@ func runTickSelfTest(_ check: (String, Bool) -> Void) {
     answer(tickBody(etag: "e6", items: three, seq: 2))
     check("fallback: and used again when it answers", window.testTickEtag == "e6" && window.testCount == "3")
     check("tick: no window was put on screen", !window.testOnScreen)
+}
+
+// MARK: - Part F: the panel's look and Open session on the open page
+//
+// - Rows: the title on one line (an ellipsis when it does not fit; the full text in the tooltip), the custom status and
+//   what is pending (or the reason, or the result) as a muted second line of at most two lines. The row's actions are
+//   icon buttons (SF Symbols, macOS 11 or later; text buttons otherwise) at the right end of the title line, before the
+//   engine tag: always shown in Needs you, under the pointer elsewhere, and always while VoiceOver runs. Every action is
+//   also in the row's context menu and its accessibility custom actions.
+// - Section headers: a colour dot, the name and a muted count. The search is a magnifier in the top row ("Tasks" and the
+//   count beside it) that opens the field; Cmd+F and Ctrl+Option+T open it too.
+// - The background: the menu material's blur under a veil of the window background colour at backgroundVeil.
+// - Open session, a "Working now" row and a bubble that opens a session first POST /api/attention/widget/open-terminal:
+//   the most recently used T-Agent page of this machine switches to the terminal in place (routes/attention-widget.js).
+//   { delivered >= 1 } -> nothing opens; unless `focused` (the browser extension brought that tab forward), the default
+//   browser is activated without an address. delivered 0, a 404 (an older T-Agent) or any failure -> the page path opens
+//   in the browser as before.
+
+/// --render-sample: the panel over terminal-like text (the veil keeps it readable), light and dark, and the hover state.
+func renderLookSamples(_ controller: WidgetController, dir: String, save: (String, Bool) -> Void) {
+    for dark in [false, true] {
+        let suffix = dark ? "dark" : "light"
+        controller.setAppearance(dark: dark)
+        controller.loadForTest(sampleList())
+        let name = "panel-over-text-\(suffix).png"
+        save(name, controller.renderPanelOverText((dir as NSString).appendingPathComponent(name), dark: dark))
+        controller.testRowView("local:20")?.setHovered(true)
+        let hover = "panel-hover-\(suffix).png"
+        save(hover, controller.renderPanel((dir as NSString).appendingPathComponent(hover), dark: dark))
+        controller.testRowView("local:20")?.setHovered(false)
+        controller.testSearchButton()
+        let search = "panel-search-open-\(suffix).png"
+        save(search, controller.renderPanel((dir as NSString).appendingPathComponent(search), dark: dark))
+        controller.unpinPanel()
+    }
+    controller.setAppearance(dark: false)
+    controller.loadForTest(sampleList())
+    for key in ["local:12", "local:14", "local:9", "remote:7:3", "local:20", "local:21", "local:22", "local:23", "remote:7:8", "local:30", "remote:9:2"] {
+        print("row height \(key): \(controller.testRowHeight(key))")
+    }
+}
+
+extension WidgetController {
+    /// The panel on a background of terminal-like text, offscreen: the blur draws nothing offscreen, so this shows what
+    /// the veil alone leaves of the text behind.
+    func renderPanelOverText(_ path: String, dark: Bool) -> Bool {
+        guard let view = detail.contentView else { return false }
+        view.layoutSubtreeIfNeeded()
+        let margin: CGFloat = 24
+        let size = NSSize(width: view.bounds.width + margin * 2, height: view.bounds.height + margin * 2)
+        let scale: CGFloat = 2
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds),
+              let out = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: out) else { return false }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let transform = NSAffineTransform()
+        transform.scale(by: scale)
+        transform.concat()
+        (dark ? NSColor(white: 0.08, alpha: 1) : NSColor(white: 0.97, alpha: 1)).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        let words = ["$ npm test", "ok 412 - attention widget tick", "PASS test/routes.test.js", "\u{2713} renders the panel",
+                     "warning: unused variable", "> node scripts/build.js", "Compiling TAttentionWidget.swift", "done in 4.2s"]
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: dark ? NSColor(white: 0.85, alpha: 1) : NSColor(white: 0.15, alpha: 1),
+        ]
+        var y = size.height - 16
+        var index = 0
+        while y > 0 {
+            NSAttributedString(string: words[index % words.count] + "   " + words[(index + 3) % words.count], attributes: attributes)
+                .draw(at: NSPoint(x: 6, y: y))
+            y -= 15
+            index += 1
+        }
+        rep.draw(in: NSRect(x: margin, y: margin, width: view.bounds.width, height: view.bounds.height), from: .zero,
+                 operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let png = out.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
+    }
+}
+
+/// --self-test, Part F.
+func runLookSelfTest(_ check: (String, Bool) -> Void) {
+    // The open-terminal request and its answer.
+    check("open terminal: the page path names the terminal", openTerminalTarget("/?openTerminal=local:12:t3").map { [$0.engine, $0.taskId, $0.terminalId] }
+          == ["local", "12", "t3"] && openTerminalTarget("/?openTerminal=remote:7:3:t-1_a").map { [$0.engine, $0.taskId, $0.terminalId] }
+          == ["remote:7", "3", "t-1_a"])
+    check("open terminal: anything else names none", ["", "/?openTerminal=", "/?openTerminal=local:0:t1", "/?openTerminal=other:1:t1",
+          "/?openTerminal=local:1:t 1", "/h5?openTerminal=local:1:t1", "/?openTerminal=local:1:" + String(repeating: "a", count: 65)]
+          .allSatisfy { openTerminalTarget($0) == nil })
+    let api = WidgetAPI(base: "http://127.0.0.1:3999", token: "tok")
+    let built = api.openTerminalRequest(engine: "remote:7", taskId: "3", terminalId: "t1")
+    check("request: open-terminal", built.httpMethod == "POST" && built.url?.absoluteString == "http://127.0.0.1:3999/api/attention/widget/open-terminal"
+          && built.value(forHTTPHeaderField: "Authorization") == "Bearer tok" && built.value(forHTTPHeaderField: "Content-Type") == "application/json"
+          && built.httpBody.flatMap { String(data: $0, encoding: .utf8) } == "{\"engine\":\"remote:7\",\"task_id\":\"3\",\"terminal_id\":\"t1\"}")
+    func outcome(_ body: String, _ code: Int = 200) -> OpenTerminalOutcome { openTerminalOutcome(code: code, data: Data(body.utf8)) }
+    check("open terminal: a page took it", outcome("{\"delivered\":1,\"focused\":true}") == .switched(focused: true)
+          && outcome("{\"delivered\":1,\"focused\":false}") == .switched(focused: false) && outcome("{\"delivered\":2}") == .switched(focused: false))
+    check("open terminal: no page, an older server or a failure opens the address", outcome("{\"delivered\":0,\"focused\":false}") == .openURL
+          && outcome("{\"error\":\"NOT_FOUND\"}", 404) == .openURL && outcome("", 0) == .openURL && outcome("{}", 500) == .openURL
+          && outcome("[1]") == .openURL && outcome("{\"delivered\":\"x\"}") == .openURL && outcome("{\"delivered\":1}", 401) == .openURL)
+
+    // The panel.
+    var options = WidgetOptions()
+    options.persistPosition = false
+    options.offscreen = true
+    let window = WidgetController(api: WidgetAPI(base: "http://127.0.0.1:3999", token: "t"), parentPID: nil, options: options)
+    var sent: [URLRequest] = []
+    var answers: [(Data?, Int) -> Void] = []
+    var opened: [String] = []
+    var raised = 0
+    var voiceOver = false
+    window.requestHook = { request, answer in
+        sent.append(request)
+        answers.append(answer)
+    }
+    window.openURL = { opened.append($0.absoluteString) }
+    window.activateBrowser = { raised += 1 }
+    window.announce = { _ in }
+    window.alwaysShowRowActions = { voiceOver }
+    func posts() -> [String] {
+        sent.filter { $0.httpMethod == "POST" }.map { ($0.url?.path ?? "") + " " + ($0.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? "") }
+    }
+    func answer(_ body: String, _ code: Int = 200) {
+        guard !answers.isEmpty else { return }
+        answers.removeLast()(Data(body.utf8), code)
+    }
+    window.loadForTest(sampleList())
+    func shown(_ key: String) -> [RowAction] {
+        window.testRowView(key)?.actionButtons.filter { !$0.isHidden }.map { $0.rowAction } ?? []
+    }
+    func all(_ key: String) -> [RowAction] { window.testRowView(key)?.actionButtons.map { $0.rowAction } ?? [] }
+    check("icons: a waiting row with a link and a live terminal", all("local:12") == [.link, .session, .handled, .reply])
+    check("icons: a review row confirms and rejects", all("local:9") == [.link, .confirm, .reject] && all("local:14") == [.link, .confirm, .reject])
+    check("icons: a remote waiting row opens its session and is handled", all("remote:7:3") == [.session, .handled])
+    check("icons: rows outside Needs you only open things", all("local:20") == [.session] && all("local:23") == [.link]
+          && all("local:21").isEmpty && all("local:30") == [.link])
+    check("icons: drawn as symbols, the words as tooltip and accessibility label", window.testRowView("local:12")?.actionButtons.allSatisfy {
+        $0.isIcon && $0.toolTip == ($0.rowAction == .link ? "CI run" : $0.label) && $0.accessibilityLabel() == ($0.rowAction == .link ? "Open link: CI run" : $0.label)
+    } == true && window.testButton("local:12", .handled)?.label == "Handled")
+    check("icons: each action has its own symbol", Set([RowAction.confirm, .reject, .handled, .link, .session, .reply].map { $0.symbolName }).count == 6
+          && [RowAction.confirm, .reject, .handled, .link, .session, .reply].allSatisfy { symbolImage($0.symbolName) != nil })
+    check("icons: on the title line, before the engine tag", ["local:12", "local:9", "remote:7:3"].allSatisfy { key in
+        guard let row = window.testRowView(key), let pill = window.testPill(key), let title = window.testTitleField(key) else { return false }
+        let pillFrame = pill.convert(pill.bounds, to: row)
+        let titleFrame = title.convert(title.bounds, to: row)
+        return row.actionButtons.allSatisfy { button in
+            let frame = button.convert(button.bounds, to: row)
+            return frame.maxX <= pillFrame.minX && frame.minX >= titleFrame.maxX && abs(frame.midY - titleFrame.midY) < 2
+        }
+    })
+    check("hover: Needs you shows its icons all the time", shown("local:12") == [.link, .session, .handled, .reply] && shown("local:9") == [.link, .confirm, .reject])
+    check("hover: other sections hide them until the pointer is over the row", shown("local:20").isEmpty && shown("local:23").isEmpty
+          && shown("local:30").isEmpty)
+    window.testRowView("local:20")?.setHovered(true)
+    check("hover: the pointer over a Working row shows them", shown("local:20") == [.session] && window.testButtonTakesPress("local:20", .session))
+    window.testRowView("local:20")?.setHovered(false)
+    check("hover: and leaving hides them again; a hidden icon never takes a press", shown("local:20").isEmpty && {
+        guard let row = window.testRowView("local:20"), let button = row.actionButtons.first else { return false }
+        return row.hitTest(button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: row.superview)) === row
+    }())
+    voiceOver = true
+    window.loadForTest(sampleList())
+    check("hover: with VoiceOver every row shows its icons", shown("local:20") == [.session] && shown("local:30") == [.link])
+    voiceOver = false
+    window.loadForTest(sampleList())
+    check("keyboard: a Working row's actions are in its menu", window.testMenuTitles("local:20") == ["Open session", "Edit", "Delete", "Quit"])
+    check("keyboard: a review row's menu confirms and rejects", window.testMenuTitles("local:9") == ["Open link", "Confirm", "Reject", "Edit", "Delete", "Quit"])
+    let custom = window.testRowView("local:12")?.accessibilityCustomActions()?.map { $0.name } ?? []
+    check("VoiceOver: the row is one element with its actions", window.testRowView("local:12")?.isAccessibilityElement() == true
+          && custom == ["Open link: CI run", "Open session", "Handled", "Reply"]
+          && window.testRowView("local:12")?.accessibilityLabel() == "Deploy the staging build. Allow running npm publish?")
+    check("VoiceOver: a hidden row's actions are still there", window.testRowView("local:20")?.accessibilityCustomActions()?.map { $0.name } == ["Open session"])
+    _ = window.testRowView("local:20")?.accessibilityCustomActions()?.first?.handler?()
+    check("VoiceOver: its Open session asks to switch an open page", posts()
+          == ["/api/attention/widget/open-terminal {\"engine\":\"local\",\"task_id\":\"20\",\"terminal_id\":\"t1\"}"] && opened.isEmpty)
+    answer("{\"delivered\":1,\"focused\":true}")
+    check("open session: a page took it and the extension focused the tab: nothing else happens", opened.isEmpty && raised == 0)
+    sent = []
+    _ = window.testOpenFromRowMenu("local:9", "Confirm")
+    check("keyboard: Confirm from the menu runs the row's action", posts() == ["/api/attention/widget/items/local:9/confirm {}"])
+    answer("{\"error\":\"WRONG_STATUS\",\"message\":\"No\"}", 409)
+    sent = []
+    window.loadForTest(sampleList())
+    check("open session: pressed", window.testPressButton("local:12", .session) && posts().count == 1 && opened.isEmpty)
+    answer("{\"delivered\":1,\"focused\":false}")
+    check("open session: without the extension the default browser comes forward, no address opens", opened.isEmpty && raised == 1)
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"delivered\":0,\"focused\":false}")
+    check("open session: no page open, so the address opens as before", opened == ["http://127.0.0.1:3999/?openTerminal=local:12:t1"] && raised == 1)
+    _ = window.testPressButton("local:12", .session)
+    answer("{\"error\":\"NOT_FOUND\",\"message\":\"Not found\"}", 404)
+    check("open session: an older T-Agent (404) opens the address as before", opened.count == 2 && raised == 1)
+    _ = window.testPressButton("local:12", .session)
+    answer("", 0)
+    check("open session: T-Agent unreachable opens the address", opened.count == 3)
+
+    // The text of the rows.
+    check("rows: the title alone on its line", window.testTitleField("local:20")?.stringValue == "Build the widget API"
+          && window.testTitleField("local:22")?.stringValue == "   \u{2514} Fix the flaky stream test")
+    check("rows: the custom status and the detail are the muted second line", window.testSecondLine("local:20")?.stringValue == "Blocked"
+          && window.testSecondLine("local:12")?.stringValue == "Allow running npm publish?"
+          && window.testSecondLine("remote:7:8")?.stringValue == "Step 3 of 5" && window.testSecondLine("local:21") == nil
+          && window.testSecondLine("local:12")?.textColor == .secondaryLabelColor)
+    check("rows: a sub-task's second line starts under its title", {
+        guard let row = window.testRowView("local:22"), let second = window.testSecondLine("local:22") else { return false }
+        return second.frame.minX > 20 && row.frame.height < 40
+    }())
+    var long = sampleList()
+    long.items[0].pending = String(repeating: "A very long question that goes on and on. ", count: 8)
+    long.items[0].customStatus = "Waiting"
+    window.loadForTest(long)
+    check("rows: the second line is at most two lines", window.testSecondLine("local:12")?.maximumNumberOfLines == 2
+          && window.testRowHeight("local:12") <= rowIconSize + 30 && window.testSecondLine("local:12")?.stringValue.hasPrefix("Waiting \u{00B7} A very") == true)
+    window.loadForTest(sampleList())
+    check("rows: shorter than before (73 / 51 / 37 pt)", window.testRowHeight("local:12") <= 36 && window.testRowHeight("local:9") <= 36
+          && window.testRowHeight("local:20") <= 36 && window.testRowHeight("remote:7:3") <= 36)
+
+    // Headers, the background and the search.
+    let lines = window.testLines
+    check("headers: no emoji, the name first", lines.contains("Needs you") && lines.contains("Working") && lines.contains("To do")
+          && !lines.contains { $0.unicodeScalars.contains { $0.value >= 0x1F300 } })
+    let needs = window.testSectionHeader(.needs)
+    check("headers: a red dot and the count", needs?.dot.color == NSColor.systemRed && needs?.countField.stringValue == "4"
+          && window.testSectionHeader(.working)?.countField.stringValue == "5" && window.testSectionHeader(.todo)?.dot.color == NSColor.systemYellow)
+    check("background: the blur has the veil", window.testBackgroundVeiled)
+    check("search: the magnifier and + are icons", window.testSearchButtonIsIcon && window.testPlusIsIcon)
+    symbolsAvailable = false
+    let fallback = ActionButton(.confirm, icon: true)
+    check("icons: without symbols the buttons are text again", !fallback.isIcon && fallback.intrinsicContentSize.width > 30)
+    symbolsAvailable = true
+    check("part F: no window was put on screen", !window.testOnScreen)
 }
 
 // MARK: - Entry point

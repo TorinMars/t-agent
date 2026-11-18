@@ -10,6 +10,10 @@
 // There are no system (browser / OS) notifications: reminders away from the page come from the server's notifiers (Telegram, services/attention-notify.js).
 // `passive` (a pane of the multi-column view, pane.mjs): no stream, no reminders and no reads of its own; the actions stay (Settings uses them) and the
 // list is read when the panel is opened. The top page follows the stream and reminds once for all its columns.
+// The top page opens this machine's stream with `?tab=1`: the server then counts it as an open page of this machine (services/page-channel.js) that
+// the desktop window's Open session can switch in place. Its first event is `hello` { stream }; the page reports when it is seen (shown or focused) with
+// POST /api/attention/stream/seen { stream }, and `open-terminal` { engine, task_id, terminal_id } shows that terminal as the `?openTerminal=` link does
+// (h5.js ui.actions.openTerminalLink). The stream stays open while the page is hidden, so a background tab is switched too.
 import { applyChange, attentionEngines, engineOf, itemKey, keyOf, needsCount, parseKey, reminderFor, showsNotice, tagItem } from './attention-model.mjs';
 
 export const BASE = '/api/attention';
@@ -98,6 +102,16 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
     return !actor || actor === 'user';
   };
 
+  // The page stream (`?tab=1`, this machine's entry of the top page): its id from `hello`, and when the page is seen it says so (only the page seen last
+  // gets the desktop window's Open session).
+  let pageStream = null;
+  const isTopPage = () => { try { return typeof window !== 'undefined' && window.top === window; } catch { return false; } };
+  const reportSeen = () => {
+    if (passive || !pageStream) return;
+    Promise.resolve().then(() => api('POST', `${BASE}/stream/seen`, { stream: pageStream })).catch(() => { /* an older server, or offline */ });
+  };
+  if (!passive && typeof window !== 'undefined' && window.addEventListener) window.addEventListener('focus', reportSeen);
+
   const make = info => ({ ...info, base: baseOf(info.key), status: 'idle', loaded: false, error: null, host: null, live: false, es: null, retry: 0, timer: 0, loadTimer: 0, loadRetry: 0, readSeq: 0, loadedAt: 0 });
   // An engine without T-Attention (501 ATTENTION_REMOTE_UNSUPPORTED from the proxy) is not an error: it is left out without a word.
   const isUnsupported = error => Boolean(error && (error.status === 501 || (error.data && error.data.error === 'ATTENTION_REMOTE_UNSUPPORTED')));
@@ -158,9 +172,27 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
     entry.timer = 0;
     if (!ES || entry.es || !alive(entry)) return;
     let es;
-    try { es = new ES(`${entry.base}/stream`); } catch { schedule(entry); return; }
+    const tab = entry.base === BASE && isTopPage();
+    try { es = new ES(`${entry.base}/stream${tab ? '?tab=1' : ''}`); } catch { schedule(entry); return; }
     entry.es = es;
     es.addEventListener('change', message => onChange(entry, message));
+    if (tab) {
+      es.addEventListener('hello', message => {
+        if (entry.es !== es) return;
+        let data = null;
+        try { data = JSON.parse(message.data); } catch { /* a broken message: no id */ }
+        pageStream = data && typeof data.stream === 'string' ? data.stream : null;
+        if (document.visibilityState === 'visible') reportSeen();
+      });
+      es.addEventListener('open-terminal', message => {
+        if (entry.es !== es) return;
+        let data = null;
+        try { data = JSON.parse(message.data); } catch { return; }
+        const open = ui.actions.openTerminalLink;
+        if (!data || typeof open !== 'function') return;
+        void Promise.resolve(open({ sourceKey: String(data.engine || ''), taskId: Number(data.task_id), terminalId: String(data.terminal_id || '') })).catch(() => {});
+      });
+    }
     // Every (re)connection reads the list again: changes made while it was away are not replayed.
     es.addEventListener('open', () => {
       if (entry.es !== es) return;
@@ -227,6 +259,7 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
   // The page shown again: read the lists (the phone may have slept) and connect at once where the stream is gone.
   document.addEventListener('visibilitychange', () => {
     if (passive || document.visibilityState !== 'visible') return;
+    reportSeen();
     for (const entry of entries.values()) {
       void load(entry);
       if (!entry.es) { entry.retry = 0; connect(entry); }

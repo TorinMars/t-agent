@@ -13,6 +13,22 @@
 const os = require('node:os');
 const express = require('express');
 const { AttentionError, recentFinishedOf } = require('../services/attention');
+const { fromThisMachine } = require('../lib/terminal-relay-auth');
+
+// The origin a page stream was opened on (the address the browser has in its tab), for the browser extension to find that tab; null when the Host
+// header is not a plain host name or address with an optional port.
+const PAGE_HOST = /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?$/;
+function pageOrigin(req) {
+  const host = req.get('host') || '';
+  const protocol = req.protocol === 'https' ? 'https' : req.protocol === 'http' ? 'http' : null;
+  return protocol && PAGE_HOST.test(host) ? `${protocol}://${host.toLowerCase()}` : null;
+}
+// Whether the page that opened the stream is a column of the multi-column view (`/h5?pane=`): its Referer has a `pane` parameter.
+function fromPane(req) {
+  const referer = req.get('referer');
+  if (!referer) return false;
+  try { return new URL(referer).searchParams.has('pane'); } catch { return false; }
+}
 
 const TOKEN_PATH = /^\/tokens(?:\/|$)/i;
 const BEARER = /^Bearer[ \t]+(\S+)[ \t]*$/i;
@@ -97,11 +113,13 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, instanceId = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now } = {}) {
+function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, instanceId = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now, isLocal = fromThisMachine, pages = null } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
   const streams = new Set();
+  // The open pages of this machine that the desktop window can tell to show a terminal (services/page-channel.js).
+  const pageChannel = () => pages || require('../services/page-channel').getPageChannel();
   const router = express.Router();
 
   // Who acts: 'user' for the browser; for a token the body's source when it sends one, else the token's name.
@@ -229,15 +247,32 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
 
   // Server-sent events: `event: change` with { kind, item, previous, event } for every change, a comment line every heartbeatMs.
   // A token's stream ends when the token is revoked.
+  // `?tab=1` from a top-level page of this machine (the browser session, fromThisMachine, a Referer without `pane`): the stream is also a page of
+  // services/page-channel.js. Its first event is `hello` { stream: <id> }, and it may get `open-terminal` { engine, task_id, terminal_id } (the desktop
+  // window's Open session); the page reports when it is seen with POST /stream/seen. Any other stream is only the change stream.
   router.get('/stream', (req, res) => {
     const tokenId = req.attentionAuth.kind === 'token' ? req.attentionAuth.id : null;
+    const isPage = tokenId === null && req.attentionAuth.kind === 'session' && req.query.tab === '1' && Boolean(isLocal(req)) && !fromPane(req);
+    let pageId = null;
     const stream = serveChangeStream(req, res, service, {
       heartbeatMs,
       active: () => tokenId === null || service.tokenActive(tokenId),
-      onClose: closing => streams.delete(closing),
+      onClose: closing => {
+        streams.delete(closing);
+        if (pageId) pageChannel().remove(pageId);
+      },
     });
     stream.tokenId = tokenId;
     streams.add(stream);
+    if (isPage && !res.writableEnded) {
+      pageId = pageChannel().add({ origin: pageOrigin(req), write: (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) });
+      res.write(`event: hello\ndata: ${JSON.stringify({ stream: pageId })}\n\n`);
+    }
+  });
+  // The page of a `?tab=1` stream is visible or has the focus now: { stream } -> { ok } (false for a stream that is not open here).
+  router.post('/stream/seen', sessionOnly, (req, res) => {
+    const id = req.body && typeof req.body.stream === 'string' ? req.body.stream : '';
+    res.json({ ok: id.length > 0 && id.length <= 64 && pageChannel().seen(id) });
   });
 
   router.get('/', wrap((req, res) => {

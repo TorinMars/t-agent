@@ -17,6 +17,9 @@
 // the one the window has (`etag`). The list is kept between ticks, each part read again only when it may have changed or has reached its age
 // ("The kept list" below): a tick in which nothing changed runs no query of the list and no remote request, apart from those ages. GET /items,
 // /notices, /activity and /prefs answer as before, for a window older than /tick; GET /items reads every part again each time.
+//
+// POST /open-terminal (Open session): tells the open T-Agent page of this machine seen last to show a terminal in place and asks the browser extension
+// to bring its tab to the front, instead of opening a new tab (see the route; services/page-channel.js).
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -47,6 +50,8 @@ const TAGENT_TASK = /^[1-9]\d{0,14}$/;
 const TAGENT_TERMINAL = /^[a-zA-Z0-9_-]{1,64}$/;
 const REPLY_MAX = 4000;
 const ACTIVITY_LIMIT = 50;
+const BRIDGE_WAIT_MS = 1500; // how long POST /open-terminal waits for the browser extension to bring the tab to the front
+const BRIDGE_TIMEOUT_MS = 1000; // the time the extension is given for tabs.reveal
 const ACTIVITY_ORDER = { running: 0, waiting: 1, done: 2 };
 const REPLY_NOTE = 'Replied from the desktop window';
 const ROOT = path.join(__dirname, '..');
@@ -271,6 +276,11 @@ function createAttentionWidgetRoutes({
   sendToTerminal = (taskId, terminalId, text) => require('./terminal').sendToTerminal(taskId, terminalId, text),
   liveActivity = () => require('./terminal').liveTerminalActivity(),
   now = () => new Date(),
+  // Open session (POST /open-terminal): the open pages of this machine (services/page-channel.js) and the browser extension's bridge, which brings
+  // the told page's tab to the front (services/browser-bridge.js, method tabs.reveal); bridgeWaitMs is how long the answer waits for it.
+  pages = null,
+  bridge = null,
+  bridgeWaitMs = BRIDGE_WAIT_MS,
   remoteTtlMs = REMOTE_TTL_MS,
   enginesTtlMs = ENGINES_TTL_MS,
   agentsTtlMs = AGENTS_TTL_MS,
@@ -555,6 +565,35 @@ function createAttentionWidgetRoutes({
     if (!sendToTerminal(session.task_id, session.terminal_id, text)) throw new WidgetError('TERMINAL_NOT_RUNNING', "The agent's terminal is not running", 409);
     service.update(key.id, { activity: { kind: 'note', text: REPLY_NOTE } }, { actor: 'user' });
     res.json({ ok: true });
+  }));
+
+  // Open session without a new tab: tells the open T-Agent page of this machine seen last (services/page-channel.js; only top-level pages of this machine
+  // register) to show this terminal in place, as its `?openTerminal=` link does, and asks the browser extension, when one is connected, to bring that
+  // page's tab to the front. { engine, task_id, terminal_id } -> { delivered: 0 | 1, focused }. delivered 0: no page was told, the window opens the link.
+  // focused: the extension brought the tab to the front (false without an extension, with an older one without tabs.reveal, or when it failed or was
+  // slower than bridgeWaitMs; the window then brings the browser app forward itself).
+  const pageChannel = () => pages || require('../services/page-channel').getPageChannel();
+  const browserBridge = () => bridge || require('../services/browser-bridge').getBrowserBridge();
+  async function revealTab(origin) {
+    let timer;
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(() => browserBridge().command('tabs.reveal', { origin }, { timeoutMs: BRIDGE_TIMEOUT_MS })),
+        new Promise(resolve => { timer = setTimeout(() => resolve(null), bridgeWaitMs); }),
+      ]);
+      return Boolean(result && result.focused === true);
+    } catch { return false; } finally { clearTimeout(timer); }
+  }
+  api.post('/open-terminal', parseJson, handle(async (req, res) => {
+    const body = objectBody(req);
+    if (typeof body.engine !== 'string' || !ENGINE_KEY.test(body.engine)) throw invalid("engine must be 'local' or 'remote:<id>'");
+    const taskId = typeof body.task_id === 'number' && Number.isSafeInteger(body.task_id) ? String(body.task_id) : body.task_id;
+    if (typeof taskId !== 'string' || !TAGENT_TASK.test(taskId)) throw invalid('task_id must be a task id');
+    if (typeof body.terminal_id !== 'string' || !TAGENT_TERMINAL.test(body.terminal_id)) throw invalid('terminal_id must be a terminal id');
+    const told = pageChannel().openTerminal({ engine: body.engine, task_id: taskId, terminal_id: body.terminal_id });
+    const delivered = told && told.delivered === 1 ? 1 : 0;
+    const focused = delivered === 1 && typeof told.origin === 'string' && told.origin ? await revealTab(told.origin) : false;
+    res.json({ delivered, focused });
   }));
 
   // What the agents in this machine's terminals are doing: the live terminals that are not idle, running first, then waiting at a question, then done

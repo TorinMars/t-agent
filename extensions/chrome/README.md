@@ -1,6 +1,6 @@
 # T-Agent Browser
 
-A local Manifest V3 bridge from your own T-Agent sessions to tabs in your own Chrome browser. It implements all 25 v1 command methods. Plain JavaScript ES modules, no build step, no remote code, no static content scripts. Requires Chrome 116 or newer (WebSocket activity keeps the service worker alive).
+A local Manifest V3 bridge from your own T-Agent sessions to tabs in your own Chrome browser. It implements all 25 v1 command methods, plus `tabs.reveal` (1.0.3: brings the tab of a T-Agent page with a given origin to the front, for the desktop window's Open session; it reads no page and needs no handed tab). Plain JavaScript ES modules, no build step, no remote code, no static content scripts. Requires Chrome 116 or newer (WebSocket activity keeps the service worker alive).
 
 ## Load and pair
 

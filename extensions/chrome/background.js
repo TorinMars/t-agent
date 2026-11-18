@@ -1,7 +1,7 @@
 import { redact, cut } from './redact.js';
 import { pageAction, installRecorder } from './page.js';
 import { captures, cdp, attach, detach, setCaptureEmitter, summary, detail, matches } from './capture.js';
-export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach'];
+export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal'];
 const recordings = new Map(),
   owned = new Set(),
   handed = new Set(),
@@ -333,6 +333,44 @@ export async function dispatch(method, p = {}) {
     } finally {
       grouping.delete(t.id);
     }
+  }
+  // Brings the tab of a T-Agent page to the front (the desktop window's Open session): the tab whose address has this origin and is a top-level page
+  // (no `pane` parameter, so not a column of the multi-column view). It reads nothing of any page, so it needs no handed tab. The active tab of the
+  // last focused window when it is one, else the one used last.
+  if (method === 'tabs.reveal') {
+    let origin = null;
+    try {
+      const u = new URL(p.origin);
+      if (/^https?:$/.test(u.protocol) && u.origin === p.origin) origin = u.origin;
+    } catch {/* Not a URL. */}
+    if (!origin) fail('BAD_PARAMS', 'origin must be an http or https origin');
+    const page = t => {
+      try {
+        const u = new URL(t.url || t.pendingUrl || '');
+        return u.origin === origin && !u.searchParams.has('pane');
+      } catch {
+        return false;
+      }
+    };
+    const candidates = (await chrome.tabs.query({})).filter(page);
+    if (!candidates.length) return {
+      focused: false
+    };
+    const front = (await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true
+    })).find(page);
+    const chosen = front || candidates.reduce((a, b) => (b.lastAccessed || 0) > (a.lastAccessed || 0) || (b.lastAccessed || 0) === (a.lastAccessed || 0) && b.id > a.id ? b : a);
+    await chrome.tabs.update(chosen.id, {
+      active: true
+    });
+    await chrome.windows.update(chosen.windowId, {
+      focused: true
+    });
+    return {
+      focused: true,
+      tab_id: chosen.id
+    };
   }
   if (method === 'record.stop' && p.recording_id) {
     const r = [...recordings].find(([, v]) => v.id === p.recording_id);

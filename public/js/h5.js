@@ -3923,6 +3923,18 @@
   // The multi-column view asks a pane to show a task and terminal, or an agent chat of a task (a `?openChat=` link handled by the top page while its columns
   // are shown; scripts/h5-shell/pane.mjs): a terminal as a tap on that row of the list does, on the named service; a chat as `openChatFromLink` does (this
   // machine only, like the link). An unknown service, task or chat is ignored quietly.
+  // The desktop window's Open session reaches an open page through its T-Attention stream (attention-feed.mjs, `open-terminal`): the top page shows that
+  // terminal in place, as the `?openTerminal=` link does (openTerminalFromLink: the task selected on its service and the terminal shown, or the focused
+  // column while the multi-column view is shown), without a reload. A terminal that is not there any more says so, like the link.
+  if (!PANE) {
+    ui.actions.openTerminalLink = async ({ sourceKey, taskId, terminalId }) => {
+      await listsKnown;
+      const ok = /^(local|remote:[1-9]\d*)$/.test(String(sourceKey)) && Number.isSafeInteger(taskId) && taskId > 0 && /^[A-Za-z0-9_-]{1,64}$/.test(String(terminalId))
+        && await openTerminalFromLink({ sourceKey, taskId, terminalId }).catch(() => false);
+      if (!ok) tell('That terminal is not available any more');
+      return Boolean(ok);
+    };
+  }
   if (PANE) {
     ui.actions.paneOpen = async ({ sourceKey, taskId, terminalId = null, conversationId = null }) => {
       await listsKnown;

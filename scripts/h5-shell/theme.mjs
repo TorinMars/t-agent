@@ -58,5 +58,7 @@ export const theme = createTheme({
     MuiListItemButton: { styleOverrides: { root: { [TOUCH]: { minHeight: 44 } } } },
     MuiCheckbox: { styleOverrides: { root: { [TOUCH]: { padding: 10 } } } },
     MuiOutlinedInput: { styleOverrides: { root: { borderRadius: 8, [TOUCH]: { minHeight: 44 } } } },
+    // Settings (the settings part, Form.jsx): the cards of a group have the same 8px corners as the buttons and inputs.
+    MuiCard: { styleOverrides: { root: { borderRadius: 8 } } },
   },
 });

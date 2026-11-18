@@ -3,6 +3,7 @@
 // and a Copy button, the web addresses with their labels and Copy buttons, nothing on a server that is not macOS (`app: null`) or on an older
 // server (404), and no horizontal overflow on a phone. H5_SHOT_DIR=<dir> saves a screenshot.
 const { chromium } = require('playwright');
+const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -77,10 +78,7 @@ async function openDevices(page) {
   await page.locator('#h5-open-tasks').waitFor();
   await page.evaluate(() => window.H5UI.actions.openSettings());
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  const summary = page.locator('#h5-set-devices .MuiAccordionSummary-root');
-  await summary.scrollIntoViewIfNeeded();
-  await summary.click();
-  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
+  await openGroup(page, 'devices');
   await page.waitForFunction(() => (document.getElementById('h5-engine-local-version') || {}).textContent === 'v2.101.0');
 }
 const text = (page, selector) => page.locator(selector).textContent();
@@ -163,9 +161,7 @@ const SCENARIOS = {
     await page.locator('#h5-open-tasks').waitFor();
     await page.evaluate(() => window.H5UI.actions.openSettings());
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    const summary = page.locator('#h5-set-devices .MuiAccordionSummary-root');
-    await summary.scrollIntoViewIfNeeded();
-    await summary.click();
+    await openGroup(page, 'devices');
     await page.locator('#h5-sec-mac-app').waitFor();
     assert.equal(await text(page, '#h5-sec-mac-app-title'), 'Mac \u5e94\u7528');
     assert.equal(await text(page, '#h5-mac-app-state'), '\u6bd4\u670d\u52a1\u65e7\uff1a\u8bf7\u91cd\u65b0\u6784\u5efa');

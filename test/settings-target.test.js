@@ -32,3 +32,20 @@ test('the parts of Devices that sit in Advanced are known, and unknown ids open 
   assert.deepEqual(settingsTarget('browser-ext'), { group: 'tasks-files', section: 'browser-ext' });
   for (const id of ['', 'nothing', 'toString', '__proto__', null, undefined, 3, {}]) assert.equal(settingsTarget(id), null, String(id));
 });
+
+test('the group list of the Settings page has a title, a description and a phone summary for every group, translated', async () => {
+  const { GROUPS, SETTINGS_GROUPS, groupInfo } = await load();
+  assert.deepEqual(GROUPS.map(group => group.id), SETTINGS_GROUPS);
+  assert.deepEqual(GROUPS.map(group => group.title), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
+  const fs = require('node:fs');
+  const zh = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'i18n-zh-ui.js'), 'utf8');
+  for (const group of GROUPS) {
+    for (const key of ['title', 'description', 'summary']) {
+      assert.equal(typeof group[key], 'string');
+      assert.ok(group[key].length > 0 && group[key].length <= 100, `${group.id}.${key} is one short line`);
+      if (group[key] !== 'T-Attention') assert.ok(zh.includes(`${JSON.stringify(group[key])}:`), `${group.id}.${key} has a Chinese entry`); // the product name stays
+    }
+    assert.equal(groupInfo(group.id), group);
+  }
+  assert.equal(groupInfo('nope'), null);
+});

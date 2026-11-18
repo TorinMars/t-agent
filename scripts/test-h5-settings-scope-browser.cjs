@@ -14,6 +14,7 @@
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of Tasks and files, T-Attention and Devices with the labels.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -120,26 +121,27 @@ async function openPage(browser, { width = 390, zh = false, sync = 'linked', wid
 const settled = page => page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
 async function openSheet(page) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
-  await page.locator('#h5-settings .h5-settings-body').waitFor({ state: 'visible' });
+  await page.locator('#h5-settings').waitFor({ state: 'visible' });
   await settled(page);
   // The sheet reads only the settings sync (for the tabs) and the linked devices when it opens; the groups read nothing until opened.
   await page.waitForFunction(() => window.calls.some(call => call.url === '/api/settings-sync'));
   const early = await page.evaluate(() => window.calls.map(call => call.url).filter(url => !['/api/settings-sync', '/api/device-settings/devices'].includes(url) && !url.startsWith('/api/system/') && !url.startsWith('/api/service-links') && !/^\/api\/attention(\?|$)/.test(url)));
-  assert.deepEqual(early, [], 'no group reads anything before it opens');
+  // A computer shows the first group (Tasks and files) at once, so only its parts read; a phone shows the list and nothing reads.
+  const shown = (await wideLayout(page)) ? ['/auth/me', '/api/oss/agent-access', '/api/oss/config', '/api/agent-skills', '/api/browser-ext', '/api/browser-sites'] : [];
+  assert.deepEqual(early.filter(url => !shown.includes(url)), [], 'no other group reads anything before it opens');
   await settled(page);
 }
 async function chooseTab(page, value, press) {
+  await backToList(page); // the device tabs are on the group list
   await press(page.locator(`#h5-settings-tab-${value}`));
   await page.waitForFunction(id => document.getElementById(`h5-settings-tab-${id}`).getAttribute('aria-selected') === 'true', value);
   await settled(page);
 }
-async function toggleGroup(page, id, press) {
-  const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-  await summary.scrollIntoViewIfNeeded();
-  const wasOpen = await summary.getAttribute('aria-expanded') === 'true';
-  await press(summary);
-  await page.waitForFunction(([groupId, open]) => Boolean(document.querySelector(`#h5-set-${groupId} > .MuiCollapse-entered`)) === open, [id, !wasOpen]);
-  if (!wasOpen) await page.waitForFunction(() => window.calls.some(call => call.url === '/api/settings-sync'));
+// Shows a group, or leaves it when it is shown (on a phone: back to the group list, where the device tabs are). Showing it reads the settings sync.
+async function toggleGroup(page, id) {
+  if (await groupShown(page, id)) { await backToList(page); return; }
+  await openSettingsGroup(page, id);
+  await page.waitForFunction(() => window.calls.some(call => call.url === '/api/settings-sync'));
   await settled(page);
 }
 // The labels of a group in page order: "<scope> <pill text>", or "<scope> - <details>" for a label whose pill is left out in the tab.
@@ -150,7 +152,7 @@ const labelsOf = (page, id) => page.locator(`#h5-set-${id} .h5-scope`).evaluateA
 
 async function assertFits(page, label) {
   const result = await page.evaluate(() => {
-    const sheet = document.querySelector('#h5-settings .h5-sheet-panel');
+    const sheet = document.querySelector('#h5-settings-page:not(.MuiModal-hidden) .MuiDialog-paper') || document.querySelector('#h5-settings .MuiDialog-paper') || document.getElementById('h5-settings');
     const inner = document.documentElement.clientWidth;
     const visible = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
     const clipped = el => Boolean(el.parentElement && el.parentElement.closest('.MuiTabs-scroller')); // a tab scrolled out of the tab row
@@ -221,7 +223,7 @@ async function testLinkedPhone(browser) {
   // Devices in Shared: the status line first, then "Show in task list", one switch per device; the list itself is in This device.
   await toggleGroup(page, 'devices', press);
   await page.waitForFunction(() => document.querySelectorAll('#h5-shown-devices .h5-shown-device').length === 2 && document.getElementById('h5-settings-sync-now'));
-  const parts = await page.evaluate(() => [...document.querySelectorAll('#h5-set-devices .MuiAccordionDetails-root > *')].filter(el => !el.hidden && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
+  const parts = await page.evaluate(() => [...document.getElementById('h5-set-devices').children].filter(el => !el.hidden && el.tagName !== 'HEADER' && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
   assert.deepEqual(parts, ['h5-sec-settings-sync', 'h5-sec-task-list-devices'], 'the status line is at the top of Devices');
   assert.deepEqual(await page.locator('.h5-settings-sync-peer').allInnerTexts(), ['K01 · Online · Synced 2 min ago', 'K02 · Offline · Synced 2 h ago · Error: REMOTE_TIMEOUT']);
   assert.deepEqual(await labelsOf(page, 'devices'), DEVICES);
@@ -239,8 +241,8 @@ async function testLinkedPhone(browser) {
   await chooseTab(page, 'local', press);
   await toggleGroup(page, 'devices', press);
   await page.waitForFunction(() => document.querySelector('.h5-link-row') && document.getElementById('h5-rule-sync-role') && document.getElementById('h5-peer-fs-enabled'));
-  const own = await page.evaluate(() => [...document.querySelectorAll('#h5-set-devices .MuiAccordionDetails-root > *')].filter(el => !el.hidden && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
-  assert.deepEqual(own, ['h5-engine-list', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
+  const own = await page.evaluate(() => [...document.getElementById('h5-set-devices').children].filter(el => !el.hidden && el.tagName !== 'HEADER' && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
+  assert.deepEqual(own, ['h5-sec-engine-name', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
   assert.deepEqual(await labelsOf(page, 'devices'), []);
   assert.equal(await page.locator('#h5-engine-list .h5-engine-visible').count(), 0, 'the switches are in Shared');
   await assertFits(page, '390 Devices, This device');
@@ -305,13 +307,15 @@ async function testHidden(browser, sync) {
   assert.equal(await page.locator('#h5-settings-tabs').count(), 0, `${sync}: no tabs`);
   for (const id of ['tasks-files', 'voice-translate', 'devices', 'attention', 'account']) await toggleGroup(page, id, press);
   await page.waitForFunction(() => document.querySelector('.h5-link-row') && document.querySelector('.h5-plugin-notifier[data-name="telegram"]') && document.getElementById('h5-attention-widget-enabled'));
-  assert.equal(await page.locator('#h5-settings .h5-scope').count(), 0, `${sync}: no label`);
+  assert.equal(await page.locator('.h5-scope').count(), 0, `${sync}: no label`);
   assert.equal(await page.locator('#h5-sec-settings-sync').count(), 0, `${sync}: no status line`);
   assert.equal(await page.locator('#h5-settings-sync').evaluate(node => node.hidden), true);
   // The page is as before: the Devices parts in their old order.
-  const parts = await page.evaluate(() => [...document.querySelectorAll('#h5-set-devices .MuiAccordionDetails-root > *')].filter(el => !el.hidden && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
-  assert.deepEqual(parts, ['h5-engine-list', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
+  await openSettingsGroup(page, 'devices');
+  const parts = await page.evaluate(() => [...document.getElementById('h5-set-devices').children].filter(el => !el.hidden && el.tagName !== 'HEADER' && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
+  assert.deepEqual(parts, ['h5-sec-engine-name', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
   // A save says Saved and nothing about copying.
+  await openSettingsGroup(page, 'voice-translate');
   await page.locator('#h5-tr-save').scrollIntoViewIfNeeded();
   await press(page.locator('#h5-tr-save'));
   await page.waitForFunction(() => document.getElementById('h5-tr-feedback').textContent === 'Translation settings saved');

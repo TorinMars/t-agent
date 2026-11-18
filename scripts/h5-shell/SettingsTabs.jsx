@@ -7,7 +7,7 @@ import { Icon } from './Icons.jsx';
 import { tabEntries, tabHint } from './settings-tabs.mjs';
 import { chooseTab, useDeviceTargets } from './DeviceTarget.jsx';
 
-// The tab row at the top of the settings sheet, under its title: Shared, this device (its engine name, "This device" under it), then each linked device
+// The device switch of the Settings page, at the top of its group list (Settings.jsx): Shared, this device (its engine name, "This device" under it), then each linked device
 // in the order of the device list ("Settings of a linked device" in docs/design/linked-device-settings.md). Drawn only while a device is linked (DeviceTarget.jsx); Shared only
 // while the settings sync shares with a linked device. A linked device that is too old, or offline and not known, is a disabled tab with the reason
 // under its name. The row scrolls sideways when the tabs do not fit, with
@@ -32,7 +32,7 @@ export function SettingsTabs({ state }) {
   const entries = tabEntries(devices, { localName: (local && local.name) || '', t, shared });
   const hint = tabHint(tab, devices, { t, shared });
   return (
-    <Box id="h5-settings-tabs-row" sx={{ borderTop: 1, borderColor: 'divider', minWidth: 0 }}>
+    <Box id="h5-settings-tabs-row" sx={{ minWidth: 0, borderBottom: 1, borderColor: 'divider' }}>
       <Tabs
         id="h5-settings-tabs" value={tab} onChange={(_, value) => chooseTab(value)} aria-label={t('Settings for')}
         variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
@@ -43,7 +43,7 @@ export function SettingsTabs({ state }) {
           <Tab
             key={entry.value} value={entry.value} id={`h5-settings-tab-${entry.value}`} data-tab={entry.value} className="h5-settings-tab" disabled={entry.disabled}
             title={entry.title} label={<TabLabel entry={entry} />}
-            sx={{ minHeight: 48, minWidth: 72, px: 1.5, py: 0.75, textTransform: 'none', fontSize: 14, fontWeight: 600, '&.Mui-disabled': { color: 'text.disabled' } }}
+            sx={{ minHeight: 48, minWidth: 72, px: 1.5, py: 0.75, textTransform: 'none', '&.Mui-disabled': { color: 'text.disabled' } }}
           />
         ))}
       </Tabs>

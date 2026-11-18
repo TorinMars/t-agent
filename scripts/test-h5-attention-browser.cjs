@@ -23,6 +23,7 @@
 //   normal dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -248,12 +249,11 @@ const row2 = page => page.evaluate(() => [...document.querySelectorAll('#h5-acti
 async function openPluginSettings(page, how) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  await page.locator('#h5-set-attention .MuiAccordionSummary-root')[how]();
-  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
+  await openGroup(page, 'attention');
   await page.locator('#h5-plugins .h5-plugin').first().waitFor();
 }
 // The Plugins rows stay inside the sheet: no row is wider than its box and nothing reaches past the viewport.
-const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, .h5-plugin-page .MuiDrawer-paper, .h5-plugin-page-body > *, .h5-plugin-page code')]
+const pluginsFit = page => page.evaluate(() => [...document.querySelectorAll('#h5-plugins .h5-plugin, .h5-plugin-page .MuiDialog-paper, .h5-plugin-page-body > *, .h5-plugin-page code')]
   .filter(node => node.scrollWidth > node.clientWidth + 1 || node.getBoundingClientRect().right > innerWidth + 0.5).map(node => node.className || node.id));
 
 // One design on both layouts: what the panel shows (header, sections, rows, row buttons) and the edit view, read the same way on a phone and a computer.
@@ -550,8 +550,7 @@ const editLayout = page => page.evaluate(() => {
       // Settings "T-Attention": tokens (shown once, revoke), sound, system notifications.
       await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
-      await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
-      await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
+      await openGroup(page, 'attention');
       await page.locator('#h5-attention-tokens .h5-attention-token').first().waitFor();
       // AI summary: off by default; provider and model; the privacy note.
       assert.equal(await page.locator('#h5-attention-summary-enabled').isChecked(), false);
@@ -599,9 +598,9 @@ const editLayout = page => page.evaluate(() => {
       const pluginReads = () => calls.filter(call => call.path === '/api/attention/plugins').length - calls.filter(call => call.method === 'GET' && call.path === '/api/attention/settings/guide').length;
       assert.equal(pluginReads(), 1, 'read once when the group opened');
       // Back keeps the scroll position; the Android back button and the browser's back work like the other sheets (one history entry for the page).
-      const scrollTop = () => page.evaluate(() => document.querySelector('#h5-settings .h5-settings-body').scrollTop);
+      const scrollTop = () => page.evaluate(() => document.querySelector('#h5-settings-page .h5-settings-body').scrollTop);
       await listRow('notifier', 'broken').scrollIntoViewIfNeeded();
-      await page.evaluate(() => { document.querySelector('#h5-settings .h5-settings-body').scrollTop = Math.min(document.querySelector('#h5-settings .h5-settings-body').scrollHeight, document.querySelector('#h5-plugins').offsetTop); });
+      await page.evaluate(() => { const body = document.querySelector('#h5-settings-page .h5-settings-body'); body.scrollTop = Math.min(body.scrollHeight, document.querySelector('#h5-plugins').getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop); });
       const depthOnList = await layerDepth(page);
       await openDetail('notifier', 'broken'); // Playwright scrolls the row into view for the tap: the position to keep is the one the page was opened at
       const scrolled = await scrollTop();
@@ -612,7 +611,7 @@ const editLayout = page => page.evaluate(() => {
       await page.waitForFunction(depth => history.state && history.state.h5Layer === depth, depthOnList + 1);
       await page.goBack();
       await detail('broken').waitFor({ state: 'detached' });
-      assert.ok(await page.locator('#h5-settings').isVisible(), 'back closes the page, not the sheet');
+      assert.ok(await page.locator('#h5-settings-page .h5-settings-body').isVisible(), 'back closes the plugin page, not the group page');
       await page.waitForFunction(depth => history.state && history.state.h5Layer === depth, depthOnList);
       assert.equal(await scrollTop(), scrolled, 'the scroll position is kept');
       await page.waitForFunction(() => document.getElementById('h5-plugins').getAttribute('aria-busy') === 'false');
@@ -1001,12 +1000,11 @@ const editLayout = page => page.evaluate(() => {
       await openPluginSettings(page, 'click');
       assert.deepEqual(await pluginsFit(page), []);
       assert.equal(await page.locator('#h5-plugins .h5-plugin').count(), 4);
-      // On a computer the page has the size and place of the sheet, and the rows and Back work with the mouse.
-      const sheetBox = await page.locator('#h5-settings .h5-sheet-panel').boundingBox();
+      // On a computer the plugin's page is a dialog over the Settings page (not full screen), and the rows and Back work with the mouse.
       await page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]').click();
       await page.locator('.h5-plugin-page[data-name="telegram"] #h5-plugin-config-telegram-callSeconds').waitFor();
       const pageBox = await page.locator('.h5-plugin-page .h5-sheet-panel').boundingBox();
-      assert.deepEqual([Math.round(pageBox.x), Math.round(pageBox.width), Math.round(pageBox.height)], [Math.round(sheetBox.x), Math.round(sheetBox.width), Math.round(sheetBox.height)], 'the page covers the sheet');
+      assert.ok(pageBox.width <= 600 && pageBox.x > 72, `a dialog, not the whole window: ${JSON.stringify(pageBox)}`);
       assert.deepEqual(await pluginsFit(page), []);
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-plugin-detail.png') });
       await page.locator('.h5-plugin-page-back').click();

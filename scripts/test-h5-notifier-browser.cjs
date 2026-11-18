@@ -6,6 +6,7 @@
 // provider help with a link, the server fields only for "Other SMTP server"). The server is a fake fetch.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -74,7 +75,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     const notifyCalls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/attention-notify')));
     assert.equal((await notifyCalls()).length, 0, 'nothing is read before the group opens');
-    await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
+    await openSettingsGroup(page, 'attention');
     // The list: a row for Telegram and for the rules, no form, and nothing of the notifier settings is read yet.
     const telegramRow = page.locator('#h5-plugins .h5-plugin-notifier[data-name="telegram"]');
     await telegramRow.waitFor({ state: 'visible' });

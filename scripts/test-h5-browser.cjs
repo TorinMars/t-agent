@@ -1764,8 +1764,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');
     assert.equal(await page.locator('#h5-lang').textContent(), '\u4e2d\u6587', 'it names the other language');
     assert.equal(await page.locator('#h5-settings #h5-logout').isVisible(), true, 'the settings have a log out button');
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none');
-    await page.screenshot({ path: '/tmp/t-agent-mui-settings.png' });
+    await page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
     // Logging out goes to the hidden login address the server wrote into the page, and comes back to the phone page afterwards.
     await page.evaluate(() => { const meta = document.createElement('meta'); meta.name = 't-agent-login-path'; meta.content = '/torin/hide/login'; document.head.append(meta); });
     page.once('dialog', dialog => dialog.accept());
@@ -1859,13 +1858,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(Math.abs(menuBox.y - (moreBox.y + moreBox.height)) <= 2 && Math.abs(menuBox.x + menuBox.width - (moreBox.x + moreBox.width)) <= 2, `the popup is under the button (${JSON.stringify([moreBox, menuBox])})`);
     await wide.page.keyboard.press('Escape');
     await wide.page.locator('#h5-session-menu').waitFor({ state: 'detached' });
-    // Settings are a sheet from the bottom with the page dimmed; a click beside the sheet closes it.
+    // Settings is a page right of the navigation rail (no backdrop); Escape closes it.
     await wide.page.locator('#h5-nav-settings').click(); // Settings in the navigation rail
     await wide.page.locator('#h5-settings').waitFor({ state: 'visible' });
-    await wide.page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none'); // the slide-in has finished
-    const panelBox = await wide.page.locator('#h5-settings .h5-sheet-panel').boundingBox();
-    assert.deepEqual([panelBox.width, panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height], [440, 720, 900], 'a centred sheet that rises from the bottom');
-    await wide.page.mouse.click(100, 100);
+    const panelBox = await wide.page.locator('#h5-settings').boundingBox();
+    assert.deepEqual([panelBox.x, panelBox.y, panelBox.x + panelBox.width, panelBox.height], [72, 0, 1440, 900], 'a page that fills the window right of the rail');
+    await wide.page.keyboard.press('Escape');
     await wide.page.locator('#h5-settings').waitFor({ state: 'detached' });
     // Narrowing the window below the breakpoint turns the sidebar back into the sheet that is closed; widening brings it back.
     await wide.page.setViewportSize({ width: 600, height: 900 });

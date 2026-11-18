@@ -6,7 +6,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { api, errorText, t } from './common.jsx';
-import { Feedback, Field, Group, Hint, PART_SX, Section, SubHeading, failure, useFeedback } from './Form.jsx';
+import { Actions, Feedback, Field, Group, Hint, Section, SettingsCard, SubHeading, SwitchRow, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { BASE } from './attention-feed.mjs';
 import { attentionSettingsSlots } from './attention-slots.mjs';
@@ -76,7 +76,7 @@ function TokenList({ opened }) {
           {tokens && tokens.length ? tokens.map(token => (
             <Paper key={token.id} variant="outlined" className="h5-attention-token" data-id={token.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
               <Box sx={{ minWidth: 0 }}>
-                <Box component="strong" sx={{ overflowWrap: 'anywhere' }}>{token.name}</Box>
+                <Typography component="strong" variant="body2" sx={{ display: 'block', fontWeight: 500, overflowWrap: 'anywhere' }}>{token.name}</Typography>
                 <Typography variant="caption" component="small" color="text.secondary" sx={{ display: 'block', overflowWrap: 'anywhere' }}>
                   {`${t('Created')} ${when(token.created_at)} · ${token.last_used_at ? `${t('Last used')} ${when(token.last_used_at)}` : t('Never used')}`}
                 </Typography>
@@ -87,10 +87,10 @@ function TokenList({ opened }) {
           )) : tokens ? <Hint>{t('No tokens created yet')}</Hint> : null}
         </Box>
         <Field id="h5-attention-token-name" label="Token name" value={name} onChange={event => setName(event.target.value)} placeholder={t('e.g. laptop claude')} htmlInput={{ maxLength: 60 }} />
-        <Button id="h5-attention-token-create" variant="contained" disabled={busy} onClick={() => void create()}>{t('Create token')}</Button>
+        <Actions><Button id="h5-attention-token-create" variant="contained" disabled={busy} onClick={() => void create()}>{t('Create token')}</Button></Actions>
         {created ? (
           <Paper id="h5-attention-token-created" variant="outlined" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, p: 1 }}>
-            <code id="h5-attention-token-value" ref={codeNode} translate="no" style={{ fontSize: 13, overflowWrap: 'anywhere', wordBreak: 'break-all', userSelect: 'all' }}>{created.token}</code>
+            <Typography component="code" variant="body2" id="h5-attention-token-value" ref={codeNode} translate="no" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere', wordBreak: 'break-all', userSelect: 'all' }}>{created.token}</Typography>
             <Button id="h5-attention-token-copy" size="small" variant="outlined" onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{t(copyLabel)}</Button>
           </Paper>
         ) : null}
@@ -146,7 +146,7 @@ function SummarySettings({ opened }) {
       </TextField>
       <Field id="h5-attention-summary-model" label="Model (optional)" value={form.model} disabled={!loaded} onChange={event => setForm(current => ({ ...current, model: event.target.value }))} placeholder={t('The provider’s default model')} />
       <Hint id="h5-attention-summary-privacy">{t('When on, the task’s goal, latest prompt and reply, pending question, changed file names and recent session messages are sent to the chosen provider, with the translation key from Voice and translation. Nothing is sent while off.')}</Hint>
-      <Button id="h5-attention-summary-save" variant="contained" disabled={busy || !loaded} onClick={() => void save()}>{t('Save')}</Button>
+      <Actions><Button id="h5-attention-summary-save" variant="contained" disabled={busy || !loaded} onClick={() => void save()}>{t('Save')}</Button></Actions>
       <Feedback id="h5-attention-summary-feedback" feedback={feedback} />
       <SyncNote id="h5-attention-summary-sync" note={synced} />
     </Section>
@@ -160,10 +160,8 @@ function Reminders({ ui, prefs, setPrefs }) {
     <Section id="reminders">
       <ScopedHeading label={<ScopeLabel follow={false} />}><SubHeading>{t('Reminders on this device')}</SubHeading></ScopedHeading>
       <Hint>{t('When a task starts to need you, fails or is ready for review, this page shows a notice. A change you make on this page gives no reminder.')}</Hint>
-      <FormControlLabel
-        control={<Checkbox checked={prefs.sound} onChange={event => { ui.actions.attentionSetSound(event.target.checked); setPrefs(ui.actions.attentionPrefs()); }} slotProps={{ input: { id: 'h5-attention-sound' } }} />}
-        label={t('Play a short sound')}
-      />
+      {/* Takes effect at once (this browser): a switch row. */}
+      <SwitchRow inputId="h5-attention-sound" label={t('Play a short sound')} checked={Boolean(prefs.sound)} onChange={on => { ui.actions.attentionSetSound(on); setPrefs(ui.actions.attentionPrefs()); }} />
     </Section>
   );
 }
@@ -181,12 +179,18 @@ export function AttentionSettings({ ui, request = null }) {
     <Group id="attention" title="T-Attention" onOpen={open} request={request}>
       {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
       <InTab part="attention-guide">
-        <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
-        <LocalOnly id="h5-guide-settings-remote"><AttentionGuide ui={ui} place="settings" active={opened} /></LocalOnly>
+        {/* The guide draws its own outlined box (AttentionGuide.jsx), so it is not put in a card. */}
+        <Box id="h5-sec-attention-guide" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 1, '& > #h5-guide-show': { alignSelf: 'flex-start' }, '&:not(:has(> :not([hidden])))': { display: 'none' } }}>
+          <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
+          <LocalOnly id="h5-guide-settings-remote"><AttentionGuide ui={ui} place="settings" active={opened} /></LocalOnly>
+        </Box>
       </InTab>
       <InTab part="reminders"><Reminders ui={ui} prefs={prefs} setPrefs={setPrefs} /></InTab>
       {/* SLOT: the settings of other T-Attention parts (attention-slots.mjs: the plugin list, then the agent skill). Nothing is drawn when none is registered. */}
-      {attentionSettingsSlots().filter(slot => !slot.part || partShown(slot.part, scope)).map(({ id, Component }) => <Box key={id} className="h5-attention-slot" data-slot={id} sx={PART_SX}><Component ui={ui} opened={opened} /></Box>)}
+      {/* Each slot is a card; a card whose component draws nothing visible (an older server) is not shown. */}
+      {attentionSettingsSlots().filter(slot => !slot.part || partShown(slot.part, scope)).map(({ id, Component }) => (
+        <SettingsCard key={id} className="h5-attention-slot" data-slot={id} sx={{ '&:not(:has(> :not([hidden])))': { display: 'none' } }}><Component ui={ui} opened={opened} /></SettingsCard>
+      ))}
       <InTab part="attention-summary"><SummarySettings opened={opened} /></InTab>
       <InTab part="cli-tokens"><TokenList opened={opened} /></InTab>
     </Group>

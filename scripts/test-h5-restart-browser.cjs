@@ -3,6 +3,7 @@
 // "Refresh now" when it takes long, the disabled button with its reason, no button on an older server or in a pane of the multi-column view, and the
 // error texts. H5_SHOT_DIR=<dir> saves a screenshot of the confirmation.
 const { chromium } = require('playwright');
+const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -89,10 +90,7 @@ async function openEngines(frame) {
   await frame.locator('#h5-app').waitFor();
   await frame.evaluate(() => window.H5UI.actions.openSettings());
   await frame.locator('#h5-settings').waitFor({ state: 'visible' });
-  const summary = frame.locator('#h5-set-devices .MuiAccordionSummary-root');
-  await summary.scrollIntoViewIfNeeded();
-  await summary.click();
-  await frame.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
+  await openGroup(frame, 'devices');
   await frame.waitForFunction(() => (document.getElementById('h5-engine-local-version') || {}).textContent === 'v2.101.0');
 }
 const dialog = page => page.locator('#h5-restart-dialog [role="dialog"]');
@@ -153,7 +151,7 @@ const SCENARIOS = {
     const w = world({ restart: undefined });
     const { context, page } = await open(browser, w);
     await openEngines(page);
-    await page.locator('.h5-engine-row[data-engine="local"] .h5-engine-rename').waitFor();
+    await page.locator('.h5-engine-row[data-engine="local"] .h5-engine-more').waitFor();
     assert.equal(await page.locator('#h5-restart').count(), 0);
     await context.close();
   },
@@ -190,7 +188,7 @@ const SCENARIOS = {
     await waitFor(() => (frame = page.frames().find(item => item.url().includes('pane=a'))), 'the pane frame');
     await frame.waitForFunction(() => Boolean(window.H5Pane));
     await openEngines(frame);
-    await frame.locator('.h5-engine-row[data-engine="local"] .h5-engine-rename').waitFor();
+    await frame.locator('.h5-engine-row[data-engine="local"] .h5-engine-more').waitFor();
     assert.equal(await frame.locator('#h5-restart').count(), 0);
     await context.close();
   },

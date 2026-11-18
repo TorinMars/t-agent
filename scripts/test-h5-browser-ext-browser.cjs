@@ -5,6 +5,7 @@
 // Chinese page; nothing is wider than a 390px phone.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -52,8 +53,7 @@ async function openPage(browser, { supported = true, present = true, browsers = 
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
   const extCalls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/browser-ext')));
   const openGroup = async () => {
-    await page.locator('#h5-set-tasks-files .MuiAccordionSummary-root').tap();
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-tasks-files .MuiCollapse-entered')));
+    await openSettingsGroup(page, 'tasks-files');
   };
   return { page, errors, extCalls, openGroup };
 }

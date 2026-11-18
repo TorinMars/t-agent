@@ -4,7 +4,7 @@ import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
 import { api, t } from './common.jsx';
-import { Feedback, Hint, Section, failure, onAnyGroupOpen, useFeedback } from './Form.jsx';
+import { Actions, Feedback, Hint, Section, failure, onAnyGroupOpen, useFeedback } from './Form.jsx';
 import { detailLine, keyEntry, labelsShown, normalizeSync, outcomeText, peerStatus, saveOutcome, scopeOf, scopeText, scopeTitle } from './settings-sync.mjs';
 import { deviceScopeText, deviceScopeTitle } from './device-target.mjs';
 import { labelRedundant } from './settings-tabs.mjs';
@@ -39,7 +39,7 @@ onAnyGroupOpen(() => void refreshSettingsSync());
 
 const PILL = {
   display: 'inline-flex', alignItems: 'center', boxSizing: 'border-box', minHeight: 22, maxWidth: '100%', px: 1, py: 0.25, borderRadius: 11, border: 1,
-  fontSize: 12, fontWeight: 500, lineHeight: 1.3, whiteSpace: 'normal', overflowWrap: 'anywhere', verticalAlign: 'middle',
+  typography: 'caption', fontWeight: 500, lineHeight: 1.3, whiteSpace: 'normal', overflowWrap: 'anywhere', verticalAlign: 'middle',
 };
 const LOOK = {
   shared: { color: 'primary.main', borderColor: theme => alpha(theme.palette.primary.main, 0.4), bgcolor: theme => alpha(theme.palette.primary.main, 0.1) },
@@ -131,18 +131,18 @@ export function SettingsSyncStatus({ opened }) {
     finally { setBusy(false); }
   };
   return (
-    <Section id="settings-sync" title="Settings sync" sx={{ borderBottom: 1, borderColor: 'divider', pb: 2 }}>
+    <Section id="settings-sync" title="Settings sync">
       <Box id="h5-settings-sync" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Hint>{t('Linked devices use one set of settings. Each part below says whether a change is copied to the other devices or stays on this one.')}</Hint>
         <Box component="ul" id="h5-settings-sync-peers" sx={{ listStyle: 'none', m: 0, p: 0, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
           {sync.peers.map(peer => (
             <Typography component="li" key={peer.name} variant="body2" className="h5-settings-sync-peer" data-peer={peer.name} data-online={peer.online ? 'true' : 'false'} color={peer.last_error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
-              <Box component="strong" translate="no" sx={{ color: 'text.primary', fontWeight: 600 }}>{peer.name}</Box>
+              <Box component="strong" translate="no" sx={{ color: 'text.primary', fontWeight: 500 }}>{peer.name}</Box>
               {` · ${peerStatus(peer, { t })}`}
             </Typography>
           ))}
         </Box>
-        <Button id="h5-settings-sync-now" variant="outlined" disabled={busy} onClick={() => void now()} sx={{ alignSelf: 'flex-start' }}>{t('Sync now')}</Button>
+        <Actions><Button id="h5-settings-sync-now" disabled={busy} onClick={() => void now()}>{t('Sync now')}</Button></Actions>
         <Feedback id="h5-settings-sync-feedback" feedback={feedback} />
       </Box>
     </Section>

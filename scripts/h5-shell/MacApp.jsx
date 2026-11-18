@@ -6,7 +6,7 @@ import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
-import { Hint, Section } from './Form.jsx';
+import { Hint, MinorHeading, Section } from './Form.jsx';
 import { useDeviceTarget } from './DeviceTarget.jsx';
 import { copyText } from './copy-text.mjs';
 
@@ -63,7 +63,7 @@ function CopyItem({ id, label, value }) {
           secondary: { id, component: 'code', variant: 'body2', color: 'text.primary', translate: 'no', sx: { display: 'block', fontFamily: 'monospace', overflowWrap: 'anywhere', userSelect: 'all' } },
         }}
       />
-      <Button id={`${id}-copy`} variant="outlined" size="small" sx={{ flexShrink: 0 }} onClick={async () => setCopied(await copyText(value))}>{copied ? t('Copied') : t('Copy')}</Button>
+      <Button id={`${id}-copy`} size="small" sx={{ flexShrink: 0 }} onClick={async () => setCopied(await copyText(value))}>{copied ? t('Copied') : t('Copy')}</Button>
     </ListItem>
   );
 }
@@ -114,7 +114,7 @@ export function MacAppSection({ opened }) {
       </List>
       {addresses.length ? (
         <Box id="h5-mac-app-addresses" sx={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <Typography component="h4" variant="subtitle2" id="h5-mac-app-addresses-title">{t('Web addresses')}</Typography>
+          <MinorHeading id="h5-mac-app-addresses-title">{t('Web addresses')}</MinorHeading>
           <Hint>{t('The addresses of this service. The app, browsers and phones all use them.')}</Hint>
           <List dense disablePadding aria-labelledby="h5-mac-app-addresses-title">
             {addresses.map((entry, index) => (

@@ -65,7 +65,7 @@ export function PairingDialog({ open, onClose, onPaired }) {
 
   return (
     <Dialog id="h5-pairing" open={open} onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-pairing-title">
-      <DialogTitle id="h5-pairing-title" sx={{ fontSize: 18 }}>{t('Connect another machine')}</DialogTitle>
+      <DialogTitle id="h5-pairing-title" >{t('Connect another machine')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
         {error ? <Typography variant="body2" color="error" id="h5-pairing-error" sx={{ overflowWrap: 'anywhere' }}>{error}</Typography> : null}
         {!pairing && !error ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : null}
@@ -75,13 +75,13 @@ export function PairingDialog({ open, onClose, onPaired }) {
         {pairing && !claimed ? (
           <>
             <Typography variant="body2" color="text.secondary">{t('Run this on the other machine. It needs T-Agent installed there (it has the t-attention command).')}</Typography>
-            <Box id="h5-pairing-code" translate="no" aria-label={t('Pairing code')} sx={{ fontSize: 40, fontWeight: 700, letterSpacing: 4, textAlign: 'center', fontVariantNumeric: 'tabular-nums', opacity: expired ? 0.4 : 1 }}>{codeGroups(pairing.code)}</Box>
+            <Box id="h5-pairing-code" translate="no" aria-label={t('Pairing code')} sx={{ typography: 'h3', fontWeight: 700, letterSpacing: 4, textAlign: 'center', fontVariantNumeric: 'tabular-nums', opacity: expired ? 0.4 : 1 }}>{codeGroups(pairing.code)}</Box>
             <Typography variant="body2" id="h5-pairing-countdown" role="timer" color={expired ? 'error' : 'text.secondary'} sx={{ textAlign: 'center' }}>
               {expired ? t('The code expired') : `${t('Valid for')} ${countdownText(left)}`}
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'action.hover' }}>
-              <Box component="code" id="h5-pairing-command" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, fontSize: 13, overflowWrap: 'anywhere', userSelect: 'all' }}>{pairing.command}</Box>
-              <Button size="small" variant="outlined" id="h5-pairing-copy" disabled={expired} onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{copied ? t('Copied') : t('Copy')}</Button>
+              <Box component="code" id="h5-pairing-command" translate="no" sx={{ flex: '1 1 auto', minWidth: 0, typography: 'body2', fontFamily: 'monospace', overflowWrap: 'anywhere', userSelect: 'all' }}>{pairing.command}</Box>
+              <Button size="small" id="h5-pairing-copy" disabled={expired} onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{copied ? t('Copied') : t('Copy')}</Button>
             </Box>
             <Typography variant="caption" color="text.secondary">{t('The code works once. The other machine gets its own token, which you can revoke under CLI tokens.')}</Typography>
           </>

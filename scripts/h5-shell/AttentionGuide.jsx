@@ -29,11 +29,11 @@ function openTelegramSetup(ui, place) {
   const openPage = () => openAttentionPluginPage({ kind: 'notifier', name: 'telegram' });
   if (place === 'settings') { openPage(); return; }
   if (!ui.get().wide && ui.actions.closeAttention) ui.actions.closeAttention();
-  ui.actions.openSettings('attention'); // opens the sheet with the T-Attention group unfolded (settings-target.mjs)
+  ui.actions.openSettings('attention'); // opens Settings on the T-Attention group (settings-target.mjs)
   let tries = 0;
   const step = () => {
     tries += 1;
-    if (document.querySelector('#h5-set-attention .MuiCollapse-entered') && openPage()) return;
+    if (document.querySelector('#h5-set-attention:not([hidden])') && openPage()) return; // the group is shown (Settings.jsx)
     if (tries < 40) setTimeout(step, 75);
   };
   setTimeout(step, 0);

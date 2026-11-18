@@ -1765,6 +1765,10 @@
     const current = terminalId ? terminals.find(entry => entry.terminal_id === terminalId) : null;
     const agent = (current && current.agent) || null; // the kind of the current terminal, as the task list shows it: picks the saved commands presets
     if (ui.get().terminalAgent !== agent) ui.set({ terminalAgent: agent });
+    // The terminal shown (none under a chat): a pane of the multi-column view tells its tab, so the rail of a maximized map column shows its state.
+    const target = task && terminalId && !agentChat ? { sourceKey: source.key, taskId: task.id, terminalId: String(terminalId) } : null;
+    const shownBefore = ui.get().shownTarget || null;
+    if (JSON.stringify(shownBefore) !== JSON.stringify(target)) ui.set({ shownTarget: target });
     if (agentChat && agentFor) {
       name = agentFor.title || '';
     } else if (terminalId) {
@@ -1856,20 +1860,32 @@
     mindmapView.style.height = mindmapView.style.top = '';
     window.visualViewport?.removeEventListener('resize', fitMindmapView);
     window.visualViewport?.removeEventListener('scroll', fitMindmapView);
-    ui.set({ mindmapLayers: [] });
+    ui.set({ mindmapLayers: [], mindmapView: null });
   }
-  function openMindmaps() {
+  // `open`: { sourceKey, id } of a map to open at once (a mind map column that a reload brings back, pane.mjs). What the view shows is in
+  // `state.mindmapView` ({ screen: 'list' | 'editor', sourceKey?, id?, title }), from the start, so a pane remembers it before the bundle has loaded.
+  // In a pane the view is a mind map column of the multi-column view: its editor has a Maximize button (and Cmd/Ctrl+Shift+Enter), which asks the
+  // top page to maximize this column (or to restore the columns), and it takes the focus only once the person used this pane.
+  // While the top page shows its columns, its own view would be hidden under them: the map opens in a new column instead (Columns.jsx).
+  function openMindmaps({ open = null } = {}) {
     if (mindmap) return;
+    if (columnsShown() && ui.actions.addMapColumn) { ui.actions.addMapColumn(); return; }
     if (!isWide()) closeTasks();
     mindmapView.hidden = false;
     window.visualViewport?.addEventListener('resize', fitMindmapView);
     window.visualViewport?.addEventListener('scroll', fitMindmapView);
     const list = mindmapSources();
     mindmapSourcesSent = JSON.stringify(list);
-    mindmap = MindMap.mount(mindmapView, { onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }), sources: list });
+    ui.set({ mindmapView: open ? { screen: 'editor', sourceKey: open.sourceKey, id: open.id, title: '' } : { screen: 'list', title: '' } });
+    const column = PANE ? { inColumn: true, maximized: Boolean(ui.get().paneMaximized), onMaximize: () => PANE.post('maximize'), canFocus: () => PANE.engaged() } : {};
+    mindmap = MindMap.mount(mindmapView, {
+      onClose: closeMindmaps, notify: (message, kind) => tell(message, kind), onLayers: layers => ui.set({ mindmapLayers: layers }), sources: list,
+      onView: view => { if (mindmap) ui.set({ mindmapView: view }); }, open, ...column,
+    });
     fitMindmapView();
   }
   ui.actions.openMindmaps = openMindmaps;
+  ui.actions.setMindmapMaximized = on => { ui.set({ paneMaximized: on }); if (mindmap && mindmap.setMaximized) mindmap.setMaximized(on); };
 
   // ── Agent chat: the same Claude / Codex sessions as a conversation view instead of a terminal. The task sheet neither lists nor creates chats; a chat link opens one (`openChatFromLink`). ──
   const agentView = $('h5-agent');
@@ -2804,6 +2820,31 @@
       }
     }
     ui.set({ activeCount: count });
+    publishActivity();
+  }
+  // The running ('running', also a running sub-agent) and finished-not-seen ('done') terminals of every listed service, for the rail of a maximized
+  // mind map column (Columns.jsx, columns.mjs `columnStatus`): `state.terminalActivity` = { sourceKey: { taskId: { terminalId: state } } }. Only the
+  // top page, which keeps the feeds; set only when it changed.
+  function publishActivity() {
+    if (PANE) return;
+    const all = {};
+    for (const from of listedSources()) {
+      const snap = snapshotOf(from);
+      if (!snap) continue;
+      const tasks = {};
+      for (const taskId of new Set([...Object.keys(snap.activity), ...Object.keys(snap.subagents)])) {
+        const states = snap.activity[taskId] || {};
+        const subs = snap.subagents[taskId] || {};
+        const row = {};
+        for (const id of new Set([...Object.keys(states), ...Object.keys(subs)])) {
+          if (states[id] === 'running' || Number(subs[id]) > 0) row[id] = 'running';
+          else if (states[id] === 'done') row[id] = 'done';
+        }
+        if (Object.keys(row).length) tasks[taskId] = row;
+      }
+      if (Object.keys(tasks).length) all[from.key] = tasks;
+    }
+    if (JSON.stringify(all) !== JSON.stringify(ui.get().terminalActivity || {})) ui.set({ terminalActivity: all });
   }
   function applyActivity(f, snap) {
     const from = f.source;
@@ -3102,6 +3143,11 @@
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
     return lines.join('\n');
   }
+  // The last non-empty lines of the terminal shown, for the peek card of this column's tile in the top page's rail (pane.mjs `peek`); none under a chat.
+  ui.actions.paneTail = count => {
+    if (!session || session.disposed || agentChat || !session.term) return [];
+    return bufferText(session.term).split('\n').filter(line => line.trim()).slice(-count);
+  };
   let copyWatch = null; // { term, listener, timer }: refreshes the open copy view when new output arrives
   function stopCopyWatch() {
     if (!copyWatch) return;

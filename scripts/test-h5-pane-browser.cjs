@@ -218,8 +218,11 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     assert.ok(messages.every(m => m.origin === ORIGIN), 'every message comes from this origin');
     assert.deepEqual(of(0, 'ready').map(m => m.data), [{ type: 't-agent-pane', paneId: 'a', event: 'ready' }]);
     assert.deepEqual(of(1, 'ready').map(m => m.data), [{ type: 't-agent-pane', paneId: 'b', event: 'ready' }]);
-    assert.deepEqual(of(0, 'title').at(-1).data, { type: 't-agent-pane', paneId: 'a', event: 'title', title: 'Alpha', session: 'Term 1' });
-    assert.deepEqual(of(1, 'title').at(-1).data, { type: 't-agent-pane', paneId: 'b', event: 'title', title: 'Beta', session: 'Term 3' });
+    // `target`: the terminal shown, for the state of the column's tile in the rail of a maximized column.
+    assert.deepEqual(of(0, 'title').at(-1).data, { type: 't-agent-pane', paneId: 'a', event: 'title', title: 'Alpha', session: 'Term 1', target: { sourceKey: 'local', taskId: 1, terminalId: 't1' } });
+    const beta = of(1, 'title').at(-1).data;
+    assert.deepEqual({ ...beta, target: undefined }, { type: 't-agent-pane', paneId: 'b', event: 'title', title: 'Beta', session: 'Term 3', target: undefined });
+    assert.equal(beta.target && beta.target.sourceKey, 'local');
     assert.ok(of(0, 'focus').length >= 1 && of(1, 'focus').length >= 1, 'a press in a pane says focus');
     const focusBefore = of(1, 'focus').length;
     await b.locator('#h5-task-name').click();

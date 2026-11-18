@@ -263,3 +263,109 @@ test('column move keys: Ctrl+Alt+Shift+Left / Right, never the step keys', async
   }
   assert.equal(columnStep({ key: 'ArrowRight', ctrlKey: true, altKey: true, shiftKey: true }), 0, 'a move is never a step');
 });
+
+// ── Mind map columns and the maximized column with its rail ──
+
+test('a mind map column is remembered by its pane: the list, or one map on one service', async () => {
+  const { MAP_KEY, mapKeyOf, readMapColumn, writeMapColumn } = await load();
+  assert.equal(MAP_KEY, 'h5-mindmap');
+  assert.equal(mapKeyOf('k3x9'), 'pane:k3x9:h5-mindmap', 'the same key the pane uses (pane:<id>: + h5-mindmap)');
+  assert.deepEqual(readMapColumn('{"screen":"list"}'), { screen: 'list' });
+  const map = { screen: 'editor', sourceKey: 'remote:7', id: '3f2a-uuid_1', title: 'Plan' };
+  assert.deepEqual(readMapColumn(JSON.stringify(map)), { screen: 'editor', sourceKey: 'remote:7', id: '3f2a-uuid_1' }, 'the title is not kept');
+  assert.equal(writeMapColumn(map), '{"screen":"editor","sourceKey":"remote:7","id":"3f2a-uuid_1"}');
+  assert.equal(writeMapColumn({ screen: 'list', title: '' }), '{"screen":"list"}');
+  for (const bad of [null, '', 'nope', '{', '{"screen":"editor","sourceKey":"local"}', '{"screen":"editor","sourceKey":"evil","id":"a"}',
+    '{"screen":"editor","sourceKey":"local","id":"../x"}', '{"screen":"other"}', '[]']) {
+    assert.equal(readMapColumn(bad), null, String(bad));
+  }
+  assert.equal(writeMapColumn(null), null, 'no view: nothing is kept (the key is removed)');
+});
+
+test('"Add mind map column" makes a new column at the end, never a 13th', async () => {
+  const { addMapColumn, MAX_COLUMNS } = await load();
+  const seq = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+  let i = 0;
+  const random = () => seq[i++ % seq.length];
+  const made = addMapColumn(['aaa', 'bbb'], ['aaa', 'bbb', 'ccc'], random);
+  assert.equal(made.ids.length, 4, 'after every mounted id, including one being closed');
+  assert.equal(made.ids[3], made.id);
+  assert.ok(!['aaa', 'bbb', 'ccc'].includes(made.id));
+  const full = Array.from({ length: MAX_COLUMNS }, (_, n) => `c${n}`);
+  assert.equal(addMapColumn(full), null);
+});
+
+test('pane messages carry the map, the terminal shown, its agent, and peek lines', async () => {
+  const { readPaneMessage, PEEK_LINES } = await load();
+  const base = { type: 't-agent-pane', paneId: 'abc' };
+  const title = readPaneMessage({ ...base, event: 'title', title: 'Fix', session: 'S', map: { title: ' Plan ', screen: 'editor' }, target: { sourceKey: 'local', taskId: 3, terminalId: 'default' }, agent: 'codex' });
+  assert.deepEqual(title.map, { title: 'Plan', screen: 'editor' });
+  assert.deepEqual(title.target, { sourceKey: 'local', taskId: 3, terminalId: 'default' });
+  assert.equal(title.agent, 'codex');
+  const odd = readPaneMessage({ ...base, event: 'title', map: { screen: 'nope' }, target: { sourceKey: 'x', taskId: 1, terminalId: 'a' }, agent: 'bash' });
+  assert.equal(odd.map, undefined);
+  assert.equal(odd.target, undefined);
+  assert.equal(odd.agent, undefined);
+  assert.equal(readPaneMessage({ ...base, event: 'title', target: { sourceKey: 'local', taskId: -1, terminalId: 'a' } }).target, undefined);
+  assert.deepEqual(readPaneMessage({ ...base, event: 'maximize' }), { paneId: 'abc', event: 'maximize' });
+  const peek = readPaneMessage({ ...base, event: 'peek', lines: ['a', 5, 'b  ', ...Array.from({ length: 10 }, (_, n) => `l${n}`), 'x'.repeat(500)] });
+  assert.equal(peek.lines.length, PEEK_LINES);
+  assert.equal(peek.lines.at(-1).length, 200, 'each line cut to 200 characters');
+  assert.deepEqual(readPaneMessage({ ...base, event: 'peek', lines: 'no' }).lines, []);
+});
+
+test('any open column of the shown strip can be maximized, a terminal or a map; one at a time', async () => {
+  const { canMaximize, keptMaximized, toggleMaximize, railColumns, RAIL_WIDTH } = await load();
+  assert.equal(RAIL_WIDTH, 72);
+  const columns = { shown: true, ids: ['a', 'b', 'c'], closing: [], titles: { a: { title: 'T' }, b: { map: { title: 'M', screen: 'editor' } } }, maximized: null };
+  assert.equal(canMaximize(columns, 'b'), true);
+  assert.equal(canMaximize(columns, 'a'), true, 'a terminal column too');
+  assert.equal(canMaximize(columns, 'c'), true, 'a column whose pane said nothing yet');
+  assert.equal(canMaximize(columns, 'z'), false);
+  assert.equal(canMaximize({ ...columns, shown: false }, 'b'), false, 'not on a narrow screen');
+  assert.equal(canMaximize({ ...columns, closing: ['b'] }, 'b'), false);
+  assert.deepEqual(toggleMaximize(columns, 'b'), { maximized: 'b' });
+  assert.deepEqual(toggleMaximize(columns, 'a'), { maximized: 'a' });
+  assert.equal(toggleMaximize(columns, null), null, 'no focused column: nothing to maximize');
+  assert.equal(toggleMaximize({ ...columns, shown: false }, 'a'), null);
+  const max = { ...columns, maximized: 'b' };
+  assert.deepEqual(toggleMaximize(max, 'b'), { maximized: null }, 'the same keys restore');
+  assert.deepEqual(toggleMaximize(max, 'a'), { maximized: null });
+  assert.equal(keptMaximized(max), 'b');
+  assert.equal(keptMaximized({ ...max, titles: { ...max.titles, b: { title: 'T' } } }), 'b', 'its map was closed: it stays maximized (now a terminal)');
+  assert.equal(keptMaximized({ ...max, ids: ['a', 'c'] }), null, 'it was closed');
+  assert.equal(keptMaximized({ ...max, closing: ['b'] }), null, 'it is being closed');
+  assert.equal(keptMaximized({ ...max, shown: false }), null, 'the strip went away');
+  assert.deepEqual(railColumns(max, 'b'), ['a', 'c'], 'the others, in the order shown');
+  assert.deepEqual(railColumns({ ...max, closing: ['c'] }, 'b'), ['a']);
+});
+
+test('Cmd/Ctrl+Shift+Enter maximizes or restores; Alt or an IME composition does not', async () => {
+  const { maximizeKey } = await load();
+  assert.equal(maximizeKey({ key: 'Enter', metaKey: true, shiftKey: true }), true);
+  assert.equal(maximizeKey({ key: 'Enter', ctrlKey: true, shiftKey: true }), true);
+  assert.equal(maximizeKey({ key: 'Enter', metaKey: true }), false, 'Cmd+Enter is the map\'s Add parent topic');
+  assert.equal(maximizeKey({ key: 'Enter', shiftKey: true }), false, 'Shift+Enter is Add topic before');
+  assert.equal(maximizeKey({ key: 'Enter', metaKey: true, shiftKey: true, altKey: true }), false);
+  assert.equal(maximizeKey({ key: 'Enter', metaKey: true, shiftKey: true, isComposing: true }), false);
+  assert.equal(maximizeKey({ key: 'Enter', ctrlKey: true, shiftKey: true, keyCode: 229 }), false);
+});
+
+test('the state of a rail tile: running, needs you (with the count and the question), or idle', async () => {
+  const { columnStatus, columnName } = await load();
+  const info = { title: 'Re-render', target: { sourceKey: 'local', taskId: 4, terminalId: 'default' }, agent: 'codex' };
+  assert.deepEqual(columnStatus(info, {}), { state: 'idle', count: 0, question: '' });
+  assert.equal(columnStatus(info, { activity: { local: { 4: { default: 'running' } } } }).state, 'running');
+  assert.equal(columnStatus(info, { activity: { local: { 4: { default: 'done' } } } }).state, 'waiting', 'finished and not seen yet');
+  assert.equal(columnStatus(info, { activity: { local: { 4: { other: 'running' } } } }).state, 'idle', 'another terminal of the task');
+  const item = (id, extra) => ({ id, status: 'waiting_user', engine: 'local', context: { tagent: { task_id: 4, terminal_id: 'default' }, pending: { text: `Q${id}` } }, ...extra });
+  const items = [item(1, { updated_at: '2026-01-01' }), item(2, { updated_at: '2026-02-01' }), item(3, { status: 'working' }), item(4, { engine: 'remote:2' }),
+    { id: 5, status: 'waiting_user', engine: 'local', context: JSON.stringify({ tagent: { task_id: 4, terminal_id: 'default' } }), attention_reason: 'Allow edit?', updated_at: '2025-01-01' }];
+  const status = columnStatus(info, { activity: { local: { 4: { default: 'running' } } }, items });
+  assert.deepEqual(status, { state: 'waiting', count: 3, question: 'Q2' }, 'needs you wins over running; the newest question');
+  assert.deepEqual(columnStatus({ map: { title: 'M', screen: 'editor' }, target: info.target }, { items }), { state: 'idle', count: 0, question: '' }, 'a map column');
+  assert.equal(columnName(info), 'Re-render');
+  assert.equal(columnName({ map: { title: 'Plan', screen: 'editor' } }), 'Plan');
+  assert.equal(columnName({ map: { title: '', screen: 'list' } }), 'Mind maps');
+  assert.equal(columnName(null), '');
+});

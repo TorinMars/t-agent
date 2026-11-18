@@ -1,10 +1,15 @@
 // Mind maps, used by the page (public/js/h5.js). This file is small and loaded with every page; the editor (mind-elixir and the view, source in scripts/mindmap/) is the
 // bundle mindmap-ui.js, fetched when the view is first opened.
 //
-//   const view = MindMap.mount(element, { onClose, notify, onLayers, sources });  returns { destroy(), flush(), setSources(list) }
+//   const view = MindMap.mount(element, { onClose, notify, onLayers, sources, onView?, open?, inColumn?, maximized?, onMaximize?, canFocus? });
+//   returns { destroy(), flush(), setSources(list), setMaximized(on) }
 // `onLayers(closers)`: the back gesture's layers, innermost last (scripts/h5-shell/back.mjs).
 // `sources`: the services whose maps are listed, in the order of the task list: [{ key, label, base, online }] (`base`: `/api/mindmaps` or
 // `/api/remote-servers/:id/mindmaps`). An empty list: not known yet. `setSources` gives the view a new list when the services change.
+// `onView({ screen, sourceKey?, id?, title })`: what the view shows, on every change; `open`: { sourceKey, id } of a map to open once its service is
+// listed. A mind map column of the multi-column view (`inColumn`): the editor has a Maximize button and Cmd/Ctrl+Shift+Enter, which call `onMaximize`;
+// `maximized` / `setMaximized(on)` say whether the column is maximized (Escape then restores instead of leaving); `canFocus()` false: the view takes
+// no focus by itself.
 const MindMap = (() => {
   // The bundle is asked for by the hash of its own content, which the page carries (window.TAAsset, put there by lib/static-assets.js), so it is
   // cached for a year like the page's other scripts. Without it (a page that was not served that way, as in most browser tests) the plain address is
@@ -32,6 +37,7 @@ const MindMap = (() => {
     let view = null;
     let disposed = false;
     let sources = options.sources; // the latest list, also when it changes before the bundle has loaded
+    let maximized = Boolean(options.maximized);
     const opener = document.activeElement;
     // The element itself has only its position here: the styles of the view arrive with the bundle.
     container.style.cssText = 'position:fixed;left:0;right:0;z-index:1250;background:#121212;color:#fff;';
@@ -42,7 +48,7 @@ const MindMap = (() => {
     loadBundle().then(ui => {
       if (disposed) return;
       container.textContent = '';
-      view = ui.mount(container, { ...options, sources });
+      view = ui.mount(container, { ...options, sources, maximized });
     }).catch(error => {
       if (disposed) return;
       if (options.notify) options.notify(tr(error.message), 'error');
@@ -51,12 +57,13 @@ const MindMap = (() => {
     return {
       flush() { return view ? view.flush() : Promise.resolve(); },
       setSources(list) { sources = list; if (view && view.setSources) view.setSources(list); },
+      setMaximized(on) { maximized = Boolean(on); if (view && view.setMaximized) view.setMaximized(maximized); },
       destroy() {
         disposed = true;
         if (view) view.destroy();
         view = null;
         container.textContent = '';
-        if (opener && opener.focus && opener.isConnected) opener.focus();
+        if (opener && opener.focus && opener.isConnected && (!options.canFocus || options.canFocus())) opener.focus();
       },
     };
   }

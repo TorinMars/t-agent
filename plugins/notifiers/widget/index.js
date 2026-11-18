@@ -1,4 +1,4 @@
-// T-Attention notifier: a bubble beside the T-Attention desktop window on this Mac (widgets/macos/TAttentionWidget.swift).
+// T-Attention notifier: a bubble beside the T-Attention desktop window on this Mac (widgets/macos/*.swift).
 // It never sends anything over the network: each message becomes one notice in the in-memory queue of services/widget-notices.js, which the window
 // reads every 5 s (GET /api/attention/widget/notices). A click on the bubble opens the notice's `target`. Ready only on macOS, in a server that may
 // start the window, with the window switched on and running (services/attention-widget.js state()); otherwise skipped like any notifier that is

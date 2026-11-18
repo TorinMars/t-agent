@@ -381,12 +381,12 @@ async function testChinese(browser) {
   assert.deepEqual(await listedTitles(page), ZH_GROUPS);
   await openGroup(page, 'devices');
   await page.locator('#h5-rule-sync-role').waitFor();
-  assert.equal(await page.locator('#h5-settings-page-title').textContent(), '设备');
-  assert.deepEqual(await page.locator('#h5-set-devices h3.h5-setting-subheading').allTextContents(), ['关联设备', '规则和技能同步', '高级']);
+  assert.equal(await page.locator('#h5-settings-page-title').textContent(), '\u8bbe\u5907');
+  assert.deepEqual(await page.locator('#h5-set-devices h3.h5-setting-subheading').allTextContents(), ['\u5173\u8054\u8bbe\u5907', '\u89c4\u5219\u548c\u6280\u80fd\u540c\u6b65', '\u9ad8\u7ea7']);
   await page.locator('#h5-devices-advanced-toggle').tap();
   await page.waitForSelector('.h5-token-row');
   await settled(page);
-  assert.deepEqual(await page.locator('#h5-devices-advanced h4.h5-setting-subheading').allTextContents(), ['连接远程引擎', '让其他客户端连接到这台']);
+  assert.deepEqual(await page.locator('#h5-devices-advanced h4.h5-setting-subheading').allTextContents(), ['\u8fde\u63a5\u8fdc\u7a0b\u5f15\u64ce', '\u8ba9\u5176\u4ed6\u5ba2\u6237\u7aef\u8fde\u63a5\u5230\u8fd9\u53f0']);
   await assertFits(page, 'Chinese 320 Devices');
   assert.deepEqual(errors, []);
   await context.close();

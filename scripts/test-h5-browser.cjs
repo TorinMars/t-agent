@@ -1383,16 +1383,19 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const rows = [...document.querySelectorAll('#h5-tasks .h5-task-item')];
       return { selectedClass: rows.some(node => node.classList.contains('Mui-selected')), colors: [...new Set(rows.map(node => bg(node) + '|' + bg(node.parentElement)))].length };
     }), { selectedClass: false, colors: 1 }, 'no task row looks selected');
-    assert.equal(await page.locator('#h5-tasks .h5-task-add').count(), await page.locator('#h5-tasks .h5-task-item').count(), 'every task has the "+" button');
+    // A touch screen: one "⋯" per task row and no "+"; New session is the first item of the "⋯" menu ("Task list look").
+    assert.equal(await page.locator('#h5-tasks .h5-task-more').count(), await page.locator('#h5-tasks .h5-task-item').count(), 'every task has the "⋯" button');
+    assert.equal(await page.locator('#h5-tasks .h5-task-add').first().isVisible(), false, 'no "+" on a touch screen');
     // Measured in one step: the task list re-renders when the sheet opens and would replace the row between two separate reads.
-    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').waitFor();
+    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').waitFor();
     const atEnd = await page.evaluate(() => {
       const row = document.querySelector('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"])').getBoundingClientRect();
-      const add = document.querySelector('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').getBoundingClientRect();
-      return add.x + add.width > row.x + row.width - 2;
+      const more = document.querySelector('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').getBoundingClientRect();
+      return more.x + more.width > row.x + row.width - 2;
     });
-    assert.ok(atEnd, 'the "+" sits at the right end of the task row');
-    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
+    assert.ok(atEnd, 'the "⋯" sits at the right end of the task row');
+    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').tap();
+    await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
     assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal'], 'the "+" opens the New session dialog');
     // The optional name field above the choices: placeholder, limit, the name stays when moving between the lists, and Enter creates.
@@ -1462,7 +1465,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-agent').isHidden(), true, 'a chat does not come back after a refresh');
     chats.length = 0;
     await page.locator('#h5-open-tasks').tap();
-    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add').tap();
+    await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').tap();
+    await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     assert.equal(await page.locator('#h5-new-name-input').inputValue(), '', 'a new New session dialog starts with an empty name');
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
@@ -1691,9 +1695,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('.h5-task-item', { hasText: 'Write docs' }).tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).waitFor();
     assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => [node.querySelector('.h5-task-title').textContent, node.getAttribute('aria-expanded')])), [['Fix login', 'true'], ['Write docs', 'true']], 'opening a second task does not close the first');
-    // Collapse all and Expand all are in the header of the list.
+    // Collapse all and Expand all are in the "List options" menu at the end of the filter chips.
+    await page.locator('#h5-task-list-more').tap();
     await page.locator('#h5-collapse-all').tap();
     assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded'))), ['false', 'false'], 'collapse all');
+    await page.locator('#h5-task-list-more').tap();
     await page.locator('#h5-expand-all').tap();
     await page.locator('#h5-tasks .h5-terminal-list[aria-label="Write docs"] .h5-terminal-main', { hasText: 'Docs terminal' }).waitFor();
     assert.deepEqual(await page.locator('.h5-task-item').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-expanded'))), ['true', 'true'], 'expand all, with the sessions of the task that is not selected read');
@@ -1880,7 +1886,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const remote = await openPage(browser, { remoteTerminals: true, remoteChat: true });
     await openTask(remote.page, 'Remote task');
     await remote.page.locator('#h5-open-tasks').tap();
-    await remote.page.locator('[data-source="remote:7"] .h5-task-add').tap();
+    await remote.page.locator('[data-source="remote:7"] .h5-task-more').tap();
+    await remote.page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     await remote.page.waitForTimeout(300);
     assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal']);
     assert.ok(!remote.calls.some(call => call.includes('/agent/conversations')), 'no chat is read');

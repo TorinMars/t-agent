@@ -1,6 +1,6 @@
 // The "⋯" of a session row (scripts/h5-shell/TermMenu.jsx, `SessionPopup`) in real Chromium at 390px (touch) and 1440px (mouse): a popup right under the button,
 // right-aligned to it and inside the screen, turned over above the button when there is no room below (a short window, the on-screen keyboard), for a session of
-// the selected task and of another task; every way it closes; the rename field keeping the focus; and the "⋯" of a task, which stays a sheet from the bottom.
+// the selected task and of another task; every way it closes; the rename field keeping the focus; and the "⋯" of a task, which opens the same popup under its button.
 // H5_SHOT_DIR=<dir> saves a screenshot of the popup at 390px there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -202,12 +202,19 @@ async function run(browser, wide) {
   await page.locator('#h5-term-rename-input').press('Escape');
   await page.locator('#h5-term-rename').waitFor({ state: 'detached' });
 
-  // ── The "⋯" of a task stays a sheet from the bottom ──
-  await h.press(page.locator('.h5-task-more').first());
-  await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'visible' });
-  assert.equal(await h.popup.count(), 0, `${label}: the task menu is not the popup`);
-  await h.press(page.locator('#h5-term-menu-cancel'));
-  await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' });
+  // ── The "⋯" of a task opens the same popup under its button (one pattern for tasks and sessions) ──
+  const taskMore = page.locator('.h5-task-more').first();
+  await h.press(taskMore);
+  await h.popup.waitFor({ state: 'visible' });
+  await h.settled();
+  assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').count(), 0, `${label}: the task menu is not a sheet from the bottom`);
+  const taskBoxes = await page.evaluate(() => {
+    const box = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+    return { button: box(document.querySelector('.h5-task-more')), paper: box(document.querySelector('.h5-session-menu-paper')) };
+  });
+  assert.ok(Math.abs(taskBoxes.paper.top - taskBoxes.button.bottom) <= 3 && Math.abs(taskBoxes.paper.right - taskBoxes.button.right) <= 3, `${label}: the task menu sits under its button ${JSON.stringify(taskBoxes)}`);
+  await page.keyboard.press('Escape');
+  await h.gone('Escape on the task menu');
 
   // ── The last row of a short window: above the button, not cut off ──
   await page.setViewportSize({ width: wide ? 1440 : 390, height: 460 });

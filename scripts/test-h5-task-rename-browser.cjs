@@ -101,7 +101,7 @@ async function run(browser, wide) {
     await page.locator('#h5-tasks').waitFor({ state: 'visible' });
     await settled();
   };
-  const menuItems = page.locator('#h5-term-menu-actions button, #h5-term-menu-actions [role="button"]');
+  const menuItems = page.locator('#h5-session-menu-actions [role="menuitem"]'); // the "⋯" of a task opens a menu under it (TermMenu.jsx `SessionPopup`)
   const askRename = async title => {
     await sheet();
     await press(row(title).first().locator('.h5-task-more'));
@@ -132,8 +132,8 @@ async function run(browser, wide) {
   await menuItems.first().waitFor();
   const items = await menuItems.allTextContents();
   assert.equal(items.indexOf('Rename') + 1, items.indexOf('Edit working directory'), `${label}: Rename comes before Edit working directory ${JSON.stringify(items)}`);
-  await press(page.locator('#h5-term-menu-cancel'));
-  await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' });
+  await page.keyboard.press('Escape');
+  await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
 
   // ── Title only: the checkbox is there (the folder has the title's name) and off; Save sends the title by PUT ──
   await askRename('Beta');

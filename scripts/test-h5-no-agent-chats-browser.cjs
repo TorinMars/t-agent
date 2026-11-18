@@ -142,7 +142,10 @@ async function check(env, h, { wide, remote, label }) {
   await assertNoChatMarks(page, label);
 
   // ── The "+": terminals and Claude / Codex terminal sessions, and no chat, also after the Engine has answered what it can do ──
-  await h.press(page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-add'));
+  // On a touch screen a row has no "+": New session is the first item of its "⋯" menu ("Task list look").
+  const shownRow = '#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"])';
+  if (wide) await h.press(page.locator(`${shownRow} .h5-task-add`));
+  else { await h.press(page.locator(`${shownRow} .h5-task-more`)); await h.press(page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' })); }
   await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
   await page.waitForTimeout(300);
   assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal'], `${label}: the New session dialog`);

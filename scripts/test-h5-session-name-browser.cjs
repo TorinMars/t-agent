@@ -161,6 +161,12 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       const { context, page, requests } = await openPage(browser, wide);
       const press = locator => (wide ? locator.click() : locator.tap());
       const taskRow = title => `#h5-tasks .h5-task-row:has(.h5-task-title:text-is("${title}"))`;
+      // New session of a task row: its "+" on a computer; a touch screen has one "⋯" whose menu starts with New session ("Task list look").
+      const addSession = async title => {
+        if (wide) { await page.locator(`${taskRow(title)} .h5-task-add`).click(); return; }
+        await page.locator(`${taskRow(title)} .h5-task-more`).tap();
+        await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
+      };
       const openSheet = async () => { if (!wide && !(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap(); await page.locator('#h5-tasks .h5-task-item').first().waitFor(); };
       await openSheet();
       // Task 6 (low in the list) is opened, then the sheet is opened again.
@@ -176,7 +182,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
         const input = document.getElementById('h5-new-name-input');
         return { paper: box(document.querySelector('#h5-new-session .MuiDialog-paper')), field: box(input.closest('.MuiInputBase-root')), visible: window.visualViewport.height, focused: document.activeElement === input };
       });
-      await press(page.locator(`${taskRow('Task 6')} .h5-task-add`));
+      await addSession('Task 6');
       await page.locator('#h5-new-session').waitFor();
       await page.waitForTimeout(300);
       assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').isVisible().catch(() => false), false, `${size}: no sheet from the bottom`);
@@ -201,7 +207,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
         await page.locator('#h5-new-session').waitFor({ state: 'detached' });
         assert.equal(await page.locator('#h5-tasks').isVisible(), true, 'the sheet stays open');
         // The "+" of a task that is not open: the sheet stays under the dialog, which names that task.
-        await page.locator(`${taskRow('Task 2')} .h5-task-add`).tap();
+        await addSession('Task 2');
         await page.locator('#h5-new-session').waitFor();
         await page.waitForTimeout(300);
         assert.equal(await page.locator('#h5-tasks').isVisible(), true, 'the sheet stays open for the "+" of another task');

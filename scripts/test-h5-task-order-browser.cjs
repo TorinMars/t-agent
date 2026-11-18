@@ -140,10 +140,12 @@ function tools(page, wide) {
   const menu = async title => {
     await sheet();
     await press(row(title).locator('.h5-task-more'));
-    await page.locator('#h5-term-menu-actions').first().waitFor();
+    await page.locator('#h5-session-menu-actions').first().waitFor();
     await settle();
   };
-  const item = text => page.locator('#h5-term-menu-actions button', { hasText: text });
+  // The "⋯" of a task opens a menu under it (TermMenu.jsx `SessionPopup`), which lists only the moves the task can make.
+  const item = text => page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: text });
+  const closeMenu = async () => { await page.keyboard.press('Escape'); await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' }); };
   const notice = wanted => page.waitForFunction(text => ((window.H5UI.get().notice || {}).message || '').startsWith(text), wanted);
   // A mouse drag that starts on the tag (the grip) of the row `from` (or, `onRow`, on its main button) and goes to the upper part of `to` (before it), or to its
   // lower part (after it).
@@ -178,7 +180,7 @@ function tools(page, wide) {
     };
   });
   const dragDone = () => page.waitForFunction(() => !document.querySelector('.h5-task-float') && !document.querySelector('.h5-task[data-drag-slot]'));
-  return { press, settle, sheet, closeSheet, titles, waitTitles, row, box, grip, expanded, lastPut, puts, menu, item, notice, mouseDrag, dragView, dragDone };
+  return { press, settle, sheet, closeSheet, titles, waitTitles, row, box, grip, expanded, lastPut, puts, menu, item, closeMenu, notice, mouseDrag, dragView, dragDone };
 }
 
 // A finger on the touch screen, through the DevTools protocol (real touch events and the pointer events made from them: what a phone sends).
@@ -574,9 +576,8 @@ async function testTouch(browser) {
   assert.equal(await t.expanded('Gamma'), 'false', `${label}: a release after the hold opens nothing`);
   // "⋯" and "+" still work with a tap (they are not part of the drag).
   await t.press(t.row('Echo').locator('.h5-task-more'));
-  await page.locator('#h5-term-menu-actions').first().waitFor();
-  await page.locator('#h5-term-menu-cancel').tap();
-  await page.locator('#h5-term-menu-actions').first().waitFor({ state: 'detached' });
+  await page.locator('#h5-session-menu-actions').first().waitFor();
+  await t.closeMenu();
   assert.equal(t.puts(world), saved, `${label}: taps, long presses and swipes save nothing`);
   // A finger that moves on a row scrolls the list, as before sorting existed.
   await page.setViewportSize({ width: 390, height: 420 });
@@ -602,16 +603,16 @@ async function testMenu(browser, wide) {
   await t.sheet();
   await t.waitTitles(FIRST);
   await t.menu('Beta');
-  assert.equal(await t.item('Move to top').isDisabled(), true, `${label}: the first cannot go up`);
-  assert.equal(await t.item('Move up').isDisabled(), true);
-  assert.equal(await t.item('Move down').isDisabled(), false);
+  assert.equal(await t.item('Move to top').count(), 0, `${label}: the first cannot go up`);
+  assert.equal(await t.item('Move up').count(), 0);
+  assert.equal(await t.item('Move down').count(), 1);
   assert.ok(await t.item('Move to “To do”').count(), `${label}: the group moves stay`);
   await t.press(t.item('Move down'));
   await t.waitTitles(['Echo', 'Beta', 'Alpha', 'Delta', 'Gamma']);
   assert.deepEqual(t.lastPut(world)[2], { order: [V(2), L(2), L(1), HIDDEN_KEY, V(1), L(3)] }, `${label}: Move down`);
   await t.menu('Gamma');
-  assert.equal(await t.item('Move down').isDisabled(), true, `${label}: the last cannot go down`);
-  assert.equal(await t.item('Move to bottom').isDisabled(), true);
+  assert.equal(await t.item('Move down').count(), 0, `${label}: the last cannot go down`);
+  assert.equal(await t.item('Move to bottom').count(), 0);
   await t.press(t.item('Move to top'));
   await t.waitTitles(['Gamma', 'Echo', 'Beta', 'Alpha', 'Delta']);
   await t.menu('Gamma');
@@ -664,7 +665,7 @@ async function testRefresh(browser, wide) {
   world.order = { order: [L(1), L(2), L(3), V(1), V(2)], updated_at: 10 };
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await t.waitTitles(['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo']);
-  assert.equal(await page.locator('#h5-term-menu-actions').first().isVisible(), true, `${label}: the menu is still open`);
+  assert.equal(await page.locator('#h5-session-menu-actions').first().isVisible(), true, `${label}: the menu is still open`);
   await t.press(t.item('Move up')); // acts on the order as it is now
   await t.waitTitles(['Alpha', 'Beta', 'Gamma', 'Echo', 'Delta']);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
@@ -683,7 +684,7 @@ async function testGroups(browser, wide) {
   assert.equal(await page.locator('#h5-task-list h3, #h5-task-list [role="heading"]').count(), 0, `${label}: no group titles, as before`);
   await t.menu('Alpha');
   await t.press(t.item('Move to “Ideas”'));
-  await page.waitForFunction(() => document.querySelectorAll('#h5-term-menu-actions button').length === 0);
+  await page.waitForFunction(() => document.querySelectorAll('#h5-session-menu-actions [role="menuitem"]').length === 0);
   await page.waitForFunction(() => window.H5UI.get().taskList.groups.some(group => group.key === 'g-ideas' && group.tasks.length === 2));
   await t.waitTitles(FIRST);
   assert.deepEqual(world.writes.filter(([m, p]) => m === 'PUT' && p === '/api/tasks/1').at(-1)[2], { status: 'g-ideas' }, `${label}: the group move went to the task`);
@@ -753,7 +754,7 @@ async function testOlderServer(browser, wide) {
   assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: no headers`);
   await t.menu('Beta');
   assert.equal(await t.item('Move up').count(), 0, `${label}: no move items`);
-  await t.press(page.locator('#h5-term-menu-cancel'));
+  await t.closeMenu();
   if (wide) { await t.mouseDrag('Echo', 'Alpha', { onRow: true }); await page.waitForTimeout(150); }
   await t.waitTitles(['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo']);
   assert.equal(world.writes.filter(([, p]) => p === '/api/task-order').length, 0, `${label}: nothing is saved`);
@@ -848,15 +849,15 @@ async function testRowHold(browser) {
   await f.tap(centre(await t.box('Alpha')));
   await page.waitForFunction(() => [...document.querySelectorAll('.h5-task')].some(node => node.querySelector('.h5-task-title').textContent === 'Alpha' && node.querySelector('.h5-task-item').getAttribute('aria-expanded') === 'false'));
   await page.waitForTimeout(250);
-  // "⋯" and "+" held and moved never drag.
+  // "⋯" held and moved never drags (a touch screen has no "+": New session is in that menu).
   const saved = t.puts(world);
-  for (const button of ['.h5-task-more', '.h5-task-add']) {
+  for (const button of ['.h5-task-more']) {
     const at = middle(await t.row('Echo').locator(button).boundingBox());
     await f.drag(at, { x: at.x, y: at.y - 60 }, { hold: 500, release: false });
     assert.equal((await t.dragView()).float, null, `${label}: ${button} does not drag`);
     await f.touch('touchEnd');
     await page.waitForTimeout(250);
-    if (await page.locator('#h5-term-menu-cancel').count()) { await page.locator('#h5-term-menu-cancel').first().tap(); await page.waitForTimeout(300); }
+    if (await page.locator('#h5-session-menu-actions').count()) await t.closeMenu();
     if (await page.locator('#h5-new-session').count() && await page.locator('#h5-new-session').isVisible()) { await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
   }
   assert.equal(t.puts(world), saved, `${label}: nothing saved from the buttons`);

@@ -30,6 +30,8 @@ import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
+import { shallowEqual } from './store.mjs';
+import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 
@@ -399,8 +401,8 @@ function TaskTag({ task, ui, drag }) {
 }
 const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
 
-function Tasks({ state, ui, query, filter, drag, sessionDrag }) {
-  const { note, tasks } = state.taskList;
+function Tasks({ taskList, rename, ui, query, filter, drag, sessionDrag }) {
+  const { note, tasks } = taskList;
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
   const needle = query.trim().toLowerCase();
   const filtering = Boolean(needle) || filter !== 'all';
@@ -417,40 +419,51 @@ function Tasks({ state, ui, query, filter, drag, sessionDrag }) {
   // Every row with an engine tag (h5.js tags the rows whenever the order can be changed or more than one device is listed) starts with it: it opens and
   // closes the task, shows that it is open, and is the drag grip of a row that can be moved. Only an older server with this machine alone has no tags;
   // there the row keeps its chevron, so whether a task is open still shows.
-  return shown.map(task => {
-    return (
-      <Box
-        key={task.ref} className="h5-task" data-ref={task.ref} data-source={task.source} data-movable={task.movable ? 'true' : undefined}
-        sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}
-      >
-        {/* A row that can be moved is held on its line to drag it (the tag drags at once): no text selection or touch callout, but it still scrolls. */}
-        <Box
-          className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} {...(task.movable ? drag.hold() : {})}
-          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 }, ...(task.movable ? HELD_ROW_SX : {}) }}
-        >
-          {task.device ? <TaskTag task={task} ui={ui} drag={drag} /> : null}
-          <ListItemButton
-            component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
-            onClick={() => ui.actions.toggleTask(task.ref)}
-            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25 }}
-          >
-            <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
-              {task.device ? null : task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
-              <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
-                {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
-              </Box>
-            </Box>
-          </ListItemButton>
-          {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
-          {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
-          {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
-        </Box>
-        {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={state.menu} drag={sessionDrag} /> : null}
-      </Box>
-    );
-  });
+  return shown.map(task => (
+    <TaskRow
+      key={task.ref} task={task} ui={ui} drag={drag} sessionDrag={sessionDrag}
+      // The rename field of a session row: only the task it is under gets the menu.
+      menu={rename && rename.rename.task === task.ref ? rename : null}
+    />
+  ));
 }
+
+// One task row with its sessions. h5.js keeps the row object of a task that did not change (store.mjs `share`) and the drag props are stable
+// (`useListDrag`), so a change of one task (a pushed activity state, a session opened) draws that row alone.
+const TaskRow = React.memo(function TaskRow({ task, ui, drag, sessionDrag, menu }) {
+  countRender('TaskRow');
+  return (
+    <Box
+      className="h5-task" data-ref={task.ref} data-source={task.source} data-movable={task.movable ? 'true' : undefined}
+      sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}
+    >
+      {/* A row that can be moved is held on its line to drag it (the tag drags at once): no text selection or touch callout, but it still scrolls. */}
+      <Box
+        className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} {...(task.movable ? drag.hold() : {})}
+        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 }, ...(task.movable ? HELD_ROW_SX : {}) }}
+      >
+        {task.device ? <TaskTag task={task} ui={ui} drag={drag} /> : null}
+        <ListItemButton
+          component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
+          onClick={() => ui.actions.toggleTask(task.ref)}
+          sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25 }}
+        >
+          <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
+            {task.device ? null : task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+            <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
+              {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
+            </Box>
+          </Box>
+        </ListItemButton>
+        {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
+        {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
+        {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
+      </Box>
+      {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={menu} drag={sessionDrag} /> : null}
+    </Box>
+  );
+});
 
 // The folder name the server makes from a task title (titleToSlug in routes/tasks.js and services/engine-tasks.js), for the default path shown.
 const slug = title => title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\u4e00-\u9fff\-_.]/g, '').replace(/^-+|-+$/g, '') || 'task';
@@ -527,7 +540,11 @@ export function NewTaskDialog({ state, ui }) {
   );
 }
 
-function Panel({ state, ui }) {
+// The list reads the tasks, the Archived section and, while a session row is being renamed, the menu (only then: another menu draws no row).
+const PANEL = state => ({ taskList: state.taskList, archived: state.archived, rename: state.menu && state.menu.rename ? state.menu : null });
+function Panel({ ui, wide }) {
+  const state = useStore(ui, PANEL, shallowEqual);
+  countRender('TaskPanel');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const listRef = useRef(null);
@@ -542,7 +559,7 @@ function Panel({ state, ui }) {
         <Box sx={{ display: 'flex', alignItems: 'center', [TOUCH]: { gap: 1 } }}>
           <IconButton id="h5-expand-all" size="small" aria-label={t('Expand all')} title={t('Expand all')} onClick={() => ui.actions.expandAll()}><UnfoldMoreIcon /></IconButton>
           <IconButton id="h5-collapse-all" size="small" aria-label={t('Collapse all')} title={t('Collapse all')} onClick={() => ui.actions.collapseAll()}><UnfoldLessIcon /></IconButton>
-          {state.wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} onClick={() => ui.actions.closeTasks()}><CloseIcon /></IconButton>}
+          {wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} onClick={() => ui.actions.closeTasks()}><CloseIcon /></IconButton>}
         </Box>
       </Box>
       <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75, [TOUCH]: { pb: 0 } }}>
@@ -562,7 +579,7 @@ function Panel({ state, ui }) {
       </Box>
       {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
       <List id="h5-task-list" ref={listRef} className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
-        <Tasks state={state} ui={ui} query={query} filter={filter} drag={drag} sessionDrag={sessionDrag} />
+        <Tasks taskList={state.taskList} rename={state.rename} ui={ui} query={query} filter={filter} drag={drag} sessionDrag={sessionDrag} />
         {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
         {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
       </List>
@@ -582,7 +599,9 @@ function Panel({ state, ui }) {
 }
 
 // A phone: the list slides over the page. A wide screen (a computer, a landscape tablet): it stays beside it.
-export function TaskDrawer({ state, ui }) {
+const DRAWER_KEYS = ['wide', 'sidebarCollapsed', 'tasksOpen', 'pane', 'paneEngaged'];
+export function TaskDrawer({ ui }) {
+  const state = useStoreKeys(ui, DRAWER_KEYS);
   // The height follows the visual viewport (--h5-height, h5.js `fitViewport`), so the on-screen keyboard shortens the list instead of covering its end
   // (a name field in the list stays visible above the keyboard).
   const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', height: 'var(--h5-height, 100%)', backgroundImage: 'none' } };
@@ -592,7 +611,7 @@ export function TaskDrawer({ state, ui }) {
     return (
       // The permanent drawer's own element has no size (its paper is fixed), so the sidebar is the paper.
       <Drawer variant="permanent" slotProps={{ paper: { ...paperProps, id: 'h5-tasks' } }} sx={{ '& .MuiDrawer-paper': { position: 'fixed' } }}>
-        <Panel state={state} ui={ui} />
+        <Panel ui={ui} wide={state.wide} />
       </Drawer>
     );
   }
@@ -603,7 +622,7 @@ export function TaskDrawer({ state, ui }) {
       // A pane of the multi-column view opens on this sheet; it must not pull the focus into its frame before the person used it (pane.mjs).
       ModalProps={{ 'aria-labelledby': 'h5-tasks-title', disableAutoFocus: Boolean(state.pane && !state.paneEngaged) }}
     >
-      <Panel state={state} ui={ui} />
+      <Panel ui={ui} wide={state.wide} />
     </Drawer>
   );
 }

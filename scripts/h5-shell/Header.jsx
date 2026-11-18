@@ -14,16 +14,28 @@ import { Icon } from './Icons.jsx';
 import { UpdateButton } from './Update.jsx';
 import { ColumnsToggle } from './Columns.jsx';
 import { DeviceTag } from './TaskDrawer.jsx';
+import { shallowEqual } from './store.mjs';
+import { countRender, useStore } from './use-store.mjs';
 
-export function Header({ state, ui }) {
+// The device of the shown task, as the task list tags it: its row's own engine tag (h5.js tags the rows whenever the order can be changed or more than one
+// device is listed), drawn by the same DeviceTag in its closed look. Without a tag (one device and no sorting, or a task its list does not show) the
+// header names a remote device in plain text, as before, and this machine not at all. Only the tag is taken from the list (h5.js keeps an unchanged
+// tag the same object, store.mjs `share`), so a change of another row does not draw the header.
+const HEADER = state => {
+  const shown = state.taskList && Array.isArray(state.taskList.tasks) ? state.taskList.tasks.find(row => row.selected && row.device) : null;
+  return {
+    wide: state.wide, sidebarCollapsed: state.sidebarCollapsed, tasksOpen: state.tasksOpen, taskName: state.taskName, sourceLabel: state.sourceLabel,
+    sessionName: state.sessionName, terminalWidth: state.terminalWidth, pane: state.pane, columns: state.columns, tag: shown ? shown.device : null,
+  };
+};
+
+export function Header({ ui }) {
+  const state = useStore(ui, HEADER, shallowEqual);
+  countRender('Header');
   const docked = state.wide && !state.sidebarCollapsed; // the permanent sidebar is shown, so the task name opens nothing
   const fold = state.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar';
   const refresh = t('Refresh the page');
-  // The device of the shown task, as the task list tags it: its row's own engine tag (h5.js tags the rows whenever the order can be changed or more than one
-  // device is listed), drawn by the same DeviceTag in its closed look. Without a tag (one device and no sorting, or a task its list does not show) the
-  // header names a remote device in plain text, as before, and this machine not at all.
-  const shown = state.taskList && Array.isArray(state.taskList.tasks) ? state.taskList.tasks.find(row => row.selected && row.device) : null;
-  const tag = shown ? shown.device : null;
+  const tag = state.tag;
   return (
     <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-header" sx={{ flex: '0 0 auto', borderBottom: 1, borderColor: 'divider' }}>
       <Toolbar variant="dense" disableGutters sx={{ px: 1, gap: 1, minHeight: 44 }}>

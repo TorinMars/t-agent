@@ -393,7 +393,12 @@ export function useListDrag(listRef, hostRef, liveRef, ui, spec) {
     },
     onContextMenu: event => { if (live.current) event.preventDefault(); },
   });
-  return { grip, hold };
+  // The same object on every render (it calls the latest `grip` / `hold`), so a memoised row that is handed it is not drawn again for it.
+  const latest = useRef(null);
+  latest.current = { grip, hold };
+  const stable = useRef(null);
+  if (!stable.current) stable.current = { grip: (...args) => latest.current.grip(...args), hold: (...args) => latest.current.hold(...args) };
+  return stable.current;
 }
 
 // The drag (useListDrag): the row's place is an empty slot (dashed, softly tinted), and the copy that floats under the pointer is lifted: a raised

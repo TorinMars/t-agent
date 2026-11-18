@@ -10,6 +10,7 @@ import { DeviceTag } from './TaskDrawer.jsx';
 import { ColumnsUpdateButton } from './Update.jsx';
 import { SETTLE_MS } from './list-drag.jsx';
 import { useFlipX, useTabDrag } from './tab-drag.jsx';
+import { countRender, useStoreKeys } from './use-store.mjs';
 import {
   STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnMove, columnStep, columnsFor, forgetMessage, hiddenEdges, minColumnWidth, mountOrder,
   moveColumn, openMessage, paneUrl, readLayout, readPaneMessage, revealLeft, shiftColumn, sidewaysDelta, stepTarget, tagOf, targetColumn, writeLayout,
@@ -322,7 +323,10 @@ function ColumnTabs({ columns, open, inView, ui, hostRef }) {
   );
 }
 
-export function ColumnStrip({ state, ui }) {
+const STRIP_KEYS = ['columns', 'wide', 'pane', 'updateDot'];
+export function ColumnStrip({ ui }) {
+  const state = useStoreKeys(ui, STRIP_KEYS);
+  countRender('ColumnStrip');
   const columns = state.columns;
   const shown = Boolean(columns && columns.shown);
   const root = useRef(null);

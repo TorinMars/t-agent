@@ -10,10 +10,15 @@ import { named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { commandsFor } from './commands.mjs';
 import { TerminalKeyboard } from './Osk.jsx';
+import { shallowEqual } from './store.mjs';
+import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches,
 // sets its mode and thumb and its ARIA values) and the copy bar.
-export function TerminalArea({ state, ui }) {
+const TERMINAL_KEYS = ['empty', 'emptyCreate', 'input', 'clipboard'];
+export function TerminalArea({ ui }) {
+  const state = useStoreKeys(ui, TERMINAL_KEYS);
+  countRender('TerminalArea');
   return (
     <Box component="main" className="h5-terminal" id="h5-terminal">
       {state.empty ? (
@@ -97,7 +102,16 @@ const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { b
 // terminal keyboard, draft keyboard, upload image, saved commands, voice, and (only while the draft box is shown) send and translate-and-send. One box holds all of it so that, when the draft box
 // grows over the terminal, the rows move up with it and stay visible (h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized for it).
 // Under row 2, while `state.osk` is on (touch mode only), the terminal's own on-screen keyboard (Osk.jsx). It takes room in the layout, so the terminal refits above it.
-export function BottomArea({ state, ui }) {
+// What the bottom area draws (its rows read it from here): T-Attention and the file sheet only as the counts and flags the buttons show.
+const BOTTOM = state => ({
+  input: state.input, terminalAgent: state.terminalAgent, translating: state.translating, osk: state.osk, mods: state.mods, keyboard: state.keyboard,
+  activeCount: state.activeCount, pane: state.pane, wide: state.wide,
+  attentionNeeds: Number(state.attention && state.attention.needs) || 0, attentionOpen: Boolean(state.attention && state.attention.open),
+  designOpen: Boolean(state.design && state.design.open),
+});
+export function BottomArea({ ui }) {
+  const state = useStore(ui, BOTTOM, shallowEqual);
+  countRender('BottomArea');
   const [menu, setMenu] = useState(false); // the saved commands list (and Paste text) is open
   useEffect(() => {
     if (!menu) return undefined;
@@ -308,9 +322,9 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
   const commands = t('Saved commands');
   const docs = t('Docs');
   // The name carries the "Needs you" count of T-Attention while there are some; the badge shows the same number.
-  const needs = Number(state.attention && state.attention.needs) || 0;
+  const needs = state.attentionNeeds;
   const attention = t('Attention') + (needs ? ` (${needs})` : '');
-  const attentionOpen = Boolean(state.attention && state.attention.open);
+  const attentionOpen = state.attentionOpen;
   // The name carries the count of running or pending sessions while there are some; the badge shows the same number.
   const active = Number(state.activeCount) || 0;
   const cycle = t('Next running or pending session') + (active ? ` (${active})` : '');
@@ -342,7 +356,7 @@ export function ActionBar({ state, ui, menu, onMenu, pointer = false }) {
       {/* Docs: the design document sheet (Design.jsx); its header has Files (the read-only file tree, FileTree.jsx), and the tree's header leads back to the
           design document. It steps aside while the draft box is shown (`.h5-draft-hide`), so send and translate-and-send keep finger-sized buttons at 320px.
           On a touch screen under 360px eight 44px buttons do not fit, so it is left out there: the saved commands list has a Docs entry instead. */}
-      <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={pointer ? look : { ...look, '@media (max-width: 359.98px)': { display: 'none' } }} {...named(docs)} aria-haspopup="dialog" aria-expanded={Boolean(state.design && state.design.open)} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>
+      <IconButton id="h5-design" className="h5-draft-hide" data-action="design" sx={pointer ? look : { ...look, '@media (max-width: 359.98px)': { display: 'none' } }} {...named(docs)} aria-haspopup="dialog" aria-expanded={state.designOpen} onClick={() => ui.actions.openDesign()}><Icon name="designDoc" /></IconButton>
       {/* T-Attention (Attention.jsx): the badge counts the tasks that need the user (waiting_user). Steps aside with the draft box too. Not in a pane of the
           multi-column view: the top page keeps T-Attention for all its columns (pane.mjs). */}
       {state.pane ? null : (

@@ -963,9 +963,17 @@ const editLayout = page => page.evaluate(() => {
       await panel.waitFor({ state: 'hidden' });
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
       // One at a time: Docs takes the place of T-Attention; the sheet is a modal, so it is closed before the panel can open again.
+      // With the rail (72px), the task list (304px) and the panel (560px) the row is under 560px at 1440px, so Docs is in More tools
+      // (`#h5-more-docs`, "Bottom bar"); without the panel it has its own button again.
+      const docs = async () => {
+        if (await page.locator('#h5-design').isVisible()) { await page.locator('#h5-design').click(); return; }
+        await page.locator('#h5-more').click();
+        await page.locator('#h5-more-docs').click();
+      };
       await attention();
       await panel.waitFor({ state: 'visible' });
-      await page.locator('#h5-design').click();
+      assert.equal(await page.locator('#h5-design').isVisible(), false, 'the row beside the open panel is the narrow one');
+      await docs();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       await panel.waitFor({ state: 'hidden' });
       await page.keyboard.press('Escape');
@@ -973,7 +981,7 @@ const editLayout = page => page.evaluate(() => {
       await attention();
       await panel.waitFor({ state: 'visible' });
       // The Docs sheet's Files button opens the tree, and the tree's Design document button leads back to DESIGN.md.
-      await page.locator('#h5-design').click();
+      await docs();
       await page.locator('#h5-design-files').click();
       await page.locator('#h5-files-sheet .h5-files-panel').waitFor({ state: 'visible' });
       await page.locator('#h5-files-design').click();

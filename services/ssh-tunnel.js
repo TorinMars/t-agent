@@ -283,7 +283,8 @@ function createSshTunnelService({
     try { launch(); } catch (error) { console.warn('[ssh-tunnel] auto start failed:', error.message); }
   }
 
-  return { view, update, start, stop, regenerate, autoStart, load };
+  // status(): stopped | starting | running | failed, without the ssh lookup of view() (services/app-info.js reads it every minute).
+  return { view, update, start, stop, regenerate, autoStart, load, status: () => status };
 }
 
 module.exports = { createSshTunnelService, buildArgs, findSsh, expandHome };

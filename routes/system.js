@@ -82,4 +82,32 @@ router.post('/auto-update', (req, res) => {
   res.json({ ...updates.publicState(), is_update_admin: isAdmin(req) });
 });
 
+// For the "Mac app" card of Settings: this server's web addresses (the ones app.json lists, services/app-info.js) and the T-Agent
+// app installed on this Mac. Read only. `app` is null when this server does not run on macOS. `server` names the version and the
+// folder the build command runs in.
+// The version compared with the app's is the one this process runs (app.json), else the one on disk.
+let macApp = null;
+const runningVersion = () => {
+  const info = require('../services/app-info').sharedPublisher()?.current();
+  if (info && info.version) return info.version;
+  try { return updates.readLocalManifest().app_version || null; } catch { return null; }
+};
+router.get('/app-info', async (req, res) => {
+  const appInfo = require('../services/app-info');
+  if (!macApp) macApp = appInfo.createMacAppProbe({ serverVersion: runningVersion });
+  const publisher = appInfo.sharedPublisher();
+  const info = publisher ? publisher.refresh() : null;
+  let app = null;
+  try { app = await macApp.probe(); } catch { app = null; }
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    addresses: info && Array.isArray(info.addresses) ? info.addresses : [],
+    app,
+    server: { version: runningVersion(), install_dir: info ? info.install_dir : require('../lib/data-home').INSTALL_DIR },
+  });
+});
+
+// Tests replace the lookup of the installed app (services/app-info.js createMacAppProbe).
+router.setMacAppProbe = probe => { macApp = probe; };
+
 module.exports = router;

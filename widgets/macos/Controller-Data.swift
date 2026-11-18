@@ -205,7 +205,7 @@ extension WidgetController {
         if let session = target.session {
             openTerminalPage(session)  // an open T-Agent page switches to it, as with Open session
         } else if let url = target.url {
-            openURL(url)
+            openPage(url)  // a page of this T-Agent in T-Agent.app when it is installed; other links in the browser
         }
     }
 

@@ -182,6 +182,28 @@ test('the tab comes forward only when the extension says so; an older or missing
   assert.ok(METHODS.includes('tabs.reveal'), 'the bridge may send tabs.reveal');
 });
 
+// The T-Agent macOS app shows the page in a WKWebView on the loopback URL of app.json. Its EventSource sends what Safari sends: a
+// Safari-like User-Agent without "Safari", maybe no Referer (or the page's own, without `pane`), an Accept of text/event-stream, and no
+// Origin or Sec-Fetch headers on a same-origin GET. The page channel keys only on the session, tab=1, the loopback socket without
+// forwarding headers, and a Referer without `pane`, so such a page counts like a browser tab and gets the open-terminal event.
+test('a page inside the T-Agent app (WKWebView on the loopback URL) counts as a local top-level page', async () => {
+  const world = await setUp({ bridge: { command: async () => ({ focused: false }) } });
+  const webKit = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)';
+  const port = new URL(world.pageBase).port;
+  const pages = [
+    await openStream(`${world.pageBase}/api/attention/stream?tab=1`, { 'User-Agent': webKit }),
+    await openStream(`${world.pageBase}/api/attention/stream?tab=1`, { 'User-Agent': webKit, Referer: `${world.pageBase}/?openTerminal=local:12:t3` }),
+    await openStream(`${world.pageBase}/api/attention/stream?tab=1`, { 'User-Agent': webKit, Host: `localhost:${port}`, Referer: `http://localhost:${port}/h5` }),
+  ];
+  for (const page of pages) await until(() => page.events.some(e => e.event === 'hello'));
+  assert.equal(world.pages.size(), 3);
+  world.tick();
+  assert.deepEqual((await world.open(TARGET)).body, { delivered: 1, focused: false });
+  await until(() => opened(pages[2]).length === 1);
+  assert.deepEqual(opened(pages[2]), [{ engine: 'local', task_id: '12', terminal_id: 't3' }]);
+  for (const page of pages) page.close();
+});
+
 test('bad input is refused, the token is needed, and an unknown path answers 404 JSON (what an older server answers here)', async () => {
   const world = await setUp({ bridge: { command: async () => ({ focused: true }) } });
   for (const body of [

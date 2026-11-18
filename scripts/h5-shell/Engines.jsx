@@ -20,6 +20,7 @@ import { RestartButton, restartInfo } from './Restart.jsx';
 import { PeerFsSwitch } from './PeerFs.jsx';
 import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
+import { MacAppSection } from './MacApp.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
 import { ScopeLabel, SettingsSyncStatus, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
 import { InTab, LocalOnly, refreshDeviceTargets, useSettingsTab } from './DeviceTarget.jsx';
@@ -567,6 +568,8 @@ export function DevicesGroup({ state, ui, request = null }) {
             ))}
             {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
           </Box>
+          {/* The T-Agent macOS app on this Mac and the web addresses of this service (read only; only on a macOS server). */}
+          <MacAppSection opened={opened} />
         </>
       ) : null}
       <Feedback id="h5-engines-feedback" feedback={feedback} />

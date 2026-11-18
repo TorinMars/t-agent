@@ -18,7 +18,6 @@ import { alpha, getOverlayAlpha } from '@mui/material/styles';
 import Chip from '@mui/material/Chip';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
-import NativeSelect from '@mui/material/NativeSelect';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';

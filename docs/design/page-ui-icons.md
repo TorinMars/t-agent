@@ -92,6 +92,8 @@
 | Drag grip (header of each column, pointer input only, decorative) | holder | not looked up (Ant Design `HolderOutlined`, the same outline as in collection 9402) | `holder` in `Icons.jsx`, 14px |
 | Opens a menu or sheet below ("Project · session ▾" of a column header, "N columns ▾" of the bar; decorative) | down | not looked up (Ant Design `DownOutlined`, the same icon as in collection 9402) | `down` in `Icons.jsx`, 12px |
 | Column actions ("⋯" of a column header) | ellipsis | 4767094 | `taskMore`, 18px |
+| More tools ("⋯" of the compact bottom area of a column, `#h5-more`) | ellipsis | 4767094 | `taskMore`, 20px; its menu items reuse the row 2 icons at 20px: `commands`, `designDoc`, `cycleSessions`, `send`, `terminalKeyboard` |
+| Upload image or file, Voice input, Translate and send (compact bottom area of a column) | image / audio / send | 4766917 / 5756281 / 9230696 | the row 2 icons at 20px (send at 16px as the start icon of the contained "Send" button; no "Aa" mark there, its name says it translates) |
 | Terminal width (column header) | column-width | not looked up (Ant Design `ColumnWidthOutlined`) | `columnWidth`, 18px |
 | Maximize / Restore a column (column header) | expand / compress | not looked up (Ant Design `ExpandOutlined` / `CompressOutlined`) | `maximize` / `restore`, 16px |
 | Add mind map column (multi-column view bar) | apartment | 5756280 | `mindmap`, 18px, the same icon as the mind map entry |

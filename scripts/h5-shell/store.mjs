@@ -66,6 +66,8 @@ export const initialState = () => ({
   wide: false,
   pane: null, // the pane id when this page is one column of the multi-column view (pane.mjs), else null
   paneEngaged: false, // a pane only: the person pressed a pointer or a key in it; until then nothing in it takes the focus by itself
+  paneFocused: false, // a pane only: this column is the focused one of the multi-column view (pane.mjs), so its compact bottom area shows its tools
+  draftPeek: '', // a pane only: the draft box's text on one line (h5.js `autosize`), shown with a "Draft" tag while the column is not the focused one
   // How the page is used, decided by media queries (never by the user agent; entry.jsx keeps it current):
   // 'pointer' = a mouse or trackpad and no touch screen (a computer), 'touch' = everything else (phones, tablets, an iPad with a trackpad).
   input: 'touch',

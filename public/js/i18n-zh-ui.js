@@ -1067,6 +1067,8 @@ I18n.add({
   "Confirm": "确认",
   "Reject": "打回",
   "Handled": "已处理",
+  "Replied from the desktop window": "已从桌面浮窗回复",
+  "That terminal is not available any more": "这个终端已经不可用了",
   "Collapse sub-tasks": "折叠子任务",
   "Expand sub-tasks": "展开子任务",
   "Reject this result?": "打回这个结果？",

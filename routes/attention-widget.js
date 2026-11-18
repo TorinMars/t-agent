@@ -29,6 +29,12 @@ const FINISHED_KEEP = 50;
 const LIST_LIMIT = 1000;
 const ENGINE_KEY = /^(?:local|remote:[1-9]\d{0,14})$/;
 const ITEM_KEY = /^(local|remote:[1-9]\d{0,14}):([1-9]\d{0,14})$/;
+const TAGENT_TASK = /^[1-9]\d{0,14}$/;
+const TAGENT_TERMINAL = /^[a-zA-Z0-9_-]{1,64}$/;
+const REPLY_MAX = 4000;
+const ACTIVITY_LIMIT = 50;
+const ACTIVITY_ORDER = { running: 0, waiting: 1, done: 2 };
+const REPLY_NOTE = 'Replied from the desktop window';
 const ROOT = path.join(__dirname, '..');
 const STRINGS_FILE = path.join(ROOT, 'widgets', 'macos', 'strings.json');
 // Later files win: the page's own UI words first.
@@ -91,8 +97,30 @@ function parseItemKey(value) {
   return match ? { engine: match[1], id: Number(match[2]) } : null;
 }
 
-// An item as the window reads it.
-function widgetItem(engine, item) {
+// The page path that opens a terminal (public/js/h5.js, `?openTerminal=<engine>:<task id>:<terminal id>`); the parts are checked, so nothing needs escaping.
+const openTerminalPath = (engine, taskId, terminalId) => `/?openTerminal=${engine}:${taskId}:${terminalId}`;
+
+// The T-Agent terminal an item belongs to (context.tagent, set by services/attention.js tieToTerminal), or null. `info(taskId, terminalId)` ->
+// { agent, live } reads this machine's terminals (routes/terminal.js terminalInfo); for a connected service there is none: agent null, live null (unknown).
+function sessionOf(engine, item, info) {
+  const tagent = item && item.context && item.context.tagent;
+  if (!tagent || typeof tagent !== 'object') return null;
+  const taskId = String(tagent.task_id ?? '');
+  const terminalId = String(tagent.terminal_id ?? '');
+  if (!TAGENT_TASK.test(taskId) || !TAGENT_TERMINAL.test(terminalId)) return null;
+  let agent = null;
+  let live = null;
+  if (engine === 'local' && info) {
+    let found = null;
+    try { found = info(taskId, terminalId); } catch { found = null; }
+    agent = found && (found.agent === 'claude' || found.agent === 'codex') ? found.agent : null;
+    live = Boolean(found && found.live);
+  }
+  return { engine, task_id: taskId, terminal_id: terminalId, agent, live, open_path: openTerminalPath(engine, taskId, terminalId) };
+}
+
+// An item as the window reads it. `info`: see sessionOf.
+function widgetItem(engine, item, info = null) {
   const pending = item.context && item.context.pending && typeof item.context.pending.text === 'string' && item.context.pending.text ? item.context.pending.text : null;
   const parent = Number.isSafeInteger(item.parent_id) ? item.parent_id : null;
   return {
@@ -114,6 +142,7 @@ function widgetItem(engine, item) {
     sort_order: typeof item.sort_order === 'number' ? item.sort_order : null,
     updated_at: item.updated_at ?? null,
     created_at: item.created_at ?? null,
+    session: sessionOf(engine, item, info),
   };
 }
 
@@ -180,11 +209,16 @@ function createAttentionWidgetRoutes({
   readTimeoutMs = 4000,
   settleMs = 1500,
   notices = require('../services/widget-notices').defaultNotices(),
+  // This machine's terminals (routes/terminal.js): what an item's terminal is, a reply typed into it, and the live activity of all of them.
+  terminalInfo = (taskId, terminalId) => require('./terminal').terminalInfo(taskId, terminalId),
+  sendToTerminal = (taskId, terminalId, text) => require('./terminal').sendToTerminal(taskId, terminalId, text),
+  liveActivity = () => require('./terminal').liveTerminalActivity(),
   now = () => new Date(),
 } = {}) {
   if (!service) throw new Error('createAttentionWidgetRoutes needs the attention service');
   if (!launcher || !settings) throw new Error('createAttentionWidgetRoutes needs the launcher and the settings');
 
+  const itemOut = (engine, item) => widgetItem(engine, item, engine === 'local' ? terminalInfo : null);
   const rowsOf = login => db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? AND enabled = 1 ORDER BY created_at ASC, id ASC').all(login);
   // The engine of a key: this machine, or an enabled row of this owner (hidden ones too: an item the window already has stays reachable).
   function engineOf(key) {
@@ -250,7 +284,7 @@ function createAttentionWidgetRoutes({
     // The page's order inside a group: the highest sort_order first, then the highest id.
     items.sort((a, b) => (Number(b.item.sort_order) || 0) - (Number(a.item.sort_order) || 0) || b.item.id - a.item.id);
     res.json({
-      items: items.map(({ engine, item }) => widgetItem(engine, item)),
+      items: items.map(({ engine, item }) => itemOut(engine, item)),
       engines: shown.map(({ key, name, local, color_index: color }) => ({ key, name, local, color_index: color })),
       failed,
       host: os.hostname(),
@@ -285,7 +319,7 @@ function createAttentionWidgetRoutes({
     for (const field of ['status', 'notes']) if (body[field] !== undefined) create[field] = body[field];
     const parent = parentIdOf(body, body.engine);
     if (parent !== undefined) create.parent_id = parent;
-    res.status(201).json(widgetItem(body.engine, await engine.create(create)));
+    res.status(201).json(itemOut(body.engine, await engine.create(create)));
   }));
 
   api.patch('/items/:key', parseJson, handle(async (req, res) => {
@@ -295,7 +329,7 @@ function createAttentionWidgetRoutes({
     delete body.parent_key;
     delete body.parent_id;
     if (parent !== undefined) body.parent_id = parent;
-    res.json(widgetItem(key.engine, await engineOf(key.engine).update(key.id, body)));
+    res.json(itemOut(key.engine, await engineOf(key.engine).update(key.id, body)));
   }));
 
   api.delete('/items/:key', handle(async (req, res) => {
@@ -340,9 +374,47 @@ function createAttentionWidgetRoutes({
       const item = await engine.get(key.id);
       if (!item) throw new WidgetError('NOT_FOUND', 'Task not found', 404);
       if (item.status !== action.from) throw new WidgetError('WRONG_STATUS', action.message, 409);
-      res.json(widgetItem(key.engine, await engine.update(key.id, action.body(req))));
+      res.json(itemOut(key.engine, await engine.update(key.id, action.body(req))));
     }));
   }
+
+  // A reply to the agent of an item, typed in the window: sent to the item's terminal on this machine (routes/terminal.js sendToTerminal: a bracketed
+  // paste, then Enter on its own) and noted on the item. Only for this machine's items whose terminal runs now.
+  api.post('/items/:key/reply', parseJson, handle(async (req, res) => {
+    const key = keyOf(req);
+    const body = objectBody(req);
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text || text.length > REPLY_MAX) throw invalid(`text must be 1 to ${REPLY_MAX} characters`);
+    if (key.engine !== 'local') throw new WidgetError('REPLY_REMOTE', 'Replies go only to terminals on this machine', 409);
+    const item = service.get(key.id);
+    if (!item) throw new WidgetError('NOT_FOUND', 'Task not found', 404);
+    const session = sessionOf('local', item, null);
+    if (!session) throw new WidgetError('NO_SESSION', 'This task has no agent terminal', 409);
+    if (!sendToTerminal(session.task_id, session.terminal_id, text)) throw new WidgetError('TERMINAL_NOT_RUNNING', "The agent's terminal is not running", 409);
+    service.update(key.id, { activity: { kind: 'note', text: REPLY_NOTE } }, { actor: 'user' });
+    res.json({ ok: true });
+  }));
+
+  // What the agents in this machine's terminals are doing: the live terminals that are not idle, running first, then waiting at a question, then done
+  // (not acknowledged yet); within a state the newest change first. At most ACTIVITY_LIMIT.
+  api.get('/activity', handle(async (req, res) => {
+    const terminals = (liveActivity() || [])
+      .filter(entry => entry && Object.prototype.hasOwnProperty.call(ACTIVITY_ORDER, entry.state) && TAGENT_TASK.test(String(entry.task_id)) && TAGENT_TERMINAL.test(String(entry.terminal_id)))
+      .sort((a, b) => ACTIVITY_ORDER[a.state] - ACTIVITY_ORDER[b.state] || (Number(b.since) || 0) - (Number(a.since) || 0))
+      .slice(0, ACTIVITY_LIMIT)
+      .map(entry => ({
+        engine: 'local',
+        task_id: String(entry.task_id),
+        task_title: typeof entry.task_title === 'string' ? entry.task_title : '',
+        terminal_id: String(entry.terminal_id),
+        title: typeof entry.title === 'string' ? entry.title : '',
+        agent: entry.agent === 'claude' || entry.agent === 'codex' ? entry.agent : null,
+        state: entry.state,
+        since: new Date(Number(entry.since) || 0).toISOString(),
+        open_path: openTerminalPath('local', entry.task_id, entry.terminal_id),
+      }));
+    res.json({ terminals, updated_at: now().toISOString() });
+  }));
 
   // The window's words in its language: { lang, strings: { English: shown } }. English, or a word without a translation, maps to itself.
   api.get('/strings', handle(async (req, res) => {
@@ -408,4 +480,4 @@ function createAttentionWidgetRoutes({
   return { bearer, settings: settingsRouterFor({ notePage: true }), peerSettings: settingsRouterFor({ notePage: false }) };
 }
 
-module.exports = { createAttentionWidgetRoutes, tagColorIndex, widgetItem, parseItemKey, createDictionary, readStringList, STRINGS_FILE };
+module.exports = { createAttentionWidgetRoutes, tagColorIndex, widgetItem, sessionOf, parseItemKey, createDictionary, readStringList, STRINGS_FILE };

@@ -3883,6 +3883,23 @@
     selectTask(LOCAL, item, { chat: row });
     return true;
   }
+  // ── A link to a terminal (`?openTerminal=<engine>:<task id>:<terminal id>`, engine `local` or `remote:<id>`; the T-Attention desktop window opens it): that
+  // task is selected on that service and that terminal is shown, or, while the multi-column view is shown, it opens in the focused column. `pending`: the read of
+  // that service's tasks already on its way. Resolves to whether it went there; a service, task or terminal that is not there any more is false.
+  async function openTerminalFromLink({ sourceKey, taskId, terminalId }, pending = null) {
+    const from = sources.find(item => item.key === sourceKey && (item === LOCAL || item.label));
+    if (!from) return false;
+    if (pending) await pending;
+    if (from.status !== 'ready' || !findTask(from, taskId)) await loadSource(from);
+    const item = from.status === 'ready' ? findTask(from, taskId) : null;
+    if (!item) return false;
+    const rows = await api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => null);
+    if (!Array.isArray(rows) || !rows.some(row => row.terminal_id === terminalId)) return false;
+    if (columnsShown()) return Boolean(ui.actions.openInColumn && ui.actions.openInColumn({ sourceKey: from.key, taskId: item.id, terminalId }));
+    if (isShown(from, item.id)) { const entry = terminals.find(row => row.terminal_id === terminalId); if (entry) switchTerminal(entry); closeTasks(); return true; }
+    selectTask(from, item, { terminal: terminalId });
+    return true;
+  }
   // The service worker makes the page installable as a Home Screen app (public/sw.js); it shows no notifications.
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
@@ -3929,8 +3946,17 @@
     if (remembered) sources = [LOCAL, assumed];
     // The page opened with a link to a chat: ?openChat=<task id>:<conversation id>.
     const link = /^(\d+):(.+)$/.exec(new URLSearchParams(location.search).get('openChat') || '');
+    // Or with a link to a terminal (openTerminalFromLink). It is taken out of the address at once, so a reload shows the page as usual and does not open it again.
+    const query = new URLSearchParams(location.search);
+    const terminalAsked = query.has('openTerminal');
+    const terminalLink = /^(local|remote:[1-9]\d*):([1-9]\d*):([A-Za-z0-9_-]{1,64})$/.exec(query.get('openTerminal') || '');
+    if (terminalAsked) {
+      query.delete('openTerminal');
+      const rest = query.toString();
+      try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays; nothing else changes */ }
+    }
     const savedId = Number(store.get(`task:${assumed.key}`));
-    if (savedId > 0 && !link) {
+    if (savedId > 0 && !link && !terminalAsked) {
       prefetch(`${assumed.tasksBase}/${savedId}/terminals`);
       if (assumed.key !== 'local') prefetch(infoUrl(assumed));
       const savedTerminal = store.get(`terminal:${assumed.key}:${savedId}`);
@@ -3938,7 +3964,7 @@
     }
     renderTasks(); // "Loading…"
     // A phone with nothing to bring back opens on the task sheet at once; that does not wait for the lists.
-    if (!link && !(savedId > 0) && !isWide()) ui.set({ tasksOpen: true, wide: false });
+    if (!link && !terminalAsked && !(savedId > 0) && !isWide()) ui.set({ tasksOpen: true, wide: false });
     const reads = new Map([[LOCAL, loadSource(LOCAL)]]);
     if (assumed !== LOCAL) reads.set(assumed, loadSource(assumed));
     void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
@@ -3954,11 +3980,21 @@
     // back its remembered task below.
     if (link && columnsShown()) ui.actions.openInColumn({ sourceKey: LOCAL.key, taskId: Number(link[1]), conversationId: link[2] });
     else if (link && await openChatFromLink({ taskId: Number(link[1]), conversationId: link[2] })) return;
+    // A terminal link that cannot be followed says so, and the page goes on as without it (the remembered task below).
+    let linked = false;
+    if (terminalAsked) {
+      const sourceKey = terminalLink && terminalLink[1];
+      linked = Boolean(terminalLink) && await openTerminalFromLink({ sourceKey, taskId: Number(terminalLink[2]), terminalId: terminalLink[3] },
+        reads.get(sources.find(item => item.key === sourceKey)) || null).catch(() => false);
+      if (!linked) tell('That terminal is not available any more');
+    }
+    // Sent to a column, the hidden normal view still brings back its remembered task, as for a chat link.
+    const shownByLink = linked && !columnsShown();
     // The remembered service and task when it is listed and answers in time; else the remembered task of another listed service; else no task and the list.
     const listed = listedSources();
     const tried = [assumed, LOCAL, ...listed].filter((from, index, all) => listed.includes(from) && all.indexOf(from) === index);
-    await Promise.race([Promise.all(tried.slice(0, 2).map(from => reads.get(from))), new Promise(resolve => setTimeout(resolve, REMEMBER_WAIT_MS))]);
-    if (!task) { // nothing was opened by hand meanwhile
+    if (!shownByLink) await Promise.race([Promise.all(tried.slice(0, 2).map(from => reads.get(from))), new Promise(resolve => setTimeout(resolve, REMEMBER_WAIT_MS))]);
+    if (!task && !shownByLink) { // nothing was opened by hand meanwhile
       const found = tried.map(from => ({ from, item: from.status === 'ready' ? findTask(from, Number(store.get(`task:${from.key}`))) : null })).find(entry => entry.item);
       if (!found || found.from !== assumed) dropEarlySocket(); // the remembered task is gone, hidden or offline
       if (found) selectTask(found.from, found.item, null, { remember: found.from === assumed });

@@ -800,6 +800,10 @@ I18n.add({
   "Parent is on another device": "父任务在另一台设备上",
   "The task is not waiting for review": "这个任务不在待确认状态",
   "The task does not need you": "这个任务不需要你处理",
+  "text must be 1 to 4000 characters": "text 必须是 1 到 4000 个字符",
+  "This task has no agent terminal": "这个任务没有智能体终端",
+  "Replies go only to terminals on this machine": "回复只能发到这台机器上的终端",
+  "The agent's terminal is not running": "智能体的终端没有在运行",
   "enabled must be true or false": "enabled 必须是 true 或 false",
   "language must be one of: {1}": "language 必须是以下之一：{1}",
   // ---- Browser extension ----

@@ -110,6 +110,7 @@ function pageBusy(ui) {
   if (chat && !chat.hidden) return true; // a reload would close the conversation, and any message being written in it
   const mindmap = document.getElementById('h5-mindmap');
   if (mindmap && !mindmap.hidden) return true; // a reload would close the open map, and an edit that is still being saved
+  if (state.columns && state.columns.shown && state.columns.tab === 'maps') return true; // the Mind maps tab of the multi-column view: the same
   const draft = document.getElementById('h5-translate-input');
   if (draft && draft.value) return true;
   const active = document.activeElement;
@@ -469,16 +470,16 @@ export function UpdateButton({ ui }) {
   );
 }
 
-// The Update button of the multi-column view's top bar (#h5-columns-update, first in #h5-columns-bar): the header (and its #h5-update) is hidden under the
+// The Update button of the multi-column view (#h5-columns-update, at the top of its navigation rail): the header (and its #h5-update) is hidden under the
 // strip, so this one opens the header updater's dialog (ui.actions.openUpdate) and shows its red dot (state.updateDot). It polls nothing itself.
 export function ColumnsUpdateButton({ state, ui }) {
   if (state.pane) return null;
   const dot = Boolean(state.updateDot);
   return (
-    <IconButton id="h5-columns-update" size="small" aria-label={t('Update')} title={t('Update')} aria-haspopup="dialog" data-attention={dot ? 'true' : undefined}
-      sx={{ flex: '0 0 auto' }} onClick={event => { if (ui.actions.openUpdate) ui.actions.openUpdate(event.currentTarget); }}>
+    <IconButton id="h5-columns-update" aria-label={t('Update')} title={t('Update')} aria-haspopup="dialog" data-attention={dot ? 'true' : undefined}
+      sx={{ flex: '0 0 auto', width: 48, height: 48, color: 'text.secondary' }} onClick={event => { if (ui.actions.openUpdate) ui.actions.openUpdate(event.currentTarget); }}>
       <Badge id="h5-columns-update-dot" variant="dot" color="error" invisible={!dot} overlap="circular">
-        <SystemUpdateAltIcon sx={{ fontSize: 20 }} />
+        <SystemUpdateAltIcon sx={{ fontSize: 22 }} />
       </Badge>
     </IconButton>
   );

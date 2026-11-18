@@ -61,7 +61,7 @@
 | Send | send | 9230696 | |
 | Translate and send | send | 9230696 | the same icon, plus the "Aa" text mark |
 | Paste text (menu item) | snippets | 4766482 | |
-| Update (header `#h5-update` and the multi-column bar's `#h5-columns-update`) | none | none | exception kept from before the library: Material `SystemUpdateAlt`; the bar's button uses the same icon (20px) so the two Update buttons look alike |
+| Update (header `#h5-update` and the multi-column view's navigation rail, `#h5-columns-update`) | none | none | exception kept from before the library: Material `SystemUpdateAlt`; the rail's button uses the same icon (22px) so the two Update buttons look alike |
 | Copy bar over the terminal (decorative, left of the title) | file-copy | 4766481 | `copy` in `Icons.jsx`, 22px, `aria-hidden`; the set has no clipboard icon, and `snippets` (the clipboard-like shape) is already Paste |
 | Task actions ("⋯" of a task row, task sidebar) | ellipsis | 4767094 | `taskMore` in `Icons.jsx`, 20px, left of the "+" |
 | Archived section (end of the task list) | container | 4766438 | `archived` in `Icons.jsx`, 18px; its chevron is `treeChevron` (right, 4767011), turned down when open |
@@ -86,18 +86,20 @@
 | Terminal on-screen keyboard: Caps lock | self-drawn `keyCapsLock` | none | self-drawn: the Shift arrow, shorter, over a bar (Shift tapped twice) |
 | Wheel strip spring (full-screen program): up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the spring thumb, 14px (direction marks inside the thin strip, not buttons) |
 | Terminal width switch (header, Fit / Wide) | column-width | not looked up (Ant Design `ColumnWidthOutlined`, the same outline as in collection 9402) | `columnWidth` in `Icons.jsx`, 22px |
-| Multi-column view switch (header of a wide screen, and the first button of the strip's bar) | project | 4765975 | `columns` in `Icons.jsx`, 22px in the header, 20px in the bar; a board with three columns |
+| Multi-column view switch (header of a wide screen) | project | 4765975 | `columns` in `Icons.jsx`, 22px; a board with three columns (in the view, "Leave the columns view" at the bottom of the navigation rail uses `logout`) |
 | Add column ("+ Column", multi-column view bar) | plus | 7834345 | `add`, 14px, the start icon of the text button |
 | Close column (header of each column) | close | 4767096 | `close`, 14px |
 | Drag grip (header of each column, pointer input only, decorative) | holder | not looked up (Ant Design `HolderOutlined`, the same outline as in collection 9402) | `holder` in `Icons.jsx`, 14px |
 | Opens a menu or sheet below ("Project · session ▾" of a column header, "N columns ▾" of the bar; decorative) | down | not looked up (Ant Design `DownOutlined`, the same icon as in collection 9402) | `down` in `Icons.jsx`, 12px |
 | Column actions ("⋯" of a column header) | ellipsis | 4767094 | `taskMore`, 18px |
 | Terminal width (column header) | column-width | not looked up (Ant Design `ColumnWidthOutlined`) | `columnWidth`, 18px |
-| Maximize / Restore a column (column header) | expand / compress | not looked up (Ant Design `ExpandOutlined` / `CompressOutlined`) | `maximize` / `restore`, 16px |
-| Add mind map column (multi-column view bar) | apartment | 5756280 | `mindmap`, 18px, the same icon as the mind map entry |
-| Mind map column (its header and the column list, decorative) | apartment | 5756280 | `mindmap`, 14px, before the map name |
-| Maximize a column (mind map editor bar) | expand | not looked up (Ant Design `ExpandOutlined`, the same outline as in collection 9402) | `maximize` in `Icons.jsx`; `fullscreen` is already Fit map |
-| Restore the columns (mind map editor bar while maximized, top of the rail) | compress | not looked up (Ant Design `CompressOutlined`, the same outline as in collection 9402) | `restore` in `Icons.jsx`, 20px in the rail |
+| Maximize / Restore a column (column header) | expand / compress | not looked up (Ant Design `ExpandOutlined` / `CompressOutlined`) | `maximize` / `restore`, 16px; `fullscreen` is already the mind map's Fit map |
+| Restore the columns (top of the maximize rail) | compress | not looked up (Ant Design `CompressOutlined`, the same outline as in collection 9402) | `restore` in `Icons.jsx`, 20px in the rail |
+| Columns destination (navigation rail of the multi-column view) | project | 4765975 | `columns`, 24px, the same icon as the view's switch in the header |
+| Mind maps destination (navigation rail of the multi-column view) | apartment | 5756280 | `mindmap`, 24px, the same icon as the mind map entry |
+| Leave the columns view (bottom of the navigation rail) | logout | 4765888 | `leaveView` in `Icons.jsx`, 22px |
+| Hide / show the map list (Mind maps tab, the map's bar) | outdent / indent | 4767051 / 4767050 | `sidebarFold` / `sidebarUnfold`, the same icons as the page's sidebar fold |
+| Search mind maps (Mind maps tab, in the search field; decorative) | search | 6598347 | `search` in `Icons.jsx`, 16px |
 | Terminal on-screen keyboard: letters, digits, symbols, `123`, `ABC`, `#+=`, Space | none | none | text labels (the layer keys are named "Numbers and symbols", "Letters", "More symbols") |
 | Ctrl+C | none | none | text "^C" |
 

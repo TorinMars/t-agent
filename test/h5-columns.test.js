@@ -23,50 +23,52 @@ test('only a top-level page without any pane parameter offers the view', async (
   assert.equal(canOfferColumns('', true), false, 'a framed page never offers it');
 });
 
-test('a column is at least a quarter of the strip and never narrower than 360px', async () => {
-  const { minColumnWidth, MIN_COLUMN_WIDTH, VISIBLE_COLUMNS } = await load();
-  assert.equal(MIN_COLUMN_WIDTH, 360);
+test('a column is at least a quarter of the strip and never narrower than 340px', async () => {
+  const { minColumnWidth, MIN_COLUMN_WIDTH, VISIBLE_COLUMNS, NAV_WIDTH, stripWidthOf } = await load();
+  assert.equal(MIN_COLUMN_WIDTH, 340);
   assert.equal(VISIBLE_COLUMNS, 4);
-  assert.equal(minColumnWidth(1440), 360, '1440 / 4');
-  assert.equal(minColumnWidth(1920), 480);
-  assert.equal(minColumnWidth(2560), 640);
-  assert.equal(minColumnWidth(1441), 360, 'rounded down, so four still fit');
-  assert.equal(minColumnWidth(1999), 499);
-  assert.equal(minColumnWidth(1000), 360, 'a narrow window: never below 360 (fewer fit and the strip scrolls)');
-  assert.equal(minColumnWidth(900), 360);
-  for (const bad of [0, -3, NaN, Infinity, undefined, null, 'x']) assert.equal(minColumnWidth(bad), 360, String(bad));
+  assert.equal(NAV_WIDTH, 72);
+  assert.equal(stripWidthOf(1440), 1368, 'the window less the navigation rail');
+  assert.equal(stripWidthOf(undefined), 0);
+  assert.equal(minColumnWidth(1368), 342, 'a 1440px window: four columns of 342px fit beside the rail');
+  assert.equal(minColumnWidth(1848), 462, 'a 1920px window');
+  assert.equal(minColumnWidth(2488), 622);
+  assert.equal(minColumnWidth(1369), 342, 'rounded down, so four still fit');
+  assert.equal(minColumnWidth(928), 340, 'a narrow window (1000px): never below 340 (fewer fit and the strip scrolls)');
+  assert.equal(minColumnWidth(828), 340);
+  for (const bad of [0, -3, NaN, Infinity, undefined, null, 'x']) assert.equal(minColumnWidth(bad), 340, String(bad));
 });
 
 test('up to four columns share the visible width; more are a quarter each and scroll', async () => {
   const { columnWidth } = await load();
-  assert.equal(columnWidth(1440, 1), 1440);
-  assert.equal(columnWidth(1440, 2), 720);
-  assert.equal(columnWidth(1440, 4), 360, 'four fit at 1440');
-  assert.equal(columnWidth(1440, 5), 360, 'a fifth makes the strip scroll; each stays a quarter');
-  assert.equal(columnWidth(1920, 3), 640);
-  assert.equal(columnWidth(1920, 4), 480);
-  assert.equal(columnWidth(1920, 12), 480);
-  assert.equal(columnWidth(1000, 2), 500);
-  assert.equal(columnWidth(1000, 3), 360, 'three do not fit at 1000: 360 each');
-  assert.equal(columnWidth(1000, 0), 1000, 'no count counts as one');
-  assert.equal(columnWidth(0, 3), 360, 'no usable width: the floor');
+  assert.equal(columnWidth(1368, 1), 1368);
+  assert.equal(columnWidth(1368, 2), 684);
+  assert.equal(columnWidth(1368, 4), 342, 'four fit at 1440 beside the rail');
+  assert.equal(columnWidth(1368, 5), 342, 'a fifth makes the strip scroll; each stays a quarter');
+  assert.equal(columnWidth(1848, 3), 616);
+  assert.equal(columnWidth(1848, 4), 462);
+  assert.equal(columnWidth(1848, 12), 462);
+  assert.equal(columnWidth(928, 2), 464);
+  assert.equal(columnWidth(928, 3), 340, 'three do not fit at 1000: 340 each');
+  assert.equal(columnWidth(928, 0), 928, 'no count counts as one');
+  assert.equal(columnWidth(0, 3), 340, 'no usable width: the floor');
 });
 
-test('the first use opens floor(width / 360) columns, 2 to 4', async () => {
-  const { defaultCount, columnsFor } = await load();
-  assert.equal(defaultCount(1440), 4, 'four on a 1440px screen');
-  assert.equal(defaultCount(1920), 4);
-  assert.equal(defaultCount(3840), 4, 'never more than 4');
-  assert.equal(defaultCount(1439), 3);
-  assert.equal(defaultCount(1080), 3);
-  assert.equal(defaultCount(1079), 2);
-  assert.equal(defaultCount(1000), 2);
-  assert.equal(defaultCount(900), 2);
+test('the first use opens floor(strip width / 340) columns, 2 to 4', async () => {
+  const { defaultCount, columnsFor, stripWidthOf } = await load();
+  assert.equal(defaultCount(stripWidthOf(1440)), 4, 'four on a 1440px screen');
+  assert.equal(defaultCount(stripWidthOf(1920)), 4);
+  assert.equal(defaultCount(stripWidthOf(3840)), 4, 'never more than 4');
+  assert.equal(defaultCount(stripWidthOf(1431)), 3);
+  assert.equal(defaultCount(stripWidthOf(1092)), 3);
+  assert.equal(defaultCount(stripWidthOf(1091)), 2);
+  assert.equal(defaultCount(stripWidthOf(1000)), 2);
+  assert.equal(defaultCount(stripWidthOf(900)), 2);
   assert.equal(defaultCount(500), 2, 'at least 2 (the second one scrolls)');
   assert.equal(defaultCount(undefined), 2);
-  assert.equal(columnsFor([], 1440).length, 4);
-  assert.equal(columnsFor([], 1000).length, 2);
-  assert.deepEqual(columnsFor(['a', 'b'], 1920), ['a', 'b'], 'stored columns are kept as they are');
+  assert.equal(columnsFor([], 1368).length, 4);
+  assert.equal(columnsFor([], 928).length, 2);
+  assert.deepEqual(columnsFor(['a', 'b'], 1848), ['a', 'b'], 'stored columns are kept as they are');
 });
 
 test('new ids are short, valid and never taken', async () => {
@@ -80,16 +82,51 @@ test('new ids are short, valid and never taken', async () => {
 
 test('the stored layout is cleaned and round-trips', async () => {
   const { readLayout, writeLayout, MAX_COLUMNS } = await load();
-  assert.deepEqual(readLayout(null), { on: false, ids: [] });
-  assert.deepEqual(readLayout('not json'), { on: false, ids: [] });
-  assert.deepEqual(readLayout('{"on":"yes","ids":"a"}'), { on: false, ids: [] });
-  assert.deepEqual(readLayout(JSON.stringify({ on: true, ids: ['a', 'a', 'B', 'c', 7, 'd'] })), { on: true, ids: ['a', 'c', 'd'] });
+  assert.deepEqual(readLayout(null), { on: false, ids: [], tab: 'columns' });
+  assert.deepEqual(readLayout('not json'), { on: false, ids: [], tab: 'columns' });
+  assert.deepEqual(readLayout('{"on":"yes","ids":"a"}'), { on: false, ids: [], tab: 'columns' });
+  assert.deepEqual(readLayout(JSON.stringify({ on: true, ids: ['a', 'a', 'B', 'c', 7, 'd'] })), { on: true, ids: ['a', 'c', 'd'], tab: 'columns' }, 'a layout from before the rail opens on the columns');
   assert.equal(MAX_COLUMNS, 12);
   const many = Array.from({ length: 15 }, (_, i) => `c${i}`);
   assert.deepEqual(readLayout(JSON.stringify({ on: true, ids: many })).ids, many.slice(0, 12), 'the first twelve are kept');
   assert.deepEqual(readLayout(writeLayout({ on: true, ids: many })).ids, many.slice(0, 12), 'and only twelve are written');
-  const layout = { on: true, ids: ['x1', 'y2'] };
+  const layout = { on: true, ids: ['x1', 'y2'], tab: 'columns' };
   assert.deepEqual(readLayout(writeLayout(layout)), layout);
+});
+
+test('the tab of the navigation rail is remembered with the layout: columns or mind maps, nothing else', async () => {
+  const { readLayout, writeLayout, readTab, TABS, STORAGE_KEY } = await load();
+  assert.equal(STORAGE_KEY, 'h5-columns');
+  assert.deepEqual(TABS, ['columns', 'maps']);
+  const maps = { on: true, ids: ['x1'], tab: 'maps' };
+  assert.equal(writeLayout(maps), '{"on":true,"ids":["x1"],"tab":"maps"}');
+  assert.deepEqual(readLayout(writeLayout(maps)), maps, 'the Mind maps tab comes back after a reload');
+  assert.equal(readLayout(writeLayout({ on: false, ids: [], tab: 'maps' })).tab, 'maps', 'kept while the view is off, for the next time');
+  for (const bad of [undefined, null, '', 'map', 'Maps', 'settings', 3, {}]) {
+    assert.equal(readTab(bad), 'columns', String(bad));
+    assert.equal(readLayout(JSON.stringify({ on: true, ids: ['a'], tab: bad })).tab, 'columns', `stored ${String(bad)}`);
+  }
+  assert.equal(JSON.parse(writeLayout({ on: true, ids: ['a'], tab: 'evil' })).tab, 'columns', 'only a known tab is written');
+});
+
+test('mind map columns of v2.133 / v2.134 are dropped on load; the other columns keep their order', async () => {
+  const { dropMapColumns, legacyMapKeyOf, LEGACY_MAP_KEY, readLayout } = await load();
+  assert.equal(LEGACY_MAP_KEY, 'h5-mindmap');
+  assert.equal(legacyMapKeyOf('k3x9'), 'pane:k3x9:h5-mindmap', 'the key such a pane wrote (pane:<id>: + h5-mindmap)');
+  // A stored state as v2.134.0 left it: two terminal columns and two map columns (one on the list, one with a map open).
+  const storage = new Map([
+    ['h5-columns', JSON.stringify({ on: true, ids: ['aaa111', 'mapl01', 'bbb222', 'mape02'] })],
+    ['pane:mapl01:h5-mindmap', '{"screen":"list"}'],
+    ['pane:mape02:h5-mindmap', '{"screen":"editor","sourceKey":"local","id":"m1"}'],
+    ['pane:aaa111:h5-task:local', '1'],
+  ]);
+  const layout = readLayout(storage.get('h5-columns'));
+  const result = dropMapColumns(layout.ids, id => storage.has(legacyMapKeyOf(id)));
+  assert.deepEqual(result, { ids: ['aaa111', 'bbb222'], dropped: ['mapl01', 'mape02'] });
+  assert.equal(layout.tab, 'columns');
+  const none = ['a', 'b'];
+  assert.equal(dropMapColumns(none, () => false).ids, none, 'nothing dropped: the same order, unchanged');
+  assert.deepEqual(dropMapColumns(['m1'], () => true), { ids: [], dropped: ['m1'] }, 'only map columns: none left (the view opens its default columns)');
 });
 
 test('columns: first use makes the default count, at most 12, the last one stays', async () => {
@@ -217,7 +254,7 @@ test('reorder: a column moved to a place or one step, and the stored order', asy
   assert.equal(shiftColumn(ids, 'x', 1), ids);
   // The order is what is stored, and it comes back as it was.
   const moved = moveColumn(ids, 'a', 3);
-  assert.deepEqual(readLayout(writeLayout({ on: true, ids: moved })), { on: true, ids: ['b', 'c', 'd', 'a'] });
+  assert.deepEqual(readLayout(writeLayout({ on: true, ids: moved })), { on: true, ids: ['b', 'c', 'd', 'a'], tab: 'columns' });
 });
 
 test('the DOM order of the columns never follows a reorder: kept ids in their old order, new ones at the end', async () => {
@@ -266,40 +303,11 @@ test('column move keys: Ctrl+Alt+Shift+Left / Right, never the step keys', async
 
 // ── Mind map columns and the maximized column with its rail ──
 
-test('a mind map column is remembered by its pane: the list, or one map on one service', async () => {
-  const { MAP_KEY, mapKeyOf, readMapColumn, writeMapColumn } = await load();
-  assert.equal(MAP_KEY, 'h5-mindmap');
-  assert.equal(mapKeyOf('k3x9'), 'pane:k3x9:h5-mindmap', 'the same key the pane uses (pane:<id>: + h5-mindmap)');
-  assert.deepEqual(readMapColumn('{"screen":"list"}'), { screen: 'list' });
-  const map = { screen: 'editor', sourceKey: 'remote:7', id: '3f2a-uuid_1', title: 'Plan' };
-  assert.deepEqual(readMapColumn(JSON.stringify(map)), { screen: 'editor', sourceKey: 'remote:7', id: '3f2a-uuid_1' }, 'the title is not kept');
-  assert.equal(writeMapColumn(map), '{"screen":"editor","sourceKey":"remote:7","id":"3f2a-uuid_1"}');
-  assert.equal(writeMapColumn({ screen: 'list', title: '' }), '{"screen":"list"}');
-  for (const bad of [null, '', 'nope', '{', '{"screen":"editor","sourceKey":"local"}', '{"screen":"editor","sourceKey":"evil","id":"a"}',
-    '{"screen":"editor","sourceKey":"local","id":"../x"}', '{"screen":"other"}', '[]']) {
-    assert.equal(readMapColumn(bad), null, String(bad));
-  }
-  assert.equal(writeMapColumn(null), null, 'no view: nothing is kept (the key is removed)');
-});
-
-test('"Add mind map column" makes a new column at the end, never a 13th', async () => {
-  const { addMapColumn, MAX_COLUMNS } = await load();
-  const seq = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
-  let i = 0;
-  const random = () => seq[i++ % seq.length];
-  const made = addMapColumn(['aaa', 'bbb'], ['aaa', 'bbb', 'ccc'], random);
-  assert.equal(made.ids.length, 4, 'after every mounted id, including one being closed');
-  assert.equal(made.ids[3], made.id);
-  assert.ok(!['aaa', 'bbb', 'ccc'].includes(made.id));
-  const full = Array.from({ length: MAX_COLUMNS }, (_, n) => `c${n}`);
-  assert.equal(addMapColumn(full), null);
-});
-
-test('pane messages carry the map, the terminal shown, its agent, and peek lines', async () => {
+test('pane messages carry the terminal shown, its agent, and peek lines; a map is no longer read', async () => {
   const { readPaneMessage, PEEK_LINES } = await load();
   const base = { type: 't-agent-pane', paneId: 'abc' };
   const title = readPaneMessage({ ...base, event: 'title', title: 'Fix', session: 'S', map: { title: ' Plan ', screen: 'editor' }, target: { sourceKey: 'local', taskId: 3, terminalId: 'default' }, agent: 'codex' });
-  assert.deepEqual(title.map, { title: 'Plan', screen: 'editor' });
+  assert.equal(title.map, undefined, 'an old pane that still says what map it shows: ignored');
   assert.deepEqual(title.target, { sourceKey: 'local', taskId: 3, terminalId: 'default' });
   assert.equal(title.agent, 'codex');
   const odd = readPaneMessage({ ...base, event: 'title', map: { screen: 'nope' }, target: { sourceKey: 'x', taskId: 1, terminalId: 'a' }, agent: 'bash' });
@@ -308,16 +316,18 @@ test('pane messages carry the map, the terminal shown, its agent, and peek lines
   assert.equal(odd.agent, undefined);
   assert.equal(readPaneMessage({ ...base, event: 'title', target: { sourceKey: 'local', taskId: -1, terminalId: 'a' } }).target, undefined);
   assert.deepEqual(readPaneMessage({ ...base, event: 'maximize' }), { paneId: 'abc', event: 'maximize' });
+  assert.deepEqual(readPaneMessage({ ...base, event: 'mindmaps' }), { paneId: 'abc', event: 'mindmaps' }, 'the pane asks for the Mind maps tab');
+  assert.equal(readPaneMessage({ ...base, event: 'maximized' }), null, 'the top page no longer hears a map column\'s state');
   const peek = readPaneMessage({ ...base, event: 'peek', lines: ['a', 5, 'b  ', ...Array.from({ length: 10 }, (_, n) => `l${n}`), 'x'.repeat(500)] });
   assert.equal(peek.lines.length, PEEK_LINES);
   assert.equal(peek.lines.at(-1).length, 200, 'each line cut to 200 characters');
   assert.deepEqual(readPaneMessage({ ...base, event: 'peek', lines: 'no' }).lines, []);
 });
 
-test('any open column of the shown strip can be maximized, a terminal or a map; one at a time', async () => {
+test('any open column of the shown strip can be maximized; one at a time', async () => {
   const { canMaximize, keptMaximized, toggleMaximize, railColumns, RAIL_WIDTH } = await load();
   assert.equal(RAIL_WIDTH, 72);
-  const columns = { shown: true, ids: ['a', 'b', 'c'], closing: [], titles: { a: { title: 'T' }, b: { map: { title: 'M', screen: 'editor' } } }, maximized: null };
+  const columns = { shown: true, ids: ['a', 'b', 'c'], closing: [], titles: { a: { title: 'T' }, b: { title: 'U', session: 'chat' } }, maximized: null };
   assert.equal(canMaximize(columns, 'b'), true);
   assert.equal(canMaximize(columns, 'a'), true, 'a terminal column too');
   assert.equal(canMaximize(columns, 'c'), true, 'a column whose pane said nothing yet');
@@ -332,7 +342,7 @@ test('any open column of the shown strip can be maximized, a terminal or a map; 
   assert.deepEqual(toggleMaximize(max, 'b'), { maximized: null }, 'the same keys restore');
   assert.deepEqual(toggleMaximize(max, 'a'), { maximized: null });
   assert.equal(keptMaximized(max), 'b');
-  assert.equal(keptMaximized({ ...max, titles: { ...max.titles, b: { title: 'T' } } }), 'b', 'its map was closed: it stays maximized (now a terminal)');
+  assert.equal(keptMaximized({ ...max, titles: { ...max.titles, b: { title: 'T' } } }), 'b', 'it shows another task: it stays maximized');
   assert.equal(keptMaximized({ ...max, ids: ['a', 'c'] }), null, 'it was closed');
   assert.equal(keptMaximized({ ...max, closing: ['b'] }), null, 'it is being closed');
   assert.equal(keptMaximized({ ...max, shown: false }), null, 'the strip went away');
@@ -363,10 +373,9 @@ test('the state of a rail tile: running, needs you (with the count and the quest
     { id: 5, status: 'waiting_user', engine: 'local', context: JSON.stringify({ tagent: { task_id: 4, terminal_id: 'default' } }), attention_reason: 'Allow edit?', updated_at: '2025-01-01' }];
   const status = columnStatus(info, { activity: { local: { 4: { default: 'running' } } }, items });
   assert.deepEqual(status, { state: 'waiting', count: 3, question: 'Q2' }, 'needs you wins over running; the newest question');
-  assert.deepEqual(columnStatus({ map: { title: 'M', screen: 'editor' }, target: info.target }, { items }), { state: 'idle', count: 0, question: '' }, 'a map column');
+  assert.deepEqual(columnStatus({ title: 'No terminal' }, { items }), { state: 'idle', count: 0, question: '' }, 'a column with no terminal');
   assert.equal(columnName(info), 'Re-render');
-  assert.equal(columnName({ map: { title: 'Plan', screen: 'editor' } }), 'Plan');
-  assert.equal(columnName({ map: { title: '', screen: 'list' } }), 'Mind maps');
+  assert.equal(columnName({ title: '', map: { title: 'Plan', screen: 'editor' } }), '', 'a map is never a column name any more');
   assert.equal(columnName(null), '');
 });
 
@@ -403,7 +412,7 @@ test('the column header names its column and the bar sums up the states', async 
   assert.deepEqual(headerName(null), { title: '', session: '' });
   assert.deepEqual(headerName({ title: 'SELF-TAGENT', session: 'main dev' }), { title: 'SELF-TAGENT', session: 'main dev' });
   assert.deepEqual(headerName({ title: '', session: 'stray' }), { title: '', session: '' }, 'no session without a task');
-  assert.deepEqual(headerName({ title: 'x', session: 'y', map: { title: '', screen: 'list' } }), { title: 'Mind maps', session: '' });
+  assert.deepEqual(headerName({ title: 'x', session: 'y', map: { title: '', screen: 'list' } }), { title: 'x', session: 'y' }, 'no map variant');
   assert.equal(headerLabel({ title: 'SELF-TAGENT', session: 'main dev' }, 'needs you', 'Column 1'), 'SELF-TAGENT, main dev, needs you');
   assert.equal(headerLabel(null, 'idle', 'Column 2'), 'Column 2, idle');
   const states = { a: 'running', b: 'waiting', c: 'idle', d: 'waiting', e: 'running' };
@@ -412,4 +421,22 @@ test('the column header names its column and the bar sums up the states', async 
   assert.deepEqual(summarize([], () => ({ state: 'idle' })), { running: 0, waiting: 0, first: null });
   assert.equal(listState({ state: 'waiting' }, true), 'focused');
   assert.equal(LIST_WORDS[listState({ state: 'waiting' }, false)], 'needs you');
+});
+
+test('the navigation rail: the arrow keys move between its destinations, the badge counts the columns that need the person', async () => {
+  const { railKey, needsCount, summarize } = await load();
+  assert.equal(railKey('ArrowDown', 0, 2), 1);
+  assert.equal(railKey('ArrowDown', 1, 2), 0, 'wraps');
+  assert.equal(railKey('ArrowUp', 0, 2), 1, 'wraps the other way');
+  assert.equal(railKey('ArrowRight', 0, 2), 1);
+  assert.equal(railKey('ArrowLeft', 1, 2), 0);
+  assert.equal(railKey('Home', 1, 2), 0);
+  assert.equal(railKey('End', 0, 2), 1);
+  for (const key of ['Enter', ' ', 'Tab', 'Escape', 'a']) assert.equal(railKey(key, 0, 2), -1, `${key} is not a move (Enter and Space open, Tab leaves)`);
+  assert.equal(railKey('ArrowDown', 0, 0), -1);
+  const states = { a: 'running', b: 'waiting', c: 'idle', d: 'waiting' };
+  const statusOf = id => ({ state: states[id] });
+  assert.equal(needsCount(['a', 'b', 'c', 'd'], statusOf), 2);
+  assert.equal(needsCount(['a', 'b', 'c', 'd'], statusOf), summarize(['a', 'b', 'c', 'd'], statusOf).waiting, 'the same count as the "N need you" chip');
+  assert.equal(needsCount(['a', 'c'], statusOf), 0);
 });

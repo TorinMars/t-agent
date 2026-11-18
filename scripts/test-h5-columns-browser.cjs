@@ -5,9 +5,9 @@
 // from a foreign origin, from the top page itself or about another column are ignored; the top page holds no terminal socket while the strip is
 // shown; the switch is not offered below the wide breakpoint, on a phone, or on a pane page. While the strip is shown, a ?openChat= link leaves the
 // hidden normal view alone and sends `open` to the focused column (else the first).
-// Widths: up to four columns share the strip's width; with more each one is a quarter of it (never below 360px) and the strip scrolls sideways; a
-// window resize changes the widths (1920: 480px each; 1000: 360px, so three overflow).
-// Scrolling (1440x900, 5 columns): each column is a quarter of the strip (360px), the strip overflows with its own scrollbar and edge shadows only where columns are hidden; a sideways wheel inside a pane scrolls the strip and a
+// Widths: up to four columns share the strip's width (the window less the 72px navigation rail); with more each one is a quarter of it (never below
+// 340px) and the strip scrolls sideways; a window resize changes the widths (1920: 462px each; 1000: 340px, so three overflow).
+// Scrolling (1440x900, 5 columns): each column is a quarter of the strip (342px), the strip overflows with its own scrollbar and edge shadows only where columns are hidden; a sideways wheel inside a pane scrolls the strip and a
 // vertical one does not; Shift+wheel over the top bar scrolls it; Ctrl+Alt+Right inside a pane moves the focus and scrolls, and never reaches the
 // terminal; a new column is scrolled into view; 12 columns, not 13; with reduced motion the strip scrolls at once.
 // Headers (1440x900): no tab strip; one header per column right above its pane with the device tag and the names from the panes (the panes draw no
@@ -22,7 +22,7 @@
 // H5_SHOT_DIR=<dir> saves screenshots of the header switch, of the strip at 1920x1080, of 5 overflowing columns at 1440x900, of the headers, of a
 // column that needs the person, of the "⋯" menu, of the column list, of a header mid-drag (2x), of the touch headers, and of the top bar with the
 // Update button's red dot (columns-update-bar.png, 2x).
-// Update (1440x900): #h5-columns-update is the first button of the top bar, left of the switch, with the header updater's red dot; it opens the same
+// Update (1440x900): #h5-columns-update is the top button of the navigation rail, above the switch, with the header updater's red dot; it opens the same
 // dialog above the strip and gets the focus back; opening the columns adds no second update-status poll; the header button still works.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -121,8 +121,8 @@ const frameIds = page => page.evaluate(() => [...document.querySelectorAll('#h5-
 const frameSrcs = page => page.evaluate(() => [...document.querySelectorAll('#h5-columns iframe')].map(el => el.getAttribute('src')));
 const stored = page => page.evaluate(() => JSON.parse(localStorage.getItem('h5-columns') || 'null'));
 const opens = page => page.evaluate(() => (window.paneInbox || []).filter(([, data]) => data.event === 'open'));
-// The minimum column width the page should use: a quarter of the strip's visible width, never below 360px (columns.mjs minColumnWidth).
-const expectedMinWidth = page => page.evaluate(() => Math.max(360, Math.floor(document.getElementById('h5-columns-strip').clientWidth / 4)));
+// The minimum column width the page should use: a quarter of the strip's visible width, never below 340px (columns.mjs minColumnWidth).
+const expectedMinWidth = page => page.evaluate(() => Math.max(340, Math.floor(document.getElementById('h5-columns-strip').clientWidth / 4)));
 const columnWidths = page => page.evaluate(() => { const strip = document.getElementById('h5-columns-strip'); return { scroll: strip.scrollWidth, client: strip.clientWidth, overflow: strip.hasAttribute('data-overflow'), widths: [...strip.querySelectorAll('.h5-column')].filter(el => getComputedStyle(el).display !== 'none').map(el => el.getBoundingClientRect().width) }; });
 // Waits until every shown column is `width` px wide (within 1px), then returns the strip's widths.
 async function widthsBecome(page, width) {
@@ -243,15 +243,15 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       assert.equal(await open.getAttribute('aria-pressed'), 'false');
       assert.equal(await page.locator('#h5-columns').count(), 0, `${label}: the normal view at first`);
 
-      // On: floor(1440 / 360) = 4 columns, each an iframe of /h5?pane=<id>, sharing the width evenly (4 x 360) with no sideways scrolling; the page
-      // under it is hidden and holds no terminal socket.
+      // On: floor((1440 - 72) / 340) = 4 columns, each an iframe of /h5?pane=<id>, sharing the strip right of the navigation rail evenly (4 x 342) with
+      // no sideways scrolling; the page under it is hidden and holds no terminal socket.
       await open.click();
       await waitFrames(page, 4);
       const minWidth = await expectedMinWidth(page);
-      assert.equal(minWidth, 360, `${label}: a quarter of the strip`);
-      const four = await widthsBecome(page, 360);
+      assert.equal(minWidth, 342, `${label}: a quarter of the strip`);
+      const four = await widthsBecome(page, 342);
       assert.ok(four.scroll <= four.client + 1 && !four.overflow, `${label}: four columns fit (${JSON.stringify(four)})`);
-      assert.ok(four.widths.length === 4 && four.widths.every(w => Math.abs(w - 360) <= 1), `${label}: each 360px (${four.widths})`);
+      assert.ok(four.widths.length === 4 && four.widths.every(w => Math.abs(w - 342) <= 1), `${label}: each 342px (${four.widths})`);
       assert.deepEqual(await edgesShown(page, []), [], `${label}: no edge shadow when nothing is hidden`);
       // A fifth column does not fit: the strip scrolls sideways instead of squeezing, and the new column was scrolled into view.
       await page.locator('#h5-columns-add').click();
@@ -262,9 +262,9 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       assert.equal(await page.locator('#h5-app').isVisible(), false, `${label}: the normal page is hidden under the strip`);
       assert.equal(await page.locator('#h5-tasks').isVisible(), false, `${label}: and its sidebar`);
       assert.deepEqual(await openTerminalSockets(page), [], `${label}: the top page closed its terminal socket`);
-      assert.deepEqual(await stored(page), { on: true, ids }, `${label}: mode and ids are remembered`);
-      assert.equal(await page.locator('#h5-columns-toggle').getAttribute('aria-pressed'), 'true');
-      assert.equal(await page.locator('#h5-columns-toggle').getAttribute('title'), 'Multi-column view');
+      assert.deepEqual(await stored(page), { on: true, ids, tab: 'columns' }, `${label}: mode, ids and the tab are remembered`);
+      assert.equal(await page.locator('#h5-columns-toggle').getAttribute('aria-label'), 'Leave the columns view');
+      assert.equal(await page.locator('#h5-columns-toggle').getAttribute('title'), 'Leave the columns view');
       assert.equal(await page.locator('#h5-columns-add').getAttribute('aria-label'), 'Add column');
       assert.equal(await page.locator('.h5-column-head [data-action="close"]').first().getAttribute('title'), 'Close column');
       // No tab strip: each column has one header, drawn by the top page at the column's top, right above its iframe.
@@ -401,7 +401,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       assert.deepEqual(await frameIds(page), [six[0]]);
       const one = await frameIds(page);
       const width = await page.evaluate(() => document.querySelector('.h5-column').getBoundingClientRect().width);
-      assert.ok(width > 1400, `${label}: one column takes the whole width (${width})`);
+      assert.equal(Math.round(width), 1440 - 72, `${label}: one column takes the whole width right of the navigation rail (${width})`);
 
       // Off: the normal view again, showing the same terminal, connected again; the ids stay for the next time.
       await page.locator('#h5-columns-toggle').click();
@@ -410,7 +410,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await shownTerminal(page, 'Terminal 1');
       assert.equal(await page.locator('.h5-xterm:not([hidden])').count(), 1, `${label}: the terminal is shown again`);
       assert.equal((await openTerminalSockets(page)).length, 1, `${label}: one terminal socket again`);
-      assert.deepEqual(await stored(page), { on: false, ids: one });
+      assert.deepEqual(await stored(page), { on: false, ids: one, tab: 'columns' });
       await page.locator('#h5-columns-open').click();
       await waitFrames(page, 1);
       assert.deepEqual(await frameIds(page), one, `${label}: on again, the same columns`);
@@ -440,7 +440,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await waitFrames(page, 5);
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.contentDocument && el.contentDocument.getElementById('h5-app')), null, { timeout: 10000 });
       const minWidth = await expectedMinWidth(page);
-      assert.equal(minWidth, 360, `${label}: a quarter of the strip`);
+      assert.equal(minWidth, 342, `${label}: a quarter of the strip`);
       await widthsBecome(page, minWidth);
       let st = await stripState(page);
       assert.ok(st.widths.every(w => Math.abs(w - minWidth) <= 1), `${label}: each column is a quarter of the strip, ${minWidth} (${st.widths})`);
@@ -556,7 +556,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       assert.deepEqual(await headIds(page), ids4, `${label}: one header per column, in column order`);
       assert.equal(await page.locator('#h5-columns-tabs, .h5-column-tab').count(), 0, `${label}: no tab strip`);
       const bar = await page.evaluate(() => [...document.getElementById('h5-columns-bar').querySelectorAll('[id]')].map(el => el.id).filter(id => id.startsWith('h5-columns-')));
-      assert.deepEqual(bar.filter(id => !id.endsWith('-dot')), ['h5-columns-update', 'h5-columns-toggle', 'h5-columns-list', 'h5-columns-add', 'h5-columns-add-map'], `${label}: Update, the switch, the column list, then + Column and Add mind map column (${bar})`);
+      assert.deepEqual(bar.filter(id => !id.endsWith('-dot')), ['h5-columns-list', 'h5-columns-add'], `${label}: the column list, then + Column (Update and the switch are in the navigation rail; no map column button) (${bar})`);
       assert.equal(await page.locator('#h5-columns-list').textContent(), '4 columns');
       // The pane hides its own page header: the column's header is the only one.
       for (const id of ids4) assert.equal(await paneFrame(page, id).locator('.h5-header, #h5-open-tasks, #h5-refresh').count(), 0, `${label}: the pane ${id} draws no header of its own`);
@@ -963,7 +963,7 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await normal.context.close();
     }
 
-    // ── 1920x1080: first use opens 4 columns of 480px; a fifth scrolls; a window resize changes the widths; screenshot ──
+    // ── 1920x1080: first use opens 4 columns of 462px (1848px of strip right of the rail); a fifth scrolls; a window resize changes the widths; screenshot ──
     {
       const label = '1920x1080';
       const { context, page } = await openPage(browser, { viewport: { width: 1920, height: 1080 } });
@@ -972,9 +972,9 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await page.locator('#h5-columns-open').click();
       await waitFrames(page, 4);
       for (const src of await frameSrcs(page)) assert.match(src, PANE_URL);
-      const fit = await widthsBecome(page, 480);
+      const fit = await widthsBecome(page, 462);
       assert.ok(fit.scroll <= fit.client + 1 && !fit.overflow, `${label}: four columns fit (${JSON.stringify(fit)})`);
-      assert.ok(fit.widths.length === 4 && fit.widths.every(w => Math.abs(w - 480) <= 1), `${label}: each a quarter, 480px (${fit.widths})`);
+      assert.ok(fit.widths.length === 4 && fit.widths.every(w => Math.abs(w - 462) <= 1), `${label}: each a quarter, 462px (${fit.widths})`);
       assert.deepEqual(await openTerminalSockets(page), []);
       // A ?openChat= link while the strip is shown and no column is focused: the first column gets `open` once its
       // page has loaded; the hidden normal view still brings back its remembered terminal, shown when the strip is left.
@@ -1000,39 +1000,39 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
         fs.mkdirSync(SHOTS, { recursive: true });
         await page.screenshot({ path: path.join(SHOTS, 'columns-1920x1080.png') });
       }
-      // A fifth column: the strip scrolls and each column stays a quarter (480px).
+      // A fifth column: the strip scrolls and each column stays a quarter (462px).
       await page.locator('#h5-columns-add').click();
       await waitFrames(page, 5);
-      let wide = await widthsBecome(page, 480);
-      assert.ok(wide.overflow && wide.scroll >= 5 * 480 - 2, `${label}: five columns overflow (${JSON.stringify(wide)})`);
-      assert.ok(wide.widths.every(w => Math.abs(w - 480) <= 1), `${label}: each stays 480px (${wide.widths})`);
-      // A narrower window: a quarter would be 250px, so each column is 360px; with three of them (1080px) the strip still overflows.
+      let wide = await widthsBecome(page, 462);
+      assert.ok(wide.overflow && wide.scroll >= 5 * 462 - 2, `${label}: five columns overflow (${JSON.stringify(wide)})`);
+      assert.ok(wide.widths.every(w => Math.abs(w - 462) <= 1), `${label}: each stays 462px (${wide.widths})`);
+      // A narrower window: a quarter would be 232px, so each column is 340px; with three of them (1020px of 928px) the strip still overflows.
       await page.setViewportSize({ width: 1000, height: 800 });
-      let narrow = await widthsBecome(page, 360);
-      assert.equal(await expectedMinWidth(page), 360, `${label} -> 1000: never below 360`);
-      assert.ok(narrow.widths.every(w => Math.abs(w - 360) <= 1), `${label} -> 1000: each 360px (${narrow.widths})`);
+      let narrow = await widthsBecome(page, 340);
+      assert.equal(await expectedMinWidth(page), 340, `${label} -> 1000: never below 340`);
+      assert.ok(narrow.widths.every(w => Math.abs(w - 340) <= 1), `${label} -> 1000: each 340px (${narrow.widths})`);
       while ((await frameIds(page)).length > 3) {
         const left = await frameIds(page);
         await closeFromHeader(page, left.at(-1));
         await waitFrames(page, left.length - 1);
       }
-      narrow = await widthsBecome(page, 360);
-      assert.ok(narrow.widths.length === 3 && narrow.widths.every(w => Math.abs(w - 360) <= 1), `${label} -> 1000: three columns of 360px (${narrow.widths})`);
+      narrow = await widthsBecome(page, 340);
+      assert.ok(narrow.widths.length === 3 && narrow.widths.every(w => Math.abs(w - 340) <= 1), `${label} -> 1000: three columns of 340px (${narrow.widths})`);
       assert.ok(narrow.scroll > narrow.client && narrow.overflow, `${label} -> 1000: three columns overflow (${JSON.stringify(narrow)})`);
-      // Wide again: the three share 1920px (640px each, more than a quarter).
+      // Wide again: the three share 1848px (616px each, more than a quarter).
       await page.setViewportSize({ width: 1920, height: 1080 });
-      wide = await widthsBecome(page, 640);
-      assert.ok(wide.widths.every(w => Math.abs(w - 640) <= 1) && !wide.overflow, `${label}: back to 1920, three share the width (${JSON.stringify(wide)})`);
+      wide = await widthsBecome(page, 616);
+      assert.ok(wide.widths.every(w => Math.abs(w - 616) <= 1) && !wide.overflow, `${label}: back to 1920, three share the width (${JSON.stringify(wide)})`);
       // And a fourth and fifth: a quarter each again.
       await page.locator('#h5-columns-add').click();
       await page.locator('#h5-columns-add').click();
       await waitFrames(page, 5);
-      wide = await widthsBecome(page, 480);
-      assert.ok(wide.widths.every(w => Math.abs(w - 480) <= 1) && wide.overflow, `${label}: five at 1920 are 480px each and scroll (${JSON.stringify(wide)})`);
+      wide = await widthsBecome(page, 462);
+      assert.ok(wide.widths.every(w => Math.abs(w - 462) <= 1) && wide.overflow, `${label}: five at 1920 are 462px each and scroll (${JSON.stringify(wide)})`);
       await context.close();
     }
 
-    // ── 1440x900: the Update button of the top bar (#h5-columns-update) and the one updater ──
+    // ── 1440x900: the Update button of the navigation rail (#h5-columns-update) and the one updater ──
     {
       const label = 'update';
       const status = over => ({ status: 'available', local_version: '1.0.0', remote_version: '2.0.0', boot_id: 'b1', install_type: 'git', is_update_admin: true, log: [], ...over });
@@ -1048,27 +1048,28 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       const button = page.locator('#h5-columns-update');
       await button.waitFor({ state: 'visible' });
       const bar = await page.evaluate(() => {
-        const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, mid: (r.top + r.bottom) / 2, width: r.width, height: r.height }; };
+        const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, mid: (r.left + r.right) / 2, width: r.width, height: r.height }; };
+        const nav = document.getElementById('h5-columns-nav');
         return {
-          first: document.getElementById('h5-columns-bar').firstElementChild.id, second: document.getElementById('h5-columns-bar').children[1].id,
-          bar: rect('h5-columns-bar'), update: rect('h5-columns-update'), toggle: rect('h5-columns-toggle'), list: rect('h5-columns-list'), add: rect('h5-columns-add'),
+          first: nav.firstElementChild.id, last: nav.lastElementChild.id,
+          nav: rect('h5-columns-nav'), update: rect('h5-columns-update'), toggle: rect('h5-columns-toggle'), list: rect('h5-columns-list'), add: rect('h5-columns-add'), barBox: rect('h5-columns-bar'),
           icon: (() => { const r = document.querySelector('#h5-columns-update svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
           toggleIcon: (() => { const r = document.querySelector('#h5-columns-toggle svg').getBoundingClientRect(); return { width: r.width, height: r.height }; })(),
           dot: !document.getElementById('h5-columns-update-dot').querySelector('.MuiBadge-badge').classList.contains('MuiBadge-invisible'),
         };
       });
-      assert.equal(bar.first, 'h5-columns-update', `${label}: the Update button is the first in the bar`);
-      assert.equal(bar.second, 'h5-columns-toggle', `${label}: then the switch`);
-      assert.ok(bar.update.right <= bar.toggle.left + 0.5 && bar.update.left >= bar.bar.left, `${label}: left of the switch (${JSON.stringify(bar)})`);
-      assert.ok(Math.abs(bar.update.mid - bar.toggle.mid) <= 0.5 && Math.abs(bar.update.height - bar.toggle.height) <= 0.5, `${label}: as tall as the switch and on its line (${JSON.stringify(bar)})`);
-      assert.ok(Math.abs(bar.icon.width - bar.toggleIcon.width) <= 0.5 && Math.abs(bar.icon.width - 20) <= 0.5, `${label}: a 20px icon like the switch's (${JSON.stringify(bar.icon)})`);
-      assert.ok(bar.toggle.right <= bar.list.left + 0.5 && bar.list.right <= bar.add.left + 0.5 && bar.add.right <= bar.bar.right + 0.5, `${label}: the column list and + Column still fit after it (${JSON.stringify(bar)})`);
+      assert.equal(bar.first, 'h5-columns-update', `${label}: the Update button is the first in the navigation rail`);
+      assert.equal(bar.last, 'h5-columns-toggle', `${label}: the switch is the last`);
+      assert.ok(bar.update.top < bar.toggle.top && Math.abs(bar.update.mid - bar.nav.mid) <= 0.5 && Math.abs(bar.toggle.mid - bar.nav.mid) <= 0.5, `${label}: above the switch, both centred in the rail (${JSON.stringify(bar)})`);
+      assert.ok(Math.abs(bar.update.height - bar.toggle.height) <= 0.5 && bar.update.height >= 48, `${label}: as big as the switch, 48px targets (${JSON.stringify(bar)})`);
+      assert.ok(Math.abs(bar.icon.width - bar.toggleIcon.width) <= 0.5 && Math.abs(bar.icon.width - 22) <= 0.5, `${label}: a 22px icon like the switch's (${JSON.stringify(bar.icon)})`);
+      assert.ok(bar.barBox.left >= bar.nav.right - 0.5 && bar.list.left >= bar.barBox.left && bar.add.right <= bar.barBox.right + 0.5, `${label}: the column list and + Column in the bar right of the rail (${JSON.stringify(bar)})`);
       assert.equal(await button.getAttribute('aria-label'), 'Update');
       assert.equal(await button.getAttribute('title'), 'Update');
       assert.equal(await button.getAttribute('aria-haspopup'), 'dialog');
       assert.equal(await button.getAttribute('data-attention'), 'true', `${label}: an update is available: data-attention`);
       assert.ok(bar.dot, `${label}: and the red dot`);
-      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-update-bar.png'), clip: { x: 0, y: 0, width: 1440, height: 60 } });
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'columns-update-bar.png'), clip: { x: 0, y: 0, width: 360, height: 200 } });
       // One updater: the header's stays mounted under the strip (hidden), no second one is mounted and the panes read nothing.
       await page.waitForTimeout(1500);
       assert.equal(server.reads, reads, `${label}: opening the columns starts no second poll of update-status`);

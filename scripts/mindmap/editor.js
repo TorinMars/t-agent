@@ -144,9 +144,11 @@ export async function createEditor(host, doc, handlers) {
     mind.copyNodes(clean.map(nodeObj => ({ nodeObj })), target);
   }
 
-  // Keys. The listener is on the document, in the capture phase, so that nothing under the view (the terminal) sees them.
+  // Keys. The listener is on the document, in the capture phase, so that nothing under the view (the terminal) sees them. `handlers.owns(event)`
+  // false: the key is not the map's (the Mind maps tab is hidden, or the key is on another part of the page, such as the navigation rail).
+  const ownsEvent = event => !handlers.owns || handlers.owns(event);
   function onKeydown(event) {
-    if (disposed || handlers.isBlocked()) return;
+    if (disposed || handlers.isBlocked() || !ownsEvent(event)) return;
     const target = event.target;
     const box = editBox();
     if (box && (target === box || box.contains(target))) {
@@ -177,7 +179,7 @@ export async function createEditor(host, doc, handlers) {
     return (t2 && t2.matches && t2.matches(TEXT_FIELD)) || isEditing();
   };
   function onCopy(event) {
-    if (disposed || handlers.isBlocked() || isTextTarget(event) || !selection().length || !event.clipboardData) return;
+    if (disposed || handlers.isBlocked() || !ownsEvent(event) || isTextTarget(event) || !selection().length || !event.clipboardData) return;
     const payload = { magic: CLIPBOARD_MAGIC, data: selection().map(tpc => JSON.parse(mind.stringifyData(tpc.nodeObj))) };
     event.clipboardData.setData('text/plain', JSON.stringify(payload));
     event.preventDefault();
@@ -186,7 +188,7 @@ export async function createEditor(host, doc, handlers) {
     if (event.type === 'cut') actions.remove();
   }
   function onPaste(event) {
-    if (disposed || handlers.isBlocked() || isTextTarget(event) || !event.clipboardData) return;
+    if (disposed || handlers.isBlocked() || !ownsEvent(event) || isTextTarget(event) || !event.clipboardData) return;
     const text = event.clipboardData.getData('text/plain');
     if (!text) return;
     event.preventDefault();
@@ -231,8 +233,7 @@ export async function createEditor(host, doc, handlers) {
   });
   observer.observe(host);
 
-  // A mind map column that a reload opened again takes no focus by itself (`canFocus`, until the person used that column).
-  if (!handlers.canFocus || handlers.canFocus()) mind.container.focus({ preventScroll: true });
+  mind.container.focus({ preventScroll: true });
 
   return {
     mind,

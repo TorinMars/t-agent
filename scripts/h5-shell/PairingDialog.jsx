@@ -7,7 +7,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import Typography from '@mui/material/Typography';
 import { api, errorText, t } from './common.jsx';
-import { copyText } from './Attention.jsx';
+import { copyText } from './copy-text.mjs';
 import { BASE } from './attention-feed.mjs';
 import { codeGroups, countdownText, secondsLeft } from './plugins-model.mjs';
 

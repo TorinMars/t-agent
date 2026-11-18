@@ -4,8 +4,8 @@ import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
-import { errorLabel as engineErrorLabel } from './Engines.jsx';
-import { readLinks } from './ServiceLinks.jsx';
+import { errorLabel as engineErrorLabel } from './engine-errors.mjs';
+import { readLinks } from './service-links-read.mjs';
 
 // "Also update" in the Update dialog (Update.jsx): the connected services (the rows of /api/remote-servers) updated together with this machine.
 // Each is checked when the dialog opens (`POST /api/remote-servers/:id/check-update`, all at once, apart from this machine's check). A service with an

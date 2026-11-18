@@ -2,11 +2,7 @@ import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { CopyDialog, Notice, PasteDialog, RetainDialog, UploadDialog } from './Dialogs.jsx';
-import { AttentionPanel } from './Attention.jsx';
-import { DesignSheet } from './Design.jsx';
-import { FileTreeSheet } from './FileTree.jsx';
 import { Header } from './Header.jsx';
-import { SettingsDrawer } from './Settings.jsx';
 import { TaskDialog } from './TaskDialogs.jsx';
 import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
@@ -14,6 +10,8 @@ import { ColumnStrip } from './Columns.jsx';
 import { measureTerminalBox, trackTerminalBox } from './terminal-box.mjs';
 import { TermMenu } from './TermMenu.jsx';
 import { theme } from './theme.mjs';
+// Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
+import { AttentionPanel, DesignSheet, FileTreeSheet, SettingsDrawer } from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
 // shorter); from then on it stays mounted, so MUI runs its closing animation and gives the focus back as usual.

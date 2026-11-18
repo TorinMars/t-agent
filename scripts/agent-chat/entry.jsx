@@ -1,5 +1,6 @@
-// Entry of the chat view bundle (public/js/agent-chat-ui.js). public/js/agent-chat.js loads it on the first chat that is opened and
-// calls `mount`; build it with `npm run build:agent-chat`.
+// Entry of the chat view bundle (public/js/agent-chat-ui.js, an ES module). public/js/agent-chat.js loads it on the first chat that is opened and
+// calls `mount` of `window.AgentChatUI`; build it with `npm run build:agent-chat`. It is built together with the page shell
+// (scripts/build-page-bundles.js), so React, react-dom and highlight.js come from chunks the page shares instead of a copy of its own.
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -33,3 +34,6 @@ export function mount(container, { api, base, conversation, agent, onClose, onTi
     },
   };
 }
+
+// For public/js/agent-chat.js, which loads this module with a script element (a module has no global of its own).
+window.AgentChatUI = { mount };

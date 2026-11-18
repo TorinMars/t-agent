@@ -26,6 +26,8 @@ const DEV_ONLY_SCRIPTS = [
   /^release\.js$/,
   /^sync-extension-redact\.js$/,
   /^h5-activity-stream-mock\.cjs$/,
+  /^h5-shell-test-script\.cjs$/, // serves the page bundles to the browser tests
+  /^build-page-bundles\.js$/, // builds public/js/h5-shell.js, public/js/agent-chat-ui.js and public/js/chunks
 ];
 const CODE = /\.(?:c|m)?js$/;
 

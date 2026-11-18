@@ -5,6 +5,7 @@
 // from the server; the email notifier: only the modes it allows (no call) in the rules, and its manifest form (Gmail / 163 / other SMTP server:
 // provider help with a link, the server fields only for "Other SMTP server"). The server is a fake fetch.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -68,7 +69,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         throw new Error(`unexpected ${method} ${url}`);
       };
     }, [EMAIL_SCHEMA, WIDGET_SCHEMA, WIDGET_OFF]);
-    await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js/h5-shell.js'), 'utf8') });
+    await addShell(page);
     await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     const notifyCalls = () => page.evaluate(() => window.calls.filter(call => call.url.startsWith('/api/attention-notify')));

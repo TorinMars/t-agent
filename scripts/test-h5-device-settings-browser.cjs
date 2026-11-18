@@ -13,6 +13,7 @@
 // - Chinese 390: the tabs, the line under them and the note are translated.
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of the sheet with K01 chosen.
 const { chromium } = require('playwright');
+const { addShell } = require('./h5-shell-test-script.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -109,7 +110,8 @@ async function openPage(browser, { width = 390, zh = false, devices = DEVICES, p
   await page.addStyleTag({ content: read('public/css/h5.css') });
   const scopes = Object.fromEntries([...SHARED.map(id => [id, 'shared']), ...DEVICE.map(id => [id, 'device']), ['telegram', 'telegram']]);
   await page.evaluate(mockServer, { devices, scopes, brokenStorage, peers });
-  for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js', 'public/js/h5-shell.js']) await page.addScriptTag({ content: read(file) });
+  for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
+  await addShell(page);
   return { context, page, errors };
 }
 

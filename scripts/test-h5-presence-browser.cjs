@@ -14,6 +14,15 @@ const TERMINALS = [1, 2, 3].map(i => ({ terminal_id: `t${i}`, title: `Term ${i}`
 const IDLE_MS = 5 * 60 * 1000;
 const CHAT = { id: 'c1', agent: 'claude', session_id: 'sess-chat', title: 'Chat one', mode: 'ask', updated_at: '2026-11-13 10:00:00', running: false, pending: false, translate: false, collapseKeyboard: true, opened: { web: null, h5: null } };
 const pageErrors = [];
+// Five quiet minutes on the page's clock, in steps of 10 s: each step fires the timers due in it once, as on a page nobody touches, and the pong of each
+// heartbeat ping (every 15 s) arrives before the next step, so the connections stay up. clock.runFor() also ran every animation frame of those
+// minutes: about 31 s of real time with four columns, and much more on a loaded machine.
+async function idleFor(page, ms) {
+  for (let left = ms; left > 0; left -= 10000) {
+    await page.clock.fastForward(Math.min(10000, left));
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0))); // the pongs queued by that step are delivered
+  }
+}
 
 async function openPage(browser, { viewport, phone, query = '' }) {
   const context = await browser.newContext({ viewport, ...(phone ? { isMobile: true, hasTouch: true } : {}) });
@@ -137,7 +146,7 @@ async function pick(page, name) {
       assert.deepEqual(await presence(page, second), [true, false], 'a hidden warm terminal stays false');
 
       // Five minutes without the person: false. The next key (or press) on the page: true.
-      await page.clock.runFor(IDLE_MS + 1000);
+      await idleFor(page, IDLE_MS + 1000);
       await expectPresence(page, first, [true, false, true, false, true, false], 'idle for five minutes');
       assert.equal(await page.evaluate(() => window.sockets.filter(socket => socket.readyState === 1).length), 2, 'the sockets stayed connected');
       await page.evaluate(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true })));
@@ -197,7 +206,7 @@ async function pick(page, name) {
       await waitPosts([true, true, false, true, false], 'a left page');
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false })));
       await waitPosts([true, true, false, true, false, true]);
-      await page.clock.runFor(IDLE_MS + 1000);
+      await idleFor(page, IDLE_MS + 1000);
       assert.equal(posts.at(-1).foreground, false, 'five minutes without the person');
       await context.close();
     }
@@ -228,7 +237,7 @@ async function pick(page, name) {
       await expectPresence(right, rightSocket, [true]);
       assert.equal(await page.evaluate(() => window.sockets.filter(socket => socket.readyState === 1 && socket.url.includes('/terminal/ws')).length), 0, 'the top page holds no terminal socket');
       // Nobody uses the page for five minutes: both columns go to the background.
-      await page.clock.runFor(IDLE_MS + 1000);
+      await idleFor(page, IDLE_MS + 1000);
       await expectPresence(left, leftSocket, [true, false]);
       await expectPresence(right, rightSocket, [true, false]);
       // A key in the left column: the right one (visible beside it) is in the foreground again too.
@@ -236,7 +245,7 @@ async function pick(page, name) {
       await expectPresence(left, leftSocket, [true, false, true]);
       await expectPresence(right, rightSocket, [true, false, true], 'the activity of one column counts for every column');
       // Idle again, then a press on the top page's own bar: the columns follow.
-      await page.clock.runFor(IDLE_MS + 1000);
+      await idleFor(page, IDLE_MS + 1000);
       await expectPresence(right, rightSocket, [true, false, true, false]);
       await page.evaluate(() => document.getElementById('h5-columns-bar').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
       await expectPresence(right, rightSocket, [true, false, true, false, true], 'activity on the top page counts for the columns');

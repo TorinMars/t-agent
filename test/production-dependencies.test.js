@@ -26,6 +26,7 @@ const DEV_ONLY_SCRIPTS = [
   /^release\.js$/,
   /^sync-extension-redact\.js$/,
   /^h5-activity-stream-mock\.cjs$/,
+  /^browser-test-wait\.cjs$/, // the waits of the real-browser tests
 ];
 const CODE = /\.(?:c|m)?js$/;
 

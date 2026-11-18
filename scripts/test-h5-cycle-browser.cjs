@@ -37,7 +37,8 @@ const hits = {}; // GET requests per path
 const acks = []; // [task, terminal_id] of every acknowledgement
 const renames = []; // [task, terminal_id, title] of every terminal rename
 
-async function openPage(browser, viewport, { stream = false } = {}) {
+// clock: the page runs on Playwright's clock (time still flows), so a check that nothing happens for a while can jump over that while.
+async function openPage(browser, viewport, { stream = false, clock = false } = {}) {
   const scale = process.env.H5_SHOT_DIR ? { deviceScaleFactor: 3 } : {};
   const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, ...scale });
   const page = await context.newPage();
@@ -82,6 +83,7 @@ async function openPage(browser, viewport, { stream = false } = {}) {
     if (/^\/api\/tasks\/\d+\/agent\/conversations$/.test(url.pathname)) return json([]);
     return json({ error: 'not mocked' }, 404);
   });
+  if (clock) await page.clock.install();
   await page.goto(`${ORIGIN}/h5`);
   return { context, page };
 }
@@ -243,7 +245,7 @@ async function toast(page, text) {
       activity = {};
       subagents = {};
       for (const key of Object.keys(hits)) delete hits[key]; // count this page's requests only
-      const live = await openPage(browser, { width: 390, height: 844 }, { stream: true });
+      const live = await openPage(browser, { width: 390, height: 844 }, { stream: true, clock: true });
       const STREAM = '/api/tasks/terminal-activity/stream';
       const push = snapshot => live.page.waitForFunction(([url, snap]) => window.activityStream.push(url, snap), [STREAM, snapshot]);
       const label = () => live.page.locator('#h5-cycle').getAttribute('aria-label');
@@ -277,7 +279,8 @@ async function toast(page, text) {
       const before = polled();
       // An Engine of an older version still sends `agents` in the stream: the page ignores it.
       await push({ activity: { 1: { c1: 'done' } }, subagents: {}, agents: { running: 2, queued: 1, submitted: 3 } });
-      await live.page.waitForTimeout(7000);
+      await live.page.clock.fastForward(7000); // every timer due in those 7 s fires (once)
+      await live.page.waitForTimeout(200); // and a poll it started would have reached the server
       assert.equal(polled(), before, 'no GET of terminal-activity / terminal-subagents while the stream is live');
       assert.equal(before, 0, 'not even once since the page opened');
       assert.equal(hits['/api/agent-chat/summary'] || 0, 0, 'the page does not read the agent summary');

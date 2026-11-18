@@ -25,7 +25,8 @@ const startRows = () => ({
   6: [shell('s1', 'Other far shell')],
 });
 
-async function openPage(browser, wide, { remote = false } = {}) {
+// clock: the page runs on Playwright's clock (time still flows), so a test can jump over the page's 10 s wait for a read that never answers.
+async function openPage(browser, wide, { remote = false, clock = false } = {}) {
   const context = await browser.newContext(wide ? { viewport: { width: 1440, height: 900 } } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   const state = { rows: startRows(), failing: new Set(), holdNext: new Set(), held: [], reads: {}, paths: [], errors: [] };
@@ -70,6 +71,7 @@ async function openPage(browser, wide, { remote = false } = {}) {
     if (/\/terminal-subagents$/.test(p)) return json({});
     return json({ error: 'not mocked' }, 404);
   });
+  if (clock) await page.clock.install();
   await page.goto(`${ORIGIN}/h5`);
   await page.locator('#h5-tasks .h5-task-item').first().waitFor({ state: 'visible' });
   return { context, page, state, how: wide ? 'click' : 'tap', wide };
@@ -111,7 +113,7 @@ const releaseAll = state => { for (const entry of state.held.splice(0)) entry.re
 
 async function scenario(browser, wide) {
   const label = wide ? 'computer' : 'phone';
-  const opened = await openPage(browser, wide);
+  const opened = await openPage(browser, wide, { clock: true });
   const { context, page, state, how } = opened;
 
   // Selecting by a tap on a session row of an expanded task. A phone closes the sheet, as ever.
@@ -195,6 +197,7 @@ async function scenario(browser, wide) {
   state.holdNext.add(4);
   await pick(opened, 'Alpha');
   await noted(page, 'Delta', LOADING, `${label}: no answer yet`);
+  await page.clock.fastForward(10000); // PEEK_WAIT_MS in h5.js: a list still on "Loading…" after this long says it could not be read
   const deadline = Date.now() + 14000;
   while ((await look(page, 'Delta')).note === LOADING && Date.now() < deadline) await page.waitForTimeout(100);
   await noted(page, 'Delta', FAILED, `${label}: no answer at all`);

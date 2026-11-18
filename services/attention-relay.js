@@ -185,6 +185,15 @@ function createAttentionRelay(options) {
     entry.pending = work;
     return work;
   }
+  // A relay (a delivery, a direct message or a test) that this device accepted as the sender proves that the device behind `link` sends through this one.
+  // Before, the page learned it only from the next probe of that device, up to 60 s later: when both devices come online together, this device may ask
+  // the other before the other has asked it, and the answer "no sender yet" was kept for the whole cache time. A probe still running from before is dropped.
+  function noteRelaying(link) {
+    const own = me().instance_id;
+    const entry = entryOf(link && link.id);
+    if (!own || (entry.supported === true && entry.effective === own)) return;
+    Object.assign(entry, { supported: true, effective: own, generation: entry.generation + 1, pending: null });
+  }
   async function refreshStale() {
     await Promise.all(peers().filter(peer => peer.online && !fresh(entryOf(peer.id))).map(refresh));
   }
@@ -293,6 +302,7 @@ function createAttentionRelay(options) {
     const sender = resolve(given.notifier);
     if (!sender.self) throw fault('NOT_SENDER', 409);
     const origin = { instance_id: String(link.peer_instance_id || link.id), name: String(link.name || 'Linked service').slice(0, 80) };
+    noteRelaying(link);
     return notify.acceptRelay({ notifier: given.notifier, mode: given.mode, reason: given.reason, item, link: cleanLink(given.link), origin });
   }
   // A direct message: always a message, never an item; the sender's own switch, readiness and rate limit apply (attention-notify.js acceptRelayDirect).
@@ -303,6 +313,7 @@ function createAttentionRelay(options) {
     const sender = resolve(given.notifier);
     if (!sender.self) throw fault('NOT_SENDER', 409);
     const origin = { instance_id: String(link.peer_instance_id || link.id), name: String(link.name || 'Linked service').slice(0, 80) };
+    noteRelaying(link);
     return notify.acceptRelayDirect({ notifier: given.notifier, message, link: cleanLink(given.link), origin });
   }
   async function acceptTest(link, body) {
@@ -311,6 +322,7 @@ function createAttentionRelay(options) {
     const sender = resolve(given.notifier);
     if (!sender.self) throw fault('NOT_SENDER', 409);
     const origin = { instance_id: String(link.peer_instance_id || link.id), name: String(link.name || 'Linked service').slice(0, 80) };
+    noteRelaying(link);
     return notify.relayTest({ notifier: given.notifier, kind: given.kind === 'call' ? 'call' : 'message', origin });
   }
   // GET /v1/attention/notify-relay/status: what a linked device needs to choose. From what is known now, never a wait.

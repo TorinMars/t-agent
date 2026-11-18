@@ -47,6 +47,7 @@ async function openPage(browser, { viewport, touch }) {
     if (/^\/api\/tasks\/\d+\/agent\/conversations$/.test(url.pathname)) return json([]);
     return json({ error: 'not mocked' }, 404);
   });
+  await page.clock.install(); // time runs normally; the checks of how long a notice stays jump over its duration instead of waiting it out
   await page.goto(`${ORIGIN}/h5`);
   await page.waitForFunction(() => Boolean(window.H5UI && window.H5UI.notify));
   return { context, page };
@@ -140,7 +141,7 @@ async function run(browser, setup) {
   if (process.env.H5_SHOT_DIR && viewport.width === 390) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'notice-expanded-390.png') });
 
   // Open, it outlives the info duration and a click away.
-  await page.waitForTimeout(INFO_DURATION + 1000);
+  await page.clock.fastForward(INFO_DURATION + 1000);
   await page.evaluate(() => document.body.click()); // a click that lands on no control, so it opens nothing
   await page.waitForTimeout(300);
   await status(page).waitFor({ state: 'visible', timeout: 500 });
@@ -179,11 +180,13 @@ async function run(browser, setup) {
   // Collapsed, it goes by itself after the info duration, not much sooner.
   await notify(page, 'Goes by itself');
   await message(page).filter({ hasText: 'Goes by itself' }).waitFor();
-  const shownAt = Date.now();
-  await page.waitForTimeout(INFO_DURATION - 1000);
+  await page.clock.fastForward(INFO_DURATION - 1000);
   assert.equal(await message(page).count(), 1, 'still there before the duration');
+  await page.clock.fastForward(500);
+  await page.waitForTimeout(100); // anything the jump made due has run
+  assert.equal(await message(page).count(), 1, 'not gone early');
+  await page.clock.fastForward(1000);
   await status(page).waitFor({ state: 'detached', timeout: 3000 });
-  assert.ok(Date.now() - shownAt >= INFO_DURATION - 500, 'not gone early');
 
   // Success and error are as before: the full Alert with a close button, wrapped, and no chip.
   for (const type of ['success', 'error']) {

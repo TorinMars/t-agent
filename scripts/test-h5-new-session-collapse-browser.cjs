@@ -7,6 +7,7 @@ const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { settled } = require('./browser-test-wait.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -63,14 +64,14 @@ async function openPage(browser, wide) {
   const openSheet = async () => {
     if (!wide && !(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
     await item('Alpha').waitFor();
-    if (!wide) await page.waitForTimeout(350); // the sheet has finished sliding in
+    if (!wide) await settled(page); // the sheet has finished sliding in
   };
   const sheetClosed = async () => { if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); };
   const shown = title => page.waitForFunction(name => document.getElementById('h5-task-name').textContent === name, title);
   const openPanel = async title => {
     await press(add(title));
     await choices.first().waitFor();
-    await page.waitForTimeout(250); // faded in
+    await settled(page); // faded in
     assert.deepEqual(await choices.allTextContents(), CHOICES, 'the choices of the dialog');
   };
   const cancel = async () => { await press(page.locator('#h5-term-menu-cancel')); await gone('after Cancel'); };

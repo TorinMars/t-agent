@@ -11,6 +11,7 @@ const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { settled } = require('./browser-test-wait.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -110,7 +111,7 @@ async function openPage(browser, size) {
   const openSheet = async () => {
     if (!wide && !(await sheetOpen())) await page.locator('#h5-open-tasks').tap();
     await item('Alpha').waitFor();
-    if (!wide) await page.waitForTimeout(350); // the sheet has finished sliding in
+    if (!wide) await settled(page); // the sheet has finished sliding in
   };
   const sheetClosed = async () => { if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); };
   const shown = title => page.waitForFunction(name => document.getElementById('h5-task-name').textContent === name, title);
@@ -118,7 +119,7 @@ async function openPage(browser, size) {
   const openDialog = async (title, want = CHOICES) => {
     await press(add(title));
     await choices.first().waitFor();
-    await page.waitForTimeout(250); // the dialog has finished fading in
+    await settled(page); // the dialog has finished fading in
     assert.deepEqual(await choices.allTextContents(), want, `${size}: the choices`);
   };
   const gone = async text => { await dialog.waitFor({ state: 'detached', ...SHORT }).catch(() => assert.fail(`${size}: ${text}: the New session dialog is still open`)); };
@@ -313,7 +314,7 @@ const CASES = [
     const form = t.page.locator('#h5-new-task-dialog');
     await t.press(t.page.locator('#h5-add-task'));
     await t.page.locator('#h5-new-task-title').waitFor();
-    await t.page.waitForTimeout(250);
+    await settled(t.page);
     assert.equal(await t.page.locator('#h5-new-task-title-label').textContent(), 'New task');
     assert.equal(await t.page.locator('#h5-tasks #h5-new-task').count(), 0, 'the form is not in the task list');
     assert.equal(await t.page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-new-task-title', 'the title has the focus');
@@ -374,7 +375,7 @@ const CASES = [
   ['the keyboard up: the New task dialog stays in the visible area', async t => {
     await t.press(t.page.locator('#h5-add-task'));
     await t.page.locator('#h5-new-task-title').waitFor();
-    await t.page.waitForTimeout(250);
+    await settled(t.page);
     await t.page.locator('#h5-new-task-title').focus();
     await t.page.evaluate(height => window.setKeyboard(height), t.size === 'narrow' ? 253 : 336);
     await t.page.waitForTimeout(350);

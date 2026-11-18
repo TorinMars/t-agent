@@ -38,6 +38,7 @@ const FIELDS = ['title', 'notes', 'status', 'priority', 'due_date', 'source', 'e
 const GROUPS = Object.freeze(['waiting_user', 'review', 'working', 'todo', 'finished']);
 const groupOf = status => (FINISHED.has(status) ? 'finished' : status);
 const statusesOf = group => (group === 'finished' ? [...FINISHED] : [group]);
+const OPEN_STATUSES = Object.freeze(STATUSES.filter(status => !FINISHED.has(status)));
 const TOKEN_PATTERN = /^tatt_[A-Za-z0-9_-]{43}$/;
 // Control characters other than tab, line feed and carriage return.
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
@@ -292,6 +293,22 @@ function rowToItem(row) {
   return { ...row, meta: parseJson(row.meta), context: parseJson(row.context) };
 }
 
+// The statuses a list is asked for ('a,b' or an array), [] for none.
+function statusList(status) {
+  if (status === undefined || status === null || status === '') return [];
+  return (Array.isArray(status) ? status : String(status).split(',')).map(value => String(value).trim()).filter(Boolean);
+}
+
+// recentFinished of a list (`recent_finished` of GET /api/attention and /v1/attention): how many of the items finished last the list also returns,
+// or null: not asked for, or a list that decides about finished items itself (a status filter, includeDone). The routes put the number into
+// their answer, so a caller knows that the list has them; a service older than this parameter ignores it and answers without the number.
+function recentFinishedOf({ status, includeDone = false, recentFinished } = {}) {
+  if (recentFinished === undefined || recentFinished === null || recentFinished === '') return null;
+  const count = Number(recentFinished);
+  if (!Number.isInteger(count) || count < 1) throw invalid(`recent_finished must be an integer between 1 and ${LIMITS.listMax}`);
+  return includeDone || statusList(status).length ? null : Math.min(count, LIMITS.listMax);
+}
+
 function rowToEvent(row) {
   if (!row) return null;
   let data = null;
@@ -323,6 +340,9 @@ function ensureTreeColumns(db) {
   if (!columns.includes('custom_status')) db.exec('ALTER TABLE attention_items ADD COLUMN custom_status TEXT');
   if (!columns.includes('result')) db.exec('ALTER TABLE attention_items ADD COLUMN result TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS idx_attention_items_parent ON attention_items (parent_id)');
+  // The items finished last (list with recentFinished). db/schema.sql makes it at every start; here for a database made from an older schema.sql.
+  // An index only: no schema generation, an older version reads and writes the table as before.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_attention_items_completed ON attention_items (completed_at)');
 }
 
 function createAttentionService({ db, now = () => new Date() } = {}) {
@@ -372,31 +392,29 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return rowToEvent(selectEvent.get(id));
   }
 
-  function list({ status, q, limit, includeDone = false, parent } = {}) {
-    const where = [];
-    const params = [];
+  // The list, sort_order DESC, then id DESC. Without a status filter and without includeDone it has the open items only; they are asked for by
+  // name (status IN the open statuses), so the query walks idx_attention_items_status and its cost follows the open items: NOT IN the finished
+  // ones reads the whole table, and the finished items are most of it.
+  // recentFinished (that default list only, see recentFinishedOf): after the open items come the items finished last, at most that many, newest
+  // first (completed_at DESC, then the list's order), under the same parent and q filters. They are read along idx_attention_items_completed,
+  // from its newest end; `+status` keeps the planner off the status index (with statistics it could pick it, and then read and sort every
+  // finished item to find the newest).
+  function list({ status, q, limit, includeDone = false, parent, recentFinished } = {}) {
+    const filters = [];
+    const filterParams = [];
     if (parent !== undefined && parent !== null && parent !== '') {
       const id = idValue(parent);
       if (id === null) throw invalid('parent must be a task id');
-      where.push('parent_id = ?');
-      params.push(id);
+      filters.push('parent_id = ?');
+      filterParams.push(id);
     }
-    let statuses = null;
-    if (status !== undefined && status !== null && status !== '') {
-      statuses = (Array.isArray(status) ? status : String(status).split(',')).map(value => String(value).trim()).filter(Boolean);
-      for (const value of statuses) if (!STATUSES.includes(value)) throw invalid(`status must be one of: ${STATUSES.join(', ')}`);
-    }
-    if (statuses && statuses.length) {
-      where.push(`status IN (${statuses.map(() => '?').join(',')})`);
-      params.push(...statuses);
-    } else if (!includeDone) {
-      where.push(`status NOT IN (${[...FINISHED].map(() => '?').join(',')})`);
-      params.push(...FINISHED);
-    }
+    const statuses = statusList(status);
+    for (const value of statuses) if (!STATUSES.includes(value)) throw invalid(`status must be one of: ${STATUSES.join(', ')}`);
+    const recent = recentFinishedOf({ status, includeDone, recentFinished });
     if (q !== undefined && q !== null && String(q).trim()) {
       const pattern = `%${String(q).trim().slice(0, 200).replace(/[\\%_]/g, ch => `\\${ch}`)}%`;
-      where.push("(title LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR attention_reason LIKE ? ESCAPE '\\')");
-      params.push(pattern, pattern, pattern);
+      filters.push("(title LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR attention_reason LIKE ? ESCAPE '\\')");
+      filterParams.push(pattern, pattern, pattern);
     }
     let max = LIMITS.listDefault;
     if (limit !== undefined && limit !== null && limit !== '') {
@@ -404,8 +422,15 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       if (!Number.isInteger(max) || max < 1) throw invalid(`limit must be an integer between 1 and ${LIMITS.listMax}`);
       max = Math.min(max, LIMITS.listMax);
     }
+    const wanted = statuses.length ? statuses : (includeDone ? null : OPEN_STATUSES);
+    const where = [...(wanted ? [`status IN (${wanted.map(() => '?').join(',')})`] : []), ...filters];
     const sql = `SELECT * FROM attention_items ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY sort_order DESC, id DESC LIMIT ?`;
-    return db.prepare(sql).all(...params, max).map(rowToItem);
+    const items = db.prepare(sql).all(...(wanted || []), ...filterParams, max).map(rowToItem);
+    if (recent === null) return items;
+    const finished = [...FINISHED];
+    const finishedSql = `SELECT * FROM attention_items WHERE ${[`+status IN (${finished.map(() => '?').join(',')})`, ...filters].join(' AND ')}
+      ORDER BY completed_at DESC, sort_order DESC, id DESC LIMIT ?`;
+    return [...items, ...db.prepare(finishedSql).all(...finished, ...filterParams, recent).map(rowToItem)];
   }
 
   function get(id) {
@@ -841,6 +866,7 @@ function defaultService() {
 
 module.exports = {
   createAttentionService, defaultService, ensureTreeColumns, groupOf, GROUPS, AttentionError, PAIRING, TOKEN_SCOPES, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
+  recentFinishedOf,
   // In-process subscribers (notifiers) of this server's list.
   onChange: fn => defaultService().onChange(fn),
 };

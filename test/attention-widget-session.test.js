@@ -96,7 +96,7 @@ async function widgetApp({ remoteItems = [], ...rest } = {}) {
     launcher: { verifyToken: value => value === TOKEN, setEnabled: async () => {}, status: async () => ({}) },
     remote: fakeRemote(remoteItems), hiddenDevices: () => [],
     localName: () => 'Studio Mac', localInstanceId: () => 'local-instance', remoteInstanceId: row => `instance-${row.name}`,
-    terminalInfo: terminal.terminalInfo, sendToTerminal: terminal.sendToTerminal, liveActivity: terminal.liveTerminalActivity,
+    terminalInfo: terminal.terminalInfo, liveTerminals: terminal.liveTerminalIds, sendToTerminal: terminal.sendToTerminal, liveActivity: terminal.liveTerminalActivity,
     ...rest,
   });
   const app = express();

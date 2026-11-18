@@ -524,7 +524,9 @@ export function DesignSheet({ state, ui }) {
   return (
     <Drawer
       anchor="top" id="h5-design-sheet" open={open} onClose={(event, reason) => (reason === 'backdropClick' ? closeAll() : close())} transitionDuration={reduced ? 0 : undefined}
-      ModalProps={{ disableScrollLock: true }}
+      // closeAfterTransition off: a closed sheet leaves MUI's stack of modals at once, not when its slide ends, so a file of the tree opened while the
+      // sheet still slides away (Files, then the tree's Design document at once) is the top modal again and Escape closes it, not the tree under it.
+      ModalProps={{ disableScrollLock: true, closeAfterTransition: false }}
       slotProps={{ backdrop: fromTree ? { sx: { bgcolor: 'transparent' } } : undefined, paper: { className: 'h5-design-panel', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'h5-design-title', ...swipe, sx: TOP_SHEET_PAPER } }}
     >
       {contents}

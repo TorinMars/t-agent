@@ -311,7 +311,10 @@
   setInterval(() => { if (keyboardOpen && !pointerMode()) fitViewport(); }, 500);
 
   // ── Tasks ──
-  function note(text) { ui.set({ taskList: { note: text, groups: [], tasks: [], sortable: false } }); }
+  // The list is built afresh on every drawing; `share` (scripts/h5-shell/store.mjs) keeps every row (and part of one) that did not change the same object,
+  // so the shell draws again only the rows that changed, and nothing at all when the list is the same.
+  const setTaskList = next => ui.set({ taskList: ui.share(ui.get().taskList, next) });
+  function note(text) { setTaskList({ note: text, groups: [], tasks: [], sortable: false }); }
   // The task list the shell draws: a note (loading, an error, no tasks), or the tasks of every listed device in one flat list in the shared order (see
   // "Task order" below), each task with its device tag and the sessions listed under it when it is open. `groups` is this machine's own, for T-Attention's way back.
   // `sources` also tells T-Attention (attention-feed.mjs) which Engines to read: `listed` (in the task list: known and not hidden; false for all until the
@@ -319,10 +322,10 @@
   function publishSources() {
     const listed = listReady ? listedSources() : [];
     ui.set({
-      sources: sources.filter(item => item === LOCAL || item.label).map(item => ({
+      sources: ui.share(ui.get().sources, sources.filter(item => item === LOCAL || item.label).map(item => ({
         key: item.key, label: item.label, name: item.name || '', offline: item.status === 'offline', hidden: hiddenDevices.has(item.key),
         listed: listed.includes(item), instanceId: item.instanceId || null, capabilities: item !== LOCAL && Array.isArray(item.capabilities) ? item.capabilities : null,
-      })),
+      }))),
       sourceKey: source.key,
       sourceLabel: task && source !== LOCAL ? source.label : '', // the header says which service the shown task is on when it is not this machine
     });
@@ -701,7 +704,7 @@
       return;
     }
     // `groups`: this machine's tasks by group, for T-Attention's way back.
-    ui.set({ taskList: { note: null, groups: listed.includes(LOCAL) ? sectionGroups(LOCAL) : [], tasks, sortable: canSort } });
+    setTaskList({ note: null, groups: listed.includes(LOCAL) ? sectionGroups(LOCAL) : [], tasks, sortable: canSort });
   }
 
   // Keep the screen on while a task is open (a terminal or a chat), so the phone does not sleep in the middle of a session and drop the connection.

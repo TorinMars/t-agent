@@ -1,5 +1,9 @@
 // The state the phone page shows. public/js/h5.js (the controller: terminals, sockets, the chat, the tasks) writes it with `set` and registers what a tap
 // does in `actions`; the React / MUI shell (App.jsx) reads it and calls the actions. Neither side touches the other's DOM.
+// `set(patch)` changes the state (and tells the listeners) only when some key of the patch gets another value (Object.is): a patch that repeats what
+// is there draws nothing. The values are never changed in place, so a slice that did not change keeps its identity and the components that read it
+// (use-store.mjs `useStore`) are not drawn again. `share(before, next)` gives `next` with every part that equals the same part of `before` (deeply)
+// replaced by that part, and `before` itself when nothing differs: h5.js builds its lists afresh each time and passes them through it.
 export function createStore(initial) {
   let state = initial;
   const listeners = new Set();
@@ -7,12 +11,55 @@ export function createStore(initial) {
     get: () => state,
     set(patch) {
       const next = typeof patch === 'function' ? patch(state) : patch;
+      if (!next || typeof next !== 'object') return;
+      let changed = false;
+      for (const key of Object.keys(next)) if (!Object.is(state[key], next[key])) { changed = true; break; }
+      if (!changed) return;
       state = { ...state, ...next };
       for (const listener of listeners) listener();
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    share: sharePlain,
     actions: {},
   };
+}
+
+// Same keys and Object.is values (one level).
+export function shallowEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]));
+}
+
+// Structural sharing of plain data (objects and arrays of the state, see `share` above). Anything else (a function, a DOM node, a class instance) is
+// compared by identity only.
+const plain = value => {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return Array.isArray(value) || proto === Object.prototype || proto === null;
+};
+export function sharePlain(before, next) {
+  if (Object.is(before, next) || !plain(before) || !plain(next) || Array.isArray(before) !== Array.isArray(next)) return next;
+  if (Array.isArray(next)) {
+    let same = before.length === next.length;
+    const out = next.map((value, index) => {
+      const kept = index < before.length ? sharePlain(before[index], value) : value;
+      if (kept !== before[index]) same = false;
+      return kept;
+    });
+    return same ? before : out;
+  }
+  const keys = Object.keys(next);
+  let same = keys.length === Object.keys(before).length;
+  const out = {};
+  for (const key of keys) {
+    const had = Object.prototype.hasOwnProperty.call(before, key);
+    out[key] = had ? sharePlain(before[key], next[key]) : next[key];
+    if (!had || out[key] !== before[key]) same = false;
+  }
+  return same ? before : out;
 }
 
 export const initialState = () => ({

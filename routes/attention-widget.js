@@ -1,4 +1,4 @@
-// The API of the T-Attention desktop window (macOS), mounted at /api/attention/widget. See "T-Attention desktop window (macOS)" in DESIGN.md.
+// The API of the T-Attention desktop window (macOS), mounted at /api/attention/widget. See "T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md.
 //
 //  - `bearer`: every path except /settings. Taken only from this machine (a loopback peer and no X-Forwarded-For / Forwarded / X-Real-IP, the rule of
 //    lib/terminal-relay-auth.js) with `Authorization: Bearer <TA_WIDGET_TOKEN>`, the token the launcher made for the window that runs now

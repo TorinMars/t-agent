@@ -2,7 +2,7 @@
 // Shared Claude Code settings for the rules and skills sync (services/rule-sync.js): the source picks some keys of its own <claude>/settings.json, the
 // receivers keep them in <claude>/shared/claude-settings.json and T-Agent passes them to the Claude sessions it starts with `--settings` (routes/terminal.js).
 // No one's settings.json is ever written. Only the keys in KEYS can be shared; the denylist below is checked again at every step, so a stored or received
-// choice can never carry credentials, hooks, permission rules or MCP servers. See "Shared Claude settings (injected at session start)" in DESIGN.md.
+// choice can never carry credentials, hooks, permission rules or MCP servers. See "Shared Claude settings (injected at session start)" in docs/design/rules-and-skills-sync.md.
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');

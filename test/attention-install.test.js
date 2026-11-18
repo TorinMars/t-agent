@@ -1,4 +1,4 @@
-// Easy listener install (A, C, D in DESIGN.md "T-Attention: easy listener install"): POST /api/attention/plugins/claude/install|uninstall,
+// Easy listener install (A, C, D in docs/design/attention-cli-and-listener.md "T-Attention: easy listener install"): POST /api/attention/plugins/claude/install|uninstall,
 // terminal tokens in services/attention.js, pairing codes (create / claim / expire / reuse / rate limit) and the CLI `pair` and `login` with
 // the hook sync. Every home and data folder is temporary: the real ~/.tagent and ~/.claude are never read or written.
 const test = require('node:test');

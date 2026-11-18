@@ -1,4 +1,4 @@
-// Applies an available update without asking, when that costs nobody anything. See "Update check and versions" in DESIGN.md.
+// Applies an available update without asking, when that costs nobody anything. See "Update check and versions" in docs/design/update-check-and-versions.md.
 // An update that needs no restart is applied at once. One that needs a restart waits until lib/update-idle.js has found nothing to lose for a whole quiet window.
 // Code on disk that is newer than the running process (status restart_pending, for example after a manual git pull) is loaded the same way: the same wait, then a restart.
 // Everything it needs is injected, so it has no database, git or process.exit of its own.

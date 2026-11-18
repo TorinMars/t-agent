@@ -1,4 +1,4 @@
-// Pane mode (scripts/h5-shell/pane.mjs, "Pane mode" in DESIGN.md): the page (/h5?pane=<id>) inside real 480x900 iframes of a test parent page, in Chromium
+// Pane mode (scripts/h5-shell/pane.mjs, "Pane mode" in docs/design/page-shell-and-columns.md): the page (/h5?pane=<id>) inside real 480x900 iframes of a test parent page, in Chromium
 // on a computer (mouse, no touch), with the API mocked. Checks: each pane remembers its own task and terminal (two panes, two sessions) and the normal view
 // keeps its own; a new pane starts at the task list with nothing selected; a pane opens no terminal activity stream and no T-Attention stream and polls
 // the activity instead; a loading pane takes no focus, a click does; `open` from the parent shows that task and terminal; no notice, sound or system notification (the page makes none at all now) and no attention or update reads in a pane; no Update or Attention button; phone layout

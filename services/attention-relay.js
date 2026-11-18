@@ -1,7 +1,7 @@
 // T-Attention: one Telegram sender for all linked devices. Only one device is logged in to Telegram and sends; the other linked devices make their
 // own decisions (statuses, foreground, dedupe, quiet hours, a delayed call's wait) and then hand the final delivery to that device over the service link
 // (POST /v1/attention/notify-relay on the sender). The same Telegram session used on two machines at once makes them push each other out, so a device
-// that is not the sender never sends to Telegram itself, even when it is logged in too. See "One Telegram sender for linked devices" under "T-Attention notifiers" in DESIGN.md.
+// that is not the sender never sends to Telegram itself, even when it is logged in too. See "One Telegram sender for linked devices" under "T-Attention notifiers" in docs/design/attention-notifiers.md.
 //
 // The sender (resolve()):
 //   1. the device named by the stored choice `telegram_sender` (system_state, { instance_id, updated_at }), when it is this device and Telegram is set

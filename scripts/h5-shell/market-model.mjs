@@ -1,6 +1,6 @@
 // The pure logic of the plugin marketplace in Settings → T-Attention → Plugins → Marketplace (PluginMarket.jsx, MarketDialogs.jsx): the list
 // entries with their badges and actions, the search and kind filter, the Git URL and index source checks, and the install preview with its
-// expiry. Data comes from the market API (GET /api/attention/market, POST …/market/prepare; see "Plugin marketplace" in DESIGN.md). No DOM, no
+// expiry. Data comes from the market API (GET /api/attention/market, POST …/market/prepare; see "Plugin marketplace" in docs/design/attention-cli-and-listener.md). No DOM, no
 // requests, so test/market-model.test.js runs it in Node. `t` is passed in; the labels below are English keys of public/js/i18n-zh-ui.js.
 
 const plain = text => text;

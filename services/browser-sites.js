@@ -3,7 +3,7 @@
 // up over time. A model explores a site with `tcli browser`, discovers its requests and actions with `tcli browser net` / `record`, then writes or
 // updates one entry per host here with `tcli site` (services are authored content, not parsed from recordings in v1). The entries sync to linked
 // devices (scope "shared", last-writer-wins per site with tombstones) through services/settings-sync.js, so every device shares one library. See
-// "Site library" in DESIGN.md.
+// "Site library" in docs/design/site-library.md.
 //
 // Storage: system_state rows, one per site (no schema bump, like the browser pairing list the core branch keeps in system_state). The key is
 // `browser_site_v1:<host>`; the host is lowercased and has no leading `www.`. Deleting a site removes its row and records a tombstone in the single

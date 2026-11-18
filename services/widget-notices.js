@@ -1,4 +1,4 @@
-// The notices of the T-Attention desktop window (macOS): the bubbles it shows beside itself. See "Floating window notices" in DESIGN.md.
+// The notices of the T-Attention desktop window (macOS): the bubbles it shows beside itself. See "Floating window notices" in docs/design/attention-desktop-window.md.
 //
 // The `widget` notifier (plugins/notifiers/widget) pushes one notice per message it is given; the window reads them with
 // GET /api/attention/widget/notices?after=<seq> (routes/attention-widget.js) on its 5 s refresh. Kept only in memory, on this machine: at most

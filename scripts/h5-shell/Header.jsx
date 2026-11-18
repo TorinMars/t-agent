@@ -77,7 +77,7 @@ export function Header({ ui }) {
   );
 }
 
-// The terminal width switch (h5.js `setTerminalWidth`, "Terminal width" in DESIGN.md). A tap switches Fit <-> Wide (the PTY gets the chosen column
+// The terminal width switch (h5.js `setTerminalWidth`, "Terminal width" in docs/design/page-terminal-and-bottom-bar.md). A tap switches Fit <-> Wide (the PTY gets the chosen column
 // count and the screen moves sideways). A long press (500 ms) or a right click opens a small menu: Fit to screen, 120, 160 or 200 columns.
 const WIDE_CHOICES = [120, 160, 200];
 const LONG_PRESS_MS = 500;

@@ -12,7 +12,7 @@ import { useDeviceTarget } from './DeviceTarget.jsx';
 // opens. Install / Update writes one skill for both agents (POST /api/agent-skills/<name>/install); when the old task-tracker skill is still there,
 // "Replace the old task-tracker skill" installs t-attention and then moves the old one into the Client's backups (POST .../t-attention/remove-old).
 // Skill names, agent names and paths are not translated; a skill's description is the server's English text, translated by the dictionary.
-// See "Agent skills" in DESIGN.md.
+// See "Agent skills" in docs/design/attention-cli-and-listener.md.
 const BASE = '/api/agent-skills';
 const AGENTS = [{ key: 'claude', name: 'Claude Code' }, { key: 'codex', name: 'Codex' }];
 

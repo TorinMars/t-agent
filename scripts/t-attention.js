@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // t-attention: the command line of T-Attention (the attention hub). It talks to /api/attention of a T-Agent Client
 // with a token (Settings -> T-Attention -> CLI tokens) through lib/attention-client.js.
-// See "T-Attention: CLI and Claude listener" in DESIGN.md. Node built-ins only.
+// See "T-Attention: CLI and Claude listener" in docs/design/attention-cli-and-listener.md. Node built-ins only.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

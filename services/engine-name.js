@@ -1,4 +1,4 @@
-// Engine names: one name per Engine, kept by that Engine. See "Engine names" in DESIGN.md.
+// Engine names: one name per Engine, kept by that Engine. See "Engine names" in docs/design/engine-names.md.
 //
 // This side: the row `name` of the engine_identity key/value table (it already holds `instance_id`, so no schema change). No row means the default,
 // config.engineName (ENGINE_NAME, otherwise the host name).

@@ -7,7 +7,7 @@ import { HINT } from './Form.jsx';
 
 // The "Agent skill" line of the Settings group "T-Attention": the t-attention skill is installed with the other agent skills in Settings → Tasks and
 // files → Agent skills (AgentSkillsSettings.jsx); this line only points there, and its button opens that part (`ui.actions.openSettings('agent-skills')`,
-// settings-target.mjs). See "Agent skills" in DESIGN.md.
+// settings-target.mjs). See "Agent skills" in docs/design/attention-cli-and-listener.md.
 function SkillPointer({ ui }) {
   return (
     <Box id="h5-skill-pointer" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>

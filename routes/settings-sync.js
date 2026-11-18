@@ -1,4 +1,4 @@
-// Settings sync across linked devices (services/settings-sync.js). See "Settings sync across linked devices" in DESIGN.md.
+// Settings sync across linked devices (services/settings-sync.js). See "Settings sync across linked devices" in docs/design/settings-sync.md.
 //
 // Page: GET /api/settings-sync -> { supported, scopes, keys, peers, telegram } (which setting groups are shared, per device or Telegram's, how far each
 // shared one has reached, and `telegram` { sender_name, self, conflict } of the device that sends Telegram now, or null when none has it: from the cache

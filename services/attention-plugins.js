@@ -1,4 +1,4 @@
-// T-Attention plugin overview: what GET /api/attention/plugins answers (see "T-Attention plugin overview" in DESIGN.md).
+// T-Attention plugin overview: what GET /api/attention/plugins answers (see "T-Attention plugin overview" in docs/design/attention-cli-and-listener.md).
 //   listeners  every plugins/listeners/<name>/manifest.json of kind 'listener' (a broken one with an `error`), and `local`: how the
 //              listener is set up on the machine that runs this server, read as the terminal user (lib/terminal-user.js) when the
 //              service runs as root and drops privileges, because that user runs `t-attention login`, `ta` and Claude Code; plus

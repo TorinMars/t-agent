@@ -1,4 +1,4 @@
-// Mind maps HTTP API (see "Mind maps" in DESIGN.md). One router, mounted twice:
+// Mind maps HTTP API (see "Mind maps" in docs/design/mind-maps.md). One router, mounted twice:
 // - /api/mindmaps for the browser session, after the session, access and login gates and the same-origin rule for mutations;
 // - /v1/mindmaps for other services (routes/engine-v1.js), with `authenticate` (an Engine token) as its first layer.
 // Both use the same service instance, so writes of one map run one at a time whichever path they come in by.

@@ -1,4 +1,4 @@
-// Which device the per-device parts of the settings sheet read and write ("Settings of a linked device" in DESIGN.md): this device, or a linked
+// Which device the per-device parts of the settings sheet read and write ("Settings of a linked device" in docs/design/linked-device-settings.md): this device, or a linked
 // device whose tab is chosen at the top of the sheet (DeviceTarget.jsx, settings-tabs.mjs). Data: GET /api/device-settings/devices
 //   { devices: [{ id, name, online, supported }] }   (`id` is the remote_servers row; `supported` true, false for an older version, null when unknown)
 // A call of a part goes to its own /api path for this device, and to /api/device-settings/<id><path without /api> for a linked one, which the

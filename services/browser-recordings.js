@@ -1,4 +1,4 @@
-// Recordings of the browser extension ("Browser extension" in DESIGN.md, contract section 6): `tcli browser record start` makes the extension send
+// Recordings of the browser extension ("Browser extension" in docs/design/browser-extension.md, contract section 6): `tcli browser record start` makes the extension send
 // `record.items` events (services/browser-bridge.js), and they are appended here, redacted again on this side (lib/browser-redact.js redactDeep):
 //   <data dir>/browser-recordings/<recording_id>.jsonl   one item per line (0600)
 //   <data dir>/browser-recordings/<recording_id>.json    the summary: { recording_id, tab_id, browser_id, started_at, stopped_at, stop_reason,

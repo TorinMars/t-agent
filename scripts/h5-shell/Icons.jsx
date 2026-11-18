@@ -2,7 +2,7 @@ import SvgIcon from '@mui/material/SvgIcon';
 
 // Icons of the phone bottom bar: one set, "Ant Design Official Icon Library" (Ant Design icons, outlined style, 1024 grid, MIT licence),
 // collection https://www.iconfont.cn/collections/detail?cid=9402 (iconfont.cn id of each icon in the comment). Paths are filled shapes, so
-// `currentColor` follows the theme, the blue pressed state and the disabled colour. Nothing is fetched at runtime. See "UI icons" in DESIGN.md.
+// `currentColor` follows the theme, the blue pressed state and the disabled colour. Nothing is fetched at runtime. See "UI icons" in docs/design/page-ui-icons.md.
 export const PATHS = {
   // code library (iconfont.cn icon 4765970)
   terminalKeyboard: 'M516 673c0 4.4 3.4 8 7.5 8h185c4.1 0 7.5-3.6 7.5-8v-48c0-4.4-3.4-8-7.5-8h-185c-4.1 0-7.5 3.6-7.5 8v48zM321.1 679.1l192-161c3.8-3.2 3.8-9.1 0-12.3l-192-160.9c-5.2-4.4-13.1-0.7-13.1 6.1v62.7c0 2.4 1 4.6 2.9 6.1L420.7 512l-109.8 92.2c-1.8 1.5-2.9 3.8-2.9 6.1V673c0 6.8 7.9 10.5 13.1 6.1zM880 112H144c-17.7 0-32 14.3-32 32v736c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V144c0-17.7-14.3-32-32-32z m-40 728H184V184h656v656z',
@@ -95,7 +95,7 @@ export const PATHS = {
   Import: 'M888.3 757.4h-53.8c-4.2 0-7.7 3.5-7.7 7.7v61.8H197.1V197.1h629.8v61.8c0 4.2 3.5 7.7 7.7 7.7h53.8c4.2 0 7.7-3.4 7.7-7.7V158.7c0-17-13.7-30.7-30.7-30.7H158.7c-17 0-30.7 13.7-30.7 30.7v706.6c0 17 13.7 30.7 30.7 30.7h706.6c17 0 30.7-13.7 30.7-30.7V765.1c0-4.3-3.5-7.7-7.7-7.7zM902 476H588v-76c0-6.7-7.8-10.5-13-6.3l-141.9 112c-4.1 3.2-4.1 9.4 0 12.6l141.9 112c5.3 4.2 13 0.4 13-6.3v-76h314c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8z',
   // export (iconfont.cn icon 4765958): export a .xmind file (mind map editor)
   export: 'M888.3 757.4h-53.8c-4.2 0-7.7 3.5-7.7 7.7v61.8H197.1V197.1h629.8v61.8c0 4.2 3.5 7.7 7.7 7.7h53.8c4.2 0 7.7-3.4 7.7-7.7V158.7c0-17-13.7-30.7-30.7-30.7H158.7c-17 0-30.7 13.7-30.7 30.7v706.6c0 17 13.7 30.7 30.7 30.7h706.6c17 0 30.7-13.7 30.7-30.7V765.1c0-4.3-3.5-7.7-7.7-7.7zM906.9 505.7L765 393.7c-5.3-4.2-13-0.4-13 6.3v76H438c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h314v76c0 6.7 7.8 10.5 13 6.3l141.9-112c4.1-3.2 4.1-9.4 0-12.6z',
-  // Function keys of row 1 that have a clear library icon (see the mapping table in DESIGN.md)
+  // Function keys of row 1 that have a clear library icon (see the mapping table in docs/design/page-ui-icons.md)
   // arrowleft (iconfont.cn icon 4767022)
   keyArrowLeft: 'M872 474H286.9l350.2-304c5.6-4.9 2.2-14-5.2-14h-88.5c-3.9 0-7.6 1.4-10.5 3.9L155 487.8c-14.7 12.8-14.7 35.6 0 48.3L535.1 866c1.5 1.3 3.3 2 5.2 2h91.5c7.4 0 10.8-9.2 5.2-14L286.9 550H872c4.4 0 8-3.6 8-8v-60c0-4.4-3.6-8-8-8z',
   // arrowdown (iconfont.cn icon 4767023)

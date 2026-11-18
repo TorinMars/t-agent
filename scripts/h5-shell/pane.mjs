@@ -1,4 +1,4 @@
-// Pane mode: the page shown as one column of the multi-column view (an <iframe> of `/h5?pane=<id>` in the top page; see "Pane mode" in DESIGN.md).
+// Pane mode: the page shown as one column of the multi-column view (an <iframe> of `/h5?pane=<id>` in the top page; see "Pane mode" in docs/design/page-shell-and-columns.md).
 // Only with a valid id AND inside a frame: a top-level `?pane=` or an invalid id is the normal page. In a pane:
 // - what this view shows is remembered under `pane:<id>:<key>` (`H5Pane.key`), so panes never overwrite each other or the normal view; device-wide
 //   preferences keep their shared keys;
@@ -14,7 +14,7 @@
 // - a sideways wheel or trackpad swipe (or Shift+wheel) that nothing inside the pane can scroll is posted as `scroll-x` ({ dx }) and the top page
 //   scrolls its strip: the gesture never reaches xterm, and a vertical one is never touched; Ctrl+Alt+Left / Right (Ctrl+Option on a Mac) is posted as
 //   `step` ({ step: -1 | 1 }), with Shift as `move` (this column one place left / right), and Cmd/Ctrl+Shift+Enter as `maximize` (this column
-//   maximized, or the columns restored); none of them reaches the terminal (see "Multi-column view" in DESIGN.md);
+//   maximized, or the columns restored); none of them reaches the terminal (see "Multi-column view" in docs/design/page-shell-and-columns.md);
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
 import { MAP_KEY, PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readMapColumn, sidewaysDelta, writeMapColumn } from './columns.mjs';

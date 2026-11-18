@@ -13,7 +13,7 @@ import { readLinks } from './service-links-read.mjs';
 // other service stays in the list, greyed, with the reason and no checkbox: offline, up to date, a Docker install, blocked, or an error.
 // `start()` sends `apply-update` to every ticked service at once and resolves when each one was accepted or refused: this machine's own update starts
 // only then, because a linked service behind the reverse tunnel cannot be reached once this machine restarts. Each row then follows its service with
-// `update-status` (as the remote update of Engines.jsx does) until it reports the new version, fails, or 12 minutes pass. "Update and restart" in DESIGN.md.
+// `update-status` (as the remote update of Engines.jsx does) until it reports the new version, fails, or 12 minutes pass. "Update and restart" in docs/design/page-files-and-settings.md.
 
 const WAIT_MS = 12 * 60_000;
 const POLL_MS = 2000;

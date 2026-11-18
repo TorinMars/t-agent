@@ -8,7 +8,7 @@ import { tabEntries, tabHint } from './settings-tabs.mjs';
 import { chooseTab, useDeviceTargets } from './DeviceTarget.jsx';
 
 // The tab row at the top of the settings sheet, under its title: Shared, this device (its engine name, "This device" under it), then each linked device
-// in the order of the device list ("Settings of a linked device" in DESIGN.md). Drawn only while a device is linked (DeviceTarget.jsx); Shared only
+// in the order of the device list ("Settings of a linked device" in docs/design/linked-device-settings.md). Drawn only while a device is linked (DeviceTarget.jsx); Shared only
 // while the settings sync shares with a linked device. A linked device that is too old, or offline and not known, is a disabled tab with the reason
 // under its name. The row scrolls sideways when the tabs do not fit, with
 // a scroll button at each end that shows while there is more to see; the arrow keys move between the tabs (MUI Tabs). The line under the row says

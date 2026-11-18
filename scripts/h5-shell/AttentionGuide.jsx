@@ -20,7 +20,7 @@ import { TOUCH } from './theme.mjs';
 // GET /api/attention/plugins and GET /api/attention/settings/guide (guide-model.mjs); the flags the overview cannot see (closed, "page only",
 // paired, a test worked) are saved with PUT /api/attention/settings/guide. It reuses the existing calls: the one-click install
 // (POST /plugins/claude/install), the pairing dialog, the notifier test (POST /plugins/:name/test) and this page's reminders (ui.actions.attention*).
-// It draws nothing until both reads worked, so a Client without the guide route shows the page as before. See "T-Attention first-run guide" in DESIGN.md.
+// It draws nothing until both reads worked, so a Client without the guide route shows the page as before. See "T-Attention first-run guide" in docs/design/page-attention.md.
 
 const SMALL = { [TOUCH]: { minHeight: 44, minWidth: 44 } };
 

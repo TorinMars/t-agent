@@ -18,7 +18,7 @@ import { LIST, readLinks } from './service-links-read.mjs';
 // "Link a device" in Settings → Devices (until the sheet was tidied up the group "Linked services"): two T-Agent services that see and operate each
 // other's tasks, terminals and sessions. Service A generates a 6-digit code (POST /api/service-links/code), service B enters A's address and the code
 // (POST /api/service-links/join with confirm: true). A linked service is then an ordinary remote Engine in /api/remote-servers (its row is matched by
-// `remote_server_id`), so the rest of the page does not change. See "Settings, Devices and Update" in DESIGN.md. After a join or an unlink the task list is
+// `remote_server_id`), so the rest of the page does not change. See "Settings, Devices and Update" in docs/design/page-files-and-settings.md. After a join or an unlink the task list is
 // read again with ui.actions.enginesChanged, as the device list does.
 
 const POLL_EVERY = 3; // seconds between two reads of the list while the code dialog is open

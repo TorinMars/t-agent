@@ -1,4 +1,4 @@
-// The T-Attention desktop window and the agent terminals ("T-Attention desktop window (macOS)" in DESIGN.md): `session` on every item of GET /items
+// The T-Attention desktop window and the agent terminals ("T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md): `session` on every item of GET /items
 // (this machine and a connected service), POST /items/:key/reply (every error, and the bytes that reach the PTY: a bracketed paste, then Enter on its
 // own about 150 ms later) and GET /activity (running, waiting, done; the order and `since`). routes/terminal.js runs for real with node-pty mocked, so
 // the shells, the activity trackers and the task_terminals rows are the real ones; the data folder and HOME are temporary.

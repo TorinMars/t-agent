@@ -21,7 +21,7 @@ import {
 // The multi-column view of a wide screen: the top page shows a row of iframes of itself in pane mode (`/h5?pane=<id>`), each a whole copy of the page
 // with its own header, terminal, draft box and tool row, and the person goes back to the normal view with the same button. The top page keeps one
 // activity feed, one notifier and one updater; while the strip is shown its own terminal is hidden and holds no socket (h5.js, `columns.shown`).
-// The rules (ids, order, the message format) are in columns.mjs; "Multi-column view" in DESIGN.md.
+// The rules (ids, order, the message format) are in columns.mjs; "Multi-column view" in docs/design/page-shell-and-columns.md.
 //
 // state.columns: null on a page that never offers the view (a pane, or any page inside a frame), else
 //   { enabled (the person's choice, remembered), shown (enabled and the screen is wide), ids (in order), focus (an id or null),

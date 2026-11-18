@@ -1,4 +1,4 @@
-// T-Attention of every engine in one list (scripts/h5-shell/Attention.jsx, attention-feed.mjs, attention-model.mjs; "T-Attention on the page" in DESIGN.md),
+// T-Attention of every engine in one list (scripts/h5-shell/Attention.jsx, attention-feed.mjs, attention-model.mjs; "T-Attention on the page" in docs/design/page-attention.md),
 // in real Chromium with the API mocked by Playwright routes and a fake EventSource per stream:
 // - this machine ("mac") and K01 (remote 7, 'attention:remote') merged in one list, each row with the engine tag of the task list, each group in engine
 //   blocks (this machine first) with repeating ids; Old (no capability) and Legacy (capability, answers 501) left out silently; Hidden (hidden from the

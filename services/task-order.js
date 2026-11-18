@@ -1,5 +1,5 @@
 // The shared task order: one list of task keys that every browser of this service and every linked service shows in the same order. See "Shared task
-// order" in DESIGN.md.
+// order" in docs/design/page-task-list.md.
 //
 // A key is `<instance id>:<task id>`, the instance id being the Engine's own identity (engine_identity `instance_id`), because a remote row's id differs
 // between machines. Stored per owner in one system_state row, `task_order_v1`: { "<login>": { order: [key, ...], updated_at } }, `updated_at` in

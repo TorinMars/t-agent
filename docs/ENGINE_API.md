@@ -16,7 +16,7 @@ Authorization: Bearer tae_xxx
 
 ## Service links
 
-Two services that see and operate each other as remote Engines; see "Service links" in `DESIGN.md`. The capability is `service-links` (in `/v1/info` and `/v1/health`).
+Two services that see and operate each other as remote Engines; see "Service links" in `docs/design/service-links.md`. The capability is `service-links` (in `/v1/info` and `/v1/health`).
 
 - `POST /v1/service-links/join`: no token; the rate limit of `/v1/pair`. Body `{ code, name, instance_id, access_token }`: the 6-digit code made by the browser call `POST /api/service-links/code` on this service, and a fresh Engine token the joiner created for this service. Answer 201 `{ link_id, access_token, tunnel_token, name, instance_id, version }`. Errors: `INVALID_CODE` (wrong, used, expired or malformed), `INVALID_REQUEST`, `SELF_LINK`, `ALREADY_LINKED`, `PAIRING_RATE_LIMITED`. An Engine pairing code (`TA-…`) is refused here, and a 6-digit code is refused on `/v1/pair`.
 - `GET /v1/service-links/tunnel`: WebSocket, `Authorization: Bearer tsl_...`. 401 for a wrong or revoked token. The `tsl_` token works only here.
@@ -24,7 +24,7 @@ Two services that see and operate each other as remote Engines; see "Service lin
 
 ### Per-task visibility
 
-The service that owns a task can hide it from a linked service; see "Per-task visibility" in `DESIGN.md`. It applies only to a token issued for a service link. Other tokens are not affected.
+The service that owns a task can hide it from a linked service; see "Per-task visibility" in `docs/design/service-links.md`. It applies only to a token issued for a service link. Other tokens are not affected.
 
 - Every route under `/v1/tasks/:id` and `/v1/terminal-sessions/:id`, `POST /v1/terminal-sessions` and the ids in `PUT /v1/tasks/reorder` treat a hidden task exactly like a task that does not exist: the same status and body as the route gives for a missing id.
 - `GET /v1/tasks` (also `?archived=1`), `/v1/terminal-activity`, `/v1/terminal-activity/stream`, `/v1/terminal-subagents`, the workspace cleanup routes and `task_count` in `/v1/task-groups` leave it out.
@@ -45,7 +45,7 @@ The bodies, answers, error messages and status codes are those of the `/api` rou
 
 ### Shared task order
 
-The order of the task list, shared by linked services; see "Shared task order" in `DESIGN.md`. The capability is `task-order` (in `/v1/info`). Only a token issued for a live service link is accepted, as for `/v1/linked-services`: any other Engine token gets 403 `LINKED_ONLY`; a missing or revoked token gets 401.
+The order of the task list, shared by linked services; see "Shared task order" in `docs/design/page-task-list.md`. The capability is `task-order` (in `/v1/info`). Only a token issued for a live service link is accepted, as for `/v1/linked-services`: any other Engine token gets 403 `LINKED_ONLY`; a missing or revoked token gets 401.
 
 - `GET /v1/task-order`: `{ order: [key, ...], updated_at }`. A key is `<instance id>:<task id>` (`^[A-Za-z0-9-]{1,64}:\d{1,12}$`), the instance id being the `engine_id` of the Engine that owns the task; `updated_at` is in milliseconds, 0 when the order was never set.
 - `PUT /v1/task-order`: body `{ order, updated_at }`, at most 5000 distinct keys (duplicates are dropped, the first kept), `updated_at` a non-negative integer. Stored only when `updated_at` is newer than the stored one (last writer wins); keys of the stored list that the new one lacks are kept after the key that came before them. The answer is the stored value either way. Error 400 `INVALID_TASK_ORDER`. It is never sent on to another service.
@@ -54,7 +54,7 @@ The list is a list of keys only: it names task ids, never a title, so per-task v
 
 ## Mind maps
 
-The mind maps stored on this service, for the other services connected to it (plain remote Engines and service links alike); see "Mind maps" in `DESIGN.md`. Capability `mindmaps` (in `/v1/info`; additive, `api_version` stays 1). Any Engine token; it is checked before the body is read. Maps belong to no task, so per-task visibility does not apply.
+The mind maps stored on this service, for the other services connected to it (plain remote Engines and service links alike); see "Mind maps" in `docs/design/mind-maps.md`. Capability `mindmaps` (in `/v1/info`; additive, `api_version` stays 1). Any Engine token; it is checked before the body is read. Maps belong to no task, so per-task visibility does not apply.
 
 - `GET /v1/mindmaps`: `{ maps: [{ id, title, revision, created_at, updated_at, size }] }`, newest first.
 - `POST /v1/mindmaps` `{ title?, data? }`: 201 with the full map.

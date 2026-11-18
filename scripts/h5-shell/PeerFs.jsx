@@ -7,7 +7,7 @@ import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
 import { useDeviceTarget } from './DeviceTarget.jsx';
 
-// The peer file access switch of this Engine ("Peer file access" in DESIGN.md), a part of the Devices group (`#h5-sec-peer-fs`): whether the Claude
+// The peer file access switch of this Engine ("Peer file access" in docs/design/peer-file-access.md), a part of the Devices group (`#h5-sec-peer-fs`): whether the Claude
 // and Codex sessions started here get the read-only `t-agent-peers` tools, and whether linked devices may read this Engine's files.
 // It is read each time the group opens (`opened` goes up) and saved at once, without Save. An older server answers 404: nothing is drawn.
 // The switch sits on the left edge of the group: MUI's hidden input is three thumbs wide and starts one thumb to the left, so it would

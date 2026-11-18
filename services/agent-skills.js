@@ -1,5 +1,5 @@
 'use strict';
-// The agent skills that come with T-Agent (see "Agent skills" in DESIGN.md): one SKILL.md each under rules/skills/<name>/, the same file for Claude Code
+// The agent skills that come with T-Agent (see "Agent skills" in docs/design/attention-cli-and-listener.md): one SKILL.md each under rules/skills/<name>/, the same file for Claude Code
 // and Codex. This module installs them on the machine that runs this server, for the user who runs the agents (the terminal user when the service runs
 // as root and drops privileges, like the listener install in services/attention-plugins.js):
 //   <claude>/skills/<name>/SKILL.md   <claude> = $CLAUDE_CONFIG_DIR or ~/.claude

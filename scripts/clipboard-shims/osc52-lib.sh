@@ -5,7 +5,7 @@
 # by a program in that terminal (`cmd | pbcopy`, Neovim's "+ register, Claude Code's copy) is then sent to the browser as
 # OSC 52 (ESC ] 52 ; c ; <base64> BEL on /dev/tty, or through tmux / GNU screen), and the real command found later in PATH
 # still runs so the server clipboard keeps working. Paste / output modes and anything unclear go to the real command
-# untouched. See "Clipboard (OSC 52)" in DESIGN.md.
+# untouched. See "Clipboard (OSC 52)" in docs/design/terminals.md.
 #
 # Every shim has the marker line `# TA-CLIPBOARD-SHIM` as its second line: the search for the real command skips any file
 # with that marker, so two copies of this folder in PATH (a server started inside a T-Agent terminal) never call each other.

@@ -1,6 +1,6 @@
 'use strict';
 // The first installer of the t-attention agent skill, kept for older pages (GET /api/attention/skill and its writes, routes/attention-skill.js). It is
-// now one skill of the agent skills installer (services/agent-skills.js, "Agent skills" in DESIGN.md), which does the work; this module keeps the old
+// now one skill of the agent skills installer (services/agent-skills.js, "Agent skills" in docs/design/attention-cli-and-listener.md), which does the work; this module keeps the old
 // answer shape: { claude, codex, old_task_tracker, cli, user } and install / remove-old results whose `status` has that shape too.
 const path = require('node:path');
 const os = require('node:os');

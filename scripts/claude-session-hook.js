@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Code SessionStart hook for t-agent terminals (see "Claude terminals follow their current session" in DESIGN.md).
+// Claude Code SessionStart hook for t-agent terminals (see "Claude terminals follow their current session" in docs/design/terminals.md).
 // Claude starts it on startup, resume, /clear, compact and fork with { session_id, source, cwd, ... } on stdin.
 // It tells the t-agent server which session the terminal now runs, so a respawned shell resumes that one.
 // It must never disturb Claude: it prints nothing (SessionStart stdout would become context), gives up after

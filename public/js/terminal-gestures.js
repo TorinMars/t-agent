@@ -1,4 +1,4 @@
-// Sideways panning of the page's wide terminal, and its width math (see "Terminal width" and "Touch scrolling" in DESIGN.md).
+// Sideways panning of the page's wide terminal, and its width math (see "Terminal width" and "Touch scrolling" in docs/design/page-terminal-and-bottom-bar.md).
 // One handler for the terminal element: a one-finger pan picks its axis in its first AXIS_SLOP px and keeps it until the finger is lifted.
 // - Horizontal: moves the wide terminal sideways (nothing in Fit mode, where the screen fits).
 // - Vertical: not this handler's. The touch is let go at once, untouched: the wheel strip (h5.js bindWheelStrip) is the vertical scroller and a drag on

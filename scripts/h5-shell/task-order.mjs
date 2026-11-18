@@ -1,4 +1,4 @@
-// The shared order of the one task list (`GET` / `PUT /api/task-order`, see "Task order" in DESIGN.md), and the device tag in front of a task name.
+// The shared order of the one task list (`GET` / `PUT /api/task-order`, see "Task order" in docs/design/page-task-list.md), and the device tag in front of a task name.
 // Pure functions: h5.js reaches them as `H5UI.taskOrder` (entry.jsx), TaskDrawer.jsx imports them, test/h5-task-order.test.js checks them.
 //
 // A task key is `<instance id>:<task id>`. `order` is the list of keys the server keeps for the person; it can hold keys this page does not show

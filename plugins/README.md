@@ -3,7 +3,7 @@
 Plugins connect T-Attention (the attention hub: tasks that need you) to other tools. Each plugin is a folder:
 
 - `plugins/listeners/<name>/`: a **listener** watches a tool from outside (hooks, webhooks) and creates or updates tasks through the HTTP API, with `lib/attention-client.js`.
-- `plugins/notifiers/<name>/`: a **notifier** runs inside the server and tells the user when a task changes (see "T-Attention" in `DESIGN.md`).
+- `plugins/notifiers/<name>/`: a **notifier** runs inside the server and tells the user when a task changes (see "T-Attention" in `docs/design/architecture-features-and-page.md`).
 
 ## Listener format
 
@@ -43,7 +43,7 @@ plugins/notifiers/<name>/
   index.js        { name, label, configFields, notify(), test() } and optional ready(), status(), routes(), close(), direct
 ```
 
-`direct: true` says the notifier also takes free-form messages of agent sessions (`tcli notify`): `notify({ reason: 'direct', mode: 'message', item: null, message: { title, text, from }, link, config, values, log, origin })`, where `text` is at most 3000 characters with newlines and `origin` (`{ name }` or null) is the linked device it was relayed from. See "Direct messages" under "T-Attention notifiers" in `DESIGN.md`.
+`direct: true` says the notifier also takes free-form messages of agent sessions (`tcli notify`): `notify({ reason: 'direct', mode: 'message', item: null, message: { title, text, from }, link, config, values, log, origin })`, where `text` is at most 3000 characters with newlines and `origin` (`{ name }` or null) is the linked device it was relayed from. See "Direct messages" under "T-Attention notifiers" in `docs/design/attention-notifiers.md`.
 
 ### Settings in the manifest (`config`, `test`, `customUi`)
 
@@ -71,7 +71,7 @@ Simple settings are described in the manifest; the server validates and stores t
 - `modes`: what the message and call rules may choose for this notifier, a list of `message`, `call`, `off` (`off` is always allowed). Default: all three. A notifier that cannot ring says `["message", "off"]`: the rules page offers only those, a save with another mode is refused (400 "<name> cannot make calls"), and a mode saved before counts as `message`.
 - `direct: true` in `index.js`: the plugin also takes free-form messages (not about an item): `notify({ reason: 'direct', mode: 'message', item: null, message: { title?, text, from? }, link?, config, values, log, origin? })`. `text` is plain text (newlines allowed, at most 3000 characters), `title` and `from` (who sent it) at most 200; throw on failure.
 - `notify` and `test` get `values` (the settings with defaults) and also find them merged into `config`. A plugin switched off gets no `notify` call. Values your plugin wrote to its own store under a schema key are moved into these settings the first time they are read.
-- API: `GET/PUT /api/attention/plugins/<name>/config` (`{ enabled, values }`), `POST /api/attention/plugins/<name>/test`; see "Plugin settings from the manifest" in `DESIGN.md`.
+- API: `GET/PUT /api/attention/plugins/<name>/config` (`{ enabled, values }`), `POST /api/attention/plugins/<name>/test`; see "Plugin settings from the manifest" in `docs/design/attention-cli-and-listener.md`.
 
 A plugin whose manifest cannot be read or whose `index.js` lacks `notify` / `test` (or has another `name`) is skipped and logged; the plugin overview (`GET /api/attention/plugins`, `t-attention plugins`, Settings -> T-Attention -> Plugins) still lists it with `loaded: false` and the error.
 
@@ -114,11 +114,11 @@ Called with the plugin's stored settings and the user. It returns an object for 
 - Ready only on macOS, in a server that may start the window, with the window switched on (Settings -> T-Attention -> Desktop window (macOS)) and running. Otherwise it is skipped like a notifier that is not set up, and the Test button says why. It exports `whyNotReady()` for that.
 - Local to each Mac: never relayed to the Telegram sender of the linked devices.
 - `direct: true` (`tcli notify --via widget`), `modes: ["message", "off"]`; a call that still arrives falls back to a message.
-- Target of a click: the item's own `link_url` (a page path `/...` against the address the window talks to), else the notification link, else the T-Agent page on this Mac. Only http(s) without credentials. The notice shape is in "Floating window notices" in `DESIGN.md`.
+- Target of a click: the item's own `link_url` (a page path `/...` against the address the window talks to), else the notification link, else the T-Agent page on this Mac. Only http(s) without credentials. The notice shape is in "Floating window notices" in `docs/design/attention-desktop-window.md`.
 
 ## Publishing a plugin (marketplace)
 
-Anyone can publish a plugin in a Git repository; users install it from Settings -> T-Attention -> Plugins -> Marketplace, or with `t-attention plugins install <name|git-url>`. The server downloads it, shows what it contains and installs it only after the user confirms, pinned to that commit. Installed plugins live in `<data folder>/plugins/{listeners,notifiers}/<name>/` (`~/.tagent` by default); see "Plugin marketplace" in `DESIGN.md`.
+Anyone can publish a plugin in a Git repository; users install it from Settings -> T-Attention -> Plugins -> Marketplace, or with `t-attention plugins install <name|git-url>`. The server downloads it, shows what it contains and installs it only after the user confirms, pinned to that commit. Installed plugins live in `<data folder>/plugins/{listeners,notifiers}/<name>/` (`~/.tagent` by default); see "Plugin marketplace" in `docs/design/attention-cli-and-listener.md`.
 
 **Repository layout**: the plugin folder is the repository root, or a subfolder of it (users give it as `https://host/repo.git#<ref>:<subfolder>`, an index entry as `"path"`). It contains `manifest.json` and the files of the format above (a notifier: `index.js`; a listener: its `entry`). Rules:
 

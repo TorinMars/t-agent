@@ -1,4 +1,4 @@
-// The tabs at the top of the settings sheet ("Settings of a linked device" in DESIGN.md): Shared, then this device, then each linked device. A tab
+// The tabs at the top of the settings sheet ("Settings of a linked device" in docs/design/linked-device-settings.md): Shared, then this device, then each linked device. A tab
 // shows only the parts whose changes belong to it: Shared holds the parts copied to every linked device (and Telegram, one setting with one sender),
 // a device tab holds the "This device only" parts of that device (a linked device's are read and saved through /api/device-settings, DeviceTarget.jsx).
 // The Shared tab exists only while the settings sync shares with a linked device (`shared`, DeviceTarget.jsx). Without it (the sync is turned off,

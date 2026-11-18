@@ -1,5 +1,5 @@
 'use strict';
-// The site capability library routes (browser feature; "Site library" in DESIGN.md). Two routers:
+// The site capability library routes (browser feature; "Site library" in docs/design/site-library.md). Two routers:
 //  - page router (/api/browser-sites, behind the Client login like the other settings pages): list, read, delete and edit the entries the Settings
 //    "Site library" viewer shows. Read-only viewing plus delete is what the viewer needs; editing is normally done by agents through `tcli site`.
 //  - tcli relay (/api/tcli/site/*, terminal hook token, this machine only, mounted like /api/tcli/oss before the body parsers and the gates): the

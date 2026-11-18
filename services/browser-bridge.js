@@ -1,4 +1,4 @@
-// The bridge to the T-Agent browser extension ("Browser extension" in DESIGN.md; the extension itself is extensions/chrome/). It holds:
+// The bridge to the T-Agent browser extension ("Browser extension" in docs/design/browser-extension.md; the extension itself is extensions/chrome/). It holds:
 //  - pairing: a one-time code (8 characters of PAIR_ALPHABET, 5 minutes, single use, kept in memory only) that the extension's options page
 //    trades for a token (POST /api/browser-ext/pair, routes/browser-ext.js). The token (`tab_` + 32 random bytes, base64url) is given out
 //    once; only its SHA-256 is kept, in system_state `browser_ext_v1` (a JSON list of { browser_id, name, token_hash, created_at,

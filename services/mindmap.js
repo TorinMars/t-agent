@@ -1,4 +1,4 @@
-// Mind maps: one JSON file per map in <data folder>/mindmaps (see "Mind maps" in DESIGN.md). Self-contained: no database table, and it never reads or
+// Mind maps: one JSON file per map in <data folder>/mindmaps (see "Mind maps" in docs/design/mind-maps.md). Self-contained: no database table, and it never reads or
 // changes tasks, work directories, terminals, agent chat or terminal activity.
 //
 // - A file is { id, title, data, revision, created_at, updated_at }. `data` is opaque to the server: a JSON object, or null until the page first saves.

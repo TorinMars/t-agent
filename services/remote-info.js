@@ -1,5 +1,5 @@
 // Every read of a remote Engine's /v1/info goes through `read`, so that the name the Engine reports follows into its remote_servers row and its link
-// record (services/engine-name.js). See "Engine names" in DESIGN.md.
+// record (services/engine-name.js). See "Engine names" in docs/design/engine-names.md.
 //
 // `refreshStale` is the light refresh of GET /api/remote-servers: rows not read in the last REFRESH_MS are read again in the background, after the
 // answer, and only their names are taken from it.

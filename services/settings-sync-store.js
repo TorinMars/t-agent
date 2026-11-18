@@ -1,5 +1,5 @@
 // Small pieces shared by the settings that linked devices keep as one set (services/settings-sync.js). See "Settings sync across linked devices" in
-// DESIGN.md.
+// docs/design/settings-sync.md.
 //
 // - settingChanged(group) is called by the save paths of the synced settings (translator, voice input, OSS, T-Attention ...) after a local change.
 //   It only says "look again": services/settings-sync.js compares a hash of the stored value, so a call without a real change does nothing.

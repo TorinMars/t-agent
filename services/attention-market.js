@@ -1,4 +1,4 @@
-// T-Attention plugin marketplace (see "Plugin marketplace" in DESIGN.md): find plugins in marketplace indexes, download one from Git into a
+// T-Attention plugin marketplace (see "Plugin marketplace" in docs/design/attention-cli-and-listener.md): find plugins in marketplace indexes, download one from Git into a
 // temp folder, show what it contains, and only after an explicit confirm move it into <data folder>/plugins/<kind>s/<name>/ pinned to a commit.
 //
 // Security (plugins run code inside the server or inside the user's tools):

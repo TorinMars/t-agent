@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // `tcli site ...`: the site capability library of the browser feature, from a T-Agent terminal (shared contract v1 section 7; "Site library" in
-// DESIGN.md). It reads and writes one entry per host through the relay /api/tcli/site/* (routes/browser-sites.js). The entries sync to linked
+// docs/design/site-library.md). It reads and writes one entry per host through the relay /api/tcli/site/* (routes/browser-sites.js). The entries sync to linked
 // devices. The core branch puts `tcli browser` in scripts/tcli-browser.js the same way; this file is the `tcli site` half, wired into scripts/tcli.js
 // with one GROUPS.site line. The shared HTTP helpers live in scripts/tcli.js and are required lazily (so loading this file never loops back into it).
 'use strict';

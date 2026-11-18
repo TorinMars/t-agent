@@ -1,4 +1,4 @@
-// The desktop window's one request per tick (GET /api/attention/widget/tick, "T-Attention desktop window (macOS)" in DESIGN.md) and the kept
+// The desktop window's one request per tick (GET /api/attention/widget/tick, "T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md) and the kept
 // list behind it: the database queries and remote requests of a tick in which nothing changed (none), the list again after a local change,
 // after a terminal starts, after the remote TTL and after the window's own change, the etag, the preferences and the notices in the same
 // answer; the finished items read with `recent_finished` (services/attention.js list, routes/attention.js) and its index; GET /items as before.

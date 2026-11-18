@@ -1,5 +1,5 @@
 // Waiting for this machine's service to come back after it restarts: the manual update (`monitor` in Update.jsx) and "Restart T-Agent" (Restart.jsx).
-// See "Automatic refresh after an update" in DESIGN.md: the version number cannot tell the new process from the old one, the `boot_id` can.
+// See "Automatic refresh after an update" in docs/design/update-check-and-versions.md: the version number cannot tell the new process from the old one, the `boot_id` can.
 
 // Once the old process said it is restarting, any answer this much later comes from the new one (it exits about 0.75 s after saying so).
 export const RESTART_GRACE_MS = 4000;

@@ -1,8 +1,8 @@
 // The pure logic of the T-Attention page (Attention.jsx, attention-feed.mjs): groups, order, the "Needs you" count, how a live change event updates the
 // list, and which change is a reminder. No DOM, no requests, so test/attention-model.test.js runs it in Node. Items are the JSON of `attention_items`
-// (see "T-Attention" in DESIGN.md): { id, title, notes, status, priority, due_date, source, attention_reason, link_url, link_label, updated_at, ... }.
+// (see "T-Attention" in docs/design/architecture-features-and-page.md): { id, title, notes, status, priority, due_date, source, attention_reason, link_url, link_label, updated_at, ... }.
 // A server with sub-tasks adds `parent_id`, `custom_status`, `result` and `sort_order` (see `hasTree`); an older one sends none of them.
-// One list of several engines (this machine and every connected service that has T-Attention, see "T-Attention on the page" in DESIGN.md): the feed
+// One list of several engines (this machine and every connected service that has T-Attention, see "T-Attention on the page" in docs/design/page-attention.md): the feed
 // tags each item with `engine` (the key of its engine, as h5.js names it: 'local', 'remote:7') and `key` ('<engine>:<id>'), since ids repeat between
 // engines. `item.source` stays what it always was: who reported the task ('claude', 'user', ...). Every function here names an item by its `key` when it
 // has one, else by its `id` (an untagged list, as the tests and an older page build it), and a `parent_id` always means an item of the same engine.
@@ -431,7 +431,7 @@ export function today(now = new Date()) {
 }
 export const overdue = (item, day = today()) => Boolean(item && item.due_date && !CLOSED_STATUSES.includes(item.status) && item.due_date < day);
 
-// ── Context recall: the context card, the timeline and the jump back (see "T-Attention on the page" in DESIGN.md) ──
+// ── Context recall: the context card, the timeline and the jump back (see "T-Attention on the page" in docs/design/page-attention.md) ──
 
 // `item.context` as an object (the API sends it parsed; a JSON string is read too). Never throws.
 export function contextOf(item) {

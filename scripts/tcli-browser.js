@@ -1,4 +1,4 @@
-// `tcli browser ...`: drives the person's browser through the T-Agent browser extension ("Browser extension" in DESIGN.md). Every command is one
+// `tcli browser ...`: drives the person's browser through the T-Agent browser extension ("Browser extension" in docs/design/browser-extension.md). Every command is one
 // call to the relay /api/tcli/browser (routes/browser-ext.js) with the terminal's hook token; T-Agent passes it to the extension over its socket
 // (services/browser-bridge.js). The default output is short text for a person or a model; --json prints the answer as it came.
 // Loaded by scripts/tcli.js, which hands over its HTTP and error helpers. Node built-ins only.

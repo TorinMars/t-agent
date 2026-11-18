@@ -1,5 +1,5 @@
 // Settings sync across linked devices: the settings in the registry below are one set for every service link, kept the same on each device. See
-// "Settings sync across linked devices" in DESIGN.md.
+// "Settings sync across linked devices" in docs/design/settings-sync.md.
 //
 // - Registry: one entry per setting group, { key, read(owner) -> value | null, write(owner, value | null), secret }. Each adapts the store of its own
 //   service (exportForSync / importFromSync there). Settings that belong to one device (working directory, access mode, authenticator, device name,

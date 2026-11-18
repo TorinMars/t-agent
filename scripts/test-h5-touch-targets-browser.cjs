@@ -70,7 +70,8 @@ function measure(min) {
   const out = [];
   for (const el of document.querySelectorAll(SEL)) {
     if (el.closest('.xterm, [inert], [aria-hidden="true"], [hidden]')) continue; // the terminal's own input; whatever sits behind a modal
-    const control = el.closest('.MuiInputBase-root, .MuiButtonBase-root, .MuiFormControlLabel-root') || el;
+    // A switch row of Settings (Form.jsx SwitchRow) is one <label>: a tap anywhere on the row toggles its switch, so the row is the control.
+    const control = el.closest('.h5-switch-row') || el.closest('.MuiInputBase-root, .MuiButtonBase-root, .MuiFormControlLabel-root') || el;
     if (seen.has(control)) continue;
     seen.add(control);
     const style = getComputedStyle(control);

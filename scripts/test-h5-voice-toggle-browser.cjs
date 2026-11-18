@@ -3,6 +3,7 @@
 // a reload keeps it off without asking for the microphone; turned on, everything is back. The composer of the chat is covered in test-agent-chat-browser.cjs.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -53,8 +54,7 @@ const measure = page => page.evaluate(() => {
 async function openSwitch(page) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  await page.locator('#h5-set-voice-translate .MuiAccordionSummary-root').click();
-  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-voice-translate .MuiCollapse-entered')));
+  await openSettingsGroup(page, 'voice-translate');
   return page.locator('#h5-vi-enabled');
 }
 async function closeSettings(page) {

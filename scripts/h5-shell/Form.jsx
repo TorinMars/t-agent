@@ -61,7 +61,7 @@ export function SwitchRow({ id, inputId, inputClassName, inputLabel, label, seco
         {aside}
       </Box>
       <Switch
-        edge="end" checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)}
+        checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} sx={{ flexShrink: 0 }}
         slotProps={{ input: { id: inputId, className: inputClassName, 'aria-label': inputLabel || (typeof label === 'string' ? label : undefined), 'aria-describedby': described, style: INPUT_INSIDE } }}
       />
     </Box>

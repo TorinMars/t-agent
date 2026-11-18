@@ -14,6 +14,7 @@
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of the sheet with K01 chosen.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -118,12 +119,13 @@ async function openPage(browser, { width = 390, zh = false, devices = DEVICES, p
 const settled = page => page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
 async function openSheet(page) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
-  await page.locator('#h5-settings .h5-settings-body').waitFor({ state: 'visible' });
+  await page.locator('#h5-settings').waitFor({ state: 'visible' });
   await page.waitForFunction(() => window.calls.some(call => call.url === '/api/device-settings/devices') && window.calls.some(call => call.url === '/api/settings-sync'));
   await settled(page);
 }
 // Taps a tab and waits until it is the chosen one.
 async function chooseTab(page, value) {
+  await backToList(page); // the device tabs are on the group list
   const tab = page.locator(`#h5-settings-tab-${value}`);
   await tab.scrollIntoViewIfNeeded();
   await tab.tap();
@@ -131,18 +133,14 @@ async function chooseTab(page, value) {
   await settled(page);
 }
 const chosenTab = page => page.evaluate(() => { const tab = document.querySelector('#h5-settings-tabs [role="tab"][aria-selected="true"]'); return tab ? tab.dataset.tab : null; });
+// Shows a group, or leaves it when it is shown (on a phone: back to the group list, where the device tabs are).
 async function toggleGroup(page, id) {
-  const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-  await summary.scrollIntoViewIfNeeded();
-  const wasOpen = await summary.getAttribute('aria-expanded') === 'true';
-  await summary.tap();
-  await page.waitForFunction(([groupId, open]) => Boolean(document.querySelector(`#h5-set-${groupId} > .MuiCollapse-entered`)) === open, [id, !wasOpen]);
-  await settled(page);
+  if (await groupShown(page, id)) await backToList(page); else await openSettingsGroup(page, id);
 }
 const callsTo = (page, prefix) => page.evaluate(start => window.calls.filter(call => call.url.startsWith(start)).map(call => `${call.method} ${call.url}`), prefix);
 async function assertFits(page, label) {
   const result = await page.evaluate(() => {
-    const sheet = document.querySelector('#h5-settings .h5-sheet-panel');
+    const sheet = document.querySelector('#h5-settings-page:not(.MuiModal-hidden) .MuiDialog-paper') || document.querySelector('#h5-settings .MuiDialog-paper') || document.getElementById('h5-settings');
     const inner = document.documentElement.clientWidth;
     const visible = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
     // A tab scrolled out of the tab row is clipped by the row's own scroller, which must fit.
@@ -153,7 +151,7 @@ async function assertFits(page, label) {
   assert.deepEqual(result.outside, [], `${label}: nothing is wider than the screen`);
   assert.ok(result.scroll <= 0, `${label}: no horizontal page scroll`);
 }
-const shot = async (page, name) => { if (SHOTS) await page.locator('#h5-settings .h5-sheet-panel').screenshot({ path: path.join(SHOTS, `${name}.png`) }); };
+const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `${name}.png`) }); };
 
 async function testChooseK01(browser) {
   const { context, page, errors } = await openPage(browser);

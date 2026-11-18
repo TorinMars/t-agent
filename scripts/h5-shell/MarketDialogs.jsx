@@ -133,7 +133,7 @@ export function ConfirmInstallDialog({ request, onClose, onInstalled }) {
       <DialogActions sx={{ flexWrap: 'wrap', gap: 1 }}>
         <Button id="h5-market-confirm-cancel" disabled={busy && Boolean(model)} onClick={onClose}>{t('Cancel')}</Button>
         {stale || (error && !model) ? <Button id="h5-market-prepare-again" disabled={busy} onClick={() => void prepare()}>{t('Prepare again')}</Button> : null}
-        <Button id="h5-market-confirm-install" variant="contained" disabled={!model || stale || busy} onClick={() => void install()}>{updating ? t('Update') : t('Install')}</Button>
+        <Button id="h5-market-confirm-install" disabled={!model || stale || busy} onClick={() => void install()}>{updating ? t('Update') : t('Install')}</Button>
       </DialogActions>
     </Dialog>
   );
@@ -299,7 +299,7 @@ export function RemoveDialog({ entry, onClose, onRemoved }) {
       </DialogContent>
       <DialogActions>
         <Button disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
-        <Button id="h5-market-remove-confirm" variant="contained" color="error" disabled={busy} onClick={() => void remove()}>{entry && entry.dev ? t('Unlink') : t('Remove')}</Button>
+        <Button id="h5-market-remove-confirm" color="error" disabled={busy} onClick={() => void remove()}>{entry && entry.dev ? t('Unlink') : t('Remove')}</Button>
       </DialogActions>
     </Dialog>
   );

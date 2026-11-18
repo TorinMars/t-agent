@@ -4,6 +4,7 @@
 // that cannot be loaded closes the screen with a notice and is asked for again on the next opening; and the page has no errors.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -49,8 +50,8 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
       assert.ok(chunks.includes('screen-settings'), 'the Settings chunk is fetched when Settings opens');
-      assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
-      await page.locator('#h5-set-attention .MuiAccordionSummary-root').tap();
+      assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
+      await openSettingsGroup(page, 'attention');
       // The parts registered by their own modules (attention-slots.mjs), imported by the Settings chunk.
       await page.locator('#h5-set-attention .h5-attention-slot[data-slot="plugins"]').waitFor({ state: 'attached' });
       const slots = await page.locator('#h5-set-attention .h5-attention-slot').evaluateAll(nodes => nodes.map(node => node.dataset.slot));
@@ -105,6 +106,7 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       await again.page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await again.page.locator('#h5-settings').waitFor({ state: 'visible' });
       assert.equal(await again.page.locator('.h5-setting-group').count(), 5);
+      assert.equal(await again.page.locator('#h5-settings-groups .h5-settings-group-item').count(), 5);
       await again.context.close();
     }
     console.log('Lazy screens: chunks on first open or hover, every Settings group and slot, a failed chunk retried: passed.');

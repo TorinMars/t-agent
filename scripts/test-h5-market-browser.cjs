@@ -11,6 +11,7 @@
 // - computer 1440x900 (mouse): the tabs and an install through the dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -157,8 +158,7 @@ async function openPage(browser, { viewport, touch = true }) {
 async function openMarket(page, how, calls) {
   await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  await page.locator('#h5-set-attention .MuiAccordionSummary-root')[how]();
-  await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-attention .MuiCollapse-entered')));
+  await openSettingsGroup(page, 'attention');
   await page.locator('#h5-plugins .h5-plugin').first().waitFor();
   assert.equal(calls.filter(call => call.path.startsWith('/api/attention/market')).length, 0, 'the market is not read before its tab is chosen');
   assert.equal(await page.locator('#h5-plugins-tab-installed').getAttribute('aria-selected'), 'true');

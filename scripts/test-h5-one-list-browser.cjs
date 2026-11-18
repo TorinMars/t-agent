@@ -7,6 +7,7 @@
 // whenever the list tags its rows; one device without sorting names none (a remote one in plain text). It fits at 320px and keeps the header's height.
 // H5_SHOT_DIR=<dir> saves screenshots of a list with two services.
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup, engineActions } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -155,12 +156,9 @@ function tools(page, wide) {
   const openEngines = async () => {
     await page.evaluate(() => window.H5UI.actions.openSettings());
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
-    const summary = page.locator('#h5-set-devices .MuiAccordionSummary-root');
-    await summary.scrollIntoViewIfNeeded();
-    if (await summary.getAttribute('aria-expanded') !== 'true') await press(summary);
-    await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
+    await openSettingsGroup(page, 'devices');
   };
-  const closeSettings = async () => { await page.evaluate(() => window.H5UI.actions.closeSettings()); await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' }); };
+  const closeSettings = async () => { await page.evaluate(() => window.H5UI.actions.closeSettings()); await page.locator('#h5-settings').waitFor({ state: 'hidden' }); };
   return { press, section, row, sheet, socketPath, waitSocket, shownName, service, openTask, taskMenu, menuItem, notice, openEngines, closeSettings };
 }
 const lastWrite = (world, method, pathname) => world.writes.filter(([m, p]) => m === method && p === pathname).at(-1);
@@ -452,7 +450,7 @@ async function testHidden(browser, wide) {
 
   await t.openEngines();
   await page.locator('.h5-engine-row[data-engine="7"] .h5-engine-linked').waitFor();
-  assert.equal(await page.locator('.h5-engine-row[data-engine="7"] .h5-engine-edit').count(), 0, `${label}: a linked row cannot be edited`);
+  assert.equal((await engineActions(page, 7)).includes('h5-engine-edit'), false, `${label}: a linked row cannot be edited`);
   const remoteSwitch = page.locator('.h5-engine-visible[data-device="remote:7"] input');
   const localSwitch = page.locator('.h5-engine-visible[data-device="local"] input');
   await remoteSwitch.waitFor({ state: 'attached' });

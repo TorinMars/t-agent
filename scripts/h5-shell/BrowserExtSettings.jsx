@@ -154,7 +154,7 @@ function RenameDialog({ browser, onClose, onDone }) {
         {error ? <Typography id="h5-browser-rename-error" role="alert" variant="body2" color="error">{error}</Typography> : null}
       </DialogContent>
       <DialogActions>
-        <Button id="h5-browser-rename-cancel" color="inherit" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-browser-rename-cancel" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
         <Button id="h5-browser-rename-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       </DialogActions>
     </Dialog>
@@ -180,8 +180,8 @@ function RemoveDialog({ browser, onClose, onDone }) {
         {error ? <Typography id="h5-browser-remove-error" role="alert" variant="body2" color="error">{error}</Typography> : null}
       </DialogContent>
       <DialogActions>
-        <Button id="h5-browser-remove-cancel" color="inherit" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
-        <Button id="h5-browser-remove-accept" variant="contained" color="error" disabled={busy} onClick={() => void remove()}>{t('Remove')}</Button>
+        <Button id="h5-browser-remove-cancel" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-browser-remove-accept" color="error" disabled={busy} onClick={() => void remove()}>{t('Remove')}</Button>
       </DialogActions>
     </Dialog>
   );

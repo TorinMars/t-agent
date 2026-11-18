@@ -147,8 +147,8 @@ function RenameDialog({ target, onClose, onDone }) {
           {error ? <Typography id="h5-engine-rename-error" role="alert" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>{error}</Typography> : null}
         </DialogContent>
         <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-          {resettable ? <Button id="h5-engine-rename-reset" color="inherit" disabled={resetDisabled} onClick={() => void send('')} sx={{ mr: 'auto' }}>{t('Reset to default')}</Button> : null}
-          <Button id="h5-engine-rename-cancel" color="inherit" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
+          {resettable ? <Button id="h5-engine-rename-reset" disabled={resetDisabled} onClick={() => void send('')} sx={{ mr: 'auto' }}>{t('Reset to default')}</Button> : null}
+          <Button id="h5-engine-rename-cancel" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
           <Button id="h5-engine-rename-save" type="submit" variant="contained" disabled={busy}>{t('Save')}</Button>
         </DialogActions>
       </Box>
@@ -179,7 +179,7 @@ function ConnectDialog({ state, open, onClose, onDone }) {
     <EngineDialog
       state={state} id="h5-engine-connect" title={t('Connect remote service')} open={open} onClose={onClose}
       actions={<>
-        <Button id="h5-engine-connect-cancel" color="inherit" onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-engine-connect-cancel" onClick={onClose}>{t('Cancel')}</Button>
         <Button id="h5-engine-connect-test" disabled={busy} onClick={() => void test()}>{t('Test connection')}</Button>
         <Button id="h5-engine-connect-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Connect')}</Button>
       </>}
@@ -224,7 +224,7 @@ function EditDialog({ state, server, onClose, onDone }) {
     <EngineDialog
       state={state} id="h5-engine-edit" title={t('Edit remote connection')} open={Boolean(server)} onClose={onClose}
       actions={<>
-        <Button id="h5-engine-edit-cancel" color="inherit" onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-engine-edit-cancel" onClick={onClose}>{t('Cancel')}</Button>
         <Button id="h5-engine-edit-test" disabled={busy} onClick={() => void test()}>{t('Test connection')}</Button>
         <Button id="h5-engine-edit-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
       </>}
@@ -310,11 +310,11 @@ function UpdateDialog({ state, server, onClose, onUpdated }) {
     <EngineDialog
       state={state} id="h5-engine-update" title={title} open={Boolean(server)} onClose={onClose} locked={locked}
       actions={<>
-        {view.phase === 'confirm' ? <Button id="h5-engine-update-cancel" color="inherit" onClick={() => setView({ phase: 'result', status })}>{t('Cancel')}</Button>
-          : <Button id="h5-engine-update-close" color="inherit" disabled={locked} onClick={onClose}>{t('Close')}</Button>}
+        {view.phase === 'confirm' ? <Button id="h5-engine-update-cancel" onClick={() => setView({ phase: 'result', status })}>{t('Cancel')}</Button>
+          : <Button id="h5-engine-update-close" disabled={locked} onClick={onClose}>{t('Close')}</Button>}
         {['result', 'error', 'failed', 'timeout'].includes(view.phase) ? <Button id="h5-engine-update-check" onClick={() => void check()}>{t('Check again')}</Button> : null}
-        {view.phase === 'result' && canApply ? <Button id="h5-engine-update-apply" variant="contained" onClick={() => setView({ phase: 'confirm', status })}>{t('Update now')}</Button> : null}
-        {view.phase === 'confirm' ? <Button id="h5-engine-update-confirm" variant="contained" onClick={() => void apply()}>{t('Confirm update')}</Button> : null}
+        {view.phase === 'result' && canApply ? <Button id="h5-engine-update-apply" onClick={() => setView({ phase: 'confirm', status })}>{t('Update now')}</Button> : null}
+        {view.phase === 'confirm' ? <Button id="h5-engine-update-confirm" onClick={() => void apply()}>{t('Confirm update')}</Button> : null}
       </>}
     >
       {view.phase === 'checking' ? (

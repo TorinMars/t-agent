@@ -550,8 +550,9 @@ function GroupList({ groups, current, wide, onChoose }) {
 // device tab that holds that part. The groups: Tasks and files, Voice and translation, Devices (Engines.jsx), T-Attention, Account and access; a group
 // with nothing in the chosen device tab is left out (settings-tabs.mjs). Every group stays mounted while the page is open, so edits survive a change
 // of group or device tab; each reads its data when it is shown.
-// - Computer (`state.wide`): the page fills the window to the right of the navigation rail (left NAV_WIDTH, no backdrop: the rail stays usable).
-//   Left, a 280px pane: the title, the device switch (SettingsTabs.jsx), the groups as a vertical tab list, Language, Log out and the version.
+// - Computer (`state.wide`): the page fills the window to the right of the navigation rail (left NAV_WIDTH, no backdrop: the rail stays usable;
+//   a column of the multi-column view has no rail and starts at its left edge).
+//   (A column of the multi-column view has no rail: there it starts at the left edge.) Left, a 280px pane: the title, the device switch (SettingsTabs.jsx), the groups as a vertical tab list, Language, Log out and the version.
 //   Right, the chosen group as cards in a column of at most 720px. Escape (and the back button, entry.jsx) closes it; the focus goes back to the
 //   button that opened it.
 // - Phone: a full-screen page (a modal, so back.mjs closes it on the back button) with a 56px app bar and a back arrow: the device switch, the
@@ -642,7 +643,7 @@ function WidePage({ state, ui, groups, current, choose, close, pane, children })
   return (
     <Box
       ref={root} id="h5-settings" role="region" aria-labelledby="h5-settings-title" className="h5-settings-page" data-layout="wide"
-      sx={theme => ({ position: 'fixed', top: 0, right: 0, bottom: 0, left: NAV_WIDTH, zIndex: theme.zIndex.drawer + 1, display: 'flex', bgcolor: 'background.default', color: 'text.primary' })}
+      sx={theme => ({ position: 'fixed', top: 0, right: 0, bottom: 0, left: state.pane ? 0 : NAV_WIDTH, zIndex: theme.zIndex.drawer + 1, display: 'flex', bgcolor: 'background.default', color: 'text.primary' })}
     >
       <Box component="nav" aria-label={t('Settings')} className="h5-settings-list" sx={{ flex: '0 0 280px', width: 280, display: 'flex', flexDirection: 'column', minHeight: 0, overflowY: 'auto', borderRight: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
         <Toolbar disableGutters sx={{ minHeight: 56, px: 2, gap: 1, justifyContent: 'space-between', flexShrink: 0 }}>

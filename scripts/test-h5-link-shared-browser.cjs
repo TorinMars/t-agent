@@ -3,6 +3,7 @@
 // said so everywhere. With `shared_from: null`, and on an older server with no such field, the "not configured" behaviour is what it always was.
 // H5_SHOT_DIR=<dir> also saves a 390px screenshot of the Translation settings group.
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -228,9 +229,7 @@ async function openSettings(page) {
 const GROUP_OF = { oss: 'tasks-files', translate: 'voice-translate', voice: 'voice-translate' };
 const openGroup = async (page, part) => {
   const id = GROUP_OF[part] || part;
-  const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-  if (await summary.getAttribute('aria-expanded') !== 'true') await summary.click();
-  await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
+  await openSettingsGroup(page, id);
   await page.locator(`#h5-sec-${part}`).scrollIntoViewIfNeeded();
 };
 const enabled = (page, id) => page.waitForFunction(button => !document.getElementById(button).disabled, id);

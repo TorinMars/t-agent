@@ -9,6 +9,7 @@
 //   a refused directory delete; the new-task form's working directory (the default path shown but never sent, a relative path refused, a custom path sent).
 // H5_SHOT_DIR=<dir> saves screenshots there.
 const { chromium } = require('playwright');
+const { openGroup, backToList, engineAction } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -154,10 +155,7 @@ async function openSettingsGroup(page, touch, id) {
   await openSidebar(page, touch);
   await page.locator('#h5-tasks-settings').click();
   await page.locator('#h5-settings').waitFor({ state: 'visible' });
-  await page.waitForFunction(() => getComputedStyle(document.querySelector('#h5-settings .h5-sheet-panel')).transform === 'none');
-  await page.locator(`#h5-set-${id} .MuiAccordionSummary-root`).click();
-  await page.waitForFunction(group => document.querySelector(`#h5-set-${group} .MuiAccordionSummary-root`).getAttribute('aria-expanded') === 'true'
-    && !document.getAnimations().some(animation => animation.playState === 'running'), id);
+  await openGroup(page, id);
 }
 // The services of the one task list: there is no selector any more, only the list and the "Create on" of a new task.
 async function engineOptions(page) {
@@ -260,7 +258,7 @@ async function checkEngines(page, label, touch) {
   await page.waitForFunction(() => window.H5UI.get().sources.map(o => o.label).includes('10.0.0.9'));
 
   // Edit: the form echoes the saved name and address (no token field: the saved token is reused); saving renames the option of the selector.
-  await row.locator('.h5-engine-edit').click();
+  await engineAction(page, 7, 'h5-engine-edit');
   await page.locator('#h5-engine-edit [role="dialog"]').waitFor({ state: 'visible' });
   assert.equal(await page.inputValue('#h5-engine-edit-name'), 'VPS');
   assert.equal(await page.inputValue('#h5-engine-edit-url'), 'http://10.0.0.7');
@@ -276,15 +274,15 @@ async function checkEngines(page, label, touch) {
 
   // Check: an offline Engine shows the reason and its new state.
   server.checkOffline = true;
-  await row.locator('.h5-engine-check').click();
+  await engineAction(page, 7, 'h5-engine-check');
   await row.locator('.h5-engine-status', { hasText: 'Offline' }).waitFor();
   await row.locator('[role="status"]', { hasText: 'Connection timed out' }).waitFor();
   server.checkOffline = false;
-  await row.locator('.h5-engine-check').click();
+  await engineAction(page, 7, 'h5-engine-check');
   await row.locator('.h5-engine-status', { hasText: 'Online' }).waitFor();
 
   // Update a remote Engine: check, confirm, follow the progress while it restarts, and see the new version.
-  await row.locator('.h5-engine-update').click();
+  await engineAction(page, 7, 'h5-engine-update');
   await page.locator('#h5-engine-update-apply').waitFor();
   assert.equal(await page.locator('#h5-engine-update-latest').textContent(), '2.88.0');
   assert.equal(await page.locator('#h5-engine-update-install').textContent(), 'Git fast-forward update');
@@ -301,25 +299,27 @@ async function checkEngines(page, label, touch) {
 
   // Remove: asks first; declining keeps it, accepting removes it from the list and the selector.
   page.once('dialog', dialog => dialog.dismiss());
-  await page.locator('.h5-engine-row[data-engine="8"] .h5-engine-remove').click();
+  await engineAction(page, 8, 'h5-engine-remove');
   await page.waitForTimeout(200);
   assert.equal(callsTo('DELETE', '/api/remote-servers/8').length, 0);
   page.once('dialog', dialog => { assert.equal(dialog.message(), 'Remove this remote connection? Remote data is not deleted.'); dialog.accept(); });
-  await page.locator('.h5-engine-row[data-engine="8"] .h5-engine-remove').click();
+  await engineAction(page, 8, 'h5-engine-remove');
   await page.locator('.h5-engine-row[data-engine="8"]').waitFor({ state: 'detached' });
   await page.waitForFunction(() => !window.H5UI.get().sources.map(o => o.label).includes('10.0.0.9'));
+  await backToList(page);
   await page.locator('#h5-close-settings').click();
-  await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' });
+  await page.locator('#h5-settings').waitFor({ state: 'hidden' });
   // The shown Engine is removed: the task list goes back to this machine.
   await openSidebar(page, touch);
   await page.locator('.h5-task-item', { hasText: 'Task on Cloud box' }).waitFor();
   await openSettingsGroup(page, touch, 'devices');
   await page.locator('.h5-engine-row[data-engine="7"]').waitFor();
   page.once('dialog', dialog => dialog.accept());
-  await page.locator('.h5-engine-row[data-engine="7"] .h5-engine-remove').click();
+  await engineAction(page, 7, 'h5-engine-remove');
   await page.locator('#h5-engine-empty').waitFor();
+  await backToList(page);
   await page.locator('#h5-close-settings').click();
-  await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' });
+  await page.locator('#h5-settings').waitFor({ state: 'hidden' });
   await openSidebar(page, touch);
   await page.locator('.h5-task-item', { hasText: 'Fix login' }).waitFor();
   assert.equal(await page.locator('.h5-source-header').count(), 0, `${label}: no header with only this machine`);

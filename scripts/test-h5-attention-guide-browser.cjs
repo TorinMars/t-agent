@@ -10,6 +10,7 @@
 //   a failed notifier test shows its message and does not finish step 3, a working one does.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -189,7 +190,7 @@ async function openPanel(page, how) {
       // Settings → T-Attention: "Show setup guide" brings it back.
       await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
-      await page.locator('#h5-set-attention .MuiAccordionSummary-root')[how]();
+      await openGroup(page, 'attention');
       await page.locator('#h5-guide-show').waitFor();
       await page.locator('#h5-guide-show')[how]();
       await page.locator('#h5-guide-settings').waitFor();
@@ -211,7 +212,7 @@ async function openPanel(page, how) {
       await page.locator('#h5-guide .h5-guide-step[data-step="notify"] .h5-guide-step-head')[how]();
       await page.locator('#h5-guide-telegram')[how]();
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
-      await page.waitForFunction(() => document.querySelector('#h5-set-attention .MuiAccordionSummary-root').getAttribute('aria-expanded') === 'true');
+      await page.waitForFunction(() => !document.getElementById('h5-set-attention').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden'));
       assert.equal(await page.evaluate(() => window.H5UI.get().attention.open), false, 'the phone sheet closed');
       await page.locator('.h5-plugin-page[data-name="telegram"] #h5-tg-qr-start').waitFor();
       assert.equal(await page.locator('.h5-plugin-page-title').textContent(), 'telegram', 'the guide lands on Telegram\'s page');

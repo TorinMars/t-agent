@@ -169,7 +169,7 @@ function JoinDialog({ state, open, onClose, onJoined }) {
       <EngineDialog
         state={state} id="h5-link-join-dialog" title={t('Join another service')} open={open} onClose={onClose}
         actions={<>
-          <Button id="h5-link-join-cancel" color="inherit" onClick={onClose}>{t('Cancel')}</Button>
+          <Button id="h5-link-join-cancel" onClick={onClose}>{t('Cancel')}</Button>
           <Button id="h5-link-join-send" variant="contained" disabled={!ready || busy} onClick={() => setAsking(true)}>{t('Link')}</Button>
         </>}
       >
@@ -187,8 +187,8 @@ function JoinDialog({ state, open, onClose, onJoined }) {
           <Typography variant="body2">{t('Only link services you own.')}</Typography>
         </DialogContent>
         <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-          <Button id="h5-link-confirm-cancel" color="inherit" disabled={busy} onClick={() => setAsking(false)}>{t('Cancel')}</Button>
-          <Button id="h5-link-confirm-accept" variant="contained" disabled={busy} onClick={() => void send()}>{t('Link services')}</Button>
+          <Button id="h5-link-confirm-cancel" disabled={busy} onClick={() => setAsking(false)}>{t('Cancel')}</Button>
+          <Button id="h5-link-confirm-accept" disabled={busy} onClick={() => void send()}>{t('Link services')}</Button>
         </DialogActions>
       </Dialog>
     </>
@@ -221,8 +221,8 @@ export function UnlinkDialog({ link, onClose, onDone }) {
         <Feedback id="h5-link-unlink-result" feedback={{ message: error, error: true }} />
       </DialogContent>
       <DialogActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-        <Button id="h5-link-unlink-cancel" color="inherit" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
-        <Button id="h5-link-unlink-accept" variant="contained" color="error" disabled={busy} onClick={() => void unlink()}>{t(revoked ? 'Remove' : 'Unlink')}</Button>
+        <Button id="h5-link-unlink-cancel" disabled={busy} onClick={onClose}>{t('Cancel')}</Button>
+        <Button id="h5-link-unlink-accept" color="error" disabled={busy} onClick={() => void unlink()}>{t(revoked ? 'Remove' : 'Unlink')}</Button>
       </DialogActions>
     </Dialog>
   );

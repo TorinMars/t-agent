@@ -3,6 +3,7 @@
 // confirmation, every error text, the list states, unlink, the Engines row, the back gesture, and an older server (404) showing nothing.
 // H5_SHOT_DIR=<dir> saves screenshots at 390px there.
 const { chromium } = require('playwright');
+const { openGroup: openSettingsGroup, engineAction, engineActions } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -77,10 +78,7 @@ function helpers(page, wide) {
   // "engines" (the device list) and "service-links" (Link a device) are both in the Devices group: a group that is already open stays open.
   const openGroup = async part => {
     const id = { engines: 'devices', 'service-links': 'devices' }[part] || part;
-    const summary = page.locator(`#h5-set-${id} .MuiAccordionSummary-root`);
-    await summary.scrollIntoViewIfNeeded();
-    if (await summary.getAttribute('aria-expanded') !== 'true') await press(summary);
-    await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
+    await openSettingsGroup(page, id);
     if (part === 'service-links') { await page.locator('#h5-sec-link').waitFor(); await page.locator('#h5-sec-link').scrollIntoViewIfNeeded(); }
   };
   // Press a control inside the moving sheet: wait until it has stopped first, so a tap cannot land beside it.
@@ -114,7 +112,7 @@ async function testOldServer(browser) {
   model.servers.push(server(7, 'Plain'));
   await openGroup('engines');
   await page.locator('.h5-engine-row[data-engine="7"]').waitFor();
-  assert.equal(await page.locator('.h5-engine-row[data-engine="7"] .h5-engine-edit').count(), 1, 'a normal Engine keeps Edit connection');
+  assert.ok((await engineActions(page, 7)).includes('h5-engine-edit'), 'a normal Engine keeps Edit connection');
   assert.equal(await page.locator('.h5-engine-linked').count(), 0);
   await context.close();
 }
@@ -362,8 +360,8 @@ async function testListAndEngines(browser, { width = 390, wide = false, shots = 
   const engine = id => page.locator(`.h5-engine-row[data-engine="${id}"]`);
   await engine(5).locator('.h5-engine-linked').waitFor();
   assert.equal(await engine(5).locator('.h5-engine-linked').innerText(), 'Linked');
-  assert.equal(await engine(5).locator('.h5-engine-edit').count(), 0, 'a linked row cannot be edited');
-  assert.equal(await engine(7).locator('.h5-engine-edit').count(), 1, 'a normal row can');
+  assert.equal((await engineActions(page, 5)).includes('h5-engine-edit'), false, 'a linked row cannot be edited');
+  assert.ok((await engineActions(page, 7)).includes('h5-engine-edit'), 'a normal row can');
   assert.equal(await engine(7).locator('.h5-engine-linked').count(), 0);
   assert.doesNotMatch(await engine(6).locator('.h5-engine-meta').innerText(), /should-not-show/, 'the address of a linked row is the link\'s');
   await settled();
@@ -372,7 +370,7 @@ async function testListAndEngines(browser, { width = 390, wide = false, shots = 
   // An offline tunnel Engine is in the selector, like any Engine.
   assert.ok((await page.evaluate(() => window.H5UI.get().sources.map(item => item.key))).includes('remote:6'), 'the offline linked Engine is in the selector');
   // Unlink from the Engines list.
-  await tap('.h5-engine-row[data-engine="5"] .h5-engine-remove');
+  await engineAction(page, 5, 'h5-engine-remove');
   await page.locator('#h5-link-unlink-accept').waitFor();
   await settled();
   const text = await page.locator('#h5-link-unlink').innerText();
@@ -384,7 +382,7 @@ async function testListAndEngines(browser, { width = 390, wide = false, shots = 
   await page.locator('#h5-link-unlink').waitFor({ state: 'detached' });
   await settled();
   assert.equal(model.calls.filter(call => call.method === 'DELETE').length, 0, 'Cancel deletes nothing');
-  await tap('.h5-engine-row[data-engine="5"] .h5-engine-remove');
+  await engineAction(page, 5, 'h5-engine-remove');
   await page.locator('#h5-link-unlink-accept').waitFor();
   await settled();
   await press(page.locator('#h5-link-unlink-accept'));

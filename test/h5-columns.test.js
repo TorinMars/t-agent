@@ -440,3 +440,18 @@ test('the navigation rail: the arrow keys move between its destinations, the bad
   assert.equal(needsCount(['a', 'b', 'c', 'd'], statusOf), summarize(['a', 'b', 'c', 'd'], statusOf).waiting, 'the same count as the "N need you" chip');
   assert.equal(needsCount(['a', 'c'], statusOf), 0);
 });
+
+test('the page navigation rail: its destinations and the one that is the current page', async () => {
+  const { railDestinations, railView, NAV_WIDTH } = await load();
+  assert.equal(NAV_WIDTH, 72);
+  assert.deepEqual(railDestinations(true).map(item => item.id), ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps']);
+  assert.deepEqual(railDestinations(false).map(item => item.id), ['h5-nav-sessions', 'h5-nav-attention', 'h5-nav-maps'], 'no Columns where the view cannot be shown');
+  assert.equal(railDestinations(true).find(item => item.view === 'attention').toggle, true, 'Attention toggles a panel, it is not a page');
+  assert.equal(railView({}), 'sessions');
+  assert.equal(railView({ columns: null }), 'sessions', 'a framed page has no columns view');
+  assert.equal(railView({ columns: { shown: false, tab: 'maps' } }), 'sessions', 'the view is off (or the screen is narrow)');
+  assert.equal(railView({ columns: { shown: true, tab: 'columns' } }), 'columns');
+  assert.equal(railView({ columns: { shown: true, tab: 'maps' } }), 'maps');
+  assert.equal(railView({ columns: { shown: true, tab: 'bogus' } }), 'columns');
+  assert.equal(railView({ settingsOpen: true, columns: { shown: true, tab: 'maps' } }), 'settings', 'Settings is current while it is open, in either view');
+});

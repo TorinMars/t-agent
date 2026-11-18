@@ -564,7 +564,7 @@ async function testHeaderTag(browser) {
       height: bar.getBoundingClientRect().height, overflow: bar.scrollWidth - bar.clientWidth, buttonOverflow: button.scrollWidth - button.clientWidth,
       nameHeight: name.getBoundingClientRect().height, nameLines: Math.round(name.getBoundingClientRect().height / parseFloat(getComputedStyle(name).lineHeight)),
       subline: document.querySelector('.h5-task-subline').getBoundingClientRect().height, sessionWidth: session.getBoundingClientRect().width,
-      sessionRight: session.getBoundingClientRect().right, buttonRight: button.getBoundingClientRect().right,
+      sessionRight: session.getBoundingClientRect().right, buttonRight: button.getBoundingClientRect().right, sublineRight: document.querySelector('.h5-task-subline').getBoundingClientRect().right,
     };
   });
   const plain = await header(); // no task shown yet: no tag
@@ -598,7 +598,7 @@ async function testHeaderTag(browser) {
   await page.waitForTimeout(150);
   const narrow = await header();
   assert.ok(narrow.overflow <= 0 && narrow.buttonOverflow <= 0 && narrow.nameLines === 1, `${label}: nothing wraps or overflows at 320 (${JSON.stringify(narrow)})`);
-  assert.ok(narrow.subline <= 21 && narrow.sessionWidth > 20 && narrow.sessionRight <= narrow.buttonRight + 0.5, `${label}: the tag and the session name on one line at 320 (${JSON.stringify(narrow)})`);
+  assert.ok(narrow.subline <= 21 && narrow.sessionWidth > 20 && narrow.sessionRight <= narrow.sublineRight + 0.5, `${label}: the tag and the session name on one line at 320 (${JSON.stringify(narrow)})`);
   assert.ok(Math.abs(narrow.height - plain.height) < 1, `${label}: the same height at 320`);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();

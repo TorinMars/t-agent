@@ -28,7 +28,11 @@
 | Hide setup guide (T-Attention first-run guide) | close | 4767096 | `close` |
 | Add task (T-Attention quick add) | plus | 7834345 | `add` |
 | Open link (T-Attention edit view and the link button of a row) | link | 4766965 | `link` |
-| Mind maps (task sheet footer) | apartment | 5756280 | `mindmap` |
+| Mind maps (the phone drawer's row below the task list, `#h5-tasks-mindmap`) | apartment | 5756280 | `mindmap`, 24px |
+| T-Attention (the phone drawer's row, `#h5-tasks-attention`) | carry out | 4766856 | `attention`, 24px |
+| Settings (the phone drawer's row `#h5-tasks-settings`, the navigation rail's `#h5-nav-settings`) | setting | 4765891 | `setting` in `Icons.jsx`, 24px in the drawer, 22px in the rail |
+| Tasks (the menu button of the phone app bar, `#h5-open-tasks`) | menu | 4767059 | `menu` in `Icons.jsx`, 22px |
+| More (the session header's "More", `#h5-header-more`) | ellipsis | 4767094 | `taskMore`, 22px; its "Refresh the page" item uses `reload` (4765852) at 20px, its phone "Update" item the Update icon below at 20px |
 | Add subtopic (mind map bar) | subnode | 8094810 | `subnode` |
 | Add topic after (mind map bar) | sisternode | 8094823 | `sisternode` |
 | Edit topic (mind map bar) | edit | 4766959 | `edit` |
@@ -61,7 +65,7 @@
 | Send | send | 9230696 | |
 | Translate and send | send | 9230696 | the same icon, plus the "Aa" text mark |
 | Paste text (menu item) | snippets | 4766482 | |
-| Update (header `#h5-update` and the multi-column view's navigation rail, `#h5-columns-update`) | none | none | exception kept from before the library: Material `SystemUpdateAlt`; the rail's button uses the same icon (22px) so the two Update buttons look alike |
+| Update (the navigation rail's `#h5-update`, the phone header's More menu item `#h5-header-update`) | none | none | exception kept from before the library: Material `SystemUpdateAlt`, 22px in the rail, 20px in the menu |
 | Copy bar over the terminal (decorative, left of the title) | file-copy | 4766481 | `copy` in `Icons.jsx`, 22px, `aria-hidden`; the set has no clipboard icon, and `snippets` (the clipboard-like shape) is already Paste |
 | Task actions ("⋯" of a task row, task sidebar) | ellipsis | 4767094 | `taskMore` in `Icons.jsx`, 20px, left of the "+" |
 | Archived section (end of the task list) | container | 4766438 | `archived` in `Icons.jsx`, 18px; its chevron is `treeChevron` (right, 4767011), turned down when open |
@@ -86,7 +90,6 @@
 | Terminal on-screen keyboard: Caps lock | self-drawn `keyCapsLock` | none | self-drawn: the Shift arrow, shorter, over a bar (Shift tapped twice) |
 | Wheel strip spring (full-screen program): up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the spring thumb, 14px (direction marks inside the thin strip, not buttons) |
 | Terminal width switch (header, Fit / Wide) | column-width | not looked up (Ant Design `ColumnWidthOutlined`, the same outline as in collection 9402) | `columnWidth` in `Icons.jsx`, 22px |
-| Multi-column view switch (header of a wide screen) | project | 4765975 | `columns` in `Icons.jsx`, 22px; a board with three columns (in the view, "Leave the columns view" at the bottom of the navigation rail uses `logout`) |
 | Add column ("+ Column", multi-column view bar) | plus | 7834345 | `add`, 14px, the start icon of the text button |
 | Close column (header of each column) | close | 4767096 | `close`, 14px |
 | Drag grip (header of each column, pointer input only, decorative) | holder | not looked up (Ant Design `HolderOutlined`, the same outline as in collection 9402) | `holder` in `Icons.jsx`, 14px |
@@ -97,9 +100,10 @@
 | Terminal width (column header) | column-width | not looked up (Ant Design `ColumnWidthOutlined`) | `columnWidth`, 18px |
 | Maximize / Restore a column (column header) | expand / compress | not looked up (Ant Design `ExpandOutlined` / `CompressOutlined`) | `maximize` / `restore`, 16px; `fullscreen` is already the mind map's Fit map |
 | Restore the columns (top of the maximize rail) | compress | not looked up (Ant Design `CompressOutlined`, the same outline as in collection 9402) | `restore` in `Icons.jsx`, 20px in the rail |
-| Columns destination (navigation rail of the multi-column view) | project | 4765975 | `columns`, 24px, the same icon as the view's switch in the header |
-| Mind maps destination (navigation rail of the multi-column view) | apartment | 5756280 | `mindmap`, 24px, the same icon as the mind map entry |
-| Leave the columns view (bottom of the navigation rail) | logout | 4765888 | `leaveView` in `Icons.jsx`, 22px |
+| Sessions destination (navigation rail, `#h5-nav-sessions`) | code library | 4765970 | `terminalKeyboard`, 24px: the same "code" icon as the terminal keyboard button, read as a terminal |
+| Columns destination (navigation rail) | project | 4765975 | `columns`, 24px; a board with three columns |
+| Attention destination (navigation rail, `#h5-nav-attention`) | carry out | 4766856 | `attention`, 24px, the same icon as the bottom area's Attention |
+| Mind maps destination (navigation rail) | apartment | 5756280 | `mindmap`, 24px, the same icon as the mind map entry |
 | Hide / show the map list (Mind maps tab, the map's bar) | outdent / indent | 4767051 / 4767050 | `sidebarFold` / `sidebarUnfold`, the same icons as the page's sidebar fold |
 | Search mind maps (Mind maps tab, in the search field; decorative) | search | 6598347 | `search` in `Icons.jsx`, 16px |
 | Terminal on-screen keyboard: letters, digits, symbols, `123`, `ABC`, `#+=`, Space | none | none | text labels (the layer keys are named "Numbers and symbols", "Letters", "More symbols") |

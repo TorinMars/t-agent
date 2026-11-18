@@ -62,8 +62,8 @@ export const FileTreeSheet = screen(() => import('./screen-files.jsx'), 'FileTre
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
 // `pointerdown` a finger (about 100 ms before the click), `focusin` the keyboard.
 const OPENERS = [
-  ['#h5-tasks-settings', SettingsDrawer],
-  ['#h5-attention', AttentionPanel],
+  ['#h5-tasks-settings, #h5-nav-settings', SettingsDrawer],
+  ['#h5-attention, #h5-nav-attention, #h5-tasks-attention', AttentionPanel],
   ['#h5-design, #h5-commands-docs, #h5-files-design', DesignSheet],
   ['#h5-design-files', FileTreeSheet],
 ];

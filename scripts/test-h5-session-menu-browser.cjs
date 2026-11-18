@@ -215,7 +215,11 @@ async function run(browser, wide) {
   await h.more(SELECTED, 19).evaluate(node => node.scrollIntoView({ block: 'end' })); // at the end of the visible list, whatever is listed after it
   await page.waitForTimeout(60);
   await h.open(SELECTED, 19);
-  assertAbove(await h.boxes(SELECTED, 19), `${label} short viewport`);
+  // On a phone the drawer's destination rows (T-Attention, Mind maps, Settings) lie below the list, so the popup of its last row may still fit below
+  // the button (over those rows); it turns over only when it does not.
+  const short = await h.boxes(SELECTED, 19);
+  if (!wide && short.button.bottom + short.paper.height <= 460) assertBelow(short, `${label} short viewport`);
+  else assertAbove(short, `${label} short viewport`);
   await page.keyboard.press('Escape');
   await h.gone('Escape');
   await page.setViewportSize({ width: wide ? 1440 : 390, height: wide ? 900 : 844 });

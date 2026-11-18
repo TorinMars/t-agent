@@ -12,6 +12,9 @@ import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import { alpha, getOverlayAlpha } from '@mui/material/styles';
 import NativeSelect from '@mui/material/NativeSelect';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
@@ -20,7 +23,6 @@ import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import SearchIcon from '@mui/icons-material/Search';
-import SettingsIcon from '@mui/icons-material/Settings';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
 import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
@@ -589,36 +591,76 @@ function Panel({ ui, wide }) {
       <Box sx={{ px: 1.5, pb: 0.75, [TOUCH]: { pt: 0.5, pb: 1 } }}>
         <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} aria-haspopup="dialog" onClick={() => ui.actions.openNewTask()} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
       </Box>
-      <Divider />
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 36 }}>
-        <IconButton id="h5-tasks-mindmap" aria-label={t('Mind maps')} title={t('Mind maps')} onClick={() => ui.actions.openMindmaps()} size="small" sx={{ mr: 0.5, [TOUCH]: { ml: 1 } }}><Icon name="mindmap" size={20} /></IconButton>
-        <IconButton id="h5-tasks-settings" aria-label={t('Settings')} title={t('Settings')} onClick={() => ui.actions.openSettings()} size="small" sx={{ mr: 1, [TOUCH]: { ml: 1 } }}><SettingsIcon fontSize="small" /></IconButton>
-      </Box>
+      {/* Below the list, on a phone: the other destinations of the page (DrawerNav). On the wide layout they are in the navigation rail. */}
+      {wide ? null : <DrawerNav ui={ui} />}
     </Box>
   );
 }
 
-// A phone: the list slides over the page. A wide screen (a computer, a landscape tablet): it stays beside it.
+// The other destinations of the page below the task list of a phone ("Phone drawer" in docs/design/page-navigation.md; the wide layout has them in the navigation
+// rail, Columns.jsx `NavRail`): labelled MD2 list rows with an icon, T-Attention (with the number of items that need the person; a pane has no
+// T-Attention), Mind maps and Settings. Choosing one closes the drawer first, as an MD2 modal navigation drawer does.
+const DRAWER_NAV = state => ({ needs: Number(state.attention && state.attention.needs) || 0, pane: Boolean(state.pane) });
+const NAV_ROW_SX = { minHeight: 48, [TOUCH]: { minHeight: 48 }, px: 2, gap: 0, '& .MuiListItemIcon-root': { minWidth: 40, color: 'text.secondary' } };
+function DrawerNav({ ui }) {
+  const { needs, pane } = useStore(ui, DRAWER_NAV, shallowEqual);
+  const go = open => () => { ui.actions.closeTasks(); open(); };
+  const attention = t('T-Attention');
+  const needsWords = needs === 1 ? t('1 item needs you') : t('{1} items need you').replace('{1}', needs);
+  const text = { slotProps: { primary: { variant: 'subtitle2', noWrap: true } } };
+  return (
+    <>
+      <Divider />
+      <List component="nav" id="h5-tasks-nav" aria-label={t('Views')} disablePadding sx={{ py: 0.5, flex: '0 0 auto' }}>
+        {pane ? null : (
+          <ListItemButton id="h5-tasks-attention" aria-label={needs ? `${attention}, ${needsWords}` : attention} aria-haspopup="dialog" onClick={go(() => ui.actions.openAttention())} sx={NAV_ROW_SX}>
+            <ListItemIcon><Icon name="attention" size={24} /></ListItemIcon>
+            <ListItemText primary={attention} {...text} />
+            {needs ? (
+              <Box component="span" className="h5-tasks-attention-count" aria-hidden="true"
+                sx={theme => ({ ...theme.typography.caption, flex: '0 0 auto', minWidth: 20, height: 20, px: 0.75, boxSizing: 'border-box', borderRadius: 10, display: 'inline-flex',
+                  alignItems: 'center', justifyContent: 'center', fontWeight: 700, bgcolor: 'error.main', color: 'error.contrastText' })}>{needs > 99 ? '99+' : needs}</Box>
+            ) : null}
+          </ListItemButton>
+        )}
+        <ListItemButton id="h5-tasks-mindmap" onClick={go(() => ui.actions.openMindmaps())} sx={NAV_ROW_SX}>
+          <ListItemIcon><Icon name="mindmap" size={24} /></ListItemIcon>
+          <ListItemText primary={t('Mind maps')} {...text} />
+        </ListItemButton>
+        <ListItemButton id="h5-tasks-settings" aria-haspopup="dialog" onClick={go(() => ui.actions.openSettings())} sx={NAV_ROW_SX}>
+          <ListItemIcon><Icon name="setting" size={24} /></ListItemIcon>
+          <ListItemText primary={t('Settings')} {...text} />
+        </ListItemButton>
+      </List>
+    </>
+  );
+}
+
+// The drawer container. A phone: an MD2 modal navigation drawer from the left (min(320px, 100vw - 56px) wide, over a 32% scrim; the page under it
+// stays where it is). A wide screen (a computer, a landscape tablet): a permanent sidebar of 304px right of the navigation rail.
 const DRAWER_KEYS = ['wide', 'sidebarCollapsed', 'tasksOpen', 'pane', 'paneEngaged'];
+const SURFACE = `linear-gradient(${alpha('#fff', Number(getOverlayAlpha(1)))}, ${alpha('#fff', Number(getOverlayAlpha(1)))})`; // MD2 dark surface at 1dp, as the rail and the header
 export function TaskDrawer({ ui }) {
   const state = useStoreKeys(ui, DRAWER_KEYS);
   // The height follows the visual viewport (--h5-height, h5.js `fitViewport`), so the on-screen keyboard shortens the list instead of covering its end
-  // (a name field in the list stays visible above the keyboard).
-  const paperProps = { className: 'h5-sheet-panel', sx: { width: state.wide ? 320 : 'min(82vw, 360px)', maxWidth: '100%', height: 'var(--h5-height, 100%)', backgroundImage: 'none' } };
+  // (a name field in the list stays visible above the keyboard). The widths are the CSS variables of h5.css (--h5-sidebar-width, --h5-drawer-width).
+  const height = 'var(--h5-height, 100%)';
   if (state.wide) {
     // Folded away with the header button (entry.jsx `toggleSidebar`): what is shown then fills the whole width.
     if (state.sidebarCollapsed) return null;
+    const paper = { className: 'h5-sheet-panel', id: 'h5-tasks', sx: { width: 'var(--h5-sidebar-width)', maxWidth: '100%', height, backgroundImage: 'none', left: 'var(--h5-nav-width, 0px)' } };
     return (
       // The permanent drawer's own element has no size (its paper is fixed), so the sidebar is the paper.
-      <Drawer variant="permanent" slotProps={{ paper: { ...paperProps, id: 'h5-tasks' } }} sx={{ '& .MuiDrawer-paper': { position: 'fixed' } }}>
+      <Drawer variant="permanent" slotProps={{ paper }} sx={{ '& .MuiDrawer-paper': { position: 'fixed' } }}>
         <Panel ui={ui} wide={state.wide} />
       </Drawer>
     );
   }
+  const paper = { className: 'h5-sheet-panel', sx: { width: 'var(--h5-drawer-width)', maxWidth: '100%', height, bgcolor: 'background.paper', backgroundImage: SURFACE, borderRadius: 0 } };
   return (
     <Drawer
       id="h5-tasks" open={state.tasksOpen} onClose={() => ui.actions.closeTasks()}
-      slotProps={{ paper: paperProps, backdrop: { id: 'h5-task-backdrop' } }}
+      slotProps={{ paper, backdrop: { id: 'h5-task-backdrop', sx: { bgcolor: 'rgba(0, 0, 0, 0.32)' } } }}
       // A pane of the multi-column view opens on this sheet; it must not pull the focus into its frame before the person used it (pane.mjs).
       ModalProps={{ 'aria-labelledby': 'h5-tasks-title', disableAutoFocus: Boolean(state.pane && !state.paneEngaged) }}
     >

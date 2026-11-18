@@ -132,7 +132,8 @@ function tools(page, touch) {
       await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks-mindmap').waitFor({ state: 'visible' });
     }
-    await press(page.locator('#h5-tasks-mindmap'));
+    // A computer: the full-window view (the rail's Mind maps opens the columns view's tab, test-h5-columns-rail-browser.cjs).
+    if (touch) await press(page.locator('#h5-tasks-mindmap')); else await page.evaluate(() => window.H5UI.actions.openMindmaps());
     await page.locator('#mm-new').waitFor();
   };
   const sections = () => page.evaluate(() => [...document.querySelectorAll('.mm-section')].map(node => ({

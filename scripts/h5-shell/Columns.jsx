@@ -13,23 +13,25 @@ import { Pill, named, t } from './common.jsx';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { DeviceTag } from './TaskDrawer.jsx';
-import { ColumnsUpdateButton } from './Update.jsx';
+import { UpdateButton } from './Update.jsx';
 import { SETTLE_MS } from './list-drag.jsx';
 import { useFlipX, useTabDrag } from './tab-drag.jsx';
-import { countRender, useStoreKeys } from './use-store.mjs';
+import { countRender, useStore, useStoreKeys } from './use-store.mjs';
+import { shallowEqual } from './store.mjs';
 import { forgetPaneKeys } from './pane.mjs';
+import { measureTerminalBox } from './terminal-box.mjs';
 import {
   STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnMove, columnStep, columnsFor, forgetMessage, hiddenEdges, minColumnWidth, mountOrder,
   moveColumn, openMessage, paneUrl, readLayout, readPaneMessage, revealLeft, shiftColumn, sidewaysDelta, stepTarget, tagOf, targetColumn, writeLayout,
   AGENT_NAMES, MESSAGE_TYPE, RAIL_WIDTH, STATE_WORDS, canMaximize, columnName, columnStatus, keptMaximized, maximizeKey,
   railColumns, toggleMaximize, LIST_WORDS, actionMessage, headerLabel, headerName, listState, summarize,
-  NAV_WIDTH, dropMapColumns, legacyMapKeyOf, needsCount, railKey, readTab, stripWidthOf,
+  NAV_WIDTH, dropMapColumns, legacyMapKeyOf, needsCount, railKey, readTab, stripWidthOf, railDestinations, railView,
 } from './columns.mjs';
 
 // The multi-column view of a wide screen: the top page shows a row of iframes of itself in pane mode (`/h5?pane=<id>`), each a whole copy of the page
-// with its own terminal, draft box and tool row under one header that the top page draws (`ColumnHeader`; the pane hides its own page header). A
-// navigation rail on the left (`ViewsRail`, "Views") has the Update button, the two tabs "Columns" (the strip) and "Mind maps" (a whole mind map page,
-// `MapsTab`), and at the bottom the switch back to the normal view. The top page keeps one
+// with its own terminal, draft box and tool row under one header that the top page draws (`ColumnHeader`; the pane hides its own page header). The
+// page's navigation rail (`NavRail`, "Views", also shown in the single view) stays on the left: Sessions leaves the view, Columns and Mind maps are its two
+// tabs (the strip and a whole mind map page, `MapsTab`). The top page keeps one
 // activity feed, one notifier and one updater; while the strip is shown its own terminal is hidden and holds no socket (h5.js, `columns.shown`).
 // The rules (ids, order, the message format) are in columns.mjs; "Multi-column view" in docs/design/page-shell-and-columns.md.
 //
@@ -127,6 +129,18 @@ export function startColumns(ui) {
       const hidden = document.getElementById(next === 'maps' ? 'h5-columns-tab' : 'h5-columns-maps');
       if (active && hidden && hidden.contains(active)) { const button = document.getElementById(next === 'maps' ? 'h5-nav-maps' : 'h5-nav-columns'); if (button) button.focus(); }
     }, 0);
+  };
+  // A destination of the navigation rail (NavRail): 'sessions' leaves the view (the single view comes back), 'columns' and 'maps' show that tab, entering
+  // the view first when it is off. Below the wide breakpoint the view cannot be shown, so only 'sessions' does anything there.
+  ui.actions.showView = view => {
+    const now = get();
+    if (view === 'sessions') { if (now.enabled) put({ enabled: false, focus: null }); return; }
+    const tab = readTab(view === 'maps' ? 'maps' : 'columns');
+    if (!now.enabled) {
+      put({ enabled: true, focus: null, tab, ids: columnsFor(now.ids.filter(id => !now.closing.includes(id)), stripWidthOf(window.innerWidth)) });
+      return;
+    }
+    ui.actions.showColumnsTab(tab);
   };
   // Maximize: one column (any: a terminal, a chat, the task list) fills the strip and the other columns become the rail (ColumnRail). Their widths and
   // the strip's scroll are kept first, so they stay as they were and come back exactly. Restore: back to the strip; `focus` (a tile, Open column)
@@ -304,27 +318,9 @@ export function startColumns(ui) {
   });
 }
 
-// The header button of the normal view (#h5-columns-open, "Multi-column view") and the bottom button of the view's navigation rail
-// (#h5-columns-toggle, "Leave the columns view"): the same switch.
-export function ColumnsToggle({ state, ui, inRail = false }) {
-  if (!state.columns || !state.wide || state.columns.shown !== inRail) return null;
-  if (inRail) {
-    return (
-      <IconButton id="h5-columns-toggle" {...named(t('Leave the columns view'))} onClick={() => ui.actions.toggleColumns()}
-        sx={{ flex: '0 0 auto', width: 48, height: 48, color: 'text.secondary' }}>
-        <Icon name="leaveView" size={22} />
-      </IconButton>
-    );
-  }
-  return (
-    <IconButton id="h5-columns-open" size="medium" {...named(t('Multi-column view'))} aria-pressed={false} onClick={() => ui.actions.toggleColumns()}>
-      <Icon name="columns" size={22} />
-    </IconButton>
-  );
-}
-
 // The page under the view is hidden: its header, terminal, sidebar, chat and full-window mind map (the Mind maps tab has its own element). Notices and
-// dialogs (higher z-index) stay above the view.
+// dialogs (higher z-index) stay above the view, and so do the navigation rail (NavRail, left of the view), the T-Attention panel (on the right: the view
+// ends where it starts, as the single view does) and Settings.
 // The strip's sideways scrollbar is always drawn while the columns overflow, also where the system hides scrollbars until they are used (macOS):
 // a styled ::-webkit-scrollbar is a classic one (Chrome, Edge, Safari). Firefox takes the standard properties instead; they are set only where
 // ::-webkit-scrollbar does not exist, since Chrome would let them win and draw its overlay scrollbar again.
@@ -341,7 +337,12 @@ const STRIP_SCROLLBAR = {
 // The edge shadows: on this dark page a black fade hardly shows, so the hidden side gets a light fade with a 1px line at the very edge.
 const EDGE = { position: 'absolute', top: 0, width: 32, pointerEvents: 'none', zIndex: 1, transition: 'opacity .15s', '@media (prefers-reduced-motion: reduce)': { transition: 'none' } };
 
-const HIDE_PAGE = { 'html[data-columns] #h5-app, html[data-columns] #h5-tasks, html[data-columns] #h5-attention-sheet, html[data-columns] #h5-agent, html[data-columns] #h5-mindmap': { display: 'none !important' } };
+const HIDE_PAGE = {
+  'html[data-columns] #h5-app, html[data-columns] #h5-tasks, html[data-columns] #h5-agent, html[data-columns] #h5-mindmap': { display: 'none !important' },
+  'html[data-columns] #h5-attention-sheet .MuiDrawer-paper': { zIndex: 1255 },
+  'html[data-columns][data-side-panel] #h5-columns': { right: 'var(--h5-side-width)' },
+  'html[data-columns] #h5-settings': { zIndex: 1255 },
+};
 
 // One header per column, drawn by the top page right above the column's iframe (`ColumnHeader`, `.h5-column-head`): the drag grip (pointer input),
 // the state dot (green running, orange needs you, grey idle: `columnStatus`, from the top page's terminal activity and T-Attention), the device tag of
@@ -359,7 +360,7 @@ const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(na
 const MAXIMIZE_KEYS = APPLE ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
 const WIDE_CHOICES = [120, 160, 200];
 // The MD2 dark theme shows elevation as a white overlay on the surface (1dp 5%, 4dp 9%, ...): `getOverlayAlpha` is MUI's own table.
-const overlay = dp => `linear-gradient(${alpha('#fff', Number(getOverlayAlpha(dp)))}, ${alpha('#fff', Number(getOverlayAlpha(dp)))})`;
+export const overlay = dp => `linear-gradient(${alpha('#fff', Number(getOverlayAlpha(dp)))}, ${alpha('#fff', Number(getOverlayAlpha(dp)))})`;
 // The state dot: the theme's success, warning and disabled colours (green 400, orange 400 and 38% white in the dark theme).
 const STATE_COLORS = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
 const STATUS_KEYS = ['attention', 'terminalActivity'];
@@ -371,6 +372,12 @@ function useStatusOf(ui, columns) {
   const live = useStoreKeys(ui, STATUS_KEYS);
   return id => columnStatus(columns.titles[id], { activity: live.terminalActivity, items: live.attention && live.attention.items });
 }
+// The state of the session the single view shows (its page header's dot, Header.jsx): the same rule as a column's (`columnStatus`), on the terminal shown
+// (`state.shownTarget`, h5.js). A string, so the header part that draws it is drawn again only when the state changes, not on every activity push.
+const SHOWN_STATE = state => (state.shownTarget
+  ? columnStatus({ target: state.shownTarget }, { activity: state.terminalActivity, items: state.attention && state.attention.items }).state
+  : null);
+export const useShownState = ui => useStore(ui, SHOWN_STATE);
 // The name of a column as its header and the column list show it: { title, session, shown (what is drawn when the pane said nothing), tag }.
 function nameOf(columns, id, index) {
   const info = columns.titles[id];
@@ -378,7 +385,7 @@ function nameOf(columns, id, index) {
   const fallback = info ? t('Choose a task') : t(`Column ${index + 1}`);
   return { info, title, session, shown: title || fallback, tag: info && info.device ? tagOf(info.device) : null };
 }
-const Dot = ({ state, className }) => (
+export const Dot = ({ state, className }) => (
   <Box component="span" aria-hidden="true" className={className} data-state={state} sx={{ width: 8, height: 8, borderRadius: '50%', flex: '0 0 auto', bgcolor: STATE_COLORS[state] }} />
 );
 // "Project · session", cut with an ellipsis; the task is the stronger of the two.
@@ -720,19 +727,61 @@ function PeekCard({ id, top, info, status, name, lines, onOpen, onEnter, onLeave
   );
 }
 
-// The navigation rail of the view (#h5-columns-nav, a nav landmark "Views", NAV_WIDTH px, full height; MD2 navigation rail): Update at the top, a
-// divider, the two destinations with icon and label, "Columns" and "Mind maps" (the one shown in the primary colour with a 3px indicator and
-// `aria-current="page"`; "Columns" carries a red badge with the number of columns that need the person, the count of the bar's "N needs you", also
-// while the Mind maps tab is shown), and at the bottom the switch that leaves the view. Each destination is reached by Tab; the arrow keys (and Home
-// / End) move between them and Enter or Space opens one (`railKey`). Opening the tab that is shown again does nothing.
-const DESTINATIONS = [
-  { tab: 'columns', id: 'h5-nav-columns', icon: 'columns', label: 'Columns' },
-  { tab: 'maps', id: 'h5-nav-maps', icon: 'mindmap', label: 'Mind maps' },
-];
-function ViewsRail({ state, ui }) {
+// The navigation rail of the page (#h5-columns-nav, a nav landmark "Views", NAV_WIDTH px, full height; MD2 navigation rail), shown on the wide layout in
+// the single view and in the columns view alike, at the left edge (fixed, above the columns view). Destinations with an icon over a caption label:
+// Sessions (the single view; in the columns view it leaves the view), Columns and Mind maps (the two tabs of the columns view; Columns carries a red
+// badge with the number of open columns that need the person), and Attention (shows or hides the T-Attention panel on the right, active while it is
+// open, with a red badge of the items that need the person). At the bottom: Update (the page's one updater, `UpdateButton`, with its red dot) and
+// Settings (current while Settings is open). The current page is in the primary colour with a 3px indicator and `aria-current="page"`; choosing any
+// destination while Settings is open closes Settings first. Each destination is a Tab stop; the arrow keys and Home / End move between them
+// (`railKey`); Enter or Space opens one. The element stays mounted on a narrow screen, hidden (`display: none`), so the updater inside it keeps its one
+// poll across a resize; a pane has no rail. See "Navigation rail" in docs/design/page-navigation.md.
+const NAV = state => {
   const columns = state.columns;
-  const statusOf = useStatusOf(ui, columns);
-  const needs = needsCount(openOf(columns), statusOf);
+  const shown = Boolean(columns && columns.shown);
+  const live = { activity: state.terminalActivity, items: state.attention && state.attention.items };
+  return {
+    wide: state.wide, pane: state.pane, canColumns: Boolean(columns),
+    view: railView({ settingsOpen: state.settingsOpen, columns }),
+    attentionOpen: Boolean(state.attention && state.attention.open),
+    attentionNeeds: Number(state.attention && state.attention.needs) || 0,
+    // Only while the view is shown: the panes' titles are what the count is about.
+    columnsNeeds: shown ? needsCount(openOf(columns), id => columnStatus(columns.titles[id], live)) : 0,
+  };
+};
+const RAIL_ITEM_SX = (current, active) => theme => ({
+  position: 'relative', width: NAV_WIDTH, height: 56, flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0.5,
+  color: current || active ? theme.palette.primary.main : theme.palette.text.secondary,
+  backgroundColor: active ? alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) : 'transparent',
+  '@media (hover: hover)': { '&:hover': { backgroundColor: active ? alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity + theme.palette.action.hoverOpacity) : theme.palette.action.hover } },
+  '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 },
+  '&::before': { content: '""', position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: '0 3px 3px 0', bgcolor: current ? theme.palette.primary.main : 'transparent' },
+});
+const RAIL_ACTION_SX = { flex: '0 0 auto', width: 48, height: 48, color: 'text.secondary' };
+export function NavRail({ ui }) {
+  const state = useStore(ui, NAV, shallowEqual);
+  countRender('NavRail');
+  const shown = state.wide && !state.pane;
+  useLayoutEffect(() => {
+    document.documentElement.toggleAttribute('data-nav-rail', shown);
+    measureTerminalBox(); // the page moved right by the rail's width, in the same frame
+    return () => document.documentElement.removeAttribute('data-nav-rail');
+  }, [shown]);
+  if (state.pane) return null;
+  // Settings goes away before any other destination is shown.
+  const leaveSettings = () => { if (ui.get().settingsOpen && ui.actions.closeSettings) ui.actions.closeSettings(); };
+  const choose = item => {
+    const settings = ui.get().settingsOpen;
+    leaveSettings();
+    if (item.view === 'attention') {
+      const open = Boolean(ui.get().attention && ui.get().attention.open);
+      if (open && !settings) ui.actions.closeAttention();
+      else if (!open) ui.actions.openAttention();
+      return;
+    }
+    if (state.canColumns && ui.actions.showView) { ui.actions.showView(item.view); return; }
+    if (item.view === 'maps' && ui.actions.openMindmaps) ui.actions.openMindmaps(); // no columns view here: the mind maps over the whole window
+  };
   const onKeyDown = event => {
     const buttons = [...event.currentTarget.querySelectorAll('.h5-nav-item')];
     const at = buttons.indexOf(document.activeElement);
@@ -742,40 +791,47 @@ function ViewsRail({ state, ui }) {
     event.preventDefault();
     buttons[next].focus();
   };
-  const needsWords = needs === 1 ? t('1 needs you') : t(`${needs} need you`);
+  const needsWords = (count, one, many) => (count === 1 ? t(one) : t(many.replace('{1}', count)));
+  const settingsLabel = t('Settings');
+  const settingsCurrent = state.view === 'settings';
   return (
-    <Box component="nav" id="h5-columns-nav" aria-label={t('Views')}
-      sx={theme => ({ flex: `0 0 ${NAV_WIDTH}px`, width: NAV_WIDTH, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', py: 1, gap: 0.5,
+    <Box component="nav" id="h5-columns-nav" aria-label={t('Views')} onKeyDown={onKeyDown}
+      sx={theme => ({ position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 1260, width: NAV_WIDTH, boxSizing: 'border-box', display: shown ? 'flex' : 'none',
+        flexDirection: 'column', alignItems: 'center', pt: 'max(8px, env(safe-area-inset-top))', pb: 'max(8px, env(safe-area-inset-bottom))', gap: 0.5,
         bgcolor: 'background.paper', backgroundImage: overlay(1), borderRight: 1, borderColor: 'divider', overflowY: 'auto', overflowX: 'hidden',
         scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, color: theme.palette.text.secondary })}>
-      <ColumnsUpdateButton state={state} ui={ui} />
-      <Divider flexItem sx={{ mx: 2, my: 0.5 }} />
-      <Box onKeyDown={onKeyDown} sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-        {DESTINATIONS.map(item => {
-          const current = columns.tab === item.tab;
-          const badge = item.tab === 'columns' ? needs : 0;
-          const label = t(item.label);
-          return (
-            <ButtonBase key={item.tab} id={item.id} className="h5-nav-item" data-tab={item.tab} aria-current={current ? 'page' : undefined}
-              aria-label={badge ? `${label}, ${needsWords}` : label} onClick={() => ui.actions.showColumnsTab(item.tab)}
-              sx={theme => ({
-                position: 'relative', width: NAV_WIDTH, height: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0.5,
-                color: current ? theme.palette.primary.main : theme.palette.text.secondary,
-                '@media (hover: hover)': { '&:hover': { backgroundColor: theme.palette.action.hover } },
-                '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 },
-                '&::before': { content: '""', position: 'absolute', left: 0, top: 8, bottom: 8, width: 3, borderRadius: '0 3px 3px 0', bgcolor: current ? theme.palette.primary.main : 'transparent' },
-              })}>
-              <Badge className="h5-nav-badge" badgeContent={badge} max={99} color="error" invisible={!badge} overlap="circular"
-                slotProps={{ badge: { 'aria-hidden': 'true', id: item.tab === 'columns' ? 'h5-nav-needs' : undefined } }}>
-                <Icon name={item.icon} size={24} />
-              </Badge>
-              <Box component="span" className="h5-nav-label" aria-hidden="true" sx={theme => ({ ...theme.typography.caption, fontWeight: 500, lineHeight: '16px', letterSpacing: '0.4px' })}>{label}</Box>
-            </ButtonBase>
-          );
-        })}
-      </Box>
+      {railDestinations(state.canColumns).map(item => {
+        const current = state.view === item.view;
+        const active = Boolean(item.toggle && state.attentionOpen);
+        const badge = item.view === 'columns' ? state.columnsNeeds : item.view === 'attention' ? state.attentionNeeds : 0;
+        const label = t(item.label);
+        const words = !badge ? '' : item.view === 'columns' ? needsWords(badge, '1 needs you', '{1} need you') : needsWords(badge, '1 item needs you', '{1} items need you');
+        return (
+          <ButtonBase key={item.view} id={item.id} className="h5-nav-item" data-view={item.view} data-tab={state.canColumns && (item.view === 'columns' || item.view === 'maps') ? item.view : undefined}
+            aria-current={current ? 'page' : undefined} aria-expanded={item.toggle ? state.attentionOpen : undefined} data-active={active ? '' : undefined}
+            aria-label={words ? `${label}, ${words}` : label} onClick={() => choose(item)} sx={RAIL_ITEM_SX(current, active)}>
+            <Badge className="h5-nav-badge" badgeContent={badge} max={99} color="error" invisible={!badge} overlap="circular"
+              slotProps={{ badge: { 'aria-hidden': 'true', id: item.view === 'columns' ? 'h5-nav-needs' : item.view === 'attention' ? 'h5-nav-attention-count' : undefined } }}>
+              <Icon name={item.icon} size={24} />
+            </Badge>
+            <Box component="span" className="h5-nav-label" aria-hidden="true" sx={theme => ({ ...theme.typography.caption, fontWeight: 500, lineHeight: '16px', letterSpacing: '0.4px' })}>{label}</Box>
+          </ButtonBase>
+        );
+      })}
       <Box sx={{ flex: '1 1 auto' }} />
-      <ColumnsToggle state={state} ui={ui} inRail />
+      {/* The updater of the page (polling, the dialog, the silent reload after an automatic update): one, here, on every layout (hidden with the rail on a
+          narrow screen, where the header's "More" menu opens its dialog through ui.actions.openUpdate). */}
+      <Box className="h5-nav-update" sx={{ display: 'flex', '& #h5-update': RAIL_ACTION_SX, '& #h5-update svg': { fontSize: 22 } }}>
+        <UpdateButton ui={ui} />
+      </Box>
+      <ButtonBase id="h5-nav-settings" className="h5-nav-item" data-view="settings" {...named(settingsLabel)} aria-current={settingsCurrent ? 'page' : undefined}
+        onClick={() => { if (!ui.get().settingsOpen) ui.actions.openSettings(); }}
+        sx={theme => ({ ...RAIL_ACTION_SX, borderRadius: '50%', color: settingsCurrent ? theme.palette.primary.main : theme.palette.text.secondary,
+          backgroundColor: settingsCurrent ? alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) : 'transparent',
+          '@media (hover: hover)': { '&:hover': { backgroundColor: theme.palette.action.hover } },
+          '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 } })}>
+        <Icon name="setting" size={22} />
+      </ButtonBase>
     </Box>
   );
 }
@@ -801,7 +857,7 @@ function MapsTab({ ui, active }) {
   );
 }
 
-const STRIP_KEYS = ['columns', 'wide', 'pane', 'updateDot', 'input'];
+const STRIP_KEYS = ['columns', 'wide', 'pane', 'input'];
 // The drag of a column by its header: its place is dimmed with a dashed outline, a lifted copy of the header follows the pointer and a primary line
 // shows where it lands (tab-drag.jsx); the iframes take no pointer events meanwhile, so the pointer is never lost to a page under it.
 const DRAG_SX = theme => ({
@@ -935,11 +991,11 @@ export function ColumnStrip({ ui }) {
   const columnsShownNow = tab === 'columns';
   return (
     <Box id="h5-columns" ref={root} role="region" aria-label={t('Multi-column view')} data-tab={tab}
-      sx={theme => ({ position: 'fixed', inset: 0, zIndex: 1250, display: 'flex', flexDirection: 'row', bgcolor: 'background.default', color: 'text.primary', ...DRAG_SX(theme) })}>
+      // Right of the navigation rail (NavRail, drawn by App above this view), to the window's right edge or the T-Attention panel (HIDE_PAGE).
+      sx={theme => ({ position: 'fixed', top: 0, bottom: 0, left: NAV_WIDTH, right: 0, zIndex: 1250, display: 'flex', flexDirection: 'row', bgcolor: 'background.default', color: 'text.primary', ...DRAG_SX(theme) })}>
       <GlobalStyles styles={HIDE_PAGE} />
       <GlobalStyles styles={STRIP_SCROLLBAR} />
       <GlobalStyles styles={NO_FRAME_POINTER} />
-      <ViewsRail state={state} ui={ui} />
       <Box id="h5-columns-views" sx={{ flex: '1 1 auto', minWidth: 0, position: 'relative' }}>
         <Box id="h5-columns-tab" data-active={columnsShownNow ? '' : undefined} aria-hidden={columnsShownNow ? undefined : 'true'}
           sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', visibility: columnsShownNow ? 'visible' : 'hidden' }}>

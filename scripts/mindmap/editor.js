@@ -231,7 +231,8 @@ export async function createEditor(host, doc, handlers) {
   });
   observer.observe(host);
 
-  mind.container.focus({ preventScroll: true });
+  // A mind map column that a reload opened again takes no focus by itself (`canFocus`, until the person used that column).
+  if (!handlers.canFocus || handlers.canFocus()) mind.container.focus({ preventScroll: true });
 
   return {
     mind,

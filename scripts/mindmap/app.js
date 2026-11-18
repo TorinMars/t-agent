@@ -4,6 +4,7 @@ import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
 import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
 import { buildXmind, parseXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
+import { maximizeKey } from '../h5-shell/columns.mjs';
 
 const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 // The services whose maps are listed (`sources` of the mount options, in list order): { key, label, base, online }. `base` is where that service's maps are
@@ -144,7 +145,15 @@ function download(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}, sources: given }) {
+// A mind map column of the multi-column view (`inColumn`, see "Mind maps" in DESIGN.md): the editor's bar has Maximize (`#mm-maximize`, and
+// Cmd/Ctrl+Shift+Enter anywhere in the view unless a topic is being edited or a dialog is open), which calls `onMaximize` (the top page toggles);
+// while `maximized`, Escape in the editor (not editing a topic, no dialog) and in the list restores the columns instead of leaving. `onView` hears what
+// the view shows ({ screen: 'list' } or { screen: 'editor', sourceKey, id, title }), so the column remembers it; `open` ({ sourceKey, id }) is opened
+// as soon as its service is listed. `canFocus()` false: nothing is focused by the view itself (a column that a reload brought back).
+export function mountApp(root, {
+  onClose, notify = () => {}, onLayers = () => {}, sources: given, onView = () => {}, open: openGiven = null, inColumn = false, maximized: maximizedGiven = false,
+  onMaximize = () => {}, canFocus = () => true,
+}) {
   let disposed = false;
   let screen = 'list';
   let current = null; // { id, src, title, editor, saver, ... } the open map and the service it is on
@@ -156,7 +165,12 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   let createOn = LOCAL_KEY; // "Create on": the service a new or imported map goes to
   let importTarget = null;
   let dialog = null; // the open dialog: { close }
+  let maximized = Boolean(maximizedGiven);
+  let pendingOpen = openGiven && openGiven.sourceKey && openGiven.id ? { sourceKey: String(openGiven.sourceKey), id: String(openGiven.id) } : null;
   const say = (text, kind) => notify(text, kind);
+  const report = () => onView(screen === 'editor' && current
+    ? { screen: 'editor', sourceKey: current.src.key, id: current.id, title: current.title }
+    : { screen: 'list', title: '' });
 
   root.replaceChildren();
   root.classList.add('mm');
@@ -335,6 +349,17 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     }
   }
 
+  // The map a mind map column showed before a reload, once the services are known: opened on its service, or the list when that service is not listed
+  // or offline (or the map is gone: openMap says so).
+  function openPending() {
+    if (!pendingOpen || !sources.length || disposed) return;
+    const want = pendingOpen;
+    pendingOpen = null;
+    const src = sourceByKey(want.sourceKey);
+    if (!src || !src.online) { report(); return; }
+    void openMap(src, want.id).then(() => { if (screen === 'list') report(); });
+  }
+
   // The services listed changed (connected, removed, hidden or shown again, offline or back). A new one, or one that came back, is read; the rest keep their lists.
   function setSources(list) {
     const next = normalizeSources(list);
@@ -350,6 +375,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
       if (back && current && current.src.key === src.key && current.saver) current.saver.wake();
     }
     renderList();
+    openPending();
   }
 
   async function createMap() {
@@ -426,10 +452,21 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     barButton('fit', 'fitWindow', 'Fit map', () => act('fit')));
   const exportButton = iconButton('export', 'Export .xmind', () => exportMap(), { id: 'mm-export' });
   const moreButton = iconButton('taskMore', 'More', () => openMore(), { id: 'mm-more' });
+  const apple = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+  const maximizeButton = inColumn ? iconButton('maximize', 'Maximize', () => onMaximize(), { id: 'mm-maximize', 'aria-keyshortcuts': apple ? 'Meta+Shift+Enter' : 'Control+Shift+Enter', onPointerdown: e => e.preventDefault() }) : null;
+  function showMaximized() {
+    if (!maximizeButton) return;
+    const label = tr(maximized ? 'Restore' : 'Maximize');
+    maximizeButton.setAttribute('aria-label', label);
+    maximizeButton.title = label;
+    maximizeButton.dataset.maximized = maximized ? 'true' : 'false';
+    maximizeButton.firstChild.firstChild.setAttribute('d', PATHS[maximized ? 'restore' : 'maximize']);
+  }
+  showMaximized();
   const editorView = el('section', { class: 'mm-view mm-editor', hidden: true },
     el('header', { class: 'mm-top' },
       iconButton('back', 'Back to the list', () => { void leaveEditor(); }, { id: 'mm-back' }),
-      titleField, statusNode, exportButton, moreButton),
+      titleField, statusNode, maximizeButton, exportButton, moreButton),
     canvas, bar);
   root.append(listView, editorView);
 
@@ -488,6 +525,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     canvas.replaceChildren();
     const state = { id: map.id, src: { key: src.key, label: src.label, local: src.local, base: src.base }, title: map.title || '', editor: null, saver: null, leaving: false };
     current = state;
+    report();
     void startEditor(state, map, doc, { restored, draftConflict });
   }
 
@@ -500,7 +538,8 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
         onSelection: () => { if (state === current) updateBar(); },
         onSaveNow: () => { if (state.saver) void state.saver.flush(); },
         onOpenInfo: kind => openInfo(state, kind),
-        onBack: () => { void leaveEditor(); },
+        onBack: () => { if (maximized) onMaximize(); else void leaveEditor(); }, // Escape: a maximized column is restored first
+        canFocus,
         isBlocked: () => Boolean(dialog),
         notify: text => say(text, 'error'),
       });
@@ -536,6 +575,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     if (value === current.title) return;
     current.title = value;
     if (current.saver) current.saver.touch();
+    report();
   }
 
   // The copy goes to the service of the original.
@@ -629,6 +669,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     editorView.hidden = true;
     listView.hidden = false;
     if (silent) return;
+    report();
     pushLayers();
     void loadList();
     const row = rows.querySelector('button, [tabindex]');
@@ -670,8 +711,9 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   const onPageHide = () => { if (current && current.saver) void current.saver.flush({ keepalive: true }); };
   const onOnline = () => { if (current && current.saver) current.saver.wake(); };
   const onListKey = e => {
+    if (inColumn && maximizeKey(e) && !dialog && !(current && current.editor && current.editor.isEditing())) { e.preventDefault(); e.stopPropagation(); onMaximize(); return; }
     if (dialog || screen !== 'list') return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (maximized) onMaximize(); else onClose(); }
   };
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pagehide', onPageHide);
@@ -680,12 +722,14 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   pushLayers();
   void loadList();
-  root.querySelector('#mm-new').focus();
+  if (canFocus()) root.querySelector('#mm-new').focus();
+  openPending();
 
   return {
     get busy() { return Boolean(current && current.saver && current.saver.dirty); },
     flush: () => (current && current.saver ? current.saver.flush() : Promise.resolve()),
     setSources: list => { if (!disposed) setSources(list); },
+    setMaximized: on => { maximized = Boolean(on); showMaximized(); },
     destroy() {
       disposed = true;
       document.removeEventListener('visibilitychange', onVisibility);

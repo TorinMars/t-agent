@@ -151,3 +151,76 @@ test('a pane tells its tab the device of its task, and posts the column keys ins
   key({ key: 'ArrowRight', ctrlKey: false, shiftKey: true });
   assert.equal(win.posted.length, count, 'other keys are not posted');
 });
+
+test('a mind map column opens its map again after a reload and keeps what its view shows; it answers maximized and peek', async () => {
+  const { startPane } = await load();
+  const win = fakeWindow({ search: '?pane=a' });
+  const doc = fakeDoc();
+  const ui = fakeUi({ taskName: '', sessionName: '' });
+  win.localStorage.setItem('pane:a:h5-mindmap', JSON.stringify({ screen: 'editor', sourceKey: 'local', id: 'm1' }));
+  const opened = [];
+  // As h5.js does: the view says at once what it is opening.
+  ui.actions.openMindmaps = ({ open }) => { opened.push(open); ui.set({ mindmapView: { screen: 'editor', sourceKey: open.sourceKey, id: open.id, title: '' } }); };
+  const maximized = [];
+  ui.actions.setMindmapMaximized = on => maximized.push(on);
+  ui.actions.paneTail = count => ['one', 'two'].slice(-count);
+  startPane(ui, 'a', { win, doc });
+  doc.fire('DOMContentLoaded');
+  assert.deepEqual(opened, [{ sourceKey: 'local', id: 'm1' }]);
+  assert.equal(win.localStorage.getItem('pane:a:h5-mindmap'), '{"screen":"editor","sourceKey":"local","id":"m1"}', 'not lost while the bundle loads');
+  ui.set({ mindmapView: { screen: 'editor', sourceKey: 'local', id: 'm1', title: 'Plan' } });
+  const title = win.posted.map(p => p.message).filter(m => m.event === 'title').at(-1);
+  assert.deepEqual(title.map, { title: 'Plan', screen: 'editor' }, 'the tab hears the map name');
+  ui.set({ mindmapView: { screen: 'list', title: '' } });
+  assert.equal(win.localStorage.getItem('pane:a:h5-mindmap'), '{"screen":"list"}');
+  ui.set({ mindmapView: null });
+  assert.equal(win.localStorage.getItem('pane:a:h5-mindmap'), null, 'the view closed: the column shows its task again');
+  const fromParent = data => win.fire('message', { source: win.parent, origin: 'http://h5.test', data: { type: 't-agent-pane', ...data } });
+  fromParent({ event: 'maximized', on: true });
+  fromParent({ event: 'maximized', on: false });
+  assert.deepEqual(maximized, [true, false]);
+  win.fire('message', { source: {}, origin: 'http://h5.test', data: { type: 't-agent-pane', event: 'maximized', on: true } });
+  assert.deepEqual(maximized, [true, false], 'only from the parent');
+  fromParent({ event: 'peek' });
+  assert.deepEqual(win.posted.at(-1).message, { type: 't-agent-pane', paneId: 'a', event: 'peek', lines: ['one', 'two'] });
+  // With the map view open, Cmd/Ctrl+Shift+Enter is the map's to take (it knows when a topic is being edited).
+  const key = { key: 'Enter', metaKey: true, shiftKey: true, preventDefault() {}, stopPropagation() {} };
+  ui.set({ mindmapView: { screen: 'list', title: '' } });
+  const before = win.posted.length;
+  win.fire('keydown', key);
+  assert.equal(win.posted.slice(before).filter(p => p.message.event === 'maximize').length, 0);
+});
+
+test('Cmd/Ctrl+Shift+Enter in any pane asks the top page to maximize its column, and never reaches the page', async () => {
+  const { startPane } = await load();
+  const win = fakeWindow({ search: '?pane=t' });
+  const doc = fakeDoc();
+  const ui = fakeUi({ taskName: 'Shell' });
+  startPane(ui, 't', { win, doc });
+  doc.fire('DOMContentLoaded');
+  let stopped = 0;
+  const key = extra => ({ key: 'Enter', shiftKey: true, preventDefault() {}, stopPropagation() { stopped += 1; }, ...extra });
+  win.fire('keydown', key({ ctrlKey: true }));
+  win.fire('keydown', key({ metaKey: true }));
+  win.fire('keydown', key({ metaKey: true, repeat: true }));
+  win.fire('keydown', key({ metaKey: true, isComposing: true }));
+  win.fire('keydown', key({}));
+  const asks = win.posted.filter(p => p.message.event === 'maximize');
+  assert.equal(asks.length, 2, 'Ctrl and Cmd; a held key asks once; not inside a composition; not Shift+Enter alone');
+  assert.deepEqual(asks[0], { message: { type: 't-agent-pane', paneId: 't', event: 'maximize' }, target: 'http://h5.test' });
+  assert.equal(stopped, 3, 'the terminal never gets it (the repeat is swallowed too)');
+});
+
+test('a pane without a stored map opens nothing and stores nothing', async () => {
+  const { startPane } = await load();
+  const win = fakeWindow({ search: '?pane=b' });
+  const doc = fakeDoc();
+  const ui = fakeUi({});
+  let calls = 0;
+  ui.actions.openMindmaps = () => { calls += 1; };
+  startPane(ui, 'b', { win, doc });
+  doc.fire('DOMContentLoaded');
+  ui.set({ taskName: 'x' });
+  assert.equal(calls, 0);
+  assert.equal(win.localStorage.getItem('pane:b:h5-mindmap'), null);
+});

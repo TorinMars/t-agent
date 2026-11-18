@@ -603,7 +603,7 @@ const countOf = (tasks, key) => (tasks || []).reduce((sum, task) => sum + (Numbe
 // the `::after` reaches 6px above and below, into the row's padding, so each is a 44px target; wrapped rows keep 12px between them for that).
 const CHIP_SX = on => theme => ({
   height: 28, borderRadius: 14, typography: 'body2', fontSize: 13, position: 'relative',
-  '& .MuiChip-label': { px: 1.25 }, '& .MuiChip-icon': { ml: 1.25, mr: -0.5 },
+  '& .MuiChip-label': { px: 1 }, '& .MuiChip-icon': { ml: 1, mr: -0.5 }, // tight enough for the three chips and the options button in one line of the 304px list
   ...(on ? { bgcolor: alpha(theme.palette.primary.main, 0.16), color: 'primary.main', borderColor: 'transparent', '&:hover, &.MuiChip-clickable:hover': { bgcolor: alpha(theme.palette.primary.main, 0.24) } } : {}),
   '&::after': { content: '""', position: 'absolute', inset: '-4px 0' },
   [TOUCH]: { height: 32, minWidth: 44, borderRadius: 16, '& .MuiChip-label': { px: 1 }, '& .MuiChip-icon': { ml: 1 }, '&::after': { inset: '-6px 0' } },
@@ -653,7 +653,7 @@ function Panel({ ui, wide }) {
         />
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, pl: 1.5, pr: 1, pb: 1, [TOUCH]: { gap: 0, pr: 0.5 } }}>
-        <Box className="h5-task-filters" role="group" aria-label={t('Filter')} sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, flex: '1 1 auto', minWidth: 0, [TOUCH]: { columnGap: 0.75, rowGap: 1.5 } }}>
+        <Box className="h5-task-filters" role="group" aria-label={t('Filter')} sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, flex: '1 1 auto', minWidth: 0, [TOUCH]: { columnGap: 0.75, rowGap: 1.5 } }}>
           {FILTERS.map(([key, label, look]) => {
             const on = filter === key;
             const count = look ? countOf(tasks, key) : 0;

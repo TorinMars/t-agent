@@ -236,3 +236,36 @@ test('the column header acts inside the pane: task sheet, terminal width, rename
     ['paneRename'], ['paneRestart'], ['refresh'],
   ]);
 });
+
+test('whether the column is the focused one comes from the parent; a press or the draft box makes it focused at once and always tells the parent', async () => {
+  const { startPane } = await load();
+  const win = fakeWindow({ search: '?pane=a' });
+  const doc = fakeDoc();
+  const ui = fakeUi({ taskName: '', sessionName: '', paneFocused: false });
+  startPane(ui, 'a', { win, doc });
+  doc.fire('DOMContentLoaded');
+  const send = (data, from = win.parent, origin = 'http://h5.test') => win.fire('message', { source: from, origin, data: { type: 't-agent-pane', ...data } });
+  send({ event: 'focused', on: true }, {});
+  send({ event: 'focused', on: true }, win.parent, 'http://evil.test');
+  send({ event: 'focused', on: true, paneId: 'b' });
+  assert.equal(ui.get().paneFocused, false, 'from elsewhere, another origin or for another pane: nothing');
+  send({ event: 'focused', on: true });
+  assert.equal(ui.get().paneFocused, true);
+  send({ event: 'focused', on: false });
+  assert.equal(ui.get().paneFocused, false);
+  const focusPosts = () => win.posted.filter(entry => entry.message.event === 'focus').length;
+  // A press: focused at once, and the parent is told.
+  doc.fire('pointerdown');
+  assert.equal(ui.get().paneFocused, true, 'a press shows the column as focused before the parent answers');
+  assert.equal(focusPosts(), 1);
+  // Another column took the focus right away (within the 200ms de-duplication): a press here still tells the parent, or it would never know.
+  send({ event: 'focused', on: false });
+  doc.fire('pointerdown');
+  assert.equal(ui.get().paneFocused, true);
+  assert.equal(focusPosts(), 2, 'a column that was not the focused one always tells the parent');
+  // The focus coming into the draft box (Tab from the top page): the same.
+  send({ event: 'focused', on: false });
+  ui.actions.paneUse();
+  assert.equal(ui.get().paneFocused, true);
+  assert.equal(focusPosts(), 3);
+});

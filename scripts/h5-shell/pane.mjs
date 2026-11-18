@@ -17,6 +17,10 @@
 //   scrolls its strip: the gesture never reaches xterm, and a vertical one is never touched; Ctrl+Alt+Left / Right (Ctrl+Option on a Mac) is posted as
 //   `step` ({ step: -1 | 1 }), with Shift as `move` (this column one place left / right), and Cmd/Ctrl+Shift+Enter as `maximize` (this column
 //   maximized, or the columns restored); none of them reaches the terminal (see "Multi-column view" in docs/design/page-shell-and-columns.md);
+// - whether this column is the focused one of the view (`state.paneFocused`, which the compact bottom area of a column follows, Terminal.jsx
+//   CompactBottom): `{ type: 't-agent-pane', event: 'focused', on }` from the parent whenever its focused column changes and after `ready`; a press in
+//   the pane, its window getting the focus after the person used it, or the focus coming into its draft box (`ui.actions.paneUse`) makes it true at
+//   once, before the parent's answer to `focus` comes back;
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
 import { PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readAction, readDevice, sidewaysDelta } from './columns.mjs';
@@ -113,8 +117,17 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
 
   // The person uses this column: a press anywhere in it, or the focus coming into its window (a click and its focus count once).
   let focusAt = -Infinity;
-  const focused = () => { const now = Date.now(); if (now - focusAt < 200) return; focusAt = now; post('focus'); };
+  const focused = () => {
+    const was = ui.get().paneFocused;
+    if (!was) ui.set({ paneFocused: true }); // shown as the focused column at once; the parent confirms it with `focused`
+    const now = Date.now();
+    if (was && now - focusAt < 200) return; // a column that was not the focused one always tells the parent
+    focusAt = now;
+    post('focus');
+  };
   const engage = () => { if (engaged) return; engaged = true; ui.set({ paneEngaged: true }); };
+  // The focus came into the draft box (a click, or Tab from the top page): the person uses this column.
+  ui.actions.paneUse = () => { engage(); focused(); };
   doc.addEventListener('pointerdown', engage, true);
   doc.addEventListener('keydown', engage, true);
   doc.addEventListener('pointerdown', focused, true);
@@ -154,6 +167,8 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
     if (!data || data.type !== PANE_MESSAGE) return;
     if (data.paneId !== undefined && data.paneId !== id) return;
     if (data.event === 'forget') { pane.forget(); post('forgotten'); return; }
+    // The top page's focused column changed (or this pane just said `ready`): the compact bottom area shows its tools only in the focused column.
+    if (data.event === 'focused') { const on = data.on === true; if (ui.get().paneFocused !== on) ui.set({ paneFocused: on }); return; }
     // An action of the column's header (the top page draws it in place of this page's header).
     const action = readAction(data);
     if (action) { engage(); runAction(ui, action); return; }

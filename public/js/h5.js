@@ -3393,14 +3393,26 @@
   // Called on input, on focus changes, after a send, when the viewport changes and at start.
   const TRANSLATE_MAX_VIEWPORT_FRACTION = 0.5;
   let oneLineInput = 0;
+  // A column of the multi-column view has the compact bottom area (Terminal.jsx CompactBottom): one row whose draft box is always shown and grows
+  // upward over the terminal, like a computer's. A column that is not the focused one keeps its box on one line (a window that lost the focus keeps
+  // its active element, so the focus alone cannot tell), and the box's text on one line is published for the "Draft" tag (`draftPeek`).
+  const COMPACT_ROW = Boolean(PANE);
+  const restingColumn = () => COMPACT_ROW && !ui.get().paneFocused;
+  const draftLine = text => String(text).replace(/\s+/g, ' ').trim().slice(0, 300);
+  function publishDraft() {
+    if (!COMPACT_ROW) return;
+    const line = draftLine(translateInput.value);
+    if (ui.get().draftPeek !== line) ui.set({ draftPeek: line });
+  }
   function autosize() {
     const input = translateInput;
+    publishDraft();
     input.style.height = '';
     input.style.overflowY = 'hidden';
     oneLineInput = input.offsetHeight; // rows=1 with no height set: the one-line box (the resting line that a computer's layout keeps room for)
     // One line while the box is empty, or while it has no focus (keyboard dismissed): the text stays in the box, clipped to the first line, and is shown in full again on focus.
     // A pressed bar button (data-hold) keeps the current size so the button does not move under the finger.
-    const resting = document.activeElement !== input && !translateForm.hasAttribute('data-hold');
+    const resting = restingColumn() || (document.activeElement !== input && !translateForm.hasAttribute('data-hold'));
     if (!input.value || resting) { if (resting) input.scrollTop = 0; syncBar(); return; } // the natural height of rows=1
     const style = getComputedStyle(input);
     const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 15) * 1.4375;
@@ -3492,8 +3504,9 @@
       // Sent: on a touch screen the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused. With a keyboard there is
       // no on-screen keyboard to dismiss, and blurring would leave the focus nowhere, so the terminal takes it: its answer is right there, and the next keys
       // (a confirmation, Ctrl+C) reach it. The box itself stays shown on a computer, ready for the next message.
+      // A column the person left while its translation ran does not take the focus back (restingColumn: not the focused column).
       if (!translateInput.value) {
-        if (deskKeys() && target === session && !target.disposed) target.term.focus();
+        if (deskKeys() && target === session && !target.disposed && !restingColumn()) target.term.focus();
         else translateInput.blur();
       }
       autosize();
@@ -3579,7 +3592,8 @@
     const height = barOuterHeight();
     // Touch: the whole box covers the terminal (it is hidden at rest). Computer: the box is always shown and its resting line has its own room in the
     // layout, so only the growth beyond one line covers the terminal (the terminal is moved for it, never resized while typing).
-    const overlap = pointerMode() ? Math.max(0, translateInput.offsetHeight - oneLineInput) : height;
+    // A column (COMPACT_ROW) is like a computer in both input modes: its row has its own fixed room, only the growth covers the terminal.
+    const overlap = pointerMode() || COMPACT_ROW ? Math.max(0, translateInput.offsetHeight - oneLineInput) : height;
     const extra = Math.max(0, overlap);
     if (overlap !== barOverlap) bottomArea.style.setProperty('--h5-bar-extra', `${overlap}px`);
     barOverlap = overlap;
@@ -3595,7 +3609,7 @@
       movingTimer = setTimeout(() => { if (el) el.classList.remove('h5-bar-moving'); }, FLIP_MS + 60);
     }
     holdTerminalSize();
-    if (motion && delta && bottomArea.animate) {
+    if (motion && delta && bottomArea.animate && !COMPACT_ROW) { // a column's box grows out of its row, which a clip of the row would hide
       const grow = delta > 0;
       const d = Math.abs(delta);
       const frames = grow ? [{ clipPath: `inset(${d}px 0 0 0)` }, { clipPath: 'inset(0)' }] : [{ boxShadow: `0 -${d}px 0 0 var(--h5-bg)` }, { boxShadow: '0 0 0 0 var(--h5-bg)' }];
@@ -3639,6 +3653,16 @@
   // Focus decides the box height (autosize): expand on focus, collapse to one line on blur, then switch the bar layout.
   translateForm.addEventListener('focusin', () => { autosize(); relayoutBar(); });
   translateForm.addEventListener('focusout', () => { autosize(); relayoutBar(); });
+  // A column that stops (or starts) being the focused one: its draft box goes back to one line (or shows its text again while it has the focus).
+  if (COMPACT_ROW) {
+    let wasFocused = ui.get().paneFocused;
+    ui.subscribe(() => {
+      const now = ui.get().paneFocused;
+      if (now === wasFocused) return;
+      wasFocused = now;
+      autosize();
+    });
+  }
 
   // ── Image and file upload: the browser uploads to OSS and the link is typed into the terminal without Enter ──
   // The file input covers the upload button (Terminal.jsx), so a tap opens the picker natively, inside the user's own gesture: iOS WebKit (the Home Screen

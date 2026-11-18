@@ -385,7 +385,8 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await closeFromHeader(page, six[1]);
       await waitFrames(page, 5);
       assert.deepEqual(await frameIds(page), six.filter(id => id !== six[1]));
-      assert.deepEqual(await page.evaluate(() => window.forgets), [[six[1], 'forget', ORIGIN]], `${label}: the closed pane got 'forget' from this origin`);
+      // (the press on its header made it the focused column first: `focused` messages are not counted here)
+      assert.deepEqual(await page.evaluate(() => window.forgets.filter(([, event]) => event !== 'focused')), [[six[1], 'forget', ORIGIN]], `${label}: the closed pane got 'forget' from this origin`);
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-columns iframe')].every(el => el.marker === el.dataset.paneId)), true, `${label}: the other columns were not reloaded`);
       assert.deepEqual((await stored(page)).ids, six.filter(id => id !== six[1]), `${label}: the closed id is forgotten`);
       // Close down to one: the last one cannot be closed.

@@ -92,6 +92,11 @@ export function startColumns(ui) {
       if (next.maximized) postTo(next.maximized, { event: 'maximized', on: true });
       say(next.maximized ? 'Column maximized. The other columns are in the rail.' : 'Columns restored');
     }
+    // Each pane is told whether it is the focused column (its compact bottom area shows its tools only then; "Pane mode" in page-shell-and-columns.md).
+    if (before && before.focus !== next.focus) {
+      if (before.focus && !next.closing.includes(before.focus)) postTo(before.focus, { event: 'focused', on: false });
+      if (next.focus) postTo(next.focus, { event: 'focused', on: true });
+    }
   };
   ui.set({ columns: { enabled: false, shown: false, ids: [], focus: null, tab: stored.tab, titles: {}, ready: {}, closing: [], maximized: null, tails: {} } });
   put({ enabled: stored.on, ids: stored.on ? columnsFor(stored.ids, stripWidthOf(window.innerWidth)) : stored.ids });
@@ -284,7 +289,7 @@ export function startColumns(ui) {
     const message = frame && readPaneMessage(event.data);
     if (!message || message.paneId !== frame.dataset.paneId) return;
     const id = message.paneId;
-    if (message.event === 'ready') { put({ ready: { ...get().ready, [id]: true } }); ui.actions.columnLoaded(id, frame); }
+    if (message.event === 'ready') { put({ ready: { ...get().ready, [id]: true } }); ui.actions.columnLoaded(id, frame); postTo(id, { event: 'focused', on: get().focus === id }); }
     else if (message.event === 'focus') ui.actions.focusColumn(id);
     else if (message.event === 'scroll-x') scrollStrip(message.dx);
     else if (message.event === 'step') ui.actions.stepColumn(message.step);

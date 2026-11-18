@@ -161,7 +161,7 @@ export function UpdateButton({ ui }) {
   const linked = useLinkedUpdates(); // "Also update": the connected services (LinkedUpdates.jsx)
   useEffect(() => () => { alive.current = false; clearInterval(timer.current); }, []);
   useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
-  // Other buttons open this same dialog (ColumnsUpdateButton): one updater, one poll, one silent reload.
+  // Other buttons open this same dialog (the phone header's More menu): one updater, one poll, one silent reload.
   useEffect(() => {
     const open = returnTo => { if (showRef.current) showRef.current(returnTo); };
     ui.actions.openUpdate = open;
@@ -469,20 +469,5 @@ export function UpdateButton({ ui }) {
         </DialogActions>
       </Dialog> : null}
     </>
-  );
-}
-
-// The Update button of the multi-column view (#h5-columns-update, at the top of its navigation rail): the header (and its #h5-update) is hidden under the
-// strip, so this one opens the header updater's dialog (ui.actions.openUpdate) and shows its red dot (state.updateDot). It polls nothing itself.
-export function ColumnsUpdateButton({ state, ui }) {
-  if (state.pane) return null;
-  const dot = Boolean(state.updateDot);
-  return (
-    <IconButton id="h5-columns-update" aria-label={t('Update')} title={t('Update')} aria-haspopup="dialog" data-attention={dot ? 'true' : undefined}
-      sx={{ flex: '0 0 auto', width: 48, height: 48, color: 'text.secondary' }} onClick={event => { if (ui.actions.openUpdate) ui.actions.openUpdate(event.currentTarget); }}>
-      <Badge id="h5-columns-update-dot" variant="dot" color="error" invisible={!dot} overlap="circular">
-        <SystemUpdateAltIcon sx={{ fontSize: 22 }} />
-      </Badge>
-    </IconButton>
   );
 }

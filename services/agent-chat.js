@@ -1,5 +1,6 @@
-// Chat-style Claude / Codex conversations of a task. A conversation lives in memory while the server runs (items, pending permission requests,
-// the running turn) and in `agent_conversations` (agent, session id, title, mode), so it can be listed and resumed after a restart.
+// Chat-style Claude / Codex conversations of a task. A conversation lives in memory while it is used (items, pending permission requests,
+// the running turn) and in `agent_conversations` (agent, session id, title, mode), so it can be listed and resumed after a restart. One that nobody
+// has used for a while leaves the memory (`evictIdle`) and is built again from the database and the agent's session when it is opened.
 //
 // Clients load a snapshot (`snapshot()`), then follow `events` (`subscribe()`); every event carries a sequence number, and a client that
 // reconnects asks for the events after the last one it saw.
@@ -8,6 +9,7 @@ const { randomUUID } = require('crypto');
 const claude = require('../lib/agent-chat/claude');
 const { createPresence } = require('../lib/terminal-presence');
 const codex = require('../lib/agent-chat/codex');
+const { endSync } = require('../lib/agent-chat/processes');
 
 const ADAPTERS = { claude, codex };
 const MAX_EVENTS = 2000;
@@ -23,6 +25,9 @@ const MAX_QUEUE = 20; // messages waiting in one chat
 const MAX_QUEUE_BYTES = 28 * 1024 * 1024; // as saved (JSON); a request is 32 MB at most
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const DEFAULT_TITLE = 'New chat';
+// A chat nobody has used for this long leaves the memory (see evictIdle); the chats in memory are looked over this often.
+const IDLE_MS = 10 * 60 * 1000;
+const SWEEP_MS = 60 * 1000;
 
 const fail = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
 const clip = (text, length) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
@@ -33,8 +38,12 @@ const STOP_GRACE_MS = 5000;
 // A viewer is one event stream of a page (`?viewer=<id>` on the events URL): letters, digits, '_' and '-'.
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
-function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS, limitsPollMs = LIMITS_POLL_MS, limitsTurnGapMs = LIMITS_TURN_GAP_MS, presence = createPresence() }) {
+function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS, limitsPollMs = LIMITS_POLL_MS, limitsTurnGapMs = LIMITS_TURN_GAP_MS, presence = createPresence(), idleMs = IDLE_MS, sweepMs = SWEEP_MS, now = Date.now }) {
   const runtimes = new Map(); // conversation id -> runtime
+  // A runtime that is built again after one left the memory starts above every number the earlier ones gave out: an event number, so a page that
+  // still follows the earlier one is told to reload (subscribe) instead of taking the new events for old ones; a queue id, so none is used twice.
+  let seqFloor = 0;
+  let queueFloor = 0;
   // Which chats are on a screen (the T-Attention notifiers send nothing for their session): a page that shows a chat reports
   // { viewer, foreground } (POST .../presence, repeated every 20 s while true); the report holds only while that viewer's event stream is open.
   const viewers = new Map(); // `${conversation id}:${viewer}` -> the stream's presence handle { readyState }
@@ -87,11 +96,14 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       rt = {
         id: row.id, taskId: row.task_id, agent: row.agent, sessionId: row.session_id, mode: row.mode, title: row.title,
         choice: { model: row.model || '', effort: row.effort || '' }, model: row.model || undefined, effort: row.effort || undefined,
-        items: new Map(), seq: 0, events: [], subscribers: new Set(), status: 'idle', abort: null, pending: new Map(), loaded: false, counter: 0,
+        items: new Map(), seq: seqFloor, events: [], subscribers: new Set(), status: 'idle', abort: null, pending: new Map(), history: null, counter: 0,
+        queueSeq: queueFloor, lingering: new Set(),
       };
       runtimes.set(row.id, rt);
+      watchIdle();
     }
     rt.workDir = task.work_dir;
+    rt.usedAt = now(); // every request for the chat comes through here
     return rt;
   }
 
@@ -110,14 +122,22 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     db.prepare(`UPDATE agent_conversations SET ${sets.join(', ')} WHERE id = ?`).run(...values, rt.id);
   }
 
-  // The earlier messages of a resumed session are loaded once, the first time the conversation is opened.
-  async function loadHistory(rt) {
-    if (rt.loaded) return;
-    rt.loaded = true;
+  // The earlier messages of a resumed session are loaded once, the first time the conversation is opened (and again after it left the memory, see
+  // evictIdle). Whoever asks while they are being read waits for the same reading, so nobody goes on with half a conversation.
+  function loadHistory(rt) {
+    if (!rt.history) {
+      rt.reading = true;
+      rt.history = readHistory(rt).finally(() => { rt.reading = false; });
+    }
+    return rt.history;
+  }
+  async function readHistory(rt) {
     if (!rt.sessionId) return;
     try {
       const items = await adapters[rt.agent].loadHistory({ cwd: rt.workDir, sessionId: rt.sessionId });
-      for (const item of items) rt.items.set(item.id, item);
+      // Nothing of an earlier run of the agent is still running: a tool call that has no result (the turn was stopped, or it ended with the server)
+      // must not say "running" for ever. A live turn does the same when it ends (finishTurn).
+      for (const item of items) rt.items.set(item.id, item.kind === 'tool' && item.status === 'running' ? { ...item, status: 'error' } : item);
       // A chat opened after a restart (or from a session of the terminal) knows its model and context from the session itself.
       if (adapters[rt.agent].loadMeta) {
         try { mergeMeta(rt, await adapters[rt.agent].loadMeta({ cwd: rt.workDir, sessionId: rt.sessionId }), { keep: true }); } catch { /* the footer just stays empty */ }
@@ -203,6 +223,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     const known = agentLimits.get(rt.agent);
     if (!rt.limits && known && known.limits.length) rt.limits = known.limits;
     void refreshLimits(rt.agent);
+    rt.unseen = false; // a page has everything now
     return {
       conversation: publicRow(db.prepare('SELECT * FROM agent_conversations WHERE id = ?').get(id), rt),
       items: [...rt.items.values()], pending: pendingList(rt), status: rt.status, seq: rt.seq, queue: readQueue(id), suggestion: rt.status === 'running' ? null : rt.suggestion || null,
@@ -220,8 +241,11 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     const rt = runtimeFor(row, task);
     const oldest = rt.events.length ? rt.events[0].seq : rt.seq + 1;
     if (after + 1 < oldest && after < rt.seq) return null;
+    // A number this runtime never gave out: the page followed the chat before a restart of the Client. It would take the next events for old ones.
+    if (after > rt.seq) return null;
     for (const event of rt.events) if (event.seq > after) send(event);
     rt.subscribers.add(send);
+    rt.unseen = false;
     watchLimits(rt);
     let stream = null;
     if (typeof viewer === 'string' && VIEWER_ID.test(viewer)) {
@@ -234,6 +258,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
     return () => {
       rt.subscribers.delete(send);
+      rt.usedAt = now(); // the idle time starts when the last page has gone
       if (stream) {
         stream.readyState = 3;
         presence.drop(id, stream);
@@ -461,6 +486,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     catch (error) {
       writeQueue(rt, [head, ...readQueue(rt.id)], { restore: true });
       turnContext(rt).upsert({ id: `e${rt.counter++}`, kind: 'error', text: `Could not send the queued message: ${error.message}` });
+      rt.unseen = true;
     } finally { rt.dispatching = false; }
   }
   const dispatchSoon = (rt, task) => { if (readQueue(rt.id).length) setImmediate(() => { void dispatchQueue(rt, task); }); };
@@ -577,7 +603,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
 
   function turnContext(rt) {
     const turnNo = rt.suggestTurn; // the turn this context belongs to
-    return {
+    const ctx = {
       // `at`: when the item first appeared (ms). An item replaced by a newer version of itself keeps its time; history items come with the time the
       // agent recorded, the others are stamped now.
       upsert(item) {
@@ -596,11 +622,18 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       // /clear: the chat starts again from nothing; the pages (and the ones that come later) drop what was said before.
       resetConversation() {
         rt.items.clear();
+        rt.steered = false;
         emit(rt, { op: 'reset' });
         if (rt.context) { rt.context = { used: 0, window: rt.context.window }; emit(rt, { op: 'meta', context: rt.context }); } // the new session starts with an empty context
       },
       // What the running turn offers while it runs: `steer(prompt)` adds the person's input to it.
       setControl(control) { rt.control = control || null; },
+      // The agent's process outlives its turn and can still add to the chat (Claude Code is read on for the suggestion, and kept alive for background
+      // tasks): from `linger(true)` to `linger(false)` the chat stays in memory, whatever else is true of it.
+      linger(active) {
+        if (active) rt.lingering.add(ctx);
+        else if (rt.lingering.delete(ctx)) rt.usedAt = now();
+      },
       // The agent's guess at what the person says next (after the turn). It is dropped when the person sends something, so a late one from an
       // earlier turn is ignored; it is kept in memory only (a restart of the Client loses it, which is harmless).
       suggest(text) {
@@ -623,6 +656,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
         emit(rt, { op: 'session', session_id: sessionId });
       },
     };
+    return ctx;
   }
 
   // A request from the agent: an approval (allow / deny, optionally "for the session"), or `kind: 'question'` with `questions`
@@ -653,6 +687,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     try { await control.steer(prompt); }
     catch (error) { throw fail(rt.status === 'running' ? 'STEER_FAILED' : 'CONVERSATION_BUSY', 409); }
     ctx.upsert({ id: `u${Date.now().toString(36)}${rt.counter++}`, kind: 'user', text: prompt.display, attachments: prompt.names, steered: true }); // `steered`: it joined a running turn (see lib/agent-chat/fork-point.js)
+    rt.steered = true; // only this runtime knows which messages joined a turn: it stays in memory (evictIdle)
     return { success: true, steered: true };
   }
 
@@ -703,7 +738,8 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       // A tool that was still running when the turn ended (Stop, a failure) is not running any more: its group must not say "running" for ever.
       for (const item of [...rt.items.values()]) if (item.kind === 'tool' && item.status === 'running') ctx.upsert({ ...item, status: 'error' });
       if (controller.signal.aborted) ctx.upsert({ id: `n${rt.counter++}`, kind: 'notice', text: 'Stopped' });
-      else if (outcome && outcome.error) ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error });
+      else if (outcome && outcome.error) { ctx.upsert({ id: `e${rt.counter++}`, kind: 'error', text: outcome.error }); rt.unseen = true; } // why it failed is kept here only
+      rt.usedAt = now();
       touch(rt);
       emit(rt, { op: 'status', status: 'idle', ok: Boolean(outcome && outcome.ok), usage: outcome && outcome.usage, cost: outcome && outcome.cost });
       if (adapters[rt.agent].POLL_LIMITS) void refreshLimits(rt.agent, { maxAgeMs: limitsTurnGapMs }); // the turn used some of the plan
@@ -819,7 +855,65 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     return false;
   }
 
-  return { list, create, snapshot, subscribe, reportPresence, isSessionForeground, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits };
+  // ── Idle chats leave the memory ──
+  // A runtime holds the whole transcript of its chat and up to MAX_EVENTS events, and the server runs for weeks. A chat that nobody has used for `idleMs`
+  // is dropped from `runtimes`; the next request builds it again from the database and the agent's session, exactly as a chat that was never opened
+  // since the server started (what the page shows of a chat after a restart). It stays while something of it lives only here:
+  //  - work: a running turn, a request that waits for the person, earlier messages that are being read;
+  //  - a page that follows it (an open event stream);
+  //  - an agent process that outlived its turn and can still add to the chat (`ctx.linger`);
+  //  - queued messages: they wait for the person, and it is this runtime that sends them;
+  //  - what the session cannot bring back: the items of a chat that has no session yet, which messages joined a running turn (`steered`, a fork counts
+  //    turns with it), and the error of a failed turn until a page has loaded the chat after it.
+  // What does go is what a restart loses too: the suggested next message, the "Stopped" and error lines, and the model as the last turn reported it
+  // (the chosen model and effort, the queue and the session are in the database; the context use comes from the session).
+  const working = rt => rt.status === 'running' || rt.pending.size > 0 || Boolean(rt.reading) || rt.subscribers.size > 0 || rt.lingering.size > 0;
+  const onlyHere = rt => (!rt.sessionId && rt.items.size > 0) || Boolean(rt.steered) || Boolean(rt.unseen);
+  let queuedQuery = null;
+  // Drops the chats that have been idle long enough; returns their ids. One pass over the chats in memory, and one small read for each idle one.
+  function evictIdle() {
+    const at = now();
+    const evicted = [];
+    for (const rt of runtimes.values()) {
+      if (at - rt.usedAt < idleMs || working(rt)) continue;
+      if (!queuedQuery) queuedQuery = db.prepare('SELECT queue IS NOT NULL AS queued FROM agent_conversations WHERE id = ?'); // not the queue itself: it can hold images
+      const row = queuedQuery.get(rt.id);
+      if (row && (row.queued || onlyHere(rt))) continue; // no row: the chat went with its task, and nothing opens it again
+      seqFloor = Math.max(seqFloor, rt.seq + 1);
+      queueFloor = Math.max(queueFloor, rt.queueSeq || 0);
+      runtimes.delete(rt.id);
+      evicted.push(rt.id);
+    }
+    if (!runtimes.size) { clearInterval(idleTimer); idleTimer = null; }
+    return evicted;
+  }
+  let idleTimer = null;
+  function watchIdle() {
+    if (idleTimer || !sweepMs) return;
+    idleTimer = setInterval(() => { try { evictIdle(); } catch { /* the database is closed: the server is going down */ } }, sweepMs);
+    if (idleTimer.unref) idleTimer.unref(); // never keeps the process alive
+  }
+  // How many chats are in memory.
+  const loadedCount = () => runtimes.size;
+
+  // For the exit handler of the server: synchronous, and it never throws. Ends the agent processes the chat mode started that are still alive (a
+  // running turn, a Claude Code kept for background tasks, a Codex app server) and nothing else: each adapter names its own (`liveProcesses`, [{ pid,
+  // group }]), SIGTERM goes to each (to the whole group of a group leader), and what is still alive after a short wait gets SIGKILL. A turn that was
+  // running is cut: after the restart its chat is idle and shows what the agent's session recorded of it.
+  // `options`: { graceMs, kill, sleep, table } (lib/agent-chat/processes.js). Returns { signalled, killed }.
+  function shutdown(options) {
+    try {
+      clearInterval(idleTimer);
+      idleTimer = null;
+      clearInterval(limitsTimer);
+      limitsTimer = null;
+      return endSync(adapterProcesses(adapters), options);
+    } catch {
+      return { signalled: [], killed: [] };
+    }
+  }
+
+  return { list, create, snapshot, subscribe, reportPresence, isSessionForeground, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits, evictIdle, loadedCount, shutdown };
 }
 
 let shared = null;
@@ -829,4 +923,21 @@ function getAgentChat() {
   return shared;
 }
 
-module.exports = { createAgentChat, getAgentChat, IMAGE_TYPES };
+// The agent processes the adapters say are alive, [{ pid, group }]; an adapter that cannot say is left out, the others still count. An adapter named
+// twice is asked once.
+function adapterProcesses(adapters) {
+  const targets = [];
+  for (const adapter of new Set(Object.values(adapters || {}))) {
+    try { if (adapter && typeof adapter.liveProcesses === 'function') targets.push(...adapter.liveProcesses()); } catch { /* the others are still ended */ }
+  }
+  return targets;
+}
+
+// For the exit handler of the server (server.js): ends the agent processes of the server's chats. It never throws. It does not make the instance when
+// no chat was used (that would open the database on the way out), but still ends what the adapters started without one: the environment check starts
+// a Codex app server of its own (services/environment-check.js).
+function shutdown(options) {
+  try { return shared ? shared.shutdown(options) : endSync(adapterProcesses(ADAPTERS), options); } catch { return { signalled: [], killed: [] }; }
+}
+
+module.exports = { createAgentChat, getAgentChat, shutdown, IMAGE_TYPES };

@@ -2,9 +2,10 @@
 // /api/attention/widget/settings:
 // - phone 390x844 (touch): nothing is read until the group opens; the switch echoes the server (on), the status says Running; turning it off sends
 //   PUT { enabled: false } and shows Off; the language select sends PUT { language: 'zh' }; a refused PUT shows the error and what is in effect; while a
-//   build runs the status says so and is read again until it ends; a last error is shown; everything fits the screen.
+//   build runs the status says so and is read again until it ends; a last error is shown; everything fits the screen. The three window preferences
+//   (shortcuts, fade when idle, working agents) echo the server and each one saves at once (PUT { hotkeys: false } ...); the login hint is shown.
 // - computer 1440x900 (mouse): a Mac without the command line tools shows the xcode-select hint; another system shows "Not supported" with the
-//   switch and the select disabled; an older server (404) shows nothing.
+//   switch, the preferences and the select disabled; an older server (404) shows nothing; a server without the preferences shows the switch only.
 // - phone 390x844 in Chinese: the texts are translated.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
@@ -15,7 +16,7 @@ const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const SHOTS = process.env.H5_SHOT_DIR || '';
-const BASE_SETTING = { enabled: true, language: 'auto', platform_supported: true, swiftc: true, running: true, building: false, last_error: null };
+const BASE_SETTING = { enabled: true, language: 'auto', hotkeys: true, dim_when_idle: true, show_activity: true, platform_supported: true, swiftc: true, running: true, building: false, last_error: null };
 
 async function openPage(browser, { wide = false, chinese = false, model }) {
   const context = await browser.newContext({ viewport: wide ? { width: 1440, height: 900 } : { width: 390, height: 844 }, ...(wide ? {} : { isMobile: true, hasTouch: true }), ...(SHOTS && !wide ? { deviceScaleFactor: 3 } : {}) });
@@ -113,6 +114,24 @@ async function assertFits(page, label) {
       // The slot sits in the T-Attention group, after the plugins and before the skill pointer.
       const slots = await page.evaluate(() => [...document.querySelectorAll('#h5-set-attention .h5-attention-slot')].map(node => node.dataset.slot));
       assert.ok(slots.indexOf('widget') >= 0 && slots.indexOf('widget') < slots.indexOf('skill'), slots.join(','));
+      // The window preferences: echoed, saved at once one by one.
+      for (const id of ['hotkeys', 'dim-when-idle', 'show-activity']) assert.equal(await page.isChecked(`#h5-attention-widget-${id}`), true, id);
+      assert.equal(await page.getAttribute('#h5-attention-widget-hotkeys', 'aria-label'), 'Global shortcuts (Ctrl+Option+T panel, Ctrl+Option+N new task)');
+      assert.equal(await page.getAttribute('#h5-attention-widget-dim-when-idle', 'aria-label'), 'Fade when idle');
+      assert.equal(await page.getAttribute('#h5-attention-widget-show-activity', 'aria-label'), 'Show working agents');
+      assert.match(await page.locator('#h5-attention-widget-login').innerText(), /pm2 startup and pm2 save/);
+      for (const [id, field] of [['hotkeys', 'hotkeys'], ['dim-when-idle', 'dim_when_idle'], ['show-activity', 'show_activity']]) {
+        const before = model.calls.length;
+        await press(page.locator(`#h5-attention-widget-${id}`));
+        await page.waitForFunction(count => document.getElementById('h5-attention-widget-feedback').innerText === 'Saved', before);
+        await page.waitForFunction(selector => !document.querySelector(selector).checked, `#h5-attention-widget-${id}`);
+        assert.equal(model.calls.at(-1), `PUT {"${field}":false}`);
+        assert.equal(model.setting[field], false);
+      }
+      await press(page.locator('#h5-attention-widget-hotkeys'));
+      await page.waitForFunction(() => document.getElementById('h5-attention-widget-hotkeys').checked);
+      assert.equal(model.calls.at(-1), 'PUT {"hotkeys":true}');
+      await page.waitForFunction(() => !document.getElementById('h5-attention-widget-hotkeys').disabled);
       await assertFits(page, 'phone');
       await shot('phone-running');
 
@@ -171,6 +190,20 @@ async function assertFits(page, label) {
       assert.equal(await status(), 'Status: Not supported on this system');
       assert.equal(await page.isDisabled('#h5-attention-widget-enabled'), true);
       assert.equal(await page.isDisabled('#h5-attention-widget-language'), true);
+      for (const id of ['hotkeys', 'dim-when-idle', 'show-activity']) assert.equal(await page.isDisabled(`#h5-attention-widget-${id}`), true, id);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+    {
+      // A server from before the preferences: only the switch.
+      const setting = { ...BASE_SETTING };
+      delete setting.hotkeys; delete setting.dim_when_idle; delete setting.show_activity;
+      const model = { setting, calls: [], reads: 0 };
+      const { context, page, errors, openGroup } = await openPage(browser, { wide: true, model });
+      await openGroup();
+      await page.waitForFunction(() => Boolean(document.getElementById('h5-attention-widget-status')));
+      assert.equal(await page.locator('#h5-attention-widget-enabled').count(), 1);
+      for (const id of ['hotkeys', 'dim-when-idle', 'show-activity']) assert.equal(await page.locator(`#h5-attention-widget-${id}`).count(), 0, id);
       assert.deepEqual(errors, []);
       await context.close();
     }
@@ -192,7 +225,7 @@ async function assertFits(page, label) {
       await openGroup();
       await page.waitForFunction(() => Boolean(document.getElementById('h5-attention-widget-status')));
       const text = await page.locator('#h5-attention-widget').innerText();
-      assert.ok(!/Desktop window|stays above|Window language|Same as this page/.test(text), text);
+      assert.ok(!/Desktop window|stays above|Window language|Same as this page|Global shortcuts|Fade when idle|working agents|opens with T-Agent/.test(text), text);
       assert.match(text, /\u684c\u9762\u6d6e\u7a97/);
       assert.match(await status(), /\u5173\u95ed/);
       const options = await page.locator('#h5-attention-widget-language option').allInnerTexts();

@@ -1,7 +1,8 @@
 // The T-Attention desktop window (macOS): its settings and the launcher that builds and starts the native window (widgets/macos/TAttentionWidget.swift).
 // See "T-Attention desktop window (macOS)" in DESIGN.md.
 //
-// Settings (system_state, one key, nothing secret): `enabled` (default true) and `language` ('auto' | 'en' | 'zh', default 'auto'). 'auto' follows the
+// Settings (system_state, one key, nothing secret): `enabled` (default true), `language` ('auto' | 'en' | 'zh', default 'auto') and the window
+// preferences `hotkeys`, `dim_when_idle`, `show_activity` (booleans, default true; the window reads them at GET /prefs). 'auto' follows the
 // language of this person's T-Agent page, which the server learns from the page's `ta-lang` cookie (lib/static-assets.js wantsChinese) each time the page
 // or the window settings are loaded, and keeps in system_state; before the page was ever opened it is English.
 //
@@ -22,6 +23,8 @@ const syncStore = require('./settings-sync-store');
 const SETTINGS_KEY = 'attention_widget_settings_v1';
 const PAGE_LANGUAGE_KEY = 'attention_widget_page_language_v1';
 const LANGUAGES = ['auto', 'en', 'zh'];
+// The window's preferences (booleans, default true): global shortcuts, fading when idle, the working agents section.
+const PREFS = ['hotkeys', 'dim_when_idle', 'show_activity'];
 const BINARY = 't-attention-widget';
 const BUILD_TIMEOUT_MS = 600 * 1000;
 const LOOKUP_TIMEOUT_MS = 10 * 1000;
@@ -51,15 +54,23 @@ function createWidgetSettings({ db }) {
     return {
       enabled: stored.enabled !== false,
       language: LANGUAGES.includes(stored.language) ? stored.language : 'auto',
+      ...Object.fromEntries(PREFS.map(name => [name, stored[name] !== false])),
     };
   }
-  // { enabled?, language? } -> the saved settings. Anything else in the body is ignored.
+  // The preferences the window reads (GET /api/attention/widget/prefs).
+  const prefs = () => { const current = read(); return Object.fromEntries(PREFS.map(name => [name, current[name]])); };
+  // { enabled?, language?, hotkeys?, dim_when_idle?, show_activity? } -> the saved settings. Anything else in the body is ignored.
   function save(body) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new WidgetError('VALIDATION_FAILED', 'The request body must be a JSON object');
     const next = read();
     if (body.enabled !== undefined) {
       if (typeof body.enabled !== 'boolean') throw new WidgetError('VALIDATION_FAILED', 'enabled must be true or false');
       next.enabled = body.enabled;
+    }
+    for (const name of PREFS) {
+      if (body[name] === undefined) continue;
+      if (typeof body[name] !== 'boolean') throw new WidgetError('VALIDATION_FAILED', `${name} must be true or false`);
+      next[name] = body[name];
     }
     if (body.language !== undefined) {
       if (!LANGUAGES.includes(body.language)) throw new WidgetError('VALIDATION_FAILED', `language must be one of: ${LANGUAGES.join(', ')}`);
@@ -84,7 +95,7 @@ function createWidgetSettings({ db }) {
   // The language the window shows: the setting, or the page's for 'auto'.
   const language = () => { const { language: chosen } = read(); return chosen === 'auto' ? pageLanguage() : chosen; };
 
-  return { read, save, notePageLanguage, pageLanguage, language };
+  return { read, prefs, save, notePageLanguage, pageLanguage, language };
 }
 
 // Why the window is never started in this process, or null. A platform other than macOS is `platform_supported: false`, not a reason here.
@@ -303,4 +314,4 @@ function importFromSync({ db }, owner, value) {
   syncStore.writeState(db, SETTINGS_KEY, next);
 }
 
-module.exports = { SYNC_GROUP, exportForSync, importFromSync, createWidgetSettings, createWidgetLauncher, blockedReason, WidgetError, SETTINGS_KEY, PAGE_LANGUAGE_KEY, LANGUAGES };
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, createWidgetSettings, createWidgetLauncher, blockedReason, WidgetError, SETTINGS_KEY, PAGE_LANGUAGE_KEY, LANGUAGES, PREFS };

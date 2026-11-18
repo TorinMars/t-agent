@@ -32,7 +32,6 @@
   "New task",
   "Nothing needs you",
   "None",
-  "Done: {1}",
   "Could not load {1}",
   "Move failed: {1}",
   "Quit",
@@ -47,5 +46,8 @@
   "Open link: {1}",
   "Close",
   "Open T-Agent",
-  "+{1} more"
+  "+{1} more",
+  "Search",
+  "No matches",
+  "Finished ({1})"
 ]

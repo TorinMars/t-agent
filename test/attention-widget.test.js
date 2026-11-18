@@ -325,7 +325,7 @@ test('every action goes to the engine of its key', async () => {
 
 test('strings: the list in widgets/macos/strings.json, in English or from the Chinese dictionary', async () => {
   const list = readStringList();
-  for (const text of ['Needs you', 'Done: {1}', 'Could not load {1}', 'Nothing needs you', 'Quit']) assert.ok(list.includes(text), text);
+  for (const text of ['Needs you', 'Finished ({1})', 'Could not load {1}', 'Nothing needs you', 'Quit']) assert.ok(list.includes(text), text);
   const words = createDictionary()();
   const missing = list.filter(text => typeof words[text] !== 'string');
   assert.deepEqual(missing, [], 'every string of the window has a Chinese translation in public/js/i18n-zh-*.js');
@@ -333,13 +333,13 @@ test('strings: the list in widgets/macos/strings.json, in English or from the Ch
   let answer = await call('GET', `${base}/strings`, undefined, AUTH);
   assert.equal(answer.body.lang, 'en');
   assert.equal(answer.body.strings['Needs you'], 'Needs you');
-  assert.equal(answer.body.strings['Done: {1}'], 'Done: {1}');
+  assert.equal(answer.body.strings['Finished ({1})'], 'Finished ({1})');
   settings.save({ language: 'zh' });
   answer = await call('GET', `${base}/strings`, undefined, AUTH);
   assert.equal(answer.body.lang, 'zh');
   assert.equal(answer.body.strings['Needs you'], words['Needs you']);
-  assert.match(answer.body.strings['Done: {1}'], /\{1\}/, 'the placeholder stays');
-  assert.notEqual(answer.body.strings['Done: {1}'], 'Done: {1}');
+  assert.match(answer.body.strings['Finished ({1})'], /\{1\}/, 'the placeholder stays');
+  assert.notEqual(answer.body.strings['Finished ({1})'], 'Finished ({1})');
   // 'auto' follows the page's language, which the settings read learns from its cookie.
   settings.save({ language: 'auto' });
   assert.equal((await call('GET', `${base}/strings`, undefined, AUTH)).body.lang, 'en');
@@ -390,7 +390,7 @@ test('settings: echoed with the launcher status, validated, and the switch start
   const launcher = fakeLauncher();
   const { base } = await widgetApp({ launcher });
   let answer = await call('GET', `${base}/settings`);
-  assert.deepEqual(answer.body, { enabled: true, language: 'auto', platform_supported: true, swiftc: true, running: true, building: false, last_error: null });
+  assert.deepEqual(answer.body, { enabled: true, language: 'auto', hotkeys: true, dim_when_idle: true, show_activity: true, platform_supported: true, swiftc: true, running: true, building: false, last_error: null });
   assert.equal(answer.headers.get('cache-control'), 'no-store');
   answer = await call('PUT', `${base}/settings`, { enabled: false });
   assert.equal(answer.body.enabled, false);
@@ -402,13 +402,44 @@ test('settings: echoed with the launcher status, validated, and the switch start
   answer = await call('PUT', `${base}/settings`, { enabled: true });
   assert.deepEqual(launcher.enabledCalls, [false, true]);
   assert.equal(answer.body.running, true);
-  for (const body of [{ enabled: 'yes' }, { language: 'fr' }, [1]]) {
+  for (const body of [{ enabled: 'yes' }, { language: 'fr' }, [1], { hotkeys: 1 }, { dim_when_idle: 'false' }, { show_activity: null }]) {
     const refused = await call('PUT', `${base}/settings`, body);
     assert.equal(refused.status, 400, JSON.stringify(body));
     assert.equal(refused.body.error, 'VALIDATION_FAILED');
   }
   assert.deepEqual((await call('GET', `${base}/settings`)).body.language, 'zh');
   await call('PUT', `${base}/settings`, { language: 'auto' });
+});
+
+test('prefs: the window preferences, saved on the settings card and read by the window with its token', async () => {
+  db.prepare("DELETE FROM system_state WHERE key LIKE 'attention_widget_%'").run();
+  const launcher = fakeLauncher();
+  const { base } = await widgetApp({ launcher });
+  assert.equal((await call('GET', `${base}/prefs`)).status, 401, 'the window token is required');
+  let prefs = await call('GET', `${base}/prefs`, undefined, AUTH);
+  assert.equal(prefs.status, 200);
+  assert.equal(prefs.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(prefs.body, { hotkeys: true, dim_when_idle: true, show_activity: true });
+  let answer = await call('PUT', `${base}/settings`, { hotkeys: false, show_activity: false });
+  assert.equal(answer.status, 200);
+  assert.equal(answer.body.hotkeys, false);
+  assert.equal(answer.body.dim_when_idle, true);
+  assert.equal(answer.body.show_activity, false);
+  assert.deepEqual(launcher.enabledCalls, [], 'a preference does not start or stop the window');
+  prefs = await call('GET', `${base}/prefs`, undefined, AUTH);
+  assert.deepEqual(prefs.body, { hotkeys: false, dim_when_idle: true, show_activity: false });
+  answer = await call('PUT', `${base}/settings`, { dim_when_idle: 'no' });
+  assert.equal(answer.status, 400);
+  assert.equal(answer.body.message, 'dim_when_idle must be true or false');
+  answer = await call('PUT', `${base}/settings`, { dim_when_idle: false, hotkeys: true });
+  assert.deepEqual((await call('GET', `${base}/prefs`, undefined, AUTH)).body, { hotkeys: true, dim_when_idle: false, show_activity: false });
+  // The Chinese of the message comes from the "{1} must be true or false" template.
+  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  sandbox.window = sandbox;
+  require('node:vm').createContext(sandbox);
+  for (const file of ['i18n.js', 'i18n-zh-server.js']) require('node:vm').runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', file), 'utf8'), sandbox);
+  for (const name of ['hotkeys', 'dim_when_idle', 'show_activity']) assert.notEqual(sandbox.I18n.t(`${name} must be true or false`), `${name} must be true or false`);
+  db.prepare("DELETE FROM system_state WHERE key LIKE 'attention_widget_%'").run();
 });
 
 // ── The launcher, with fakes for everything that would touch the system.

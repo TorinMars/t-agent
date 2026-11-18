@@ -1697,7 +1697,8 @@ I18n.add({
   "Enter the other client’s address and a pairing code made there under “Let other clients connect to this one”. Only this side sees the other.": "填写另一个客户端的地址，以及在那边“让其他客户端连接到这台”里生成的配对码。只有这一边能看到另一边。",
   // The T-Attention desktop window (macOS): its own words (widgets/macos/strings.json, served by GET /api/attention/widget/strings) and its settings
   // card (scripts/h5-shell/AttentionWidgetSettings.jsx).
-  "Done: {1}": "已完成：{1}",
+  "Finished ({1})": "已结束（{1}）",
+  "No matches": "没有匹配的任务",
   "Waits for your confirmation": "等你确认",
   "Quit": "退出",
   "Could not reach T-Agent": "无法连接 T-Agent",
@@ -1708,6 +1709,10 @@ I18n.add({
   "A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.": "一个停在这台 Mac 其他窗口上方的小窗口，显示这台机器和已连接设备上需要你处理的任务。",
   "Window language": "浮窗语言",
   "Same as this page": "跟随此页面",
+  "Global shortcuts (Ctrl+Option+T panel, Ctrl+Option+N new task)": "全局快捷键（Ctrl+Option+T 打开面板，Ctrl+Option+N 新建任务）",
+  "Fade when idle": "闲置时变淡",
+  "Show working agents": "显示正在工作的智能体",
+  "The window opens with T-Agent. To start T-Agent when you log in, run pm2 startup and pm2 save.": "浮窗随 T-Agent 一起打开。要在登录时启动 T-Agent，请运行 pm2 startup 和 pm2 save。",
   "Not supported on this system": "此系统不支持",
   "Xcode command line tools needed: xcode-select --install": "需要 Xcode 命令行工具：xcode-select --install",
   "Building the window…": "正在构建浮窗…",

@@ -365,6 +365,9 @@ function createAttentionWidgetRoutes({
     res.json(notices.list({ after }));
   }));
 
+  // The window's preferences (the settings card's switches): { hotkeys, dim_when_idle, show_activity }. Read at start and on every 5 s tick.
+  api.get('/prefs', handle(async (req, res) => res.json(settings.prefs())));
+
   api.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
 
   function bearer(req, res, next) {

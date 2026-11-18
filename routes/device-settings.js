@@ -37,8 +37,8 @@ const ALLOWLIST = Object.freeze([
   { method: 'GET', path: /^\/rule-sync\/shared$/, body: null, timeoutMs: 20_000, maxBytes: 16 * 1024 * 1024 },
   { method: 'PUT', path: /^\/rule-sync\/shared$/, body: ['content', 'base_revision'], timeoutMs: 20_000 },
   { method: 'GET', path: /^\/attention\/widget\/settings$/, body: null },
-  // The window switch only: its language is a shared setting (settings sync), changed on this device's page.
-  { method: 'PUT', path: /^\/attention\/widget\/settings$/, body: ['enabled'], timeoutMs: 20_000 },
+  // The window switch and its preferences only: its language is a shared setting (settings sync), changed on this device's page.
+  { method: 'PUT', path: /^\/attention\/widget\/settings$/, body: ['enabled', 'hotkeys', 'dim_when_idle', 'show_activity'], timeoutMs: 20_000 },
 ]);
 
 // The entry for a request, or null. `path` must be a plain path of printable ASCII.

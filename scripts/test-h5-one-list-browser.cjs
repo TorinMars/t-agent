@@ -97,7 +97,8 @@ async function serve(world, route) {
   return json(route, { error: 'not mocked' }, 404);
 }
 
-async function open(browser, world, wide, { storage = {}, scale = 1 } = {}) {
+// clock: the page runs on Playwright's clock (time still flows), so a test can jump over the page's slow timers with page.clock.fastForward().
+async function open(browser, world, wide, { storage = {}, scale = 1, clock = false } = {}) {
   const context = await browser.newContext(wide ? { viewport: { width: 1280, height: 800 } } : { viewport: { width: 390, height: 844 }, deviceScaleFactor: scale, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.on('pageerror', error => world.pageErrors.push(error.message));
@@ -115,6 +116,7 @@ async function open(browser, world, wide, { storage = {}, scale = 1 } = {}) {
   }, storage);
   await page.addInitScript(activityStreamMock);
   await page.route(`${ORIGIN}/**`, route => serve(world, route));
+  if (clock) await page.clock.install();
   await page.goto(`${ORIGIN}/h5`);
   return { context, page };
 }
@@ -306,7 +308,7 @@ async function testOfflineAndReturn(browser, wide) {
   const label = wide ? 'wide' : 'phone';
   const world = makeWorld();
   world.vps.offline = true;
-  const { context, page } = await open(browser, world, wide);
+  const { context, page } = await open(browser, world, wide, { clock: true });
   const t = tools(page, wide);
   await t.sheet();
   await t.row('local', 'Alpha').waitFor();
@@ -315,14 +317,15 @@ async function testOfflineAndReturn(browser, wide) {
   assert.doesNotMatch(await page.locator('#h5-task-list').textContent(), /Could not/, `${label}: no error text`);
   assert.equal(await page.evaluate(url => window.activityStream.open(url), REMOTE_STREAM), false, `${label}: no feed while offline`);
 
-  // It comes back by itself (the slow poll runs while the page is visible).
+  // It comes back by itself (the slow poll runs while the page is visible: every 30 s, jumped over here instead of waited out).
   world.vps.offline = false;
-  await t.row('remote:7', 'Alpha').waitFor({ timeout: 40000 });
+  await page.clock.fastForward(30000);
+  await t.row('remote:7', 'Alpha').waitFor({ timeout: 10000 });
   assert.equal(await page.locator('.h5-device-tag[data-offline]').count(), 0, `${label}: the Offline mark is gone`);
   await page.waitForFunction(url => window.activityStream.open(url), REMOTE_STREAM);
 
   // Going offline in use: a dropped feed reads the list again and marks it. A task of another service stays usable.
-  await page.waitForTimeout(5200); // a failed feed reads the list at most every 5 s, and it was just read
+  await page.clock.fastForward(5200); // a failed feed reads the list at most every 5 s, and it was just read
   world.vps.offline = true;
   await page.evaluate(url => window.activityStream.drop(url), REMOTE_STREAM);
   await page.locator('.h5-task[data-source="remote:7"] .h5-device-tag[data-offline="true"]').first().waitFor({ timeout: 10000 });

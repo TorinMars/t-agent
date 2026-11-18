@@ -44,15 +44,20 @@ const server = http.createServer((req, res) => {
     await tab.goto(origin);
     const get = expression => tab.evaluate(expression);
     const liveTracks = () => get(() => window.streams.filter(stream => stream.getTracks().every(track => track.readyState === 'live')).length);
-    const settle = ms => tab.waitForTimeout(ms);
+    const settle = ms => tab.waitForTimeout(ms); // only before a check that nothing happens
+    // A state the page reaches by itself (tracks stopped or taken, audio sent): waited for, not slept for, so a loaded machine (npm test runs four
+    // scripts at a time) only makes it slower, never wrong.
+    const live = () => window.streams.filter(stream => stream.getTracks().every(track => track.readyState === 'live')).length;
+    const reaches = (check, arg, message) => tab.waitForFunction(check, arg, { timeout: 15000 }).catch(() => assert.fail(message));
+    const liveTracksBecome = (count, message) => reaches(`(${live})() === ${count}`, undefined, message);
     // Time from the tap to the first block of audio, and whether the recognizer is ready, for the numbers below.
     const record = async () => {
       const before = await get(() => window.blocks);
       const t0 = Date.now();
       await tab.click('#m');
-      await tab.waitForFunction(count => window.blocks > count, before, { timeout: 5000 });
+      await tab.waitForFunction(count => window.blocks > count, before, { timeout: 15000 });
       const ms = Date.now() - t0;
-      await tab.waitForFunction(() => window.recording.state === 'listening', null, { timeout: 5000 });
+      await tab.waitForFunction(() => window.recording.state === 'listening', null, { timeout: 15000 });
       return ms;
     };
 
@@ -62,8 +67,7 @@ const server = http.createServer((req, res) => {
     const coldMs = await record();
     assert.equal(await get(() => window.gum), 1);
     await get(() => window.recording.cancel());
-    await settle(150);
-    assert.equal(await liveTracks(), 0, 'the microphone is let go after the recording');
+    await liveTracksBecome(0, 'the microphone is let go after the recording');
 
     // On: the microphone is taken once and the audio graph runs silent.
     await tab.click('#keep');
@@ -79,8 +83,7 @@ const server = http.createServer((req, res) => {
     const warmMs = await record();
     assert.equal(await get(() => window.gum), 2, 'no second request for the microphone');
     assert.equal(await get(() => window.nodes), 2, 'no new audio graph');
-    await settle(300);
-    assert.ok(await get(() => window.sockets.at(-1).sent.filter(item => item === 'audio').length) > 0, 'the audio reaches the recognizer');
+    await reaches(() => window.sockets.at(-1).sent.filter(item => item === 'audio').length > 0, undefined, 'the audio reaches the recognizer');
     await get(() => window.recording.cancel());
     await settle(250);
     assert.equal(await liveTracks(), 1, 'the microphone is kept after the recording');
@@ -95,23 +98,19 @@ const server = http.createServer((req, res) => {
 
     // A hidden page does not hold the microphone; a shown page takes it again.
     await get(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
-    await settle(150);
-    assert.equal(await liveTracks(), 0, 'let go while the page is hidden');
+    await liveTracksBecome(0, 'let go while the page is hidden');
     await get(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); document.dispatchEvent(new Event('visibilitychange')); });
     await tab.waitForFunction(() => window.gum === 3);
-    await settle(150);
-    assert.equal(await liveTracks(), 1, 'taken again when the page is shown');
+    await liveTracksBecome(1, 'taken again when the page is shown');
 
     // Off again: the microphone is let go and recordings work as before.
     await tab.click('#keep');
-    await settle(150);
     assert.equal(await get(() => VoiceInput.keepWarm), false);
-    assert.equal(await liveTracks(), 0);
+    await liveTracksBecome(0, 'let go when it is turned off');
     await record();
     assert.equal(await get(() => window.gum), 4, 'a recording asks for the microphone again');
     await get(() => window.recording.cancel());
-    await settle(150);
-    assert.equal(await liveTracks(), 0);
+    await liveTracksBecome(0, 'let go after a recording once it is off');
     assert.deepEqual(await get(() => window.notices), []);
     assert.deepEqual(errors, []);
     console.log(`Keep the microphone ready: kept once, silent while idle, handed back by a recording, let go when hidden or turned off (tap to first audio: ${coldMs} ms without it, ${warmMs} ms with it, on this fake microphone).`);

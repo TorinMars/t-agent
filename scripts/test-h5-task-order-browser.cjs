@@ -83,7 +83,8 @@ async function serve(world, route) {
   return json(route, { error: 'not mocked' }, 404);
 }
 
-async function open(browser, world, wide) {
+// clock: the page runs on Playwright's clock (time still flows), so a test can jump over a slow timer of the page with page.clock.fastForward().
+async function open(browser, world, wide, { clock = false } = {}) {
   const context = await browser.newContext(wide ? { viewport: { width: 1280, height: 800 } } : { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.on('pageerror', error => world.pageErrors.push(error.message));
@@ -106,11 +107,15 @@ async function open(browser, world, wide) {
         const y = (String((keyframes[0] || {}).transform || '').match(/translate3d\([^,]+,\s*(-?[\d.]+)px/) || [])[1];
         window.flips.push({ title: this.querySelector('.h5-task-title').textContent, from: y === undefined ? null : Number(y) });
       }
-      return animate.call(this, keyframes, options);
+      const animation = animate.call(this, keyframes, options);
+      // window.flipRate: a test that looks at slides while they run makes them slower, so a loaded machine cannot let them end before it looks.
+      if (window.flipRate && this.classList.contains('h5-task')) animation.playbackRate = window.flipRate;
+      return animation;
     };
   });
   await page.addInitScript(activityStreamMock);
   await page.route(`${ORIGIN}/**`, route => serve(world, route));
+  if (clock) await page.clock.install();
   await page.goto(`${ORIGIN}/h5`);
   return { context, page };
 }
@@ -691,7 +696,7 @@ async function testGroups(browser, wide) {
 async function testUnknownId(browser) {
   const label = 'wide';
   const world = makeWorld({ older: true });
-  const { context, page } = await open(browser, world, true);
+  const { context, page } = await open(browser, world, true, { clock: true });
   const t = tools(page, true);
   await t.sheet();
   await t.waitTitles([...FIRST, 'Foxtrot']);
@@ -722,7 +727,8 @@ async function testUnknownId(browser) {
   await page.keyboard.press('Escape');
   // The server learns the id: the rows are read again and its task joins the order as a new task (first, after this machine's new one).
   world.oldId = OLD_ID;
-  await page.waitForFunction(() => document.querySelector('.h5-task[data-source="remote:8"]')?.dataset.movable === 'true', null, { timeout: 25000 });
+  await page.clock.fastForward(15000); // the rows of a service without an id are read again every 15 s (ID_RETRY_MS in h5.js)
+  await page.waitForFunction(() => document.querySelector('.h5-task[data-source="remote:8"]')?.dataset.movable === 'true', null, { timeout: 10000 });
   await t.waitTitles(['Beta', 'Foxtrot', ...FIRST.slice(1)]);
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
@@ -955,6 +961,7 @@ async function testFlip(browser) {
   const world = makeWorld();
   const { context, page } = await open(browser, world, true);
   const t = tools(page, true);
+  await page.evaluate(() => { window.flipRate = 0.25; }); // each slide 720 ms instead of 180 ms
   await t.sheet();
   await t.waitTitles(FIRST);
   await t.press(t.row('Alpha').locator('.h5-task-item'));
@@ -997,7 +1004,14 @@ async function testFlip(browser) {
   world.order = { order: [V(2), L(2), L(3), L(1), V(1)], updated_at: 120 };
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await t.waitTitles(['Echo', 'Beta', 'Gamma', 'Alpha', 'Delta']);
-  await page.waitForTimeout(50);
+  // The second order must come while the first slide is about half way. With a fixed 50 ms wait, on a loaded machine the 180 ms slide was often over
+  // before the second order arrived (Echo had less than 40px to go). So the first slide runs slower still (1.8 s), and the second order goes once Echo has
+  // slid 40% of its way: it is then still in the middle when the answer comes.
+  await page.evaluate(() => { for (const animation of document.getAnimations()) if (animation.effect.target?.classList.contains('h5-task')) animation.playbackRate = 0.1; });
+  await page.waitForFunction(() => {
+    const echo = document.getAnimations().find(animation => animation.effect.target?.classList.contains('h5-task') && animation.effect.target.querySelector('.h5-task-title')?.textContent === 'Echo');
+    return echo && echo.playState === 'running' && echo.effect.getComputedTiming().progress >= 0.4;
+  }, null, { timeout: 5000 });
   world.order = { order: [L(2), L(3), L(1), V(1), V(2)], updated_at: 121 };
   const mark = await page.evaluate(() => { const at = window.frames.length; document.dispatchEvent(new Event('visibilitychange')); return at; });
   await t.waitTitles(['Beta', 'Gamma', 'Alpha', 'Delta', 'Echo']);

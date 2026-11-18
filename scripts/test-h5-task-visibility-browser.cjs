@@ -5,6 +5,7 @@ const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { settled: settledPage } = require('./browser-test-wait.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -112,7 +113,7 @@ async function openPage(browser, server, viewport, touch) {
 
 function helpers(page, server, wide, label) {
   const press = locator => (wide ? locator.click() : locator.tap());
-  const settled = () => page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running' && animation.effect.getComputedTiming().iterations !== Infinity));
+  const settled = () => settledPage(page);
   const row = title => page.locator('.h5-task-row', { hasText: title });
   const sheet = async () => {
     if (!wide && !await page.locator('#h5-tasks').isVisible()) await page.locator('#h5-open-tasks').tap();

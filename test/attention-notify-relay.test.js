@@ -171,6 +171,30 @@ test('a device that is not the sender relays the delivery to the sender, which s
   assert.equal(row.summary, 'Sent through A');
 });
 
+// The race of two devices that come online together: A asks B before B has asked A, so B still says it has no sender and A keeps that for 60 s. The first
+// relay from B is the proof that B sends through A: A's page lists B at once, not only when the cached facts run out.
+test('the sender lists a device as relaying through it as soon as that device relays, even when its probe of the device was older', async t => {
+  const a = await makeDevice(t, 'A', { ready: true });
+  const b = await makeDevice(t, 'B');
+  link(a, b);
+  await a.relay.refreshStale(); // B has not asked A yet: its effective sender is nobody
+  assert.deepEqual((await a.call('GET', '/api/attention-notify/config')).body.relay.relaying, []);
+  const probes = () => a.requests.filter(entry => entry.pathname.endsWith('/status')).length;
+  const probesBefore = probes();
+  b.bus.emit(change(item(9, 'waiting_user'), item(9, 'working')));
+  await until(() => a.calls.length === 1 && b.service.recent().some(entry => entry.outcome === 'relayed'), 'A sent it');
+  // No clock change, no refreshStale: the cache of A is still fresh, and it already knows.
+  const viewA = (await a.call('GET', '/api/attention-notify/config')).body.relay;
+  assert.deepEqual(viewA.relaying, [{ name: 'B', online: true }]);
+  assert.equal(probes(), probesBefore, 'A learned it from the relay, without asking B again');
+  // A test and a direct message from B teach A the same, for a device A never asked.
+  const c = await makeDevice(t, 'C');
+  link(a, c);
+  await c.relay.refreshStale();
+  assert.equal((await c.service.sendDirect({ text: 'hello from C' })).results[0].outcome, 'relayed');
+  assert.deepEqual(a.relay.view().relaying.map(entry => entry.name).sort(), ['B', 'C']);
+});
+
 test('the foreground rule, quiet hours and dedupe are decided on the origin, before anything is relayed', async t => {
   let foreground = true;
   const a = await makeDevice(t, 'A', { ready: true });
@@ -656,8 +680,9 @@ test('two real services over a service-link tunnel: an item on B that needs you 
   const recentB = (await b.call('GET', '/api/attention-notify/config')).body.recent;
   assert.equal(recentB[0].outcome, 'relayed');
   assert.equal(recentB[0].via, nameOfA);
-  // The other way: A's own item stays on A; A is told it sends for B.
-  await until(async () => ((await a.call('GET', '/api/attention-notify/config')).body.relay.relaying || []).length === 1, 'A lists B', 10000);
+  // The other way: A's own item stays on A; A is told it sends for B. The relay it just accepted is the signal, so there is nothing to wait for: before,
+  // A learned it only from a probe of B, and when A had asked B before B knew that A sends (the two come online together), from the next probe 60 s later.
+  assert.deepEqual((await a.call('GET', '/api/attention-notify/config')).body.relay.relaying, [{ name: nameOfB, online: true }], 'A lists B');
   // A test from B's page goes through A.
   const tested = await b.call('POST', '/api/attention-notify/relay/test', { kind: 'message' });
   assert.equal(tested.status, 200, tested.text);

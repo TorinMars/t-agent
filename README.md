@@ -664,6 +664,8 @@ npm test
 
 `npm test` runs four test files at a time (`node --test --test-concurrency=4`), about 11 minutes on an 8-core machine: the browser regressions start real Chromium windows and shells, so run it alone; with other heavy work on the machine, or with every file in parallel, the slower ones time out. Playwright is pinned to 1.58.2, which is compatible with macOS 13. The full test run includes real Chromium browser regressions, and the dev dependencies include Playwright, xterm and the Fit addon. Linux CI can install the system dependencies with `npx playwright install --with-deps chromium`; you can also point `CHROME_PATH` at an existing Chromium executable.
 
+CI (GitHub Actions) runs only the unit and integration tests, `node --test test/*.test.js`, on Node 20 and Node 24; the browser scripts run on a local machine. A browser script waits for what the page does (`settled(page)` in `scripts/browser-test-wait.cjs` for sheets and dialogs that slide or fade in) and jumps over the page's slow timers with Playwright's clock (`page.clock.install()`, `page.clock.fastForward(ms)`) instead of sleeping; a fixed wait is kept only before a check that something does not happen.
+
 
 The default address is `http://127.0.0.1:3000`.
 

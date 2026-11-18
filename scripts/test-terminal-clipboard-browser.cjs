@@ -83,7 +83,9 @@ async function openPage(browser, touch, size) {
   await page.goto(`${ORIGIN}/h5`);
   assert.equal(await page.evaluate(() => document.documentElement.dataset.input), touch ? 'touch' : 'pointer');
   const how = touch ? 'tap' : 'click';
-  if (touch || !(await page.locator('.h5-task-item', { hasText: 'Fix login' }).isVisible())) await page.locator('#h5-open-tasks')[how]().catch(() => {});
+  // A phone with nothing to bring back opens on the task sheet by itself (h5.js start), and the sheet covers the button that opens it: tapping it waited out
+  // the whole 30 s action timeout. A wide page has the list in its sidebar.
+  if (!touch && !(await page.locator('.h5-task-item', { hasText: 'Fix login' }).isVisible())) await page.locator('#h5-open-tasks')[how]();
   await page.locator('.h5-task-item', { hasText: 'Fix login' })[how]();
   await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main').first()[how]();
   await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);

@@ -1188,11 +1188,17 @@ test('a 256 MiB upload streams through: B reads it while A is still sending, and
   let producedAtFirstByte = null;
   let maxQueued = 0;
   let maxBuffers = 0;
+  let collectGarbage = null;
+  try { require('node:v8').setFlagsFromString('--expose-gc'); collectGarbage = require('node:vm').runInNewContext('gc'); } catch { collectGarbage = null; }
   const baseline = process.memoryUsage().arrayBuffers;
   const sampler = setInterval(() => {
     if (producedAtFirstByte === null && received.bytes > 0) producedAtFirstByte = body.produced;
     for (const channel of hub.tunnels.get(link.linkId).streams.values()) maxQueued = Math.max(maxQueued, channel.queuedBytes);
-    maxBuffers = Math.max(maxBuffers, process.memoryUsage().arrayBuffers - baseline);
+    // Buffers that are already garbage are not held by the tunnel: before a high reading counts, they are collected (a runner with much free
+    // memory collects late, and a reading of 116 MB was once only that).
+    let grown = process.memoryUsage().arrayBuffers - baseline;
+    if (grown > 48 * 1024 * 1024 && collectGarbage) { collectGarbage(); grown = process.memoryUsage().arrayBuffers - baseline; }
+    maxBuffers = Math.max(maxBuffers, grown);
   }, 5);
   t.after(() => clearInterval(sampler));
   const answer = await new Promise((resolve, reject) => {
@@ -1210,7 +1216,7 @@ test('a 256 MiB upload streams through: B reads it while A is still sending, and
   assert.ok(producedAtFirstByte !== null && producedAtFirstByte < 16 * 1024 * 1024, `B started reading after ${producedAtFirstByte} bytes were produced`);
   // One window (512 KiB) plus the chunk that crossed it.
   assert.ok(maxQueued <= 512 * 1024 + 64 * 1024, `queued on A at most ${maxQueued}`);
-  // A and B run in this process: all their buffers together stay far below the body (garbage not yet collected counts too).
+  // A and B run in this process: all the buffers they hold together stay far below the body.
   assert.ok(maxBuffers < 96 * 1024 * 1024, `buffers grew by at most ${maxBuffers}`);
   await until(() => hub.streamCount(link.linkId) === 0, 'the stream to be released');
 });

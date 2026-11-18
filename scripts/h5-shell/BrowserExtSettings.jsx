@@ -35,8 +35,8 @@ function CopyLine({ id, label, value }) {
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 0 }}>
       {label ? <Typography variant="body2" color="text.secondary">{label}</Typography> : null}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <Box component="code" id={id} translate="no" sx={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', userSelect: 'all', fontSize: 13, px: 1, py: 0.75, borderRadius: 1, bgcolor: 'action.hover' }}>{value}</Box>
-        <Button id={`${id}-copy`} variant="outlined" size="small" sx={{ flexShrink: 0, minHeight: 44 }} onClick={async () => setCopied(await copyText(value))}>{copied ? t('Copied') : t('Copy')}</Button>
+        <Box component="code" id={id} translate="no" sx={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere', userSelect: 'all', typography: 'body2', fontFamily: 'monospace', px: 1, py: 0.75, borderRadius: 1, bgcolor: 'action.hover' }}>{value}</Box>
+        <Button id={`${id}-copy`} size="small" sx={{ flexShrink: 0 }} onClick={async () => setCopied(await copyText(value))}>{copied ? t('Copied') : t('Copy')}</Button>
       </Box>
     </Box>
   );
@@ -94,14 +94,14 @@ function PairDialog({ open, status, onClose, onPaired }) {
   const serverUrl = status.serverUrl || FALLBACK_URL;
   return (
     <Dialog id="h5-browser-pair-dialog" open={open} onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="h5-browser-pair-title">
-      <DialogTitle id="h5-browser-pair-title" sx={{ fontSize: 18 }}>{t('Pair a browser')}</DialogTitle>
+      <DialogTitle id="h5-browser-pair-title" >{t('Pair a browser')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {error ? <Typography id="h5-browser-pair-error" role="alert" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>{error}</Typography> : null}
         {!made && !error ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : null}
         {paired ? <Typography id="h5-browser-pair-done" role="status" variant="body1" sx={{ overflowWrap: 'anywhere' }}>{t('Paired:')} <span translate="no">{paired.name}</span></Typography> : null}
         {made && !paired ? (
           <>
-            <Box id="h5-browser-pair-code" translate="no" aria-label={t('Pairing code')} sx={{ fontSize: 34, fontWeight: 700, letterSpacing: 3, textAlign: 'center', fontFamily: 'monospace', opacity: expired ? 0.4 : 1 }}>{pairCodeText(made.code)}</Box>
+            <Box id="h5-browser-pair-code" translate="no" aria-label={t('Pairing code')} sx={{ typography: 'h4', fontWeight: 700, letterSpacing: 3, textAlign: 'center', fontFamily: 'monospace', opacity: expired ? 0.4 : 1 }}>{pairCodeText(made.code)}</Box>
             <Typography id="h5-browser-pair-countdown" role="timer" variant="body2" color={expired ? 'error' : 'text.secondary'} sx={{ textAlign: 'center' }}>
               {expired ? t('The code expired') : `${t('Valid for')} ${countdownText(left)}`}
             </Typography>
@@ -121,7 +121,7 @@ function PairDialog({ open, status, onClose, onPaired }) {
                 </Box>
               </li>
             </Box>
-            <Button id="h5-browser-pair-copy" variant="outlined" disabled={expired} onClick={() => void copyText(made.code)}>{t('Copy the code')}</Button>
+            <Button id="h5-browser-pair-copy" disabled={expired} onClick={() => void copyText(made.code)}>{t('Copy the code')}</Button>
           </>
         ) : null}
       </DialogContent>
@@ -148,7 +148,7 @@ function RenameDialog({ browser, onClose, onDone }) {
   };
   return (
     <Dialog id="h5-browser-rename" open={Boolean(browser)} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-browser-rename-title">
-      <DialogTitle id="h5-browser-rename-title" sx={{ fontSize: 18 }}>{t('Rename browser')}</DialogTitle>
+      <DialogTitle id="h5-browser-rename-title" >{t('Rename browser')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1, pt: '8px !important' }}>
         <Field id="h5-browser-rename-name" label="Name" value={name} onChange={event => setName(event.target.value)} htmlInput={{ maxLength: 120 }} onKeyDown={event => { if (event.key === 'Enter') void save(); }} />
         {error ? <Typography id="h5-browser-rename-error" role="alert" variant="body2" color="error">{error}</Typography> : null}
@@ -173,7 +173,7 @@ function RemoveDialog({ browser, onClose, onDone }) {
   };
   return (
     <Dialog id="h5-browser-remove" open={Boolean(browser)} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-browser-remove-title">
-      <DialogTitle id="h5-browser-remove-title" sx={{ fontSize: 18 }}>{t('Remove this browser?')}</DialogTitle>
+      <DialogTitle id="h5-browser-remove-title" >{t('Remove this browser?')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Typography variant="body2" translate="no" sx={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{browser ? browser.name : ''}</Typography>
         <Typography variant="body2" color="text.secondary">{t('Its extension is disconnected and can no longer connect. To use it again, pair it again.')}</Typography>
@@ -191,14 +191,14 @@ function BrowserRow({ browser, onRename, onRemove }) {
   return (
     <Box component="li" className="h5-browser-row" data-browser={browser.browser_id} data-online={browser.online ? 'true' : 'false'} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1.5, borderRadius: 1, border: 1, borderColor: 'divider', minWidth: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
-        <Box component="span" className="h5-browser-name" translate="no" sx={{ fontWeight: 600, fontSize: '0.9375rem', overflowWrap: 'anywhere', minWidth: 0, flex: '1 1 8rem' }}>{browser.name}</Box>
+        <Box component="span" className="h5-browser-name" translate="no" sx={{ typography: 'subtitle1', fontWeight: 500, overflowWrap: 'anywhere', minWidth: 0, flex: '1 1 8rem' }}>{browser.name}</Box>
         <Pill className="h5-browser-state" label={t(browser.online ? 'Online' : 'Offline')} tone={browser.online ? 'success' : 'default'} />
         {browser.active ? <Pill className="h5-browser-active" label={t('Commands go here')} tone="primary" /> : null}
       </Box>
       <Typography variant="caption" color="text.secondary" className="h5-browser-detail" sx={{ overflowWrap: 'anywhere' }}>{browserDetail(browser, { t })}</Typography>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-        <Button className="h5-browser-rename" variant="outlined" size="small" sx={{ minHeight: 44 }} onClick={onRename}>{t('Rename')}</Button>
-        <Button className="h5-browser-remove" variant="outlined" color="error" size="small" sx={{ minHeight: 44 }} onClick={onRemove}>{t('Remove')}</Button>
+        <Button className="h5-browser-rename" size="small" onClick={onRename}>{t('Rename')}</Button>
+        <Button className="h5-browser-remove" color="error" size="small" onClick={onRemove}>{t('Remove')}</Button>
       </Box>
     </Box>
   );

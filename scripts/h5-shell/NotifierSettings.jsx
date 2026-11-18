@@ -7,7 +7,7 @@ import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { api, t } from './common.jsx';
-import { Feedback, Field, Hint, failure, useFeedback } from './Form.jsx';
+import { Actions, Feedback, Field, Hint, MinorHeading, SubHeading, failure, useFeedback } from './Form.jsx';
 import { loginInProgress } from './plugins-model.mjs';
 import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 
@@ -76,12 +76,12 @@ function RelayPart({ relay, status, busy, run, logout }) {
         <Box component="span" id="h5-tg-relay-online" sx={{ color: sender.online ? 'success.main' : 'warning.main' }}>{t(sender.online ? 'Online' : 'Offline')}</Box>
       </Typography>
       <Hint>{t('This device hands its notifications to that device and does not use Telegram itself.')}</Hint>
-      <Button id="h5-tg-relay-test" variant="outlined" disabled={busy} onClick={() => void testThrough()}>{t('Send test message')}</Button>
+      <Button id="h5-tg-relay-test" disabled={busy} onClick={() => void testThrough()}>{t('Send test message')}</Button>
       {status.loggedIn ? (
         <>
           <Hint id="h5-tg-relay-own">{t('This device is logged in to Telegram too, but it does not send. The same login on two devices at once makes them log each other out.')}</Hint>
           {useHereButton}
-          <Button id="h5-tg-logout-here" variant="outlined" color="error" disabled={busy} onClick={logout}>{t('Log out here')}</Button>
+          <Button id="h5-tg-logout-here" color="error" disabled={busy} onClick={logout}>{t('Log out here')}</Button>
         </>
       ) : null}
     </Box>
@@ -149,7 +149,7 @@ function TelegramPart({ telegram, relay, onChanged }) {
   const account = status.account;
   return (
     <>
-      <Typography variant="subtitle2" component="strong">{telegram.label}</Typography>
+      <SubHeading>{telegram.label}</SubHeading>
       <Hint id="h5-tg-state">{status.loggedIn
         ? `${t('Account 1:')} ${account ? `${account.name}${account.username ? ` (@${account.username})` : ''}` : ''} ${status.phone || ''}`
         : t('Not logged in')}</Hint>
@@ -183,27 +183,27 @@ function TelegramPart({ telegram, relay, onChanged }) {
       {qrStep ? (
         <>
           <Hint id="h5-tg-qr-steps">{t('Open Telegram on the phone of account 1 \u2192 Settings \u2192 Devices \u2192 Link Desktop Device \u2192 scan this code')}</Hint>
-          <Box id="h5-tg-qr" sx={{ alignSelf: 'center', width: 224, height: 224, p: 1, bgcolor: '#fff', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Box id="h5-tg-qr" sx={{ alignSelf: 'center', width: 224, height: 224, p: 1, bgcolor: 'common.white', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {qr && qr.svg
               ? <Box component="img" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.svg)}`} alt={t('Telegram login QR code')} data-url={qr.url} sx={{ width: '100%', height: '100%', display: 'block' }} />
-              : <Typography variant="body2" sx={{ color: '#000' }}>{t('Loading\u2026')}</Typography>}
+              : <Typography variant="body2" sx={{ color: 'common.black' }}>{t('Loading\u2026')}</Typography>}
           </Box>
           <Hint>{t('The code changes about every 30 seconds; this page shows the current one.')}</Hint>
-          <Button id="h5-tg-qr-cancel" variant="outlined" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
+          <Button id="h5-tg-qr-cancel" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
         </>
       ) : null}
       {status.step === 'code' ? (
         <>
           <Field id="h5-tg-code" label="Login code" value={login.code} onChange={set('code')} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric' }} />
           <Button id="h5-tg-verify" variant="contained" disabled={busy} onClick={() => void verify()}>{t('Log in')}</Button>
-          <Button variant="outlined" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
+          <Button disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
         </>
       ) : null}
       {status.step === 'password' ? (
         <>
           <Field id="h5-tg-password" label="Two-step verification password" type="password" autoComplete="current-password" value={login.password} onChange={set('password')} />
           <Button id="h5-tg-password-send" variant="contained" disabled={busy} onClick={() => void password()}>{t('Log in')}</Button>
-          <Button variant="outlined" disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
+          <Button disabled={busy} onClick={() => void cancel()}>{t('Cancel')}</Button>
         </>
       ) : null}
       {status.loggedIn && !relaying ? (
@@ -211,12 +211,12 @@ function TelegramPart({ telegram, relay, onChanged }) {
           <Field id="h5-tg-target" label="Account 2 (username or user id)" value={target} onChange={event => setTarget(event.target.value)} placeholder="@username" />
           <Hint id="h5-tg-target-state">{status.target ? `${t('Sends to:')} ${status.target.name}${status.target.username ? ` (@${status.target.username})` : ''}` : t('No account 2 chosen yet')}</Hint>
           <Hint>{t('For calls, account 2 must allow calls from account 1 (Privacy and Security > Calls); saving account 1 as a contact helps. The call only rings: there is no voice. It hangs up when answered, declined or after the ring time.')}</Hint>
-          <Button id="h5-tg-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button id="h5-tg-test" variant="outlined" sx={{ flex: 1 }} disabled={busy || !status.target} onClick={() => void test('message')}>{t('Send test message')}</Button>
-            <Button id="h5-tg-test-call" variant="outlined" sx={{ flex: 1 }} disabled={busy || !status.target} onClick={() => void test('call')}>{t('Test call')}</Button>
-          </Box>
-          <Button id="h5-tg-logout" variant="outlined" color="error" disabled={busy} onClick={logout}>{t('Log out of Telegram')}</Button>
+          <Actions>
+            <Button id="h5-tg-test" disabled={busy || !status.target} onClick={() => void test('message')}>{t('Send test message')}</Button>
+            <Button id="h5-tg-test-call" disabled={busy || !status.target} onClick={() => void test('call')}>{t('Test call')}</Button>
+            <Button id="h5-tg-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
+          </Actions>
+          <Button id="h5-tg-logout" color="error" disabled={busy} onClick={logout}>{t('Log out of Telegram')}</Button>
         </>
       ) : null}
       <Feedback id="h5-tg-feedback" feedback={feedback} />
@@ -272,7 +272,7 @@ function RulesPart({ data, onChanged }) {
   };
   return (
     <>
-      <Typography variant="subtitle2" component="strong" sx={{ mt: 1 }}>{t('When to notify')}</Typography>
+      <MinorHeading>{t('When to notify')}</MinorHeading>
       {STATUS_ORDER.map(status => notifiers.map(notifier => (
         <TextField
           key={`${notifier.name}-${status}`} id={`h5-notify-mode-${notifier.name}-${status}`} select size="small" fullWidth
@@ -308,12 +308,12 @@ function RulesPart({ data, onChanged }) {
         </>
       )}
       <Hint>{t('The same item and status is sent at most once in 10 minutes. A call that is not possible is sent as a message. Telegram may limit accounts that send too much automatically, so keep the limits low.')}</Hint>
-      <Button id="h5-notify-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button>
+      <Actions><Button id="h5-notify-save" variant="contained" disabled={busy} onClick={() => void save()}>{t('Save')}</Button></Actions>
       <Feedback id="h5-notify-feedback" feedback={feedback} />
       <SyncNote id="h5-notify-sync" note={synced} />
       {data.recent && data.recent.length ? (
         <>
-          <Typography variant="subtitle2" component="strong" sx={{ mt: 1 }}>{t('Recent notifications')}</Typography>
+          <MinorHeading sx={{ mt: 1 }}>{t('Recent notifications')}</MinorHeading>
           <Box id="h5-notify-recent" sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {data.recent.slice(0, 10).map((entry, index) => (
               <Typography key={index} variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>

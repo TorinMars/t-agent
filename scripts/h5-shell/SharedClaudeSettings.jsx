@@ -3,14 +3,14 @@ import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
-import { Hint } from './Form.jsx';
+import { Hint, MinorHeading } from './Form.jsx';
 
 // The "Claude settings" part of Settings > Devices > Rules and skills sync (rendered from RuleSync.jsx; `claude_settings` of GET /api/rule-sync). On the source:
 // a checkbox per allowlisted key of its settings.json (PUT `claude_settings_keys`) and the status line scripts that go with them. On a receiver: the
 // received keys, each with "Keep this device's own value" (PUT `keep_local`). The values are injected into the Claude sessions T-Agent starts on the
 // receivers; no settings.json is written. See "Shared Claude settings (injected at session start)" in docs/design/rules-and-skills-sync.md.
 
-const mono = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13, overflowWrap: 'anywhere' };
+const mono = { typography: 'body2', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' };
 const WARNINGS = {
   symlink: 'a link, not sent',
   missing: 'not found',
@@ -26,16 +26,14 @@ const SETTINGS_ERRORS = {
   unreadable: 'settings.json cannot be read, so nothing is shared',
 };
 
-function Heading({ children }) {
-  return <Typography variant="subtitle2" component="strong" sx={{ mt: 0.5 }}>{children}</Typography>;
-}
+const Heading = ({ children }) => <MinorHeading sx={{ mt: 1 }}>{children}</MinorHeading>;
 
 // One key with its value in short: the key name in monospace, the preview below it.
 function KeyLabel({ item }) {
   return (
     <Box component="span" sx={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      <Typography component="span" variant="body2" translate="no" sx={{ ...mono, fontWeight: 600 }}>{item.key}</Typography>
-      <Typography component="span" variant="body2" color="text.secondary" translate="no" className="h5-claude-settings-preview" sx={{ ...mono, fontSize: 12 }}>{item.preview}</Typography>
+      <Typography component="span" variant="body2" translate="no" sx={{ ...mono, fontWeight: 500 }}>{item.key}</Typography>
+      <Typography component="span" variant="body2" color="text.secondary" translate="no" className="h5-claude-settings-preview" sx={{ typography: 'caption', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' }}>{item.preview}</Typography>
     </Box>
   );
 }

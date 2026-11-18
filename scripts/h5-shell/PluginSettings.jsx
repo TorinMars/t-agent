@@ -3,12 +3,12 @@ import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
-import Drawer from '@mui/material/Drawer';
+import Dialog from '@mui/material/Dialog';
 import IconButton from '@mui/material/IconButton';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { Pill, api, errorText, named, t } from './common.jsx';
-import { Feedback, Hint, SubHeading, useFeedback } from './Form.jsx';
+import { Feedback, Hint, MinorHeading, SubHeading, useFeedback } from './Form.jsx';
 import { Icon } from './Icons.jsx';
 import { copyText } from './copy-text.mjs';
 import { BASE } from './attention-feed.mjs';
@@ -48,8 +48,8 @@ function Command({ id, text }) {
   return (
     <>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'action.hover' }}>
-        <Box component="code" id={id} translate="no" sx={{ flex: '1 1 auto', minWidth: 0, fontSize: 13, overflowWrap: 'anywhere', userSelect: 'all' }}>{text}</Box>
-        <Button size="small" variant="outlined" className="h5-plugin-copy" onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{copied ? t('Copied') : t('Copy')}</Button>
+        <Box component="code" id={id} translate="no" sx={{ flex: '1 1 auto', minWidth: 0, typography: 'body2', fontFamily: 'monospace', overflowWrap: 'anywhere', userSelect: 'all' }}>{text}</Box>
+        <Button size="small" className="h5-plugin-copy" onClick={() => void copy()} sx={{ flex: '0 0 auto' }}>{copied ? t('Copied') : t('Copy')}</Button>
       </Box>
       <Feedback feedback={feedback} />
     </>
@@ -84,7 +84,7 @@ function ListenerActions({ listener, onChanged }) {
       {listener.local.autoTerminal ? <Secondary className="h5-plugin-auto">{t('Connects automatically in T-Agent terminals')}</Secondary> : null}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
         {action ? <Button variant="contained" size="small" className="h5-plugin-install" disabled={busy} onClick={() => void run('install')}>{action === 'update' ? t('Update the hooks') : t('Install on this machine')}</Button> : null}
-        <Button variant="outlined" size="small" className="h5-plugin-pair" disabled={busy} onClick={() => setPairing(true)}>{t('Another machine…')}</Button>
+        <Button size="small" className="h5-plugin-pair" disabled={busy} onClick={() => setPairing(true)}>{t('Another machine…')}</Button>
         {canUninstall(listener) ? <Button size="small" className="h5-plugin-uninstall" disabled={busy} onClick={() => void run('uninstall')}>{t('Uninstall')}</Button> : null}
       </Box>
       <Feedback feedback={feedback} />
@@ -143,25 +143,24 @@ function NotifierPage({ notifier, onChanged, onLogin, onRules }) {
   );
 }
 
-// The second level, drawn over the Settings sheet with the same size and place. It is its own modal (see the top of this file); without an animation, so
-// leaving ends what the page runs (the Telegram QR polling) at once. A tap beside the sheet goes back, as it closes the sheet on the first level.
-const SHEET = { width: 'min(440px, 100%)', maxWidth: '100%', height: '92dvh', mx: 'auto', borderRadius: '16px 16px 0 0', backgroundImage: 'none' };
-function PluginPage({ page, data, onBack, onChanged, onLogin, onRules }) {
+// The second level, drawn over the Settings page: full screen on a phone (like a group's page), a dialog on a computer. It is its own modal (see the
+// top of this file); without an animation, so leaving ends what the page runs (the Telegram QR polling) at once. A tap beside the dialog goes back.
+function PluginPage({ wide, page, data, onBack, onChanged, onLogin, onRules }) {
   const titleId = `h5-plugin-page-title-${pageKey(page)}`;
   const plugin = findPlugin(data, page);
   const rules = page.kind === RULES_PAGE.kind;
   return (
-    <Drawer
-      anchor="bottom" open transitionDuration={0} onClose={onBack} className="h5-plugin-page" data-kind={page.kind} data-name={page.name} aria-labelledby={titleId}
-      slotProps={{ backdrop: { invisible: true }, paper: { className: 'h5-sheet-panel', sx: SHEET } }}
+    <Dialog
+      open transitionDuration={0} onClose={onBack} className="h5-plugin-page" data-kind={page.kind} data-name={page.name} aria-labelledby={titleId}
+      fullScreen={!wide} fullWidth maxWidth="sm" slotProps={{ paper: { className: 'h5-sheet-panel', sx: { backgroundImage: 'none', ...(wide ? { height: 'min(720px, calc(100dvh - 64px))' } : {}) } } }}
     >
       <AppBar position="static" color="default" enableColorOnDark elevation={0} className="h5-sheet-header" sx={{ borderBottom: 1, borderColor: 'divider' }}>
-        <Toolbar variant="dense" disableGutters sx={{ gap: 0.5, px: 1 }}>
+        <Toolbar disableGutters sx={{ minHeight: 56, gap: 0.5, px: 0.5 }}>
           <IconButton className="h5-plugin-page-back" onClick={onBack} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
           <Typography id={titleId} className="h5-plugin-page-title" variant="h6" component="h2" noWrap translate={rules ? undefined : 'no'} sx={{ flex: '1 1 auto', minWidth: 0 }}>{rules ? t('Message and call rules') : page.name}</Typography>
         </Toolbar>
       </AppBar>
-      <Box className="h5-plugin-page-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.25, p: 2 }}>
+      <Box className="h5-plugin-page-body" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5, p: 2 }}>
         <PageScope page={page} />
         {rules ? <NotifierRules onChanged={onChanged} /> : null}
         {!rules && !data ? <Hint>{t('Loading…')}</Hint> : null}
@@ -169,7 +168,7 @@ function PluginPage({ page, data, onBack, onChanged, onLogin, onRules }) {
         {plugin && page.kind === 'listener' ? <ListenerPage listener={plugin} onChanged={onChanged} /> : null}
         {plugin && page.kind === 'notifier' ? <NotifierPage notifier={plugin} onChanged={onChanged} onLogin={onLogin} onRules={onRules} /> : null}
       </Box>
-    </Drawer>
+    </Dialog>
   );
 }
 
@@ -213,7 +212,7 @@ function PluginRow({ kind, plugin, loggingIn, onOpen }) {
 function PluginList({ id, title, empty, label = null, children }) {
   return (
     <Box id={id} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <ScopedHeading label={label}><Typography variant="subtitle2" component="strong" className="h5-setting-minor" sx={{ fontWeight: 600 }}>{t(title)}</Typography></ScopedHeading>
+      <ScopedHeading label={label}><MinorHeading>{t(title)}</MinorHeading></ScopedHeading>
       {children.length ? children : <Hint>{t(empty)}</Hint>}
     </Box>
   );
@@ -228,7 +227,7 @@ function Tabs({ tab, onTab }) {
         <Button
           key={entry.key} id={`h5-plugins-tab-${entry.key}`} role="tab" aria-selected={tab === entry.key ? 'true' : 'false'} aria-controls={`h5-plugins-panel-${entry.key}`}
           onClick={() => onTab(entry.key)} color={tab === entry.key ? 'primary' : 'inherit'}
-          sx={{ borderRadius: 0, px: 1.5, mb: '-1px', borderBottom: 2, borderColor: tab === entry.key ? 'primary.main' : 'transparent', fontWeight: tab === entry.key ? 700 : 500 }}
+          sx={{ borderRadius: 0, px: 1.5, mb: '-1px', borderBottom: 2, borderColor: tab === entry.key ? 'primary.main' : 'transparent' }}
         >{t(entry.label)}</Button>
       ))}
     </Box>
@@ -290,7 +289,7 @@ function PluginSlot({ ui, opened }) {
             ) : null}
             {notifiers ? (
               <Box id="h5-plugins-rules" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><Typography variant="subtitle2" component="strong" className="h5-setting-minor" sx={{ fontWeight: 600 }}>{t('Rules for all notifiers')}</Typography></ScopedHeading>
+                <ScopedHeading label={<ScopeLabel id="notify-rules" scope="shared" />}><MinorHeading>{t('Rules for all notifiers')}</MinorHeading></ScopedHeading>
                 <ButtonBase id="h5-plugins-rules-open" className="h5-plugin-rules" onClick={() => open(RULES_PAGE)} sx={ROW_LOOK}>
                   <RowText>
                     <Box component="strong">{t('Message and call rules')}</Box>
@@ -310,7 +309,7 @@ function PluginSlot({ ui, opened }) {
           {marketShown && opened ? <PluginMarket refresh={marketRefresh} onChanged={() => void load()} /> : null}
         </Box>
       ) : null}
-      {pages.map(page => <PluginPage key={pageKey(page)} page={page} data={data} onBack={back} onChanged={load} onLogin={setLoggingIn} onRules={() => open(RULES_PAGE)} />)}
+      {pages.map(page => <PluginPage key={pageKey(page)} wide={Boolean(ui.get().wide)} page={page} data={data} onBack={back} onChanged={load} onLogin={setLoggingIn} onRules={() => open(RULES_PAGE)} />)}
     </>
   );
 }

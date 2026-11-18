@@ -110,12 +110,12 @@ export default function PluginMarket({ refresh = 0, onChanged }) {
       <Box id="h5-market-kinds" role="group" aria-label={t('Kind')} sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
         {KINDS.map(option => (
           <Button key={option.key || 'all'} size="small" className="h5-market-kind-filter" data-kind={option.key} aria-pressed={kind === option.key ? 'true' : 'false'}
-            variant={kind === option.key ? 'contained' : 'outlined'} onClick={() => setKind(option.key)} sx={{ borderRadius: 999, minWidth: 44, px: 1.5 }}>{t(option.label)}</Button>
+            variant={kind === option.key ? 'contained' : 'outlined'} onClick={() => setKind(option.key)} sx={{ borderRadius: 4, minWidth: 44, px: 1.5 }}>{t(option.label)}</Button>
         ))}
       </Box>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-        <Button size="small" variant="outlined" id="h5-market-git-open" onClick={() => setDialog('git')}>{t('Install from Git URL…')}</Button>
-        <Button size="small" variant="outlined" id="h5-market-link-open" onClick={() => setDialog('link')}>{t('Link local folder…')}</Button>
+        <Button size="small" id="h5-market-git-open" onClick={() => setDialog('git')}>{t('Install from Git URL…')}</Button>
+        <Button size="small" id="h5-market-link-open" onClick={() => setDialog('link')}>{t('Link local folder…')}</Button>
         <Button size="small" id="h5-market-updates" disabled={checking} onClick={() => void checkUpdates()}>{t('Check for updates')}</Button>
         <Button size="small" id="h5-market-sources-open" onClick={() => setDialog('sources')}>{t('Sources')}</Button>
       </Box>

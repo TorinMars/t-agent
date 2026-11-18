@@ -14,7 +14,7 @@ import Typography from '@mui/material/Typography';
 import TextField from './TextField.jsx';
 import { Pill, api, t } from './common.jsx';
 import { useDeviceTarget } from './DeviceTarget.jsx';
-import { Feedback, Hint, Section, failure, useFeedback } from './Form.jsx';
+import { Actions, Feedback, Hint, MinorHeading, Section, SwitchRow, failure, useFeedback } from './Form.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
 import { SharedClaudeSettings } from './SharedClaudeSettings.jsx';
 
@@ -74,7 +74,7 @@ const codeText = code => (ERRORS[code] ? t(ERRORS[code]) : code || '');
 const short = revision => (revision ? revision.slice(0, 8) : '');
 const when = value => (value ? new Date(value).toLocaleString() : '');
 const conflictText = item => `${item.skill}: ${t(CONFLICTS[item.reason] || item.reason)}`;
-const mono = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 13, overflowWrap: 'anywhere' };
+const mono = { typography: 'body2', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', overflowWrap: 'anywhere' };
 // The text of a failed request about the shared rules: the known code, with the names the server sent.
 function sharedError(error) {
   const data = error.data || {};
@@ -86,9 +86,7 @@ function sharedError(error) {
   return t(known);
 }
 
-function Heading({ children }) {
-  return <Typography variant="subtitle2" component="strong" className="h5-setting-minor" sx={{ mt: 1, fontWeight: 600 }}>{children}</Typography>;
-}
+const Heading = ({ children }) => <MinorHeading sx={{ mt: 1 }}>{children}</MinorHeading>;
 
 function Targets({ targets, revision }) {
   if (!targets.length) return <Hint id="h5-rule-sync-no-targets">{t('No linked devices yet. Link one under “Link a device” above.')}</Hint>;
@@ -132,7 +130,7 @@ function SourcePart({ data, busy, save, act }) {
         : (
           <>
             <Hint id="h5-rule-sync-missing">{t('The file does not exist yet.')}</Hint>
-            <Button id="h5-rule-sync-create" variant="outlined" disabled={busy} onClick={() => void act('create-shared', 'Created')}>{t('Create it')}</Button>
+            <Button id="h5-rule-sync-create" disabled={busy} onClick={() => void act('create-shared', 'Created')}>{t('Create it')}</Button>
           </>
         )}
       <Heading>{t('Shared skills')}</Heading>
@@ -162,7 +160,7 @@ function SourcePart({ data, busy, save, act }) {
       <Heading>{t('Receivers')}</Heading>
       <Targets targets={data.targets} revision={data.revision} />
       {data.revision ? <Hint id="h5-rule-sync-revision">{`${t('Current revision')} ${short(data.revision)}${data.last_change_at ? ` · ${t('changed')} ${when(data.last_change_at)}` : ''}`}</Hint> : null}
-      <Button id="h5-rule-sync-push" variant="contained" disabled={busy} onClick={() => void act('push', 'Sync finished')}>{t('Sync now')}</Button>
+      <Actions><Button id="h5-rule-sync-push" variant="contained" disabled={busy} onClick={() => void act('push', 'Sync finished')}>{t('Sync now')}</Button></Actions>
     </>
   );
 }
@@ -177,7 +175,7 @@ function ReceivePart({ data, busy, save, act }) {
           <Hint id="h5-rule-sync-following">{t(`Follows ${data.following.name || data.following.instance_id}`)}</Hint>
           {data.received && data.received.synced_at ? <Hint>{`${t('Last synced')} ${when(data.received.synced_at)} · ${t('Revision')} ${short(data.received.revision)}`}</Hint> : null}
           <Hint>{t('Bundles from any other source are refused until you reset this.')}</Hint>
-          <Button id="h5-rule-sync-reset" variant="outlined" disabled={busy} onClick={() => void act('reset-source', 'The next source that sends is followed')}>{t('Reset the source')}</Button>
+          <Button id="h5-rule-sync-reset" disabled={busy} onClick={() => void act('reset-source', 'The next source that sends is followed')}>{t('Reset the source')}</Button>
         </>
       ) : <Hint id="h5-rule-sync-following">{t('No source yet. The first source that sends is followed.')}</Hint>}
       {conflicts.length ? (
@@ -263,8 +261,8 @@ function SharedRulesDialog({ open, wide, onClose, onSaved, call = api }) {
               <Typography variant="body2" color="warning.main" sx={{ overflowWrap: 'anywhere' }}>{t(`The shared rules were changed on ${name} while you edited them.`)}</Typography>
               <Hint>{t('Load the latest replaces your text. Overwrite saves your text over the other change.')}</Hint>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                <Button id="h5-rule-sync-load-latest" variant="outlined" disabled={busy} onClick={loadLatest}>{t('Load the latest')}</Button>
-                <Button id="h5-rule-sync-overwrite" variant="outlined" color="warning" disabled={busy} onClick={() => void save(conflict.content_revision)}>{t('Overwrite')}</Button>
+                <Button id="h5-rule-sync-load-latest" disabled={busy} onClick={loadLatest}>{t('Load the latest')}</Button>
+                <Button id="h5-rule-sync-overwrite" color="warning" disabled={busy} onClick={() => void save(conflict.content_revision)}>{t('Overwrite')}</Button>
               </Box>
             </Paper>
           ) : null}
@@ -297,7 +295,7 @@ function SharedRules({ shared, busy, onEdit }) {
       ) : (
         <>
           <Hint id="h5-rule-sync-shared-state">{shared.source.local ? t('This service is the source. The text is saved here.') : t(`The text is saved on ${shared.source.name}, the source.`)}</Hint>
-          <Button id="h5-rule-sync-edit" variant="outlined" disabled={busy} onClick={onEdit}>{t('Edit shared rules')}</Button>
+          <Button id="h5-rule-sync-edit" disabled={busy} onClick={onEdit}>{t('Edit shared rules')}</Button>
         </>
       )}
     </>
@@ -318,7 +316,7 @@ function LocalChanges({ changes, busy, act }) {
         </Box>
       ))}
       {changes.length > shown.length ? <Hint>{t(`${changes.length - shown.length} more`)}</Hint> : null}
-      <Button id="h5-rule-sync-dismiss" variant="outlined" disabled={busy} onClick={() => void act('dismiss-local-changes', '')}>{t('Dismiss')}</Button>
+      <Button id="h5-rule-sync-dismiss" disabled={busy} onClick={() => void act('dismiss-local-changes', '')}>{t('Dismiss')}</Button>
     </Paper>
   );
 }
@@ -366,11 +364,8 @@ function RuleSyncPart({ state, opened, call }) {
               <FormControlLabel key={value} value={value} disabled={busy} sx={{ minHeight: 44, mr: 0 }} control={<Radio slotProps={{ input: { id: `h5-rule-sync-role-${value}` } }} />} label={t(label)} />
             ))}
           </RadioGroup>
-          <FormControlLabel
-            sx={{ minHeight: 44, mr: 0 }}
-            control={<Checkbox checked={data.codex} disabled={busy} onChange={event => void save({ codex: event.target.checked })} slotProps={{ input: { id: 'h5-rule-sync-codex' } }} />}
-            label={t('Also put the shared rules into Codex (AGENTS.md)')}
-          />
+          {/* Saved at once: a switch row. */}
+          <SwitchRow inputId="h5-rule-sync-codex" label={t('Also put the shared rules into Codex (AGENTS.md)')} checked={Boolean(data.codex)} disabled={busy} onChange={on => void save({ codex: on })} />
           <LocalChanges changes={data.local_changes} busy={busy} act={act} />
           <SharedRules shared={shared} busy={busy} onEdit={() => setEditing(true)} />
           {data.role !== 'off' ? <Hint id="h5-rule-sync-import">{`${t('Claude reads the shared rules through this line at the top of')} ${data.claude_md_path}: ${data.import_line}`}</Hint> : null}
@@ -379,7 +374,7 @@ function RuleSyncPart({ state, opened, call }) {
           {data.role === 'off' && (data.import_line_present || data.codex_block_present) ? (
             <>
               <Hint id="h5-rule-sync-leftover">{t('The import line (and the managed block in Codex AGENTS.md) are still there. The shared files and synced skills stay until you delete them.')}</Hint>
-              <Button id="h5-rule-sync-remove-import" variant="outlined" disabled={busy} onClick={() => void act('remove-import', 'Removed')}>{t('Remove the import line')}</Button>
+              <Button id="h5-rule-sync-remove-import" disabled={busy} onClick={() => void act('remove-import', 'Removed')}>{t('Remove the import line')}</Button>
             </>
           ) : null}
           {data.local_error ? <Typography variant="body2" color="error">{codeText(data.local_error)}</Typography> : null}

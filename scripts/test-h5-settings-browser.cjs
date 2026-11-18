@@ -1,8 +1,9 @@
-// Browser test of the phone settings groups (the Material UI shell, scripts/h5-shell/Settings.jsx): Tasks and files (working directory, image upload),
-// Voice and translation, the remote access part of Devices → Advanced, and Account and access, on a phone-sized page. The order, the aliases of the old
-// group ids, 320 / 390 px and Chinese are in scripts/test-h5-settings-layout-browser.cjs.
+// Browser test of the settings groups on a phone (the Material UI shell, scripts/h5-shell/Settings.jsx): the group list, then Tasks and files (working
+// directory, image upload), Voice and translation, the remote access part of Devices → Advanced, and Account and access, each on its own page. The
+// computer layout, the order, the aliases of the old group ids, 320 / 390 px and Chinese are in scripts/test-h5-settings-layout-browser.cjs.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
+const { openGroup: openSettingsGroup, listedTitles } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -55,32 +56,21 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-update-check, #h5-update-log, #h5-update-hint').count(), 0, 'the updater moved to the header Update button');
     // The header Update button reads the update state for its red dot when the page loads; that is not a settings read.
-    // Open one settings group and wait, in the page, until its unfolding animation has ended. A click on a button
-    // that is still moving inside the opening group can miss it when the machine is busy (seen in the full test run).
-    const openGroup = async id => {
-      await page.locator(`#h5-set-${id} .MuiAccordionSummary-root`).tap();
-      await page.waitForFunction(groupId => Boolean(document.querySelector(`#h5-set-${groupId} .MuiCollapse-entered`)), id);
-    };
+    const openGroup = id => openSettingsGroup(page, id);
     // T-Attention reads its list (and opens its live stream) when the page loads, for the badge of row 2: not a settings read either.
     // Linked services is read when the sheet opens: an older server answers 404 and the group is not drawn. So are the linked devices and the settings
     // sync, which decide whether the tabs at the top are drawn (here: no linked device, no tabs).
     const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && call.url !== '/api/device-settings/devices' && call.url !== '/api/settings-sync' && !/^\/api\/attention(\?|$)/.test(call.url)));
     assert.equal(await page.locator('#h5-settings-tabs').count(), 0, 'no tabs without a linked device');
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
-    assert.deepEqual(await page.locator('.h5-setting-group .MuiAccordionSummary-content').allTextContents(), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
-    // One row style for every top-level row (Language, the group headers, Log out): same height, label size, letter spacing and left edge; Log out is last.
-    const rows = await page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-settings-body > *')].map(el => {
-      const head = el.querySelector('.MuiAccordionSummary-root') || el;
-      const label = el.querySelector('.h5-setting-label');
-      const style = getComputedStyle(label);
-      return { id: el.id, height: Math.round(head.getBoundingClientRect().height), size: style.fontSize, spacing: style.letterSpacing, left: Math.round(label.getBoundingClientRect().left), text: label.textContent };
-    }));
-    assert.equal(rows.length, 7);
-    assert.deepEqual(rows.map(row => row.text), ['Language', 'Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Log out']);
+    assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
+    // The first page: the groups as two-line rows (a 44px touch target at least), then Language and Log out, Log out last.
+    const rows = await page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-settings-group-item, #h5-settings .h5-setting-row')].map(el => ({ id: el.id, height: Math.round(el.getBoundingClientRect().height), text: el.querySelector('.MuiListItemText-primary').textContent })));
+    assert.deepEqual(rows.map(row => row.text), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Language', 'Log out']);
     assert.equal(rows.at(-1).id, 'h5-logout', 'the Log out row itself is the button');
-    for (const key of ['height', 'size', 'spacing', 'left']) assert.equal(new Set(rows.map(row => row[key])).size, 1, `all rows share one ${key}: ${JSON.stringify(rows)}`);
-    assert.ok(rows[0].height >= 44, 'a row is a 44px touch target');
+    assert.ok(rows.every(row => row.height >= 44), `every row is a 44px touch target: ${JSON.stringify(rows)}`);
     assert.equal(await page.locator('#h5-settings').getByText('Log out', { exact: true }).count(), 1, 'the Log out text is not repeated');
+    assert.equal(await page.locator('#h5-settings-page').isVisible(), false, 'no group page is open yet');
 
     // Working directory: the effective default is shown; an unchanged default stays inherited, a new path is saved, clearing restores the default.
     // Its group "Tasks and files" reads both of its parts when it opens.

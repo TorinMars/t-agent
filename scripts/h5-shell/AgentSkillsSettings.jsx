@@ -52,7 +52,7 @@ function AgentRow({ agent, state }) {
   return (
     <Box className="h5-skill-agent" data-agent={agent.key} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
-        <Box component="span" translate="no" sx={{ fontWeight: 600, fontSize: '0.875rem' }}>{agent.name}</Box>
+        <Box component="span" translate="no" sx={{ typography: 'body2', fontWeight: 500 }}>{agent.name}</Box>
         <Pill className="h5-skill-chip" data-state={chip.label} label={t(chip.label)} tone={chip.tone} sx={{ whiteSpace: 'normal', height: 'auto', minHeight: 24, py: 0.25, textAlign: 'center' }} />
       </Box>
       {state && state.path ? <Typography variant="caption" color="text.secondary" className="h5-skill-path" translate="no" sx={{ overflowWrap: 'anywhere' }}>{state.path}</Typography> : null}
@@ -68,14 +68,14 @@ function SkillCard({ skill, busy, onInstall }) {
       sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, p: 1.5, borderRadius: 1, border: 1, borderColor: 'divider', minWidth: 0 }}
     >
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-        <Typography id={`h5-agent-skill-${skill.name}-name`} component="h4" variant="body1" translate="no" sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '0.9375rem' }}>{skill.name}</Typography>
+        <Typography id={`h5-agent-skill-${skill.name}-name`} component="h4" variant="body1" translate="no" sx={{ fontWeight: 500, fontFamily: 'monospace' }}>{skill.name}</Typography>
         <Typography variant="body2" color="text.secondary" className="h5-agent-skill-description" sx={{ overflowWrap: 'anywhere' }}>{t(skill.description || '')}</Typography>
       </Box>
       {AGENTS.map(agent => <AgentRow key={agent.key} agent={agent} state={skill[agent.key]} />)}
       {skill.error ? <Typography variant="body2" color="error" className="h5-agent-skill-error" sx={{ overflowWrap: 'anywhere' }}>{t(skill.error)}</Typography> : null}
       {/* A card's button is outlined, like the buttons of a device row (Actions in Form.jsx): the part has two cards, so neither is the part's main action. */}
       <Box>
-        <Button id={`h5-agent-skill-install-${skill.name}`} className="h5-agent-skill-install" variant="outlined" disabled={busy || button.disabled} onClick={onInstall}>
+        <Button id={`h5-agent-skill-install-${skill.name}`} className="h5-agent-skill-install" disabled={busy || button.disabled} onClick={onInstall}>
           {t(button.label)}
         </Button>
       </Box>
@@ -127,7 +127,7 @@ function AgentSkillsPart({ opened, call, remote, name }) {
         <Box id="h5-skill-old" sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 1.5, borderRadius: 1, border: 1, borderColor: 'warning.main' }}>
           <Hint>{t('The old task-tracker skill is still installed. It teaches the earlier tracker, so agents could report to both. Replacing it installs t-attention and moves task-tracker into the backups folder of this Client (nothing is deleted).')}</Hint>
           <Typography variant="caption" color="text.secondary" translate="no">{old.map(agent => agent.name).join(', ')}</Typography>
-          <Box><Button id="h5-skill-replace-old" variant="outlined" color="warning" disabled={busy} onClick={() => void run('t-attention', true)}>{t('Replace the old task-tracker skill')}</Button></Box>
+          <Box><Button id="h5-skill-replace-old" color="warning" disabled={busy} onClick={() => void run('t-attention', true)}>{t('Replace the old task-tracker skill')}</Button></Box>
         </Box>
       ) : null}
       <Feedback id="h5-agent-skills-feedback" feedback={feedback} />

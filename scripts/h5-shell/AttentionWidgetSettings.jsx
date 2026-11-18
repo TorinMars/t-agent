@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
-import { Feedback, HINT, Hint, SubHeading, failure, useFeedback } from './Form.jsx';
+import { Feedback, Hint, SubHeading, SwitchRow, failure, useFeedback } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { registerAttentionSettings } from './attention-slots.mjs';
 import { ScopeLabel, SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
@@ -15,7 +13,6 @@ import { useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 // /api/attention/widget/settings { enabled, language, hotkeys, dim_when_idle, show_activity, platform_supported, swiftc, running, building, last_error }. Read each time the group opens (`opened` goes up), saved at once without Save. An older server answers 404: nothing is drawn.
 // See "T-Attention desktop window (macOS)" in docs/design/attention-desktop-window.md.
 const SETTINGS_URL = '/api/attention/widget/settings';
-const INPUT_INSIDE = { left: 0, width: '100%' }; // MUI's hidden input of the switch stays on the thumb (see PeerFs.jsx)
 const LANGUAGES = [['auto', 'Same as this page'], ['en', 'English'], ['zh', 'Chinese']];
 const POLL_MS = 3000; // while a build runs, the status is read again
 // The window's preferences (per device, like the switch). A server that does not answer them (an older linked device) shows none.
@@ -88,25 +85,24 @@ function WidgetPart({ opened, call, remote, name }) {
   const switchShown = scope !== 'shared';
   const languageShown = scope !== 'device';
   return (
-    <Box id="h5-attention-widget" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, '& > .MuiFormControlLabel-root + .h5-scope + .h5-setting-hint, & > .MuiFormControlLabel-root + .h5-setting-hint': { mt: -0.75 } }}>
+    <Box id="h5-attention-widget" sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <SubHeading id="h5-attention-widget-title">{label}</SubHeading>
       {switchShown ? (
         <>
-          <FormControlLabel
-            sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={label}
-            control={<Switch size="small" checked={setting.enabled} disabled={busy || !usable} onChange={event => void save({ enabled: event.target.checked })} slotProps={{ input: { id: 'h5-attention-widget-enabled', 'aria-label': label, style: INPUT_INSIDE } }} />}
-          />
           {/* The switch is this Mac's own; the language of the window is one setting for all linked devices. */}
-          <ScopeLabel id="widget-enabled" subject="On or off" sx={{ alignSelf: 'flex-start' }} />
-          <Hint>{remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}</Hint>
-          {PREFS.filter(([name]) => setting[name] !== null).map(([name, text]) => (
-            <FormControlLabel
-              key={name} sx={{ m: 0, alignSelf: 'flex-start', gap: 0.5 }} label={t(text)}
-              control={<Switch size="small" checked={setting[name]} disabled={busy || !usable} onChange={event => void save({ [name]: event.target.checked })} slotProps={{ input: { id: `h5-attention-widget-${name.replace(/_/g, '-')}`, 'aria-label': t(text), style: INPUT_INSIDE } }} />}
+          <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+            <SwitchRow
+              inputId="h5-attention-widget-enabled" label={t('Show the desktop window')} inputLabel={label} checked={setting.enabled} disabled={busy || !usable} onChange={on => void save({ enabled: on })}
+              secondary={remote ? t(`A small window that stays above other windows on ${name} and shows the tasks that need you, from that machine and its connected devices.`) : t('A small window that stays above other windows on this Mac and shows the tasks that need you, from this machine and the connected devices.')}
+              aside={<ScopeLabel id="widget-enabled" subject="On or off" />}
             />
-          ))}
+            {PREFS.filter(([key]) => setting[key] !== null).map(([key, text]) => (
+              <SwitchRow key={key} inputId={`h5-attention-widget-${key.replace(/_/g, '-')}`} label={t(text)} checked={setting[key]} disabled={busy || !usable} onChange={on => void save({ [key]: on })} />
+            ))}
+          </Box>
           <Hint id="h5-attention-widget-login">{t('The window opens with T-Agent. To start T-Agent when you log in, run pm2 startup and pm2 save.')}</Hint>
         </>
-      ) : <SubHeading id="h5-attention-widget-title">{label}</SubHeading>}
+      ) : null}
       {languageShown ? (
         <>
           <TextField
@@ -119,7 +115,7 @@ function WidgetPart({ opened, call, remote, name }) {
         </>
       ) : null}
       {switchShown ? (
-        <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ ...HINT, overflowWrap: 'anywhere' }}>
+        <Typography id="h5-attention-widget-status" variant="body2" color={status.error ? 'error' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
           {`${t('Status')}: ${t(status.text)}`}
         </Typography>
       ) : null}

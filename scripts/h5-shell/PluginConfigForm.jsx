@@ -4,10 +4,9 @@ import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Link from '@mui/material/Link';
-import Switch from '@mui/material/Switch';
 import TextField from './TextField.jsx';
 import { api, errorText, t } from './common.jsx';
-import { Feedback, Field, Hint, useFeedback } from './Form.jsx';
+import { Actions, Feedback, Field, Hint, SwitchRow, useFeedback } from './Form.jsx';
 import { BASE } from './attention-feed.mjs';
 import { SyncNote, useSyncAfterSave } from './ScopeLabel.jsx';
 import { fieldHelp, fieldShown, formFromConfig, formProblem, helpParts, numberInput, valuesFromForm } from './plugin-config-model.mjs';
@@ -99,16 +98,14 @@ export default function PluginConfigForm({ notifier, onChanged, onRules }) {
       {!config && busy ? <Hint>{t('Loading…')}</Hint> : null}
       {config && form ? (
         <Box className="h5-plugin-config-body" sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-          <FormControlLabel
-            control={<Switch checked={form.enabled} disabled={busy} onChange={event => void save({ enabled: event.target.checked })} slotProps={{ input: { id: `h5-plugin-enabled-${name}` } }} />}
-            label={form.enabled ? t('Turned on') : t('Turned off: sends nothing')} sx={{ ml: 0, gap: 1 }}
-          />
+          {/* Saved at once: a switch row. */}
+          <SwitchRow inputId={`h5-plugin-enabled-${name}`} label={form.enabled ? t('Turned on') : t('Turned off: sends nothing')} checked={form.enabled} disabled={busy} onChange={on => void save({ enabled: on })} />
           {schema.filter(field => fieldShown(field, form.values)).map(field => <ConfigField key={field.key} name={name} field={field} form={form} secretsSet={form.secretsSet} onValue={onValue} onClear={clear} busy={busy} />)}
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            {schema.length ? <Button variant="contained" className="h5-plugin-config-save" disabled={busy} onClick={saveForm}>{t('Save')}</Button> : null}
-            {config.test ? <Button variant="outlined" className="h5-plugin-config-test" disabled={busy || !form.enabled} onClick={() => void test()}>{t('Test')}</Button> : null}
+          <Actions>
             <Button className="h5-plugin-config-rules" onClick={onRules}>{t('Message and call rules')}</Button>
-          </Box>
+            {config.test ? <Button className="h5-plugin-config-test" disabled={busy || !form.enabled} onClick={() => void test()}>{t('Test')}</Button> : null}
+            {schema.length ? <Button variant="contained" className="h5-plugin-config-save" disabled={busy} onClick={saveForm}>{t('Save')}</Button> : null}
+          </Actions>
         </Box>
       ) : null}
       <Feedback id={`h5-plugin-config-feedback-${name}`} feedback={feedback} />

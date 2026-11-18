@@ -5,7 +5,6 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
-import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { Pill, api, t } from './common.jsx';
 import { copyText } from './copy-text.mjs';
@@ -104,7 +103,7 @@ function CodeDialog({ open, onClose, onLinked }) {
 
   return (
     <Dialog id="h5-link-code-dialog" open={open} onClose={onClose} fullWidth maxWidth="xs" aria-labelledby="h5-link-code-title">
-      <DialogTitle id="h5-link-code-title" sx={{ fontSize: 18 }}>{t('Linking code')}</DialogTitle>
+      <DialogTitle id="h5-link-code-title" >{t('Linking code')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
         {error ? <Typography id="h5-link-code-error" role="alert" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>{error}</Typography> : null}
         {!made && !error ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : null}
@@ -120,11 +119,11 @@ function CodeDialog({ open, onClose, onLinked }) {
             {isLoopback(location.hostname) ? (
               <Typography id="h5-link-address-warning" role="alert" variant="body2" sx={{ color: 'warning.main' }}>{t('The other service will not be able to reach this address. Tell it an address it can reach, such as the network address of this computer.')}</Typography>
             ) : null}
-            <Box id="h5-link-code" translate="no" aria-label={t('Linking code')} sx={{ fontSize: 40, fontWeight: 700, letterSpacing: 4, textAlign: 'center', fontVariantNumeric: 'tabular-nums', opacity: expired ? 0.4 : 1 }}>{codeGroups(made.code)}</Box>
+            <Box id="h5-link-code" translate="no" aria-label={t('Linking code')} sx={{ typography: 'h3', fontWeight: 700, letterSpacing: 4, textAlign: 'center', fontVariantNumeric: 'tabular-nums', opacity: expired ? 0.4 : 1 }}>{codeGroups(made.code)}</Box>
             <Typography id="h5-link-countdown" role="timer" variant="body2" color={expired ? 'error' : 'text.secondary'} sx={{ textAlign: 'center' }}>
               {expired ? t('The code expired') : `${t('Valid for')} ${countdownText(left)}`}
             </Typography>
-            <Button id="h5-link-copy" variant="outlined" disabled={expired} onClick={() => void copy()}>{copied ? t('Copied') : t('Copy')}</Button>
+            <Button id="h5-link-copy" disabled={expired} onClick={() => void copy()}>{copied ? t('Copied') : t('Copy')}</Button>
           </>
         ) : null}
       </DialogContent>
@@ -181,7 +180,7 @@ function JoinDialog({ state, open, onClose, onJoined }) {
         <Feedback id="h5-link-join-result" feedback={{ message: error, error: true }} />
       </EngineDialog>
       <Dialog id="h5-link-confirm" open={asking} onClose={busy ? undefined : () => setAsking(false)} fullWidth maxWidth="xs" aria-labelledby="h5-link-confirm-title">
-        <DialogTitle id="h5-link-confirm-title" sx={{ fontSize: 18 }}>{t('Link these services?')}</DialogTitle>
+        <DialogTitle id="h5-link-confirm-title" >{t('Link these services?')}</DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           <Typography variant="body2" sx={{ color: 'warning.main' }}>{t('Linking gives both services full control of each other, including terminals on both machines.')}</Typography>
           <Typography variant="body2">{t('This also applies if this service only allows local access.')}</Typography>
@@ -214,7 +213,7 @@ export function UnlinkDialog({ link, onClose, onDone }) {
   };
   return (
     <Dialog id="h5-link-unlink" open={Boolean(link)} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="h5-link-unlink-title">
-      <DialogTitle id="h5-link-unlink-title" sx={{ fontSize: 18 }}>{t(revoked ? 'Remove this link?' : 'Unlink this service?')}</DialogTitle>
+      <DialogTitle id="h5-link-unlink-title" >{t(revoked ? 'Remove this link?' : 'Unlink this service?')}</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <Typography id="h5-link-unlink-name" component="strong" variant="body2" translate="no" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>{shown ? shown.name : ''}</Typography>
         <Typography variant="body2">{t(revoked ? 'The other service already ended this link.' : 'The two services will stop seeing each other.')}</Typography>
@@ -233,18 +232,18 @@ function LinkRow({ link, onUnlink }) {
   const revoked = link.state === 'revoked';
   const direction = t(link.role === 'initiator' ? 'This service generated the code' : 'Joined using a code');
   return (
-    <Paper variant="outlined" className="h5-link-row" data-link={link.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, p: 1 }}>
+    <Box component="li" className="h5-link-row" data-link={link.id} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 1.5, listStyle: 'none' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
         {/* The engine name of the other service (the server keeps it current); a long one is cut, the full name is its title. */}
-        <strong className="h5-link-name" translate="no" title={link.name} style={{ minWidth: 0, flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</strong>
+        <Typography component="strong" variant="subtitle1" className="h5-link-name" translate="no" title={link.name} sx={{ fontWeight: 500, minWidth: 0, flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link.name}</Typography>
         <Pill className="h5-link-status" tone={STATE_TONE[link.state] || 'default'} label={t(STATE[link.state] || 'Unknown')} sx={{ flexShrink: 0 }} />
       </Box>
-      <Typography className="h5-link-direction" variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{[direction, link.peer_url].filter(Boolean).join(' · ')}</Typography>
-      {revoked ? <Typography className="h5-link-revoked" variant="caption" sx={{ color: 'warning.main' }}>{t('The other service ended this link.')}</Typography> : null}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-        <Button size="small" variant="outlined" color="error" className="h5-link-unlink" onClick={onUnlink}>{t(revoked ? 'Remove' : 'Unlink')}</Button>
-      </Box>
-    </Paper>
+      <Typography className="h5-link-direction" variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{[direction, link.peer_url].filter(Boolean).join(' · ')}</Typography>
+      {revoked ? <Typography className="h5-link-revoked" variant="body2" sx={{ color: 'warning.main' }}>{t('The other service ended this link.')}</Typography> : null}
+      <Actions>
+        <Button size="small" color="error" className="h5-link-unlink" onClick={onUnlink}>{t(revoked ? 'Remove' : 'Unlink')}</Button>
+      </Actions>
+    </Box>
   );
 }
 
@@ -267,13 +266,13 @@ export function ServiceLinksSection({ state, ui, version, opened, onChanged }) {
     <Section id="link" title="Link a device" aside={<ScopeLabel />}>
       <LocalOnly id="h5-link-remote">
         <Hint>{t('Linked services see and operate each other’s tasks, terminals and sessions. Generate a code on one and join with it on the other.')}</Hint>
-        <Box id="h5-link-list" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box component="ul" id="h5-link-list" sx={{ display: 'flex', flexDirection: 'column', m: 0, p: 0, '& > li + li': { borderTop: 1, borderColor: 'divider' } }}>
           {links.map(link => <LinkRow key={link.id} link={link} onUnlink={() => setUnlinking(link)} />)}
-          {links.length ? null : <Hint id="h5-link-empty">{t('No linked devices yet')}</Hint>}
         </Box>
+        {links.length ? null : <Hint id="h5-link-empty">{t('No linked devices yet')}</Hint>}
         <Actions>
+          <Button id="h5-link-join" onClick={() => setJoining(true)}>{t('Join another service')}</Button>
           <Button id="h5-link-generate" variant="contained" onClick={() => setGenerating(true)}>{t('Generate a linking code')}</Button>
-          <Button id="h5-link-join" variant="outlined" onClick={() => setJoining(true)}>{t('Join another service')}</Button>
         </Actions>
         <Feedback id="h5-link-feedback" feedback={feedback} />
         <CodeDialog open={generating} onClose={() => setGenerating(false)} onLinked={() => void changed(null)} />

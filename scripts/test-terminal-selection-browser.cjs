@@ -1,9 +1,13 @@
 // Mouse selection in the page's terminal (a computer): mixed ASCII / CJK / punctuation text stays on xterm's cell grid, so a drag selects exactly the
-// characters under the mouse, in the normal and the alternate screen, at DPR 1 and 2, with the page's own styles (public/css/h5.css).
+// characters under the mouse, in the normal and the alternate screen, at DPR 1 and 2, with the page's own styles (public/css/h5.css) and the text
+// styles the page's body has (MUI CssBaseline gives it body1, with a letter spacing that the terminal must not inherit: at column 130 the drawn
+// text was 2 to 3 characters left of the grid).
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
+// What MUI's CssBaseline puts on the page's body (theme.typography.body1).
+const BODY_STYLE = 'margin:0;font-family:Roboto,Helvetica,Arial,sans-serif;font-weight:400;font-size:1rem;line-height:1.5;letter-spacing:0.00938em';
 
 (async () => {
   const browser = await chromium.launch({ headless: true,
@@ -12,7 +16,7 @@ const root = path.resolve(__dirname, '..');
     for (const deviceScaleFactor of [1, 2]) {
       const page = await browser.newPage({ viewport: { width: 1728, height: 917 }, deviceScaleFactor });
       // The page's terminal (public/h5.html): the xterm element inside .h5-terminal > .h5-xterm, styled by h5.css.
-      await page.setContent('<html lang="zh-CN"><div class="h5-terminal" style="width:1400px;height:700px;margin-left:100px;flex:none"><div class="h5-xterm"></div></div></html>');
+      await page.setContent('<html lang="zh-CN"><body style="' + BODY_STYLE + '"><div class="h5-terminal" style="width:1400px;height:700px;margin-left:100px;flex:none"><div class="h5-xterm"></div></div></html>');
       await page.addStyleTag({ path: path.join(root, 'public/css/h5.css') });
       await page.addStyleTag({ path: require.resolve('@xterm/xterm/css/xterm.css') });
       await page.addScriptTag({ path: require.resolve('@xterm/xterm') });
@@ -22,7 +26,7 @@ const root = path.resolve(__dirname, '..');
         term.open(document.querySelector('.h5-xterm'));
       });
       for (const alternate of [false, true]) {
-        for (const prefix of ['ASCII text '.repeat(8), '中文测试'.repeat(10), '中文, 测试. '.repeat(6), ' (中文): 测试; '.repeat(5)]) {
+        for (const prefix of ['ASCII text '.repeat(8), 'a long line '.repeat(11), '中文测试'.repeat(10), '中文, 测试. '.repeat(6), ' (中文): 测试; '.repeat(5)]) {
           await page.evaluate(async ({ prefix, alternate }) => {
             term.reset();
             await new Promise(done => term.write((alternate ? '\x1b[?1049h' : '') + prefix + '\x1b[36;4mTARGET\x1b[0m tail', done));
@@ -60,6 +64,12 @@ const root = path.resolve(__dirname, '..');
       }
       await page.close();
     }
+    // The real page: its body has the letter spacing, and the terminal's glyph measurement does not inherit it.
+    const sources = require('node:fs');
+    const bundle = sources.readFileSync(path.join(root, 'node_modules/@mui/material/styles/createTypography.js'), 'utf8')
+      + sources.readFileSync(path.join(root, 'node_modules/@mui/material/CssBaseline/CssBaseline.js'), 'utf8');
+    assert.match(bundle, /body1/, 'CssBaseline still gives the body the body1 text style (the reason for the reset in h5.css)');
+    assert.match(sources.readFileSync(path.join(root, 'public/css/h5.css'), 'utf8'), /\.h5-terminal \.xterm \{[^}]*letter-spacing: normal/);
     console.log('PASS: ASCII/CJK/punctuation mixed text stays aligned; real mouse selection matches in normal/alternate screens at DPR 1 and 2.');
   } finally { await browser.close(); }
 })();

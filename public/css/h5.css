@@ -39,7 +39,11 @@ body { -webkit-text-size-adjust: 100%; }
 .h5-terminal .h5-xterm.h5-wide { overflow: hidden; }
 /* Keep glyph measurement and drawing on xterm's fixed cell grid: Chrome's contextual CJK punctuation trimming breaks xterm's repeated glyph width
    measurement and made a mouse selection drift in earlier Chrome versions (moved from the old desktop style.css in 2.88.0). */
-.h5-terminal .xterm { text-spacing-trim: space-all; text-autospace: no-autospace; }
+/* The page's body carries the letter spacing of MUI's body1 (0.00938em of 16px, 0.15px; CssBaseline). xterm sets its own spacing on the drawn rows
+   but measures each glyph in a helper element that inherits the body's: every glyph was measured 0.15px too wide, so the rows were drawn 0.15px per
+   column narrower than the cell grid that the mouse, the selection and the links use (2 to 3 characters apart at column 130). The terminal starts
+   from no spacing of its own. */
+.h5-terminal .xterm { text-spacing-trim: space-all; text-autospace: no-autospace; letter-spacing: normal; word-spacing: normal; }
 /* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a scrollbar on the right edge of the terminal,
    drawn over the terminal's right margin (it is absolutely placed and never changes the columns). The 40px hit area takes the touches itself
    (touch-action: none); only a 4px track and thumb are drawn, dim when idle and brighter while a finger is on it ('active').

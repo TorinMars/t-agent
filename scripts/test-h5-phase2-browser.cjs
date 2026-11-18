@@ -330,34 +330,38 @@ async function checkEngines(page, label, touch) {
 
 async function taskMenu(page, title) {
   await page.locator('.h5-task-row', { has: page.locator('.h5-task-item', { hasText: title }) }).locator('.h5-task-more').click();
-  await page.locator('#h5-term-menu-actions').waitFor({ state: 'visible' });
-  // The sheet slides up; a click during the slide can land on the backdrop (headless Chromium draws few frames while the display sleeps).
-  await page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running') && getComputedStyle(document.querySelector('#h5-term-menu .h5-menu-panel')).transform === 'none');
+  // A menu under the button, like a session row's (TermMenu.jsx `SessionPopup`); it fades in, so a click waits for it to settle.
+  await page.locator('#h5-session-menu-actions').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => !document.getAnimations().some(animation => animation.playState === 'running'));
 }
+const menuItem = (page, text) => page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: text });
 
 async function checkTasks(page, label, touch) {
   await openSidebar(page, touch);
   await page.locator('.h5-task-item', { hasText: 'Fix login' }).waitFor();
   assert.equal(await page.locator('#h5-tasks .h5-task-more').count(), await page.locator('#h5-tasks .h5-task-item').count(), 'every task has "⋯"');
   assert.equal(await page.getAttribute('#h5-tasks .h5-task-more >> nth=0', 'aria-label'), 'Task actions');
-  // The "+" stays at the right end; "⋯" is left of it.
-  assert.ok(await page.evaluate(() => {
-    const rowEl = document.querySelector('#h5-tasks .h5-task-row');
-    return rowEl.querySelector('.h5-task-more').getBoundingClientRect().right <= rowEl.querySelector('.h5-task-add').getBoundingClientRect().left + 1;
-  }));
+  // "⋯" stays at the right end; on a computer the "+" is left of it, a touch screen has no "+" (New session is in the "⋯" menu).
+  if (touch) assert.equal(await page.locator('#h5-tasks .h5-task-add').first().isVisible(), false, `${label}: no "+" on a touch screen`);
+  else {
+    assert.ok(await page.evaluate(() => {
+      const rowEl = document.querySelector('#h5-tasks .h5-task-row');
+      return rowEl.querySelector('.h5-task-add').getBoundingClientRect().right <= rowEl.querySelector('.h5-task-more').getBoundingClientRect().left + 1;
+    }));
+  }
 
   // Move to a group.
   await taskMenu(page, 'Fix login');
-  assert.deepEqual(await page.locator('#h5-term-menu-actions button').allTextContents(), ['✓ Move to “In progress”', 'Move to “To do”', 'Move to “Done”', 'Rename', 'Edit working directory', 'Archive', 'Delete']);
+  assert.deepEqual(await page.locator('#h5-session-menu-actions [role="menuitem"]').allTextContents(), [...(touch ? ['New session'] : []), '✓ Move to “In progress”', 'Move to “To do”', 'Move to “Done”', 'Rename', 'Edit working directory', 'Archive', 'Delete']);
   await shot(page, `${label}-task-menu`);
-  await page.locator('#h5-term-menu-actions button', { hasText: 'Done' }).click();
+  await menuItem(page, 'Done').click();
   await until(() => callsTo('PUT', '/api/tasks/1').length === 1, 'move PUT');
   assert.deepEqual(callsTo('PUT', '/api/tasks/1')[0].body, { status: 'done' });
 
   // Edit the working directory: the saved path is shown; a relative path is refused without a request; an absolute one is saved.
   if (touch) await openSidebar(page, touch);
   await taskMenu(page, 'Fix login');
-  await page.locator('#h5-term-menu-actions button', { hasText: 'Edit working directory' }).click();
+  await menuItem(page, 'Edit working directory').click();
   await page.locator('#h5-task-workdir').waitFor();
   assert.equal(await page.inputValue('#h5-task-workdir'), '/work/fix-login');
   await page.fill('#h5-task-workdir', 'relative/dir');
@@ -372,7 +376,7 @@ async function checkTasks(page, label, touch) {
   // Delete with the directory, refused by the server (shared directory): the reason is shown and the task stays.
   if (touch) await openSidebar(page, touch);
   await taskMenu(page, 'Write docs');
-  await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).click();
+  await menuItem(page, 'Delete').click();
   await page.locator('#h5-task-delete-dir').waitFor();
   assert.equal(await page.locator('#h5-task-delete-dir').isChecked(), false, 'the directory is not deleted by default');
   await page.locator('#h5-task-delete-dir').check();
@@ -390,7 +394,7 @@ async function checkTasks(page, label, touch) {
   await page.locator('.h5-task-item', { hasText: 'Write docs' }).waitFor({ state: 'detached' });
   // A task without a working directory: no checkbox, and Cancel deletes nothing.
   await taskMenu(page, 'Notes');
-  await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).click();
+  await menuItem(page, 'Delete').click();
   await page.locator('#h5-task-dialog', { hasText: 'This task has no working directory, so no directory will be deleted.' }).waitFor();
   assert.equal(await page.locator('#h5-task-delete-dir').count(), 0);
   await page.locator('#h5-task-dialog-cancel').click();
@@ -399,7 +403,7 @@ async function checkTasks(page, label, touch) {
   // With the directory (allowed).
   if (touch) await openSidebar(page, touch);
   await taskMenu(page, 'Fix login');
-  await page.locator('#h5-term-menu-actions button', { hasText: 'Delete' }).click();
+  await menuItem(page, 'Delete').click();
   await page.locator('#h5-task-delete-dir').check();
   await page.locator('#h5-task-dialog-ok').click();
   await page.locator('#h5-task-dialog').waitFor({ state: 'detached' });

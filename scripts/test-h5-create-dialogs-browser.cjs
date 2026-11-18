@@ -102,7 +102,13 @@ async function openPage(browser, size) {
 
   const press = locator => (wide ? locator.click() : locator.tap());
   const item = title => page.locator('#h5-tasks .h5-task-item', { hasText: title });
-  const add = title => page.locator(`#h5-tasks .h5-task-row:has(.h5-task-title:text-is("${title}")) .h5-task-add`);
+  const row = title => `#h5-tasks .h5-task-row:has(.h5-task-title:text-is("${title}"))`;
+  // New session of a task row: its "+" on a computer; on a touch screen "New session" in its "⋯" menu (the row has no "+", "Task list look").
+  const pressAdd = async title => {
+    if (wide) { await page.locator(`${row(title)} .h5-task-add`).click(); return; }
+    await page.locator(`${row(title)} .h5-task-more`).tap();
+    await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
+  };
   const list = label => page.locator(`#h5-tasks .h5-terminal-list[aria-label="${label}"]`);
   const dialog = page.locator('#h5-new-session');
   const choices = page.locator('#h5-new-session #h5-term-menu-actions button');
@@ -117,7 +123,7 @@ async function openPage(browser, size) {
   const shown = title => page.waitForFunction(name => document.getElementById('h5-task-name').textContent === name, title);
   const sessionName = name => page.waitForFunction(text => document.getElementById('h5-session-name').textContent === text, name);
   const openDialog = async (title, want = CHOICES) => {
-    await press(add(title));
+    await pressAdd(title);
     await choices.first().waitFor();
     await settled(page); // the dialog has finished fading in
     assert.deepEqual(await choices.allTextContents(), want, `${size}: the choices`);
@@ -131,7 +137,7 @@ async function openPage(browser, size) {
   await sheetClosed();
   await openSheet();
   await list('Phone terminals').locator('.h5-terminal-row').nth(1).waitFor();
-  return { context, page, server, holdNext, pageErrors, size, wide, press, item, add, list, dialog, choices, nameField, sheetOpen, openSheet, sheetClosed, shown, sessionName, openDialog, gone };
+  return { context, page, server, holdNext, pageErrors, size, wide, press, item, pressAdd, list, dialog, choices, nameField, sheetOpen, openSheet, sheetClosed, shown, sessionName, openDialog, gone };
 }
 
 // The boxes of the dialog compared with the visible area, read in one step.
@@ -266,7 +272,7 @@ const CASES = [
   ['"New session" in the empty terminal area opens the dialog for the shown task', async t => {
     await t.press(t.item('Gamma'));
     await t.list('Gamma').waitFor();
-    await t.press(t.page.locator('#h5-tasks .h5-task-row:has(.h5-task-title:text-is("Gamma")) .h5-task-add'));
+    await t.pressAdd('Gamma');
     await t.choices.first().waitFor();
     await t.press(t.page.locator('#h5-term-menu-cancel'));
     await t.gone('after Cancel');

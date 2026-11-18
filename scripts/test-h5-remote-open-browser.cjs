@@ -249,7 +249,10 @@ async function neverExpanded(browser, wide) {
   const opened = await openPage(browser, wide);
   const { context, page, state, label, how } = opened;
   state.slow.add(6);
-  await page.locator('#h5-tasks .h5-task-row', { hasText: 'Never opened' }).locator('.h5-task-add')[how]();
+  // On a touch screen a row has no "+": New session is in its "⋯" menu ("Task list look").
+  const row = page.locator('#h5-tasks .h5-task-row', { hasText: 'Never opened' });
+  if (how === 'click') await row.locator('.h5-task-add').click();
+  else { await row.locator('.h5-task-more')[how](); await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' })[how](); }
   await page.locator('#h5-new-session #h5-term-menu-cancel')[how]();
   await page.locator('#h5-new-session').waitFor({ state: 'detached' });
   assert.equal(await page.locator('#h5-empty').textContent(), 'Loading…', `${label}: the loading state`);

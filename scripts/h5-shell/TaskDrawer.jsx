@@ -15,18 +15,13 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import { alpha, getOverlayAlpha } from '@mui/material/styles';
+import Chip from '@mui/material/Chip';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
 import NativeSelect from '@mui/material/NativeSelect';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
-import AddIcon from '@mui/icons-material/Add';
-import CloseIcon from '@mui/icons-material/Close';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import SearchIcon from '@mui/icons-material/Search';
-import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
-import UnfoldLessIcon from '@mui/icons-material/UnfoldLess';
-import UnfoldMoreIcon from '@mui/icons-material/UnfoldMore';
-import { DomIcon, Pill, api, deviceParts, deviceText, t, terminalMark } from './common.jsx';
+import { DomIcon, api, deviceParts, deviceText, t, terminalMark } from './common.jsx';
 import { shortName, tagColor } from './task-order.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
@@ -40,15 +35,39 @@ const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 // The sessions under a task are its terminals. Every session row has "⋯" actions, under the selected task or any other.
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 
-// The second line of a session row: what it is, the folder of a terminal that kept its own directory after the task's working directory
-// changed (the full path is the row's tooltip).
+// The live state of a session (h5.js `sessionState`, from the pushed terminal activity): its words and the colours of the column headers (Columns.jsx
+// `STATE_COLORS`: green running, orange needs you, grey idle). The dot takes the main shade; the status line the light one, which reads better as text.
+const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
+const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
+const STATE_TEXT = { running: 'success.light', waiting: 'warning.light', idle: 'text.secondary' };
+
+// What a session row is: "Claude session", "Codex session" or "Terminal" (the glyph of its tile shows it; screen readers get the words).
+const kindOf = row => (AGENT_NAMES[row.agent] ? `${AGENT_NAMES[row.agent]} session` : 'Terminal');
+
+// The second line of a session row: its live state ("Running", "Needs you", "Idle"; what it is while the state is not known), then the folder of a
+// terminal that kept its own directory after the task's working directory changed (the full path is the row's tooltip).
 function subtitle(row) {
-  const name = AGENT_NAMES[row.agent];
-  // A Claude / Codex running in a terminal is a "Session".
-  const kind = row.kind === 'terminal' ? (name ? `${name} ${t('Session')}` : t('Terminal')) : '';
+  const state = row.status ? t(STATE_WORDS[row.status]) : row.kind === 'terminal' ? t(kindOf(row)) : '';
   const folder = row.otherDir ? row.otherDir.replace(/\/+$/, '').split('/').pop() || row.otherDir : '';
-  return [kind, folder].filter(Boolean).join(' \u00B7 ');
+  return [state, folder].filter(Boolean).join(' \u00B7 ');
 }
+
+// The selected row, a task or a session: the MD2 selected list item (primary at 12% with a 3px indicator at the left edge, drawn inside the row so it takes no width).
+const SELECTED_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.12), boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` });
+// The hover look of a whole row line (the tag, the name and the buttons), where a pointer can hover.
+const HOVER_SX = { '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } } };
+// A status dot (8px), in the colour of its state.
+const DOT_SX = { flex: '0 0 auto', display: 'inline-block', width: 8, height: 8, borderRadius: '50%' };
+// The buttons of a row on a computer appear while the pointer is over its line or the keyboard focus is inside it (`:focus-visible`, so a click that
+// leaves the focus on the row does not keep them shown); they keep their place (opacity only), so nothing moves, and Tab still reaches them. On a touch
+// screen they are always shown.
+const REVEAL_SX = {
+  '& .h5-row-act': { opacity: 0, transition: 'opacity 120ms ease-out' },
+  '&:hover .h5-row-act, &:has(:focus-visible) .h5-row-act': { opacity: 1 },
+  '@media (prefers-reduced-motion: reduce)': { '& .h5-row-act': { transition: 'none' } },
+  // Its own key, so it does not replace the row's own [TOUCH] rules when spread into them.
+  [`${TOUCH} .h5-row-act`]: { opacity: 1 },
+};
 
 // Keeps the node in the visible part of the task list: when it appears, and when the visible area changes (the on-screen keyboard opens or closes;
 // the sheet follows the visual viewport through --h5-height). With the focus inside it, the form of the focused field (with its outline) is kept in view.
@@ -218,11 +237,11 @@ function RenameRow({ menu, ui, row }) {
     <Box
       ref={ref} component="form" id="h5-term-rename" className="h5-menu-rename" autoComplete="off"
       onSubmit={event => { event.preventDefault(); ui.actions.menuRename(new FormData(event.currentTarget).get('title')); }}
-      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent' }}
+      sx={theme => ({ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 40, pl: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, ...(row.current ? SELECTED_SX(theme) : {}) })}
     >
       <TextField
         id="h5-term-rename-input" name="title" size="small" fullWidth defaultValue={menu.renameValue} onKeyDown={escapeCancels(ui)} onBlur={() => ui.actions.menuCancel()}
-        slotProps={{ input: { sx: { fontSize: 14 } }, htmlInput: { maxLength: 40, enterKeyHint: 'done', 'aria-label': t('Terminal name') } }}
+        slotProps={{ input: { sx: { typography: 'body2' } }, htmlInput: { maxLength: 40, enterKeyHint: 'done', 'aria-label': t('Terminal name') } }}
       />
       <Button type="submit" variant="contained" size="small" onPointerDown={keep} onMouseDown={keep} sx={{ flex: '0 0 auto', minHeight: 40 }}>{t('Save')}</Button>
     </Box>
@@ -237,31 +256,39 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
   const renaming = Boolean(menu && menu.rename && menu.rename.task === taskId);
   const movable = row => Boolean(sessions.movable && !renaming && row.kind === 'terminal');
   return (
-    <List className="h5-terminal-list" data-task={taskId} role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 1.75, mb: 0.125, pl: 0.125, borderLeft: 1, borderColor: 'divider' }}>
+    <List className="h5-terminal-list" data-task={taskId} role="group" aria-label={sessions.label} dense disablePadding sx={{ ml: 2, mr: 0.5, pb: 0.5 }}>
       {sessions.note ? <Typography className="h5-peek-note" variant="body2" color="text.secondary" sx={{ px: 1, py: 0.75 }}>{t(sessions.note)}</Typography> : null}
       {sessions.rows.map(row => (
         <React.Fragment key={`${row.kind}:${row.id}`}>
         {row.more && menu && menu.rename && menu.rename.task === taskId && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
         <Box
-          className="h5-terminal-row" data-session={row.kind === 'terminal' ? row.id : undefined} data-movable={movable(row) ? 'true' : undefined} {...(movable(row) && drag ? drag.hold() : {})}
-          sx={{ display: 'flex', alignItems: 'center', gap: 0.5, [TOUCH]: { gap: 1 }, borderRadius: 2, borderLeft: 3, borderColor: row.current ? 'primary.main' : 'transparent', bgcolor: row.current ? 'action.selected' : undefined, ...HELD_ROW_SX }}
+          className="h5-terminal-row" data-session={row.kind === 'terminal' ? row.id : undefined} data-status={row.status || undefined} data-movable={movable(row) ? 'true' : undefined} {...(movable(row) && drag ? drag.hold() : {})}
+          sx={theme => ({ display: 'flex', alignItems: 'center', gap: 0.5, pr: 0.5, [TOUCH]: { gap: 1, pr: 0 }, borderRadius: 2, ...(row.current ? SELECTED_SX(theme) : HOVER_SX), ...REVEAL_SX, ...HELD_ROW_SX })}
         >
           <ListItemButton
             component="button" className="h5-terminal-main" aria-current={row.current ? 'true' : undefined}
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
-            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.125, px: 0.75, borderRadius: 2, gap: 0.875, textAlign: 'left', fontSize: 14, '&.Mui-selected': { bgcolor: 'transparent' } }}
+            sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.25, pl: 1, pr: 0.5, borderRadius: 2, gap: 1.25, textAlign: 'left', '&:hover, &.Mui-selected, &.Mui-selected:hover': { bgcolor: 'transparent' } }}
           >
-            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" sx={{ position: 'relative', flex: '0 0 28px', width: 28, height: 28, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 18, height: 18 } }}>
+            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" title={t(kindOf(row))} sx={{ position: 'relative', flex: '0 0 28px', width: 28, height: 28, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 'caption', fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 18, height: 18 } }}>
               {row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} /> : GLYPHS.shell}
+              {/* The live state as a dot on the tile's corner, ringed in the list's colour so it stands apart from the tile. */}
+              {row.status ? <Box component="span" className="h5-terminal-dot" sx={{ ...DOT_SX, position: 'absolute', right: -3, bottom: -3, width: 10, height: 10, bgcolor: STATE_DOT[row.status], boxShadow: theme => `0 0 0 2px ${theme.palette.background.paper}` }} /> : null}
             </Box>
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-              <Box component="span" className="h5-terminal-name" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
-              {subtitle(row) ? <Box component="span" className="h5-terminal-sub" title={row.otherDir ? `${t('Directory')}: ${row.otherDir}` : undefined} sx={{ fontSize: 12, lineHeight: 1.3, color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle(row)}</Box> : null}
+              <Box component="span" className="h5-terminal-name" sx={{ typography: 'body2', fontWeight: row.current ? 500 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
+              {subtitle(row) ? (
+                <Box component="span" className="h5-terminal-sub" title={row.otherDir ? `${t('Directory')}: ${row.otherDir}` : undefined} sx={{ typography: 'caption', lineHeight: 1.35, color: row.status ? STATE_TEXT[row.status] : 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {/* What the session is, for screen readers (the tile shows it as a glyph) when the line names its state. */}
+                  {row.status && row.kind === 'terminal' ? <Box component="span" sx={VISUALLY_HIDDEN}>{`${t(kindOf(row))}, `}</Box> : null}
+                  {subtitle(row)}
+                </Box>
+              ) : null}
             </Box>
           </ListItemButton>
           {row.more ? (
-            <IconButton className="h5-terminal-more" size="small" sx={{ p: 0.5 }} aria-label={t('Terminal actions')} title={t('Terminal actions')} aria-haspopup="menu" onClick={event => ui.actions.rowMore(taskId, row, event.currentTarget)}>
-              <MoreHorizIcon fontSize="small" />
+            <IconButton className="h5-terminal-more h5-row-act" size="small" sx={{ p: 0.5 }} aria-label={t('Terminal actions')} title={t('Terminal actions')} aria-haspopup="menu" onClick={event => ui.actions.rowMore(taskId, row, event.currentTarget)}>
+              <Icon name="taskMore" size={20} />
             </IconButton>
           ) : null}
         </Box>)}
@@ -430,37 +457,61 @@ function Tasks({ taskList, rename, ui, query, filter, drag, sessionDrag }) {
   ));
 }
 
+// The name of a task as the person typed it (no capitals forced on it), medium weight, at most two lines with an ellipsis; the full name is its `title`.
+// A computer has the compact list size (14px), a touch screen the MD2 list size (16px).
+const TASK_TITLE_SX = theme => ({
+  ...theme.typography.body2, fontWeight: 500, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere',
+  [TOUCH]: { fontSize: theme.typography.body1.fontSize, lineHeight: 1.375 },
+});
+// The dot at the end of a task row: orange when one of its sessions needs the person, else green when one runs (none when all are idle).
+const taskState = task => (task.pending ? 'waiting' : task.running ? 'running' : null);
+
 // One task row with its sessions. h5.js keeps the row object of a task that did not change (store.mjs `share`) and the drag props are stable
 // (`useListDrag`), so a change of one task (a pushed activity state, a session opened) draws that row alone.
+// On a computer the row's "+" (New session) and "⋯" appear while the pointer is over its line or the focus is inside it, in a space kept for them (where
+// the status dot is shown otherwise); on a touch screen there is one "⋯" (44px), whose menu starts with New session (h5.js `taskMore`). Both "⋯" open a
+// menu under the button, as a session row's does.
 const TaskRow = React.memo(function TaskRow({ task, ui, drag, sessionDrag, menu }) {
   countRender('TaskRow');
+  const state = taskState(task);
+  // The selected look goes to the shown session when it is listed under the row, else to the task itself.
+  const selectedHere = task.selected && !(task.expanded && task.sessions && task.sessions.rows.some(row => row.current));
   return (
     <Box
       className="h5-task" data-ref={task.ref} data-source={task.source} data-movable={task.movable ? 'true' : undefined}
-      sx={{ position: 'relative', borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}
+      sx={{ position: 'relative', ...(task.expanded ? { borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } } : {}) }}
     >
       {/* A row that can be moved is held on its line to drag it (the tag drags at once): no text selection or touch callout, but it still scrolls. */}
       <Box
-        className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} {...(task.movable ? drag.hold() : {})}
-        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, borderRadius: 2, [TOUCH]: { gap: 1 }, ...(task.movable ? HELD_ROW_SX : {}) }}
+        className={task.add ? 'h5-task-head h5-task-row' : 'h5-task-head'} data-selected={selectedHere ? 'true' : undefined} {...(task.movable ? drag.hold() : {})}
+        sx={theme => ({
+          display: 'flex', alignItems: 'center', gap: 1, pl: 1, pr: 0.5, borderRadius: 2, [TOUCH]: { pr: 0 },
+          ...(selectedHere ? SELECTED_SX(theme) : HOVER_SX), ...REVEAL_SX, ...(task.movable ? HELD_ROW_SX : {}),
+          '@media (hover: hover)': { '&:hover .h5-task-dot': { opacity: 0 } }, '&:has(:focus-visible) .h5-task-dot': { opacity: 0 },
+        })}
       >
         {task.device ? <TaskTag task={task} ui={ui} drag={drag} /> : null}
         <ListItemButton
           component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
           onClick={() => ui.actions.toggleTask(task.ref)}
-          sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 36, py: 0, px: 0.75, borderRadius: 2, textAlign: 'left', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.25 }}
+          sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.5, px: 0.5, borderRadius: 2, textAlign: 'left', '&:hover': { bgcolor: 'transparent' } }}
         >
           <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
-            {task.device ? null : task.expanded ? <ExpandMoreIcon fontSize="small" /> : <ChevronRightIcon fontSize="small" />}
+            {task.device ? null : <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.secondary', transform: task.expanded ? 'rotate(90deg)' : 'none' }}><Icon name="treeChevron" size={14} /></Box>}
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-              <Box component="span" className="h5-task-title" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.3 }}>{task.title}</Box>
-              {task.count != null ? <Box component="span" className="h5-task-count" sx={{ fontSize: 12, color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
+              <Box component="span" className="h5-task-title" title={task.title} sx={TASK_TITLE_SX}>{task.title}</Box>
+              {task.count != null ? <Box component="span" className="h5-task-count" sx={{ typography: 'caption', color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
             </Box>
           </Box>
         </ListItemButton>
-        {/* "⋯" (move, working directory, delete) left of the "+", which stays at the right end of the row */}
-        {task.add ? <IconButton className="h5-task-more" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="dialog" onClick={() => ui.actions.taskMore(task.ref)}><Icon name="taskMore" size={20} /></IconButton> : null}
-        {task.add ? <IconButton className="h5-task-add" size="small" sx={{ p: 0.5 }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><AddIcon /></IconButton> : null}
+        {task.add ? (
+          <Box className="h5-task-actions" sx={{ flex: '0 0 auto', position: 'relative', display: 'flex', alignItems: 'center', gap: 0.25 }}>
+            {state ? <Box component="span" className="h5-task-dot" data-state={state} aria-hidden="true" sx={{ ...DOT_SX, bgcolor: STATE_DOT[state], position: 'absolute', right: 10, top: 'calc(50% - 4px)', transition: 'opacity 120ms ease-out', [TOUCH]: { position: 'static', mr: 0.5 } }} /> : null}
+            {/* "+" (pointer input only) left of "⋯" (move, rename, working directory, archive, delete), which stays at the right end of the row */}
+            <IconButton className="h5-task-add h5-row-act" size="small" sx={{ p: 0.5, [TOUCH]: { display: 'none' } }} aria-label={t('New session')} title={t('New session') + NEW_SESSION_KEYS} aria-haspopup="dialog" onClick={() => ui.actions.addSession(task.ref)}><Icon name="add" size={18} /></IconButton>
+            <IconButton className="h5-task-more h5-row-act" size="small" sx={{ p: 0.5 }} aria-label={t('Task actions')} title={t('Task actions')} aria-haspopup="menu" onClick={event => ui.actions.taskMore(task.ref, event.currentTarget)}><Icon name="taskMore" size={20} /></IconButton>
+          </Box>
+        ) : null}
       </Box>
       {task.expanded && task.sessions ? <Sessions ui={ui} taskId={task.ref} sessions={task.sessions} menu={menu} drag={sessionDrag} /> : null}
     </Box>
@@ -544,40 +595,89 @@ export function NewTaskDialog({ state, ui }) {
 
 // The list reads the tasks, the Archived section and, while a session row is being renamed, the menu (only then: another menu draws no row).
 const PANEL = state => ({ taskList: state.taskList, archived: state.archived, rename: state.menu && state.menu.rename ? state.menu : null });
+// The filters of the list: All, Running and Needs you (h5.js puts `running` / `pending`, counts of the task's terminals from the activity feeds, on each
+// task row). A chip names how many sessions of the listed tasks are in that state, from the same rows.
+const FILTERS = [['all', 'All', null], ['running', 'Running', 'running'], ['pending', 'Needs you', 'waiting']];
+const countOf = (tasks, key) => (tasks || []).reduce((sum, task) => sum + (Number(task[key]) || 0), 0);
+// MD2 choice chips: the chosen one is a primary tint with primary text, the others are outlined. 28px (32px on a touch screen, at least 44px wide, where
+// the `::after` reaches 6px above and below, into the row's padding, so each is a 44px target; wrapped rows keep 12px between them for that).
+const CHIP_SX = on => theme => ({
+  height: 28, borderRadius: 14, typography: 'body2', fontSize: 13, position: 'relative',
+  '& .MuiChip-label': { px: 1.25 }, '& .MuiChip-icon': { ml: 1.25, mr: -0.5 },
+  ...(on ? { bgcolor: alpha(theme.palette.primary.main, 0.16), color: 'primary.main', borderColor: 'transparent', '&:hover, &.MuiChip-clickable:hover': { bgcolor: alpha(theme.palette.primary.main, 0.24) } } : {}),
+  '&::after': { content: '""', position: 'absolute', inset: '-4px 0' },
+  [TOUCH]: { height: 32, minWidth: 44, borderRadius: 16, '& .MuiChip-label': { px: 1 }, '& .MuiChip-icon': { ml: 1 }, '&::after': { inset: '-6px 0' } },
+});
 function Panel({ ui, wide }) {
   const state = useStore(ui, PANEL, shallowEqual);
   countRender('TaskPanel');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [options, setOptions] = useState(null); // the "List options" button while its menu is open
   const listRef = useRef(null);
   const floatRef = useRef(null);
   const liveRef = useRef(null);
+  const searchRef = useRef(null);
   const drag = useListDrag(listRef, floatRef, liveRef, ui, TASK_DRAG);
   const sessionDrag = useListDrag(listRef, floatRef, liveRef, ui, SESSION_DRAG);
+  const tasks = state.taskList && state.taskList.tasks;
+  const option = run => () => { setOptions(null); run(); };
   return (
     <Box sx={theme => ({ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, ...DRAG_SX(theme) })}>
-      <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1.5, py: 0.25, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography id="h5-tasks-title" variant="h6" component="h2">{t('Tasks')}</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', [TOUCH]: { gap: 1 } }}>
-          <IconButton id="h5-expand-all" size="small" aria-label={t('Expand all')} title={t('Expand all')} onClick={() => ui.actions.expandAll()}><UnfoldMoreIcon /></IconButton>
-          <IconButton id="h5-collapse-all" size="small" aria-label={t('Collapse all')} title={t('Collapse all')} onClick={() => ui.actions.collapseAll()}><UnfoldLessIcon /></IconButton>
-          {wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} onClick={() => ui.actions.closeTasks()}><CloseIcon /></IconButton>}
-        </Box>
+      {/* The top of the list: the title with New task at its right, the search field, then the filter chips with their counts. */}
+      <Box className="h5-sheet-header" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 48, pl: 2, pr: 1, [TOUCH]: { minHeight: 56 } }}>
+        <Typography id="h5-tasks-title" variant="h6" component="h2" sx={{ flex: '1 1 auto', minWidth: 0 }}>{t('Tasks')}</Typography>
+        <Button id="h5-add-task" color="primary" size="medium" startIcon={<Icon name="add" size={18} />} aria-haspopup="dialog" onClick={() => ui.actions.openNewTask()} sx={{ flex: '0 0 auto', px: 1.25 }}>{t('New task')}</Button>
+        {wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} title={t('Close')} onClick={() => ui.actions.closeTasks()}><Icon name="close" size={20} /></IconButton>}
       </Box>
-      <Box className="h5-task-search" sx={{ px: 1.5, pb: 0.25, pt: 0.75, [TOUCH]: { pb: 0 } }}>
+      <Box className="h5-task-search" sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
-          slotProps={{ input: { startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>, sx: { borderRadius: 3, fontSize: 14, '& input': { py: 0.75 } } }, htmlInput: { id: 'h5-task-search-input', 'aria-label': t('Search sessions') } }}
+          onKeyDown={event => { if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); setQuery(''); } }}
+          slotProps={{
+            input: {
+              inputRef: searchRef,
+              startAdornment: <InputAdornment position="start" sx={{ color: 'text.secondary', mr: 0.5 }}><Icon name="search" size={16} /></InputAdornment>,
+              endAdornment: query ? (
+                <InputAdornment position="end">
+                  <IconButton id="h5-task-search-clear" size="small" edge="end" aria-label={t('Clear search')} title={t('Clear search')} onClick={() => { setQuery(''); if (searchRef.current) searchRef.current.focus(); }} sx={{ p: 0.5 }}><Icon name="close" size={14} /></IconButton>
+                </InputAdornment>
+              ) : null,
+              sx: {
+                typography: 'body2', bgcolor: 'action.hover', '& input': { py: 1 }, '& input::-webkit-search-cancel-button': { display: 'none' },
+                '&:not(.Mui-focused):not(:hover) .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
+              },
+            },
+            htmlInput: { id: 'h5-task-search-input', 'aria-label': t('Search sessions') },
+          }}
         />
-        {/* The filters look small (32px on a touch screen) but each is a 44px target: its `::after` reaches 6px above and below, into the row's padding. */}
-        <Box className="h5-task-filters" sx={{ display: 'flex', gap: 0.75, pt: 0.75, [TOUCH]: { gap: 1, py: 0.75 } }}>
-          {[['all', 'All'], ['running', 'Running'], ['pending', 'Pending']].map(([key, label]) => (
-            <Pill
-              key={key} label={t(label)} tone={filter === key ? 'primary' : 'default'} filled={filter === key} aria-pressed={filter === key} onClick={() => setFilter(key)}
-              sx={{ [TOUCH]: { height: 32, minWidth: 44, px: 1.5, fontSize: 14, borderRadius: 16, position: 'relative', '&::after': { content: '""', position: 'absolute', inset: '-7px 0' } } }}
-            />
-          ))}
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, pl: 1.5, pr: 1, pb: 1, [TOUCH]: { gap: 0, pr: 0.5 } }}>
+        <Box className="h5-task-filters" role="group" aria-label={t('Filter')} sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, flex: '1 1 auto', minWidth: 0, [TOUCH]: { columnGap: 0.75, rowGap: 1.5 } }}>
+          {FILTERS.map(([key, label, look]) => {
+            const on = filter === key;
+            const count = look ? countOf(tasks, key) : 0;
+            return (
+              <Chip
+                key={key} component="button" clickable variant="outlined" data-filter={key} aria-pressed={on} onClick={() => setFilter(key)}
+                icon={look ? <Box component="span" className="h5-filter-dot" sx={{ ...DOT_SX, bgcolor: STATE_DOT[look] }} /> : undefined}
+                label={count ? `${t(label)} ${count}` : t(label)} sx={CHIP_SX(on)}
+              />
+            );
+          })}
         </Box>
+        {/* The less used list actions (open or close every task's sessions) wait behind one button at the end of the chips. */}
+        <IconButton
+          id="h5-task-list-more" size="small" aria-label={t('List options')} title={t('List options')} aria-haspopup="menu" aria-expanded={options ? 'true' : undefined}
+          aria-controls={options ? 'h5-task-list-menu' : undefined} onClick={event => setOptions(event.currentTarget)} sx={{ p: 0.5 }}
+        ><Icon name="taskMore" size={20} /></IconButton>
+        <Menu
+          id="h5-task-list-menu" anchorEl={options} open={Boolean(options)} onClose={() => setOptions(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <MenuItem id="h5-expand-all" onClick={option(() => ui.actions.expandAll())} sx={{ typography: 'body2', minHeight: 36 }}>{t('Expand all')}</MenuItem>
+          <MenuItem id="h5-collapse-all" onClick={option(() => ui.actions.collapseAll())} sx={{ typography: 'body2', minHeight: 36 }}>{t('Collapse all')}</MenuItem>
+        </Menu>
       </Box>
       {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
       <List id="h5-task-list" ref={listRef} className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
@@ -588,9 +688,6 @@ function Panel({ ui, wide }) {
       {/* The floating copy of a dragged row goes in here (useListDrag), and a keyboard move or a session moved is announced in the live region. */}
       <Box ref={floatRef} className="h5-task-float-host" />
       <Box id="h5-task-order-live" ref={liveRef} aria-live="assertive" aria-atomic="true" sx={VISUALLY_HIDDEN} />
-      <Box sx={{ px: 1.5, pb: 0.75, [TOUCH]: { pt: 0.5, pb: 1 } }}>
-        <Button id="h5-add-task" fullWidth variant="contained" size="medium" startIcon={<AddIcon />} aria-haspopup="dialog" onClick={() => ui.actions.openNewTask()} sx={{ borderRadius: 3, py: 0.5, textTransform: 'none', fontSize: 14 }}>{t('New task')}</Button>
-      </Box>
       {/* Below the list, on a phone: the other destinations of the page (DrawerNav). On the wide layout they are in the navigation rail. */}
       {wide ? null : <DrawerNav ui={ui} />}
     </Box>

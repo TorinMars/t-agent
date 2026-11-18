@@ -57,7 +57,13 @@ async function openPage(browser, wide) {
 
   const press = locator => (wide ? locator.click() : locator.tap());
   const item = title => page.locator('#h5-tasks .h5-task-item', { hasText: title });
-  const add = title => page.locator(`#h5-tasks .h5-task-row:has(.h5-task-title:text-is("${title}")) .h5-task-add`);
+  const row = title => `#h5-tasks .h5-task-row:has(.h5-task-title:text-is("${title}"))`;
+  // New session of a task row: its "+" on a computer; on a touch screen "New session" in its "⋯" menu (the row has no "+", "Task list look").
+  const pressAdd = async title => {
+    if (wide) { await page.locator(`${row(title)} .h5-task-add`).click(); return; }
+    await page.locator(`${row(title)} .h5-task-more`).tap();
+    await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
+  };
   const list = label => page.locator(`#h5-tasks .h5-terminal-list[aria-label="${label}"]`);
   const panel = page.locator('#h5-new-session');
   const choices = page.locator('#h5-new-session #h5-term-menu-actions button');
@@ -69,7 +75,7 @@ async function openPage(browser, wide) {
   const sheetClosed = async () => { if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); };
   const shown = title => page.waitForFunction(name => document.getElementById('h5-task-name').textContent === name, title);
   const openPanel = async title => {
-    await press(add(title));
+    await pressAdd(title);
     await choices.first().waitFor();
     await settled(page); // faded in
     assert.deepEqual(await choices.allTextContents(), CHOICES, 'the choices of the dialog');
@@ -85,7 +91,7 @@ async function openPage(browser, wide) {
   await sheetClosed();
   await openSheet();
   await list('Phone terminals').locator('.h5-terminal-row').nth(1).waitFor();
-  return { context, page, server, pageErrors, wide, press, item, add, list, panel, choices, openSheet, sheetClosed, shown, openPanel, cancel, gone, owner };
+  return { context, page, server, pageErrors, wide, press, item, pressAdd, list, panel, choices, openSheet, sheetClosed, shown, openPanel, cancel, gone, owner };
 }
 
 const CASES = [
@@ -174,7 +180,8 @@ const CASES = [
     await t.press(t.page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
     await t.page.locator('#h5-term-rename-input').waitFor();
     await t.page.waitForTimeout(350);
-    await t.page.locator('#h5-collapse-all').evaluate(node => node.click());
+    // Collapse all is in the "List options" menu, which would take the focus (and so the field) away first: the action itself is run here.
+    await t.page.evaluate(() => window.H5UI.actions.collapseAll());
     await t.page.locator('#h5-term-rename').waitFor({ state: 'detached', ...SHORT });
   }],
   ['folding the sidebar takes the rename field away', async t => {

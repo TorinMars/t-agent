@@ -137,14 +137,14 @@ function helpers(page, server, wide, label) {
     await page.waitForFunction(task_ => window.taskSockets(task_).length > 0, id, { timeout: 3000 });
     if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
   };
-  const menuItems = page.locator('#h5-term-menu-actions button, #h5-term-menu-actions [role="button"]');
+  const menuItems = page.locator('#h5-session-menu-actions [role="menuitem"]'); // the "⋯" of a task opens a menu under it (TermMenu.jsx `SessionPopup`)
   const menu = async title => {
     await sheet();
     await press(row(title).locator('.h5-task-more'));
     await menuItems.first().waitFor();
     await settled();
   };
-  const closeMenu = async () => { await press(page.locator('#h5-term-menu-cancel')); await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' }); };
+  const closeMenu = async () => { await page.keyboard.press('Escape'); await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' }); };
   const items = async title => { await menu(title); const texts = await menuItems.allTextContents(); await closeMenu(); return texts; };
   const dialog = page.locator('#h5-task-dialog');
   const ask = async (title = 'Beta') => { await menu(title); await press(menuItems.filter({ hasText: /^Visible to$/ })); await dialog.waitFor(); await settled(); };
@@ -480,7 +480,7 @@ async function warmAndMenu(browser) {
   await h.menu('Remote one');
   await page.evaluate(() => window.H5UI.actions.openTasks());
   await h.gone('Remote one');
-  await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached', timeout: 3000 }).catch(() => assert.fail(`${label}: the menu of a task that left closes`));
+  await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached', timeout: 3000 }).catch(() => assert.fail(`${label}: the menu of a task that left closes`));
   assert.deepEqual((await h.socketState(70)).at(-1), 3, `${label}: the warm terminal is closed`);
   assert.equal(await page.locator('#h5-task-name').textContent(), 'Remote two', `${label}: the shown task stays`);
   assert.deepEqual(await h.socketState(71), [1], `${label}: its socket stays open`);

@@ -187,7 +187,7 @@ function measure(min) {
       await check('update-dialog');
       await page.locator('#h5-update-dismiss').tap();
       await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
-      // The task sheet (the selected task has its "⋯" and "+"), the terminal menu, the session menu.
+      // The task sheet (each row has its "⋯"), the terminal menu, the session menu.
       await page.locator('#h5-open-tasks').tap();
       await page.locator('#h5-tasks').waitFor({ state: 'visible' });
       await page.locator('#h5-tasks .h5-terminal-more').first().waitFor();
@@ -199,7 +199,11 @@ function measure(min) {
       await page.locator('#h5-session-menu .MuiBackdrop-root').tap({ position: { x: 4, y: 4 } });
       await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
       if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
-      await page.locator('#h5-tasks .h5-task-add').first().tap();
+      // The "⋯" of a task: the same popup as a session's, starting with New session (a touch screen has no "+").
+      await page.locator('#h5-tasks .h5-task-more').first().tap();
+      await page.locator('#h5-session-menu-actions').waitFor();
+      await check('task-menu');
+      await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
       await page.locator('#h5-new-name-input').waitFor();
       await check('session-menu'); // the New session dialog
       await page.locator('#h5-term-menu-cancel').tap();

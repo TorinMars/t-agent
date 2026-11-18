@@ -430,12 +430,21 @@
     const own = item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''));
     return row.work_dir && own && row.work_dir !== own ? row.work_dir : null;
   };
+  // The live state of a session row, from the pushed terminal activity of its service (the feed snapshot that also drives the Running and Needs you
+  // filters): 'running' (also a running sub-agent), 'waiting' (finished and not seen yet: it needs the person), 'idle', or null while the service's activity
+  // is not known (hidden, offline, no feed yet). TaskDrawer.jsx shows it as the row's dot and status line; a change redraws only the rows it changes (`share`).
+  function sessionState(from, taskId, id) {
+    const snap = snapshotOf(from);
+    if (!snap) return null;
+    if (((snap.activity[taskId] || {})[id]) === 'running' || Number((snap.subagents[taskId] || {})[id]) > 0) return 'running';
+    return ((snap.activity[taskId] || {})[id]) === 'done' ? 'waiting' : 'idle';
+  }
   // The sessions of the selected task: its terminals, each with "⋯" actions. Agent chats are not listed in the task sheet.
   function ownSessions() {
     return {
       label: 'Phone terminals', note: null, movable: ordersTerminals(source) && terminals.length > 1,
       rows: [
-        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true })), // no row is current while a chat covers the terminal
+        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true, status: sessionState(source, task.id, row.terminal_id) })), // no row is current while a chat covers the terminal
       ],
     };
   }
@@ -446,7 +455,7 @@
     if (!peek || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
-      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true })),
+      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true, status: sessionState(from, item.id, row.terminal_id) })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
     return { label, note: null, rows, movable: ordersTerminals(from) && peek.terminals.length > 1 };
@@ -1010,7 +1019,9 @@
   const serviceOf = from => (from === LOCAL ? null : from.label); // the name a dialog or menu shows beside the title: tasks of two services can have the same title
   const dialogFor = (kind, from, item, extra = {}) => ({ kind, sourceKey: from.key, service: serviceOf(from), id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false, ...extra });
   const dialogSource = dialog => (dialog ? sources.find(item => item.key === dialog.sourceKey) : null);
-  ui.actions.taskMore = ref => {
+  // anchor: the "⋯" it was opened from: the actions are a popup under it, like those of a session row (TermMenu.jsx `SessionPopup`), which lists only
+  // what can be done (no disabled items). On a touch screen the row has no "+", so the popup starts with New session. Without an anchor: the sheet.
+  ui.actions.taskMore = (ref, anchor = null) => {
     const hit = resolveRef(ref);
     if (!hit) return;
     const { from, item } = hit;
@@ -1028,7 +1039,8 @@
       const target = to && orderedTasks().find(row => row.key === to.target);
       if (target) reorderTask(taskRef(from, item.id), taskRef(target.from, target.item.id), to.after);
     };
-    showMenu(serviceOf(from) ? `${item.title} \u00B7 ${serviceOf(from)}` : item.title, [
+    const items = [
+      ...(anchor && !pointerMode() ? [['New session', () => { closeTerminalMenu(); ui.actions.addSession(taskRef(from, item.id)); }]] : []),
       ...steps.map(([label, step]) => [label, () => moveStep(step), null, null, null, !ui.taskOrder.stepTarget(display, key, step)]),
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(from, item, group.key), 'raw']),
       ['Rename', () => void askTaskRename(from, item)],
@@ -1036,7 +1048,8 @@
       ...(choosesVisibility(from) ? [['Visible to', () => void askVisibility(from, item)]] : []),
       ...(archives(from) ? [['Archive', () => void askArchive(from, item)]] : []),
       ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('delete', from, item) }); }, 'danger'],
-    ]);
+    ];
+    showMenu(serviceOf(from) ? `${item.title} \u00B7 ${serviceOf(from)}` : item.title, anchor ? items.filter(entry => !entry[5]) : items, { anchor });
   };
   async function moveTask(from, item, status) {
     closeTerminalMenu();

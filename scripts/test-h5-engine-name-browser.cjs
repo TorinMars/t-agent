@@ -181,7 +181,7 @@ async function testNamesShown(browser) {
   // "Visible to" of a task of this machine lists the linked machines by the names the server gives.
   await t.sheet();
   await page.locator('#h5-task-list .h5-task[data-source="local"] .h5-task-more').first().tap();
-  await page.locator('#h5-term-menu-actions button', { hasText: 'Visible to' }).tap();
+  await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'Visible to' }).tap();
   await page.locator('.h5-visibility-row').waitFor();
   assert.equal(await page.locator('.h5-visibility-name').textContent(), 'Peer', 'Visible to: the linked machine by name');
   await page.locator('#h5-task-dialog-cancel').tap();

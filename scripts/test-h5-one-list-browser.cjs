@@ -5,6 +5,8 @@
 // One service looks as it did. The Archived section across services. "Show in task list": hiding removes rows, counts and feeds, the last switch is disabled, it survives a reload.
 // The header names the device of the shown task with the same engine tag as its row in the list (the DeviceTag pill, closed look), on this machine too,
 // whenever the list tags its rows; one device without sorting names none (a remote one in plain text). It fits at 320px and keeps the header's height.
+// The look of the list ("Task list look"): names as typed in two lines at most, the row buttons on hover or keyboard focus (one "⋯" on a touch screen), the
+// status line of each session and the counts on the filter chips.
 // H5_SHOT_DIR=<dir> saves screenshots of a list with two services.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -147,10 +149,17 @@ function tools(page, wide) {
   const taskMenu = async (key, title) => {
     await sheet();
     await press(row(key, title).locator('.h5-task-more'));
-    await page.locator('#h5-term-menu-actions').first().waitFor();
+    await page.locator('#h5-session-menu-actions').first().waitFor();
     await page.waitForTimeout(250);
   };
-  const menuItem = text => page.locator('#h5-term-menu-actions button', { hasText: text });
+  // The "⋯" of a task opens a menu under the button, like a session row's (TermMenu.jsx `SessionPopup`).
+  const menuItem = text => page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: text });
+  // New session of a row: its "+" on a computer; on a touch screen the row has no "+", so "New session" in its "⋯" menu.
+  const addSession = async (key, title) => {
+    if (wide) { await press(row(key, title).locator('.h5-task-add')); return; }
+    await taskMenu(key, title);
+    await press(menuItem('New session'));
+  };
   const notice = wanted => page.waitForFunction(text => (window.H5UI.get().notice || {}).message === text, wanted);
   const openEngines = async () => {
     await page.evaluate(() => window.H5UI.actions.openSettings());
@@ -161,7 +170,7 @@ function tools(page, wide) {
     await page.waitForFunction(() => Boolean(document.querySelector('#h5-set-devices .MuiCollapse-entered')));
   };
   const closeSettings = async () => { await page.evaluate(() => window.H5UI.actions.closeSettings()); await page.locator('#h5-settings .h5-sheet-panel').waitFor({ state: 'hidden' }); };
-  return { press, section, row, sheet, socketPath, waitSocket, shownName, service, openTask, taskMenu, menuItem, notice, openEngines, closeSettings };
+  return { press, section, row, sheet, socketPath, waitSocket, shownName, service, openTask, taskMenu, menuItem, addSession, notice, openEngines, closeSettings };
 }
 const lastWrite = (world, method, pathname) => world.writes.filter(([m, p]) => m === method && p === pathname).at(-1);
 const count = (list, item) => list.filter(entry => entry === item).length;
@@ -207,7 +216,7 @@ async function testTwoServices(browser, wide) {
   // The shown task is on VPS; actions on a row of this machine go to this machine.
   await t.taskMenu('local', 'Beta');
   await t.press(t.menuItem('To do'));
-  await page.waitForFunction(() => document.querySelectorAll('#h5-term-menu-actions button').length === 0);
+  await page.waitForFunction(() => document.querySelectorAll('#h5-session-menu-actions [role="menuitem"]').length === 0);
   await page.waitForFunction(() => window.H5UI.get().taskList.tasks.length === 4);
   await page.waitForTimeout(100);
   assert.deepEqual(lastWrite(world, 'PUT', '/api/tasks/2'), ['PUT', '/api/tasks/2', { status: 'todo' }], `${label}: move goes to the row's service`);
@@ -217,7 +226,7 @@ async function testTwoServices(browser, wide) {
   await t.openTask('local', 'Alpha');
   await t.waitSocket('/terminal/ws');
   await t.taskMenu('remote:7', 'Beta');
-  assert.match(await page.locator('.h5-menu-panel, #h5-term-menu').first().textContent(), /Beta · VPS/, `${label}: the sheet names the service`);
+  assert.match(await page.locator('#h5-session-menu-actions').getAttribute('aria-label'), /Beta · VPS/, `${label}: the menu names the service`);
   await t.press(t.menuItem('Archive'));
   await page.locator('#h5-task-dialog-ok').waitFor();
   await page.waitForFunction(() => !document.getElementById('h5-task-dialog-ok').disabled);
@@ -230,7 +239,7 @@ async function testTwoServices(browser, wide) {
 
   // "+" of a row of the other service adds a terminal there, opened through that service.
   await t.sheet();
-  await t.press(t.row('remote:7', 'Alpha').locator('.h5-task-add'));
+  await t.addSession('remote:7', 'Alpha');
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Alpha' && document.getElementById('h5-task-service')?.textContent === 'VPS');
   assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Alpha', `${label}: the New session dialog names the row's task`);
   assert.equal(await page.locator('#h5-new-session-service').textContent(), 'VPS', `${label}: and its service`);
@@ -281,13 +290,13 @@ async function testActivity(browser, wide) {
   await t.row('remote:7', 'Alpha').waitFor();
   assert.equal(await t.section('local').locator('.h5-task-row').count(), 1, `${label}: search keeps the matching task`);
   await search.fill('');
-  await page.locator('.h5-task-filters').getByText('Running', { exact: true }).click();
+  await page.locator('.h5-task-filters [data-filter="running"]').click();
   await t.row('local', 'Alpha').waitFor();
   assert.equal(await page.locator('.h5-task[data-source="remote:7"]').count(), 0, `${label}: the remote service has nothing running`);
-  await page.locator('.h5-task-filters').getByText('Pending', { exact: true }).click();
+  await page.locator('.h5-task-filters [data-filter="pending"]').click();
   await t.row('remote:7', 'Beta').waitFor();
   assert.equal(await page.locator('.h5-task[data-source="local"]').count(), 0, `${label}: this machine has nothing pending`);
-  await page.locator('.h5-task-filters').getByText('All', { exact: true }).click();
+  await page.locator('.h5-task-filters [data-filter="all"]').click();
 
   // The next-session button crosses services: the one running here, then the pending one there, and back.
   world.local.activity = { 1: { default: 'running' } }; world.vps.activity = { 2: { b1: 'done' } };
@@ -300,6 +309,101 @@ async function testActivity(browser, wide) {
   await page.evaluate(() => window.H5UI.actions.nextActiveSession());
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Alpha');
   await t.waitSocket('/terminal/ws');
+  assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
+  await context.close();
+}
+
+// "Task list look" (docs/design/page-task-list.md): a name as it was typed, two lines at most with the full name in `title`; on a computer a row's "+" and
+// "⋯" are shown only on hover or keyboard focus, in a place kept for them; on a touch screen one 44px "⋯" whose menu starts with New session; the status
+// line and dot of a running, a waiting and an idle session, from the pushed activity; the counts on the Running and Needs you chips.
+const LONG_NAME = 'A long task name typed in sentence case that needs more than two lines in the narrow task list of the page';
+async function testListLook(browser, wide) {
+  const label = `${wide ? 'wide' : 'phone'} look`;
+  const world = makeWorld();
+  world.local.tasks[1].title = LONG_NAME;
+  const { context, page } = await open(browser, world, wide);
+  const t = tools(page, wide);
+  await t.sheet();
+  await t.row('remote:7', 'Beta').waitFor();
+  await page.waitForFunction(([a, b]) => window.activityStream.open(a) && window.activityStream.open(b), [LOCAL_STREAM, REMOTE_STREAM]);
+  await pushActivity(page, LOCAL_STREAM, { activity: { 1: { default: 'running' } }, subagents: {} });
+  await pushActivity(page, REMOTE_STREAM, { activity: { 2: { b1: 'done' } }, subagents: {} });
+
+  // The chips count the sessions in each state.
+  await page.waitForFunction(() => document.querySelector('.h5-task-filters [data-filter="running"]').textContent === 'Running 1');
+  assert.equal(await page.locator('.h5-task-filters [data-filter="pending"]').textContent(), 'Needs you 1', `${label}: the Needs you chip counts the waiting session`);
+  assert.equal(await page.locator('.h5-task-filters [data-filter="all"]').textContent(), 'All', `${label}: All has no count`);
+  assert.equal(await page.locator('.h5-task-filters [data-filter="all"]').getAttribute('aria-pressed'), 'true', `${label}: All is chosen`);
+
+  // The name as typed, at most two lines with an ellipsis, the full name in `title`.
+  const title = t.row('local', 'A long task').locator('.h5-task-title');
+  const look = await title.evaluate(node => { const style = getComputedStyle(node); return { transform: style.textTransform, clamp: style.webkitLineClamp, weight: style.fontWeight, lines: node.getBoundingClientRect().height / parseFloat(style.lineHeight), clipped: node.scrollHeight > node.clientHeight + 1, title: node.title, text: node.textContent }; });
+  assert.equal(look.transform, 'none', `${label}: no capitals forced on the name`);
+  assert.equal(look.clamp, '2', `${label}: two lines at most`);
+  assert.equal(look.weight, '500', `${label}: medium weight`);
+  assert.ok(look.lines <= 2.05, `${label}: the long name takes two lines (${look.lines})`);
+  assert.ok(look.clipped, `${label}: the rest of the long name is cut`);
+  assert.equal(look.title, LONG_NAME, `${label}: the full name is the title`);
+  assert.equal(look.text, LONG_NAME, `${label}: the name is the typed text`);
+
+  // The status line and dot of a running and of a waiting session.
+  await t.press(t.row('local', 'Alpha').locator('.h5-task-item'));
+  await t.press(t.row('remote:7', 'Beta').locator('.h5-task-item'));
+  const sessionRow = (key, id) => t.section(key).locator(`.h5-terminal-row[data-session="${id}"]`);
+  const state = async (key, id) => sessionRow(key, id).evaluate(node => ({ status: node.dataset.status, line: node.querySelector('.h5-terminal-sub').textContent, color: getComputedStyle(node.querySelector('.h5-terminal-sub')).color, dot: getComputedStyle(node.querySelector('.h5-terminal-dot')).backgroundColor }));
+  await sessionRow('local', 'default').waitFor();
+  await sessionRow('remote:7', 'b1').waitFor();
+  assert.deepEqual(await state('local', 'default'), { status: 'running', line: 'Terminal, Running', color: 'rgb(129, 199, 132)', dot: 'rgb(102, 187, 106)' }, `${label}: a running session says so in green (the kind is read out first)`);
+  assert.deepEqual(await state('remote:7', 'b1'), { status: 'waiting', line: 'Terminal, Needs you', color: 'rgb(255, 183, 77)', dot: 'rgb(255, 167, 38)' }, `${label}: a finished, unseen session needs the person, in orange`);
+  assert.equal(await t.row('remote:7', 'Beta').locator('.h5-task-dot').getAttribute('data-state'), 'waiting', `${label}: the task row has the orange dot`);
+  await pushActivity(page, LOCAL_STREAM, { activity: {}, subagents: {} });
+  await page.waitForFunction(() => document.querySelector('.h5-task[data-source="local"] .h5-terminal-row[data-session="default"]').dataset.status === 'idle');
+  assert.equal((await state('local', 'default')).line, 'Terminal, Idle', `${label}: then idle`);
+  assert.equal(await t.row('local', 'Alpha').locator('.h5-task-dot').count(), 0, `${label}: a task with nothing running has no dot`);
+  await page.waitForFunction(() => document.querySelector('.h5-task-filters [data-filter="running"]').textContent === 'Running');
+
+  const add = t.row('local', 'Alpha').locator('.h5-task-add');
+  const more = t.row('local', 'Alpha').locator('.h5-task-more');
+  const opacity = locator => locator.evaluate(node => getComputedStyle(node).opacity);
+  if (wide) {
+    // Hidden at rest, shown on hover, in the same place: the name does not move or narrow.
+    await page.mouse.move(1000, 700);
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.h5-task[data-source="local"] .h5-task-add')).opacity === '0');
+    assert.equal(await opacity(more), '0', `${label}: "⋯" is hidden at rest`);
+    assert.equal(await page.locator('#h5-task-list .h5-task-more').count(), 4, `${label}: every row still has its "⋯" (reachable by Tab)`);
+    const before = await t.row('local', 'Alpha').locator('.h5-task-title').boundingBox();
+    await t.row('local', 'Alpha').locator('.h5-task-title').hover();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.h5-task[data-source="local"] .h5-task-add')).opacity === '1');
+    assert.equal(await opacity(more), '1', `${label}: "⋯" shows on hover`);
+    assert.deepEqual(await t.row('local', 'Alpha').locator('.h5-task-title').boundingBox(), before, `${label}: the buttons do not move the name`);
+    assert.equal(await opacity(t.row('remote:7', 'Beta').locator('.h5-task-more')), '0', `${label}: other rows keep theirs hidden`);
+    // Keyboard focus inside a row shows them too.
+    await page.mouse.move(1000, 700);
+    await t.row('remote:7', 'Beta').locator('.h5-task-item').focus();
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.h5-task[data-source="remote:7"] .h5-task-add'));
+    await page.waitForFunction(() => getComputedStyle(document.activeElement.closest('.h5-task-head').querySelector('.h5-task-more')).opacity === '1');
+    // Its "⋯" opens a menu under the button, without New session (the row has its "+").
+    await t.press(more);
+    await page.locator('#h5-session-menu-actions').waitFor();
+    assert.equal(await t.menuItem('New session').count(), 0, `${label}: the menu of a computer has no New session`);
+    await page.keyboard.press('Escape');
+    await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
+  } else {
+    // One "⋯" of 44px, no "+"; its menu starts with New session.
+    assert.equal(await add.isVisible(), false, `${label}: no "+" on a touch screen`);
+    assert.equal(await opacity(more), '1', `${label}: "⋯" is always shown`);
+    const box = await more.boundingBox();
+    assert.ok(box.width >= 44 && box.height >= 44, `${label}: "⋯" is a 44px target (${box.width}x${box.height})`);
+    await t.taskMenu('local', 'Alpha');
+    assert.equal(await page.locator('#h5-session-menu-actions [role="menuitem"]').first().textContent(), 'New session', `${label}: the menu starts with New session`);
+    await t.press(t.menuItem('New session'));
+    await page.locator('#h5-new-session-task').waitFor();
+    assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Alpha', `${label}: for that task`);
+    await t.press(page.locator('#h5-term-menu-cancel'));
+    await page.locator('#h5-new-session').waitFor({ state: 'detached' });
+  }
+  if (process.env.H5_SHOT_DIR) { await t.sheet(); await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, `list-look-${wide ? 'wide' : '390'}.png`) }); }
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
 }
@@ -620,6 +724,7 @@ async function testHeaderTag(browser) {
     for (const wide of [true, false]) {
       await testTwoServices(browser, wide);
       await testActivity(browser, wide);
+      await testListLook(browser, wide);
       await testNewTask(browser, wide);
       await testOneService(browser, wide);
       await testRemembered(browser, wide);

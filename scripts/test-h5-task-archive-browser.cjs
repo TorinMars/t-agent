@@ -115,7 +115,7 @@ function helpers(page, wide, label) {
     await page.waitForFunction(id => window.taskSockets(id).some(socket => socket.readyState === 1), title === 'Alpha' ? 1 : title === 'Beta' ? 2 : 3, { timeout: 3000 });
     if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // the sheet has finished closing, so `sheet` opens it again
   };
-  const menuItems = page.locator('#h5-term-menu-actions button, #h5-term-menu-actions [role="button"]');
+  const menuItems = page.locator('#h5-session-menu-actions [role="menuitem"]'); // the "⋯" of a task opens a menu under it (TermMenu.jsx `SessionPopup`)
   const menu = async title => {
     await sheet();
     await press(row(title).locator('.h5-task-more'));
@@ -155,8 +155,8 @@ async function run(browser, wide) {
   assert.deepEqual((await h.menuItems.allTextContents()).slice(-2), ['Archive', 'Delete'], `${label}: Archive is above Delete`);
   assert.deepEqual((await h.menuItems.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger')))).slice(-2), [false, true], `${label}: only Delete is a warning`);
   await shot('task-archive-menu-390.png');
-  await h.press(page.locator('#h5-term-menu-cancel'));
-  await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' });
+  await page.keyboard.press('Escape');
+  await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
 
   // ── The confirmation: nothing is said about running terminals when none is running; Cancel archives nothing ──
   await h.askArchive('Gamma');
@@ -246,8 +246,8 @@ async function run(browser, wide) {
   await page.waitForTimeout(100);
   await h.menu('Old engine task');
   assert.ok(!(await h.menuItems.allTextContents()).includes('Archive'), `${label}: no Archive item on an old Engine`);
-  await h.press(page.locator('#h5-term-menu-cancel'));
-  await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' });
+  await page.keyboard.press('Escape');
+  await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
 
   // The Archived section of the one list: the rows of this machine and of Engine 8 together, named by their service; the old Engine 7 adds none and is not asked.
   server.bases['/api/remote-servers/8/tasks'].archived = [{ ...task(81, 'Remote archived'), archived_at: ARCHIVED_AT }];
@@ -340,7 +340,7 @@ async function oldServer(browser, wide) {
   const LIST = 'GET /api/tasks?archived=1';
   const withoutKey = () => [bare(1, 'Alpha'), bare(2, 'Beta'), bare(3, 'Gamma')];
   const nullKeys = () => [task(1, 'Alpha'), task(2, 'Beta'), task(3, 'Gamma')];
-  const items = async ({ page, h }, title) => { await h.menu(title); const texts = await h.menuItems.allTextContents(); await h.press(page.locator('#h5-term-menu-cancel')); await page.locator('#h5-term-menu .h5-menu-panel').waitFor({ state: 'detached' }); return texts; };
+  const items = async ({ page, h }, title) => { await h.menu(title); const texts = await h.menuItems.allTextContents(); await page.keyboard.press('Escape'); await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' }); return texts; };
   const finish = async ({ server, context }) => { await context.close(); assert.deepEqual(server.pageErrors, [], `${label}: no page errors`); };
 
   // Rows without the key: an old server from the first list on, so nothing is offered and `?archived=1` is never read.

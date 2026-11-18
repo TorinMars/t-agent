@@ -12,6 +12,12 @@
 // parallel through services/remote-attention.js (the helper of the /api/remote-servers/:id/attention proxy), each within readTimeoutMs; one that fails
 // is named in `failed` and the others go on; one without T-Attention (501) is left out quietly, as on the page. Items are keyed
 // '<engine>:<id>' with engine 'local' or 'remote:<row id>', since ids repeat between engines; every action goes to the item's own engine.
+//
+// The window asks GET /tick every 5 s: the list, the notices, the live activity and the preferences in one answer, the list only when it is not
+// the one the window has (`etag`). The list is kept between ticks, each part read again only when it may have changed or has reached its age
+// ("The kept list" below): a tick in which nothing changed runs no query of the list and no remote request, apart from those ages. GET /items,
+// /notices, /activity and /prefs answer as before, for a window older than /tick; GET /items reads every part again each time.
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -27,6 +33,14 @@ const SETTINGS_PATH = /^\/settings\/?$/i;
 const FINISHED = new Set(['done', 'failed', 'cancelled']);
 const FINISHED_KEEP = 50;
 const LIST_LIMIT = 1000;
+// How long a part of the kept list is used before it is read again without a reason to (the reasons are in createAttentionWidgetRoutes).
+const REMOTE_TTL_MS = 10 * 1000; // the items of a connected service
+const ENGINES_TTL_MS = 30 * 1000; // which engines are listed, with their names and colours
+const AGENTS_TTL_MS = 60 * 1000; // the agents of this machine's terminals
+const PREFS_TTL_MS = 30 * 1000; // the window preferences
+const TICK_WAIT_MS = 250; // how long a tick waits for a remote read that only its TTL asked for; a slower one is in the next tick
+const AGENT_CHUNK = 500; // task ids in one query
+const ETAG = /^[A-Za-z0-9_-]{1,64}$/;
 const ENGINE_KEY = /^(?:local|remote:[1-9]\d{0,14})$/;
 const ITEM_KEY = /^(local|remote:[1-9]\d{0,14}):([1-9]\d{0,14})$/;
 const TAGENT_TASK = /^[1-9]\d{0,14}$/;
@@ -150,9 +164,8 @@ function widgetItem(engine, item, info = null) {
 function localEngine(service) {
   const actor = { actor: 'user' };
   return {
-    async list() {
-      return [...service.list({ limit: LIST_LIMIT }), ...service.list({ status: [...FINISHED].join(','), limit: LIST_LIMIT })];
-    },
+    // The open items and the FINISHED_KEEP items finished last: only what the window keeps (services/attention.js list, recentFinished).
+    list() { return service.list({ limit: LIST_LIMIT, recentFinished: FINISHED_KEEP }); },
     async get(id) { return service.get(id); },
     async create(body) { return service.create(body, { ...actor, defaultSource: 'user' }); },
     async update(id, body) { return service.update(id, body, actor); },
@@ -161,17 +174,31 @@ function localEngine(service) {
   };
 }
 
-// A connected service's T-Attention through the proxy's helper.
-function remoteEngine(remote, row, { readTimeoutMs }) {
+// A connected service's T-Attention through the proxy's helper. `kinds`: row id -> 'new' (its list answers `recent_finished`) or 'old' (it
+// ignores the parameter), learnt from its answers and kept by the routes.
+function remoteEngine(remote, row, { readTimeoutMs, kinds = new Map() }) {
   const call = (method, pathname, body, timeoutMs) => remote.call(row, { method, path: pathname, body, ...(timeoutMs ? { timeoutMs } : {}) });
   const list = answer => (answer && Array.isArray(answer.items) ? answer.items : []);
+  const id = Number(row.id);
   return {
+    // The open items and the FINISHED_KEEP items finished last, in one read (`recent_finished`; the answer names the number when the service
+    // did it). A service older than the parameter ignores it and answers the open items alone; its finished items are then read as before
+    // (status filter, up to LIST_LIMIT; the merge keeps the newest). While it is not known which one a service is, or for an older one, both
+    // reads go out in parallel (the old cost); a service known to be new gets the one read. Every answer is looked at, so an upgrade or a
+    // downgrade is noticed.
     async list() {
-      const [open, finished] = await Promise.all([
-        call('GET', `?limit=${LIST_LIMIT}`, undefined, readTimeoutMs),
-        call('GET', `?status=${[...FINISHED].join(',')}&limit=${LIST_LIMIT}`, undefined, readTimeoutMs),
-      ]);
-      return [...list(open), ...list(finished)];
+      const both = call('GET', `?limit=${LIST_LIMIT}&recent_finished=${FINISHED_KEEP}`, undefined, readTimeoutMs);
+      const finished = () => call('GET', `?status=${[...FINISHED].join(',')}&limit=${LIST_LIMIT}`, undefined, readTimeoutMs);
+      const whole = answer => Boolean(answer) && Number.isInteger(answer.recent_finished);
+      if (kinds.get(id) === 'new') {
+        const answer = await both;
+        if (whole(answer)) return list(answer);
+        kinds.set(id, 'old');
+        return [...list(answer), ...list(await finished())];
+      }
+      const [answer, rest] = await Promise.all([both, finished()]);
+      kinds.set(id, whole(answer) ? 'new' : 'old');
+      return whole(answer) ? list(answer) : [...list(answer), ...list(rest)];
     },
     async get(id) {
       try { const found = await call('GET', `/${id}`); return found && found.item ? found.item : null; }
@@ -190,6 +217,33 @@ function within(promise, ms) {
   const limit = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('REMOTE_TIMEOUT')), ms); });
   return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
 }
+// Resolves when the promise settles, or after ms.
+function settledWithin(promise, ms) {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms);
+    const done = () => { clearTimeout(timer); resolve(); };
+    promise.then(done, done);
+  });
+}
+
+// What is kept of an engine's list between ticks: each item as the window reads it (its session without `agent` and `live`, which are filled in for
+// this machine when the list is put together) with what the merge sorts by; not the notes, the context and the meta. An id counts once. Of the
+// finished items only the FINISHED_KEEP newest by completed_at: the merged list keeps that many of all engines together, so no other can be in it.
+function keptPart(engine, list) {
+  const seen = new Set();
+  const open = [];
+  const finished = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    if (!item || !Number.isSafeInteger(item.id) || seen.has(item.id)) continue;
+    seen.add(item.id);
+    const entry = { engine, id: item.id, order: Number(item.sort_order) || 0, out: widgetItem(engine, item, null) };
+    if (!FINISHED.has(item.status)) open.push(entry);
+    else finished.push({ ...entry, at: String(item.completed_at || item.updated_at || '') });
+  }
+  finished.sort((a, b) => b.at.localeCompare(a.at));
+  return { open, finished: finished.slice(0, FINISHED_KEEP) };
+}
+const sessionKey = session => `${session.task_id}:${session.terminal_id}`;
 
 function createAttentionWidgetRoutes({
   service,
@@ -210,15 +264,26 @@ function createAttentionWidgetRoutes({
   settleMs = 1500,
   notices = require('../services/widget-notices').defaultNotices(),
   // This machine's terminals (routes/terminal.js): what an item's terminal is, a reply typed into it, and the live activity of all of them.
+  // terminalInfo answers one item (an action's answer); the list asks liveTerminals (the ids of a task's running shells, in memory) and reads
+  // the agents of all its items in one query (see "The kept list").
   terminalInfo = (taskId, terminalId) => require('./terminal').terminalInfo(taskId, terminalId),
+  liveTerminals = taskId => require('./terminal').liveTerminalIds(taskId),
   sendToTerminal = (taskId, terminalId, text) => require('./terminal').sendToTerminal(taskId, terminalId, text),
   liveActivity = () => require('./terminal').liveTerminalActivity(),
   now = () => new Date(),
+  remoteTtlMs = REMOTE_TTL_MS,
+  enginesTtlMs = ENGINES_TTL_MS,
+  agentsTtlMs = AGENTS_TTL_MS,
+  prefsTtlMs = PREFS_TTL_MS,
+  tickWaitMs = TICK_WAIT_MS,
 } = {}) {
   if (!service) throw new Error('createAttentionWidgetRoutes needs the attention service');
   if (!launcher || !settings) throw new Error('createAttentionWidgetRoutes needs the launcher and the settings');
 
+  const nowMs = () => now().getTime();
+  // An action's answer: one item, its terminal read with routes/terminal.js terminalInfo.
   const itemOut = (engine, item) => widgetItem(engine, item, engine === 'local' ? terminalInfo : null);
+  const remoteKinds = new Map(); // see remoteEngine
   const rowsOf = login => db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? AND enabled = 1 ORDER BY created_at ASC, id ASC').all(login);
   // The engine of a key: this machine, or an enabled row of this owner (hidden ones too: an item the window already has stays reachable).
   function engineOf(key) {
@@ -226,7 +291,7 @@ function createAttentionWidgetRoutes({
     const id = Number(String(key).slice('remote:'.length));
     const row = db.prepare('SELECT * FROM remote_servers WHERE id = ? AND owner_id = ? AND enabled = 1').get(id, owner());
     if (!row) throw new WidgetError('ENGINE_NOT_FOUND', 'This device is not connected', 404);
-    return remoteEngine(remote, row, { readTimeoutMs });
+    return remoteEngine(remote, row, { readTimeoutMs, kinds: remoteKinds });
   }
   const localEntry = () => ({ key: 'local', name: localName(), local: true, color_index: tagColorIndex(localInstanceId()), engine: localEngine(service) });
   // The engines of the merged list, in the page's order (this machine first): { key, name, local, color_index, engine }.
@@ -240,57 +305,152 @@ function createAttentionWidgetRoutes({
       if (hidden.has(key)) continue;
       let instanceId = null;
       try { instanceId = remoteInstanceId(row); } catch { /* no colour */ }
-      out.push({ key, name: row.name, local: false, color_index: tagColorIndex(instanceId), engine: remoteEngine(remote, row, { readTimeoutMs }) });
+      out.push({ key, name: row.name, local: false, color_index: tagColorIndex(instanceId), engine: remoteEngine(remote, row, { readTimeoutMs, kinds: remoteKinds }) });
     }
     // As on the page: when every device is hidden or none is left, this machine is shown.
     if (!out.length) out.push(localEntry());
     return out;
   }
 
-  const api = express.Router();
-  const parseJson = express.json({ limit: '256kb' });
+  // The kept list. Each engine's part (keptPart, or the error of its read) is kept with the serial it was read at:
+  //  - this machine's part is read again after a change on its change bus (service.onChange; a service without one is read every time);
+  //  - a connected service's part when it is remoteTtlMs old, and at once after the window changed one of its items (touch);
+  //  - the engines (rows, hidden devices, names, colours) every enginesTtlMs: a device added, removed or hidden shows within that time;
+  //  - the agents of this machine's terminals (one query for all items) when the set of terminals or of live ones changes, else every
+  //    agentsTtlMs. Whether a terminal's shell runs is asked of routes/terminal.js in memory on every tick (liveTerminals), so a terminal
+  //    that starts or ends changes the list at once. A shell that is being closed counts as running until it has ended.
+  // A tick waits for a read it needs (the first one, or one after a change) up to readTimeoutMs like GET /items, and for a read that only
+  // the age asked for up to tickWaitMs: a slower one is answered by the next tick, which meanwhile gets the part as it was.
+  const parts = new Map(); // engine key -> { serial, applied, startedAt, result: { part } | { error } | null, version, reading, readingSerial }
+  const partOf = key => {
+    if (!parts.has(key)) parts.set(key, { serial: 1, applied: 0, startedAt: 0, result: null, version: 0, reading: null, readingSerial: 0 });
+    return parts.get(key);
+  };
+  const touch = key => { if (parts.has(key)) parts.get(key).serial += 1; };
+  const localBus = typeof service.onChange === 'function';
+  if (localBus) service.onChange(() => touch('local'));
+  const ttlOf = entry => (entry.local ? (localBus ? Infinity : 0) : remoteTtlMs);
+  // This machine's failed read is never kept (the next tick tries again, as GET /items did); a connected service's is, for its TTL.
+  const fresh = (entry, part, at) => part.result !== null && !(entry.local && part.result.error) && part.applied === part.serial && at - part.startedAt < ttlOf(entry);
 
-  const readEngines = engines => Promise.all(engines.map(entry => within(Promise.resolve().then(() => entry.engine.list()), readTimeoutMs).then(items => ({ entry, items }), error => ({ entry, error }))));
-  api.get('/items', handle(async (req, res) => {
-    const engines = listedEngines();
-    let answers = await readEngines(engines);
+  function readPart(entry, part) {
+    if (part.reading && part.readingSerial === part.serial) return part.reading;
+    const serial = part.serial;
+    const startedAt = nowMs();
+    const reading = within(Promise.resolve().then(() => entry.engine.list()), readTimeoutMs)
+      .then(list => ({ part: keptPart(entry.key, list) }), error => ({ error }))
+      .then(result => {
+        if (serial >= part.applied) Object.assign(part, { applied: serial, startedAt, result, version: part.version + 1 });
+        if (part.reading === reading) part.reading = null;
+      });
+    part.reading = reading;
+    part.readingSerial = serial;
+    return reading;
+  }
+  // Reads what the engines need (force: everything, as GET /items does) and answers [{ entry, result }].
+  async function settle(engines, force) {
+    const at = nowMs();
+    await Promise.all(engines.map(entry => {
+      const part = partOf(entry.key);
+      if (!force && fresh(entry, part, at)) return null;
+      const reading = readPart(entry, part);
+      const needed = force || part.result === null || part.applied !== part.serial;
+      return needed ? reading : settledWithin(reading, tickWaitMs);
+    }));
+    return engines.map(entry => ({ entry, result: partOf(entry.key).result || { error: new Error('REMOTE_TIMEOUT') } }));
+  }
+
+  let enginesKept = null; // { at, list }
+  function engines(force) {
+    if (force || !enginesKept || nowMs() - enginesKept.at >= enginesTtlMs) enginesKept = { at: nowMs(), list: listedEngines() };
+    return enginesKept.list;
+  }
+
+  // The agents of terminals: `${task_id}:${terminal_id}` -> 'claude' | 'codex', one query for all task ids (in chunks of AGENT_CHUNK), as
+  // routes/terminal.js terminalInfo reads them one by one (none for the 'default' terminal).
+  function readAgents(sessions) {
+    const agents = new Map();
+    const tasks = [...new Set(sessions.filter(session => session.terminal_id !== 'default').map(session => Number(session.task_id)))];
+    for (let start = 0; start < tasks.length; start += AGENT_CHUNK) {
+      const chunk = tasks.slice(start, start + AGENT_CHUNK);
+      try {
+        const rows = db.prepare(`SELECT task_id, terminal_id, agent FROM task_terminals WHERE task_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk);
+        for (const row of rows) if (row.agent === 'claude' || row.agent === 'codex') agents.set(`${row.task_id}:${row.terminal_id}`, row.agent);
+      } catch { /* no agents: none shown */ }
+    }
+    return agents;
+  }
+  let agentsKept = { at: -Infinity, keys: null, live: null, agents: new Map() };
+  // { live: Set of session keys whose shell runs, agents, stamp } for this machine's sessions among the items.
+  function localSessions(outs, force) {
+    const sessions = new Map();
+    for (const out of outs) if (out.engine === 'local' && out.session) sessions.set(sessionKey(out.session), out.session);
+    const live = new Set();
+    for (const taskId of new Set([...sessions.values()].map(session => session.task_id))) {
+      let ids = [];
+      try { ids = liveTerminals(taskId) || []; } catch { ids = []; }
+      for (const id of ids) if (sessions.has(`${taskId}:${id}`)) live.add(`${taskId}:${id}`);
+    }
+    const keys = [...sessions.keys()].sort().join(',');
+    const running = [...live].sort().join(',');
+    if (force || keys !== agentsKept.keys || running !== agentsKept.live || nowMs() - agentsKept.at >= agentsTtlMs) {
+      agentsKept = { at: nowMs(), keys, live: running, agents: readAgents([...sessions.values()]) };
+    }
+    return { live, agents: agentsKept.agents, stamp: `${agentsKept.at}|${running}` };
+  }
+
+  const unsupported = error => error instanceof RemoteAttentionError && error.statusCode === 501;
+  let memo = null; // { key, list, etag }
+  // The merged list: { list: { items, engines, failed }, etag }. force: every part read again (GET /items).
+  async function keptList(force = false) {
+    const listed = engines(force);
+    let answers = await settle(listed, force);
     // As on the page: when no listed engine has T-Attention (this machine hidden, the others without it), this machine is shown.
-    const usable = answers.filter(({ error }) => !(error instanceof RemoteAttentionError && error.statusCode === 501));
-    if (!usable.length && !engines.some(entry => entry.local)) answers = await readEngines([localEntry()]);
+    if (!answers.some(({ result }) => !unsupported(result.error)) && !listed.some(entry => entry.local)) answers = await settle([localEntry()], force);
     const shown = [];
     const failed = [];
-    let items = [];
-    for (const { entry, items: list, error } of answers) {
-      if (error) {
-        if (error instanceof RemoteAttentionError && error.statusCode === 501) continue; // no T-Attention there: left out quietly
-        if (entry.local) throw error;
+    const open = [];
+    let finished = [];
+    for (const { entry, result } of answers) {
+      if (result.error) {
+        if (unsupported(result.error)) continue; // no T-Attention there: left out quietly
+        if (entry.local) throw result.error;
         failed.push(entry.name);
         shown.push(entry);
         continue;
       }
       shown.push(entry);
-      const seen = new Set();
-      for (const item of list) {
-        if (!item || !Number.isSafeInteger(item.id) || seen.has(item.id)) continue;
-        seen.add(item.id);
-        items.push({ engine: entry.key, item });
-      }
+      open.push(...result.part.open);
+      finished.push(...result.part.finished);
     }
-    const finished = items.filter(({ item }) => FINISHED.has(item.status))
-      .sort((a, b) => String(b.item.completed_at || b.item.updated_at || '').localeCompare(String(a.item.completed_at || a.item.updated_at || '')))
-      .slice(0, FINISHED_KEEP);
-    const keep = new Set(finished);
-    items = items.filter(entry => !FINISHED.has(entry.item.status) || keep.has(entry));
-    // The page's order inside a group: the highest sort_order first, then the highest id.
-    items.sort((a, b) => (Number(b.item.sort_order) || 0) - (Number(a.item.sort_order) || 0) || b.item.id - a.item.id);
-    res.json({
-      items: items.map(({ engine, item }) => itemOut(engine, item)),
-      engines: shown.map(({ key, name, local, color_index: color }) => ({ key, name, local, color_index: color })),
-      failed,
-      host: os.hostname(),
-      updated_at: now().toISOString(),
+    // The FINISHED_KEEP finished last of all engines; then the page's order inside a group: the highest sort_order first, then the highest id.
+    finished = finished.sort((a, b) => b.at.localeCompare(a.at)).slice(0, FINISHED_KEEP);
+    const outs = [...open, ...finished].sort((a, b) => b.order - a.order || b.id - a.id).map(entry => entry.out);
+    const sessions = localSessions(outs, force);
+    const engineList = shown.map(({ key, name, local, color_index: color }) => ({ key, name, local, color_index: color }));
+    const key = JSON.stringify([engineList, failed, answers.map(({ entry }) => `${entry.key}:${partOf(entry.key).version}`), sessions.stamp]);
+    if (!force && memo && memo.key === key) return memo;
+    const items = outs.map(out => {
+      if (out.engine !== 'local' || !out.session) return out;
+      const at = sessionKey(out.session);
+      return { ...out, session: { ...out.session, agent: sessions.agents.get(at) || null, live: sessions.live.has(at) } };
     });
-  }));
+    const list = { items, engines: engineList, failed };
+    const etag = crypto.createHash('sha1').update(JSON.stringify(list)).digest('base64url').slice(0, 22);
+    memo = { key, list, etag };
+    return memo;
+  }
+  const listAnswer = ({ list }) => ({ ...list, host: os.hostname(), updated_at: now().toISOString() });
+
+  const api = express.Router();
+  const parseJson = express.json({ limit: '256kb' });
+
+  // Every part read again, as before /tick (a window older than it polls this every 5 s).
+  api.get('/items', handle(async (req, res) => res.json(listAnswer(await keptList(true)))));
+
+  // A change the window makes: that engine's part is read again by the next tick, also when the change failed (the window asks again after a
+  // refusal, and the item may have changed meanwhile).
+  const changing = (engineKey, promise) => Promise.resolve(promise).finally(() => touch(engineKey));
 
   // parent_key (same engine, or null) -> parent_id. Undefined when the body does not name it.
   function parentIdOf(body, engine) {
@@ -319,7 +479,7 @@ function createAttentionWidgetRoutes({
     for (const field of ['status', 'notes']) if (body[field] !== undefined) create[field] = body[field];
     const parent = parentIdOf(body, body.engine);
     if (parent !== undefined) create.parent_id = parent;
-    res.status(201).json(itemOut(body.engine, await engine.create(create)));
+    res.status(201).json(itemOut(body.engine, await changing(body.engine, engine.create(create))));
   }));
 
   api.patch('/items/:key', parseJson, handle(async (req, res) => {
@@ -329,12 +489,12 @@ function createAttentionWidgetRoutes({
     delete body.parent_key;
     delete body.parent_id;
     if (parent !== undefined) body.parent_id = parent;
-    res.json(itemOut(key.engine, await engineOf(key.engine).update(key.id, body)));
+    res.json(itemOut(key.engine, await changing(key.engine, engineOf(key.engine).update(key.id, body))));
   }));
 
   api.delete('/items/:key', handle(async (req, res) => {
     const key = keyOf(req);
-    await engineOf(key.engine).remove(key.id);
+    await changing(key.engine, engineOf(key.engine).remove(key.id));
     res.status(204).end();
   }));
 
@@ -351,7 +511,7 @@ function createAttentionWidgetRoutes({
     }
     if (body.position !== undefined) move.position = body.position;
     if (body.status !== undefined) move.status = body.status;
-    await engineOf(key.engine).move(key.id, move);
+    await changing(key.engine, engineOf(key.engine).move(key.id, move));
     res.json({ ok: true });
   }));
 
@@ -371,10 +531,12 @@ function createAttentionWidgetRoutes({
     api.post(`/items/:key/${name}`, parseJson, handle(async (req, res) => {
       const key = keyOf(req);
       const engine = engineOf(key.engine);
-      const item = await engine.get(key.id);
-      if (!item) throw new WidgetError('NOT_FOUND', 'Task not found', 404);
-      if (item.status !== action.from) throw new WidgetError('WRONG_STATUS', action.message, 409);
-      res.json(itemOut(key.engine, await engine.update(key.id, action.body(req))));
+      res.json(await changing(key.engine, (async () => {
+        const item = await engine.get(key.id);
+        if (!item) throw new WidgetError('NOT_FOUND', 'Task not found', 404);
+        if (item.status !== action.from) throw new WidgetError('WRONG_STATUS', action.message, 409);
+        return itemOut(key.engine, await engine.update(key.id, action.body(req)));
+      })()));
     }));
   }
 
@@ -397,7 +559,7 @@ function createAttentionWidgetRoutes({
 
   // What the agents in this machine's terminals are doing: the live terminals that are not idle, running first, then waiting at a question, then done
   // (not acknowledged yet); within a state the newest change first. At most ACTIVITY_LIMIT.
-  api.get('/activity', handle(async (req, res) => {
+  function activityAnswer() {
     const terminals = (liveActivity() || [])
       .filter(entry => entry && Object.prototype.hasOwnProperty.call(ACTIVITY_ORDER, entry.state) && TAGENT_TASK.test(String(entry.task_id)) && TAGENT_TERMINAL.test(String(entry.terminal_id)))
       .sort((a, b) => ACTIVITY_ORDER[a.state] - ACTIVITY_ORDER[b.state] || (Number(b.since) || 0) - (Number(a.since) || 0))
@@ -413,8 +575,16 @@ function createAttentionWidgetRoutes({
         since: new Date(Number(entry.since) || 0).toISOString(),
         open_path: openTerminalPath('local', entry.task_id, entry.terminal_id),
       }));
-    res.json({ terminals, updated_at: now().toISOString() });
-  }));
+    return { terminals, updated_at: now().toISOString() };
+  }
+  api.get('/activity', handle(async (req, res) => res.json(activityAnswer())));
+  // In a tick, a failure of the terminals' activity is no activity (what the window shows after a failed GET /activity), not a failed tick.
+  const tickActivity = () => {
+    try { return activityAnswer(); } catch (error) {
+      console.error(`T-Attention desktop window API: ${error && (error.stack || error.message)}`);
+      return { terminals: [], updated_at: now().toISOString() };
+    }
+  };
 
   // The window's words in its language: { lang, strings: { English: shown } }. English, or a word without a translation, maps to itself.
   api.get('/strings', handle(async (req, res) => {
@@ -427,18 +597,39 @@ function createAttentionWidgetRoutes({
 
   // The bubbles of the window (services/widget-notices.js): { seq, notices } with the notices after `after` (a seq), oldest first; without `after`
   // the ones of the last 60 s.
-  api.get('/notices', handle(async (req, res) => {
-    const raw = req.query.after;
-    let after;
-    if (raw !== undefined) {
-      if (typeof raw !== 'string' || !/^(0|[1-9]\d{0,15})$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw invalid('after must be a whole number of at least 0');
-      after = Number(raw);
-    }
-    res.json(notices.list({ after }));
-  }));
+  const afterOf = raw => {
+    if (raw === undefined) return undefined;
+    if (typeof raw !== 'string' || !/^(0|[1-9]\d{0,15})$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw invalid('after must be a whole number of at least 0');
+    return Number(raw);
+  };
+  api.get('/notices', handle(async (req, res) => res.json(notices.list({ after: afterOf(req.query.after) }))));
 
-  // The window's preferences (the settings card's switches): { hotkeys, dim_when_idle, show_activity }. Read at start and on every 5 s tick.
+  // The window's preferences (the settings card's switches): { hotkeys, dim_when_idle, show_activity }. A window older than /tick reads them at
+  // start and every 5 s. The tick keeps them for prefsTtlMs; the settings card's save (PUT /settings, here) drops that at once.
   api.get('/prefs', handle(async (req, res) => res.json(settings.prefs())));
+  let prefsKept = null; // { at, prefs }
+  const keptPrefs = () => {
+    if (!prefsKept || nowMs() - prefsKept.at >= prefsTtlMs) prefsKept = { at: nowMs(), prefs: settings.prefs() };
+    return prefsKept.prefs;
+  };
+
+  // The window's one request every 5 s: GET /tick?after=<notice seq>&items=<etag>[&activity=0] ->
+  //   { etag, list: the answer of GET /items, or null when `items` is that etag; notices: the answer of GET /notices?after;
+  //     activity: the answer of GET /activity, or null with activity=0; prefs: the answer of GET /prefs; updated_at }.
+  // `etag` names the list's content (items, engines, failed). A value of `items` that is no etag counts as none: the list is sent.
+  api.get('/tick', handle(async (req, res) => {
+    const after = afterOf(req.query.after);
+    const known = typeof req.query.items === 'string' && ETAG.test(req.query.items) ? req.query.items : null;
+    const kept = await keptList(false);
+    res.json({
+      etag: kept.etag,
+      list: kept.etag === known ? null : listAnswer(kept),
+      notices: notices.list({ after }),
+      activity: req.query.activity === '0' ? null : tickActivity(),
+      prefs: keptPrefs(),
+      updated_at: now().toISOString(),
+    });
+  }));
 
   api.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
 
@@ -469,6 +660,7 @@ function createAttentionWidgetRoutes({
     router.put('/', handle(async (req, res) => {
       const before = settings.read();
       const saved = settings.save(req.body);
+      prefsKept = null;
       // Started or stopped at once; the answer waits a moment for a quick start (a build can take minutes: `building` says so meanwhile).
       if (saved.enabled !== before.enabled) {
         let timer;

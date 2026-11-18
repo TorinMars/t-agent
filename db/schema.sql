@@ -233,6 +233,9 @@ CREATE TABLE IF NOT EXISTS attention_items (
   result           TEXT                              -- one-line outcome (at most 500)
 );
 CREATE INDEX IF NOT EXISTS idx_attention_items_status ON attention_items (status, sort_order);
+-- The items finished last (the list's recent_finished, which the desktop window reads): read from the newest end, never the whole table. An index
+-- only, made here on every start: no schema generation.
+CREATE INDEX IF NOT EXISTS idx_attention_items_completed ON attention_items (completed_at);
 
 -- History of an item, written in the same transaction as the change. data: the changed fields as JSON. A deleted item takes its events with it.
 CREATE TABLE IF NOT EXISTS attention_events (

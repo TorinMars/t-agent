@@ -12,7 +12,7 @@
 //    address (pairingClaims: 5 wrong codes in a minute lock the address out for a minute).
 const os = require('node:os');
 const express = require('express');
-const { AttentionError } = require('../services/attention');
+const { AttentionError, recentFinishedOf } = require('../services/attention');
 
 const TOKEN_PATH = /^\/tokens(?:\/|$)/i;
 const BEARER = /^Bearer[ \t]+(\S+)[ \t]*$/i;
@@ -32,8 +32,16 @@ const wrap = handler => (req, res) => {
 };
 const idOf = value => (/^\d{1,15}$/.test(String(value)) ? Number(value) : null);
 const isTrue = value => ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
-// The list filters of GET / (the same on /api/attention and /v1/attention). parent=<id>: only the children of that item.
-const listQuery = query => ({ status: query.status, q: query.q, limit: query.limit, includeDone: isTrue(query.include_done), parent: query.parent });
+// The list filters of GET / (the same on /api/attention and /v1/attention). parent=<id>: only the children of that item. recent_finished=<n>: the
+// default list (no status, no include_done) also has the n items finished last, after the open ones (services/attention.js list).
+const listQuery = query => ({ status: query.status, q: query.q, limit: query.limit, includeDone: isTrue(query.include_done), parent: query.parent, recentFinished: query.recent_finished });
+// The list part of that answer: `items`, and `recent_finished: <n>` when the list has those finished items, so a caller that asked for them knows
+// this service did it (one older than the parameter ignores it and answers the open items alone).
+function listAnswer(service, query) {
+  const options = listQuery(query);
+  const recent = recentFinishedOf(options);
+  return { items: service.list(options), ...(recent === null ? {} : { recent_finished: recent }) };
+}
 
 // Server-sent events of the change bus: `retry`, `event: change` with { kind, item, previous, event, ... } for every change, a comment line every
 // heartbeatMs. `active()` is asked at every heartbeat; false ends the stream (a revoked token). Returns the stream's handle ({ close }).
@@ -236,7 +244,7 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     // `host`: this machine's name, as the Claude listener writes it into context.host (os.hostname()). The page opens the files of a context only
     // when they are on this machine. `instance_id`: this Engine's own identity (engine_identity, the first part of a shared task order key), so a
     // page that lists the items of several services can key them `<instance_id>:<id>`.
-    res.json({ items: service.list(listQuery(req.query)), host: os.hostname(), ...(instanceId ? { instance_id: instanceId() } : {}) });
+    res.json({ ...listAnswer(service, req.query), host: os.hostname(), ...(instanceId ? { instance_id: instanceId() } : {}) });
   }));
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req), tagent: tagentOf(req) }))));
@@ -391,7 +399,7 @@ function createEngineAttentionRouter({ service = null, getService = null, summar
     const tokenId = req.engineAuth.tokenId;
     streams.add(serveChangeStream(req, res, items(), { heartbeatMs, active: () => tokenActive(tokenId), onClose: closing => streams.delete(closing) }));
   });
-  router.get('/', read, wrap((req, res) => res.json({ items: items().list(listQuery(req.query)), host: os.hostname(), instance_id: instanceId() })));
+  router.get('/', read, wrap((req, res) => res.json({ ...listAnswer(items(), req.query), host: os.hostname(), instance_id: instanceId() })));
   router.post('/', write, parseJson, wrap((req, res) => res.status(201).json(items().create(req.body, { ...actor, defaultSource: 'user' }))));
   router.get('/:id', read, wrap((req, res) => {
     const id = idOf(req.params.id);

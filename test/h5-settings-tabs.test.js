@@ -77,6 +77,9 @@ test('the tab entries: Shared, this device under its name, then each linked devi
   assert.equal(entries[3].title, 'Old Mac is too old to be changed from here. Update Old Mac first.');
   assert.equal(entries[5].title, 'Sleeping is offline. Its settings can be read and saved again once it is back online.');
   assert.deepEqual(tabEntries([], {}).map(entry => [entry.label, entry.note]), [['Shared', ''], ['This device', '']], 'an older server has no name');
+  const marked = tabEntries([{ ...DEVICES[0], company_computer: true }, { ...DEVICES[3], company_computer: true }], { localName: 'T01' });
+  assert.deepEqual(marked.map(entry => [entry.label, entry.note, entry.company]), [['Shared', '', undefined], ['T01', 'This device', undefined], ['K01', 'Company computer', true], ['Sleeping', 'Offline', false]],
+    'a company computer says so under its name, unless another reason is said there');
   const shout = text => text.toUpperCase();
   assert.equal(tabEntries([], { t: shout })[0].label, 'SHARED', 'the words go through `t`');
   assert.equal(deviceOfTab('7', DEVICES).name, 'K01');

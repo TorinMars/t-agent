@@ -11,6 +11,9 @@
 // - K01 in the device list but no linked device in the settings sync: the tabs are This device, K01 and Old Mac (no Shared), and K01's tab still
 //   reads through /api/device-settings/2/....
 // - Chinese 390: the tabs, the line under them and the note are translated.
+// - "Company computer" (390): the switch of this machine and of each linked device in the device list, its line, the pill of a marked machine and the
+//   note of its tab, the PUT of this machine (/api/device-tier) and of K01 (/api/device-settings/2/device-tier), a failed save putting the switch back
+//   with the reason on the row, and the disabled switch of a device that is too old or offline.
 // H5_SHOT_DIR=<dir> saves 390px (3x) screenshots of the sheet with K01 chosen.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
@@ -29,8 +32,12 @@ const DEVICE = ['workdir', 'access', 'authenticator', 'engine-name', 'widget-ena
 
 // `devices`: the answer of GET /api/device-settings/devices, or null for an older server (404).
 // `peers`: the linked devices of the settings sync, or null for an older server (404).
-function mockServer({ devices, scopes, brokenStorage, peers }) {
+// `tier`: { local, servers } for the "Company computer" test: this machine's flag (GET / PUT /api/device-tier; without it the route is 404, an older
+// server) and the rows of /api/remote-servers. `window.failTier` makes the next saves of the flag fail.
+function mockServer({ devices, scopes, brokenStorage, peers, tier }) {
   window.calls = [];
+  window.localTier = tier ? tier.local : undefined;
+  window.failTier = false;
   window.confirm = () => true;
   window.devices = devices;
   if (brokenStorage) {
@@ -79,6 +86,17 @@ function mockServer({ devices, scopes, brokenStorage, peers }) {
     window.calls.push({ method, url: pathname, body });
     const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
     if (pathname === '/api/device-settings/devices') return window.devices ? reply(window.devices) : reply({ error: 'NOT_FOUND' }, 404);
+    if (pathname === '/api/device-tier' && window.localTier !== undefined) {
+      if (method === 'PUT' && window.failTier) return reply({ error: 'SAVE_FAILED', message: 'The flag could not be saved' }, 500);
+      if (method === 'PUT') window.localTier = body.company_computer;
+      return reply({ company_computer: window.localTier });
+    }
+    if (pathname === '/api/device-settings/2/device-tier' && method === 'PUT') {
+      if (window.failTier) return reply({ error: 'REMOTE_OFFLINE' }, 502);
+      for (const device of window.devices.devices) if (device.id === 2) device.company_computer = body.company_computer;
+      return reply({ company_computer: body.company_computer });
+    }
+    if (pathname === '/api/remote-servers' && tier) return reply(tier.servers);
     const remote = /^\/api\/device-settings\/2(\/.*)$/.exec(pathname);
     if (remote) {
       if (method === 'PUT' && remote[1] === '/peer-fs/settings') window.k01['/peer-fs/settings'] = { enabled: body.enabled };
@@ -96,7 +114,7 @@ const DEVICES = { devices: [{ id: 2, name: 'K01', online: true, supported: true 
 const PEERS = [{ name: 'K01', online: true, supported: true, last_sync_at: new Date().toISOString(), last_error: null }];
 
 // `stored`: the remembered tab; `old`: the device chosen in "Settings for" before the tabs.
-async function openPage(browser, { width = 390, zh = false, devices = DEVICES, peers = PEERS, stored = null, old = null, brokenStorage = false } = {}) {
+async function openPage(browser, { width = 390, zh = false, devices = DEVICES, peers = PEERS, stored = null, old = null, brokenStorage = false, tier = null } = {}) {
   const context = await browser.newContext({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true, deviceScaleFactor: SHOTS ? 3 : 1 });
   const page = await context.newPage();
   const errors = [];
@@ -110,7 +128,7 @@ async function openPage(browser, { width = 390, zh = false, devices = DEVICES, p
   }, [zh ? 'zh' : '', stored, old]);
   await page.addStyleTag({ content: read('public/css/h5.css') });
   const scopes = Object.fromEntries([...SHARED.map(id => [id, 'shared']), ...DEVICE.map(id => [id, 'device']), ['telegram', 'telegram']]);
-  await page.evaluate(mockServer, { devices, scopes, brokenStorage, peers });
+  await page.evaluate(mockServer, { devices, scopes, brokenStorage, peers, tier });
   for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
   await addShell(page);
   return { context, page, errors };
@@ -307,6 +325,88 @@ async function testWithoutSyncPeers(browser) {
   await context.close();
 }
 
+// "Company computer" in the device list of this device's tab: Home Mac (this machine), K01 (linked, online), Old Mac (too old) and Away (offline,
+// marked when it was last seen).
+async function testCompanyComputer(browser) {
+  const servers = [
+    { id: 2, name: 'K01', base_url: 'tunnel://l1', status: 'online', remote_version: '2.142.0', can_rename: true, name_source: 'engine' },
+    { id: 3, name: 'Old Mac', base_url: 'http://10.0.0.3:14002', status: 'online', remote_version: '2.100.0' },
+    { id: 4, name: 'Away', base_url: 'http://10.0.0.4:14002', status: 'offline', remote_version: '2.142.0' },
+  ];
+  const devices = { devices: [
+    { id: 2, name: 'K01', online: true, supported: true, company_computer: false },
+    { id: 3, name: 'Old Mac', online: true, supported: false, company_computer: null },
+    { id: 4, name: 'Away', online: false, supported: true, company_computer: true },
+  ] };
+  const { context, page, errors } = await openPage(browser, { devices, stored: 'local', tier: { local: false, servers } });
+  await openSheet(page);
+  await page.locator('#h5-settings-tabs').waitFor({ state: 'visible' });
+  await toggleGroup(page, 'devices');
+  const row = engine => page.locator(`.h5-engine-row[data-engine="${engine}"]`);
+  const input = engine => row(engine).locator('.h5-engine-company-input');
+  const caption = engine => row(engine).locator('.h5-engine-company-note').innerText();
+  const pill = engine => row(engine).locator('.h5-engine-company-pill').count();
+  await input('local').waitFor({ state: 'attached' });
+  await input('2').waitFor({ state: 'attached' });
+  const KEEPS = 'Keeps your personal data, such as learning progress.';
+  assert.equal(await input('local').isChecked(), false);
+  assert.equal(await input('local').isDisabled(), false);
+  assert.equal(await caption('local'), KEEPS);
+  assert.equal(await input('2').isChecked(), false);
+  assert.equal(await input('2').isDisabled(), false);
+  assert.equal(await caption('2'), KEEPS);
+  assert.equal(await input('local').getAttribute('aria-label'), 'Company computer');
+  assert.equal(await input('3').isDisabled(), true, 'too old: disabled');
+  assert.equal(await caption('3'), 'Update Old Mac first');
+  assert.equal(await input('4').isDisabled(), true, 'offline: disabled');
+  assert.equal(await input('4').isChecked(), true, 'the last known value');
+  assert.equal(await caption('4'), 'Away is offline. This can be changed once it is back online.');
+  assert.deepEqual([await pill('local'), await pill('2'), await pill('3'), await pill('4')], [0, 0, 0, 1], 'only the marked machine has the pill');
+  assert.equal(await row('4').locator('.h5-engine-company-pill').innerText(), 'Company computer');
+
+  // K01 is marked: the PUT goes through the link, the pill and the line follow, the list is read again and K01's tab says so.
+  const listReads = () => page.evaluate(() => window.calls.filter(call => call.url === '/api/device-settings/devices').length);
+  const readsBefore = await listReads();
+  await row('2').locator('.h5-engine-company').tap();
+  await page.waitForFunction(() => window.calls.some(call => call.method === 'PUT' && call.url === '/api/device-settings/2/device-tier' && call.body.company_computer === true));
+  await page.waitForFunction(() => document.querySelector('.h5-engine-row[data-engine="2"] .h5-engine-company-pill'));
+  assert.equal(await input('2').isChecked(), true);
+  assert.equal(await caption('2'), 'Personal data stays on Home Mac. Kept here only while no other machine can be reached.');
+  await page.waitForFunction(count => window.calls.filter(call => call.url === '/api/device-settings/devices').length > count, readsBefore);
+  assert.equal((await callsTo(page, '/api/device-tier')).filter(call => call.startsWith('PUT')).length, 0, 'this machine is not changed');
+  await assertFits(page, 'Devices with K01 marked');
+  await page.locator('#h5-engine-list').scrollIntoViewIfNeeded();
+  await settled(page);
+  await shot(page, 'device-tier-list');
+  await page.waitForFunction(() => document.querySelector('#h5-settings-tab-2 .h5-settings-tab-note[data-company="true"]'));
+  assert.equal(await page.locator('#h5-settings-tab-2 .h5-settings-tab-note').innerText(), 'Company computer');
+
+  // A failed save puts the switch back and says why on the row.
+  await page.evaluate(() => { window.failTier = true; });
+  await row('local').locator('.h5-engine-company').tap();
+  await page.waitForFunction(() => window.calls.some(call => call.method === 'PUT' && call.url === '/api/device-tier'));
+  await row('local').locator('[role="status"]').waitFor();
+  assert.equal(await row('local').locator('[role="status"]').innerText(), 'The flag could not be saved');
+  await page.waitForFunction(() => document.querySelector('.h5-engine-row[data-engine="local"] .h5-engine-company-input').checked === false);
+  assert.equal(await pill('local'), 0);
+  await row('2').locator('.h5-engine-company').tap();
+  await page.waitForFunction(() => window.calls.filter(call => call.method === 'PUT' && call.url === '/api/device-settings/2/device-tier').length === 2);
+  await page.waitForFunction(() => document.querySelector('.h5-engine-row[data-engine="2"] .h5-engine-company-input').checked === true);
+  assert.equal(await pill('2'), 1, 'K01 stays marked');
+  assert.ok(await row('2').locator('.MuiTypography-root[role="status"]').innerText(), 'the reason is on K01\'s row');
+
+  // This machine is marked too: no normal machine is known, so the line names none.
+  await page.evaluate(() => { window.failTier = false; });
+  await row('local').locator('.h5-engine-company').tap();
+  await page.waitForFunction(() => window.calls.some(call => call.method === 'PUT' && call.url === '/api/device-tier' && call.body.company_computer === true) && document.querySelector('.h5-engine-row[data-engine="local"] .h5-engine-company-pill'));
+  assert.equal(await page.evaluate(() => window.localTier), true);
+  const GENERIC = 'Personal data stays on your other machines. Kept here only while none of them can be reached.';
+  assert.equal(await caption('local'), GENERIC);
+  assert.equal(await caption('2'), GENERIC);
+  assert.deepEqual(errors, []);
+  await context.close();
+}
+
 async function testChinese(browser) {
   const { context, page, errors } = await openPage(browser, { zh: true, stored: '2' });
   await openSheet(page);
@@ -318,6 +418,8 @@ async function testChinese(browser) {
   await toggleGroup(page, 'devices');
   await page.waitForFunction(() => document.getElementById('h5-link-remote'));
   assert.equal(await page.locator('#h5-link-remote').innerText(), '\u8bf7\u6253\u5f00 K01 \u81ea\u5df1\u7684\u9875\u9762\u6765\u4fee\u6539\u8fd9\u9879\u8bbe\u7f6e');
+  assert.equal(await page.locator('.h5-engine-row[data-engine="2"] .h5-engine-company-note').innerText(), '\u8bf7\u5148\u5347\u7ea7 K01', 'K01 without device:tier: "Update K01 first"');
+  assert.equal(await page.locator('.h5-engine-row[data-engine="2"] .h5-engine-company').innerText(), '\u516c\u53f8\u7535\u8111');
   await assertFits(page, 'zh Devices on K01');
   assert.deepEqual(errors, []);
   await context.close();
@@ -332,6 +434,7 @@ async function testChinese(browser) {
     await testHidden(browser, { peers: [], devices: { devices: [] } }, 'no linked device');
     await testHidden(browser, { peers: null, devices: null }, 'an older server');
     await testWithoutSyncPeers(browser);
+    await testCompanyComputer(browser);
     await testChinese(browser);
     console.log('h5 device settings browser test passed');
   } finally {

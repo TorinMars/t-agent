@@ -235,6 +235,20 @@ function ViewFrame({ phone, title, counter = '', source = '', progress = null, o
 
 // ── Home ──
 
+// On a company computer whose home (the normal machine that keeps the learning data) cannot be reached ("Company computer" in
+// docs/design/learn-english.md): `device` of GET /api/learn/summary says `cache_only` and not `home_online`. The answers wait here and move over by
+// themselves once the home is back, so the page only says so; with the home online nothing is shown.
+const homeAway = summary => Boolean(summary && summary.device && summary.device.cache_only === true && summary.device.home_online === false);
+function HomeAway({ device }) {
+  const name = device.home_name;
+  return (
+    <Alert severity="info" id="h5-learn-home-away">
+      {name ? <Fmt template="{1} can't be reached. Your answers are kept on this computer for now and moved to {1} when it is back." values={[name]} />
+        : t("Your other computer can't be reached. Your answers are kept on this computer for now and moved there when it is back.")}
+    </Alert>
+  );
+}
+
 function Home({ ui, phone, data, modes, current, open }) {
   const { summary, error, reload, settings, setSettings } = data;
   const [busy, setBusy] = useState(false);
@@ -264,8 +278,10 @@ function Home({ ui, phone, data, modes, current, open }) {
     }
   };
   const countOf = mode => (mode.kind === 'word' ? count(words, 'word', 'words') : count(sentences, 'sentence', 'sentences'));
+  const away = homeAway(summary);
   return (
     <>
+      {away ? <HomeAway device={summary.device} /> : null}
       {!words && !sentences ? (
         <Card id="h5-learn-empty" sx={{ p: 2 }}>
           <Typography variant="h6" component="h2">{t('No study cards yet')}</Typography>
@@ -297,6 +313,11 @@ function Home({ ui, phone, data, modes, current, open }) {
           </Box>
         </Card>
       )}
+      {away && summary.device.offline_copy_at && summary.device.home_name ? (
+        <Typography id="h5-learn-offline-counts" variant="caption" component="p" color="text.secondary" sx={{ m: 0 }}>
+          <Fmt template="The counts are those of the last copy from {1} plus what you answered here." values={[summary.device.home_name]} />
+        </Typography>
+      ) : null}
       <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Practice')}</Typography>
       {modes.map(mode => (
         <ModeCard key={mode.id} id={`h5-learn-mode-${mode.id}`} icon={mode.icon} title={t(mode.label)} note={t(mode.note)} count={countOf(mode)}
@@ -1107,9 +1128,18 @@ function SettingsView({ frame, ui, data, openTranslator }) {
   const [goal, setGoal] = useState(String((settings && settings.daily_goal) || 20));
   useEffect(() => { if (settings && settings.daily_goal) setGoal(String(settings.daily_goal)); }, [settings && settings.daily_goal]); // eslint-disable-line react-hooks/exhaustive-deps -- the stored goal
   const [busy, setBusy] = useState(false);
+  // The last failed change, in view until the next change works (on a company computer whose home cannot be reached the server answers 503 with
+  // its reason; a toast alone would be easy to miss). The controls show the stored values again.
+  const [failed, setFailed] = useState('');
   const current = settings || {};
+  const fail = failure => {
+    const message = errorText(failure) || t('Operation failed');
+    setFailed(message);
+    ui.notify(message, 'error');
+  };
   const save = async patch => {
     setBusy(true);
+    setFailed('');
     try {
       const next = await api('PUT', '/api/learn/settings', patch);
       setSettings(next || { ...current, ...patch });
@@ -1118,7 +1148,8 @@ function SettingsView({ frame, ui, data, openTranslator }) {
       void reload();
       return true;
     } catch (failure) {
-      ui.notify(errorText(failure), 'error');
+      fail(failure);
+      if (patch.daily_goal !== undefined) setGoal(String(current.daily_goal || 20));
       return false;
     } finally {
       setBusy(false);
@@ -1130,11 +1161,12 @@ function SettingsView({ frame, ui, data, openTranslator }) {
   const toggleStarter = async on => {
     if (!on) { await save({ starter: null }); return; }
     setBusy(true);
+    setFailed('');
     try {
       const result = await api('POST', '/api/learn/starter', { list: 'dev' });
       ui.notify(tf('Added {1} words', (result && result.added) || 0), 'success');
     } catch (failure) {
-      ui.notify(errorText(failure), 'error');
+      fail(failure);
       setBusy(false);
       return;
     }
@@ -1142,6 +1174,7 @@ function SettingsView({ frame, ui, data, openTranslator }) {
   };
   return (
     <ViewFrame {...frame}>
+      {failed ? <Alert severity="error" id="h5-learn-settings-error" role="alert">{failed}</Alert> : null}
       {!settings ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : (
         <Card id="h5-learn-settings-card" sx={{ px: 2, py: 1 }}>
           <SwitchRow inputId="h5-learn-collect" label={t('Collect study material')} disabled={busy} checked={current.collect !== false} onChange={on => save({ collect: on })}

@@ -30,6 +30,14 @@
   template), and Mistakes (`#h5-learn-mode-mistakes`, the summary's count); YOUR MATERIAL (`#h5-learn-material`), Learn settings and How
   learning works. Without cards: "No study cards yet", what will appear here, and Add the starter list (`POST /starter` then `PUT /settings
   { starter: 'dev' }`).
+- **On a company computer** ("Company computer" in [learn-english.md](learn-english.md)): while `device` of the summary says `cache_only` and
+  not `home_online`, an MD2 info Alert at the top of the home (`#h5-learn-home-away`): "T01 can't be reached. Your answers are kept on this
+  computer for now and moved to T01 when it is back." (without a `home_name`: "Your other computer can't be reached. …"), and under the numbers,
+  when `offline_copy_at` is set, "The counts are those of the last copy from T01 plus what you answered here." (`#h5-learn-offline-counts`).
+  On a computer the home column stays beside the open mode, so the banner stays in view; a phone's mode page does not repeat it. With the home
+  online nothing is shown (the server hands the waiting answers over). Learn settings keep the reason of a failed change in view
+  (`#h5-learn-settings-error`, an error Alert with the server's message, such as the 503 "Learning settings are kept on a normal computer, which
+  cannot be reached right now", besides the toast) until the next change works; the switches and the goal show the stored values again.
 - **Modes** (`MODES` in `learn-model.mjs`; a session fetches `GET /queue?mode=…&limit=` 20 for words, 10 for sentences):
   - Review: the due cards of both kinds, each in the mode that fits (`exerciseOf`): a word is spelled, a sentence is built. Mistakes and free
     practice work the same way.
@@ -116,4 +124,5 @@
   without speech, the focus kept by Hear it, Show first letter, Hint and Slow (computer and phone), no page keyboard on a computer; on a phone the
   page ending at the bar, the letter keyboard of Spell (layout, `inputmode`, keys at the caret, Shift, Backspace and its repeat, Hide and the tap
   that opens it again, the bottom navigation away, Check above the keys), the full keyboard of Build (opened by a tap, Backspace taking a tile
-  back) and Dictation (layers, the caret), and Say it's Check above the system keyboard. `H5_SHOT_DIR` saves screenshots.
+  back) and Dictation (layers, the caret), and Say it's Check above the system keyboard. A company computer at 390px: the banner and the
+  offline counts only while the home cannot be reached, and a 503 of the settings shown in the panel. `H5_SHOT_DIR` saves screenshots.

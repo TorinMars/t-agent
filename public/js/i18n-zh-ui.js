@@ -1995,6 +1995,7 @@ I18n.add({
   "Older than the server: rebuild it": "比服务旧：请重新构建",
   "Not the server’s version: rebuild it": "和服务的版本不同：请重新构建",
   "Version unknown: rebuild it": "版本未知：请重新构建",
+  "Rebuilding the app for this version…": "正在为这个版本重新构建应用…",
   "App": "应用",
   "Server": "服务",
   "Installed at": "安装位置",

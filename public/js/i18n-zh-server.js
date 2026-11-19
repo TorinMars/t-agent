@@ -806,6 +806,11 @@ I18n.add({
   "The agent's terminal is not running": "智能体的终端没有在运行",
   "enabled must be true or false": "enabled 必须是 true 或 false",
   "language must be one of: {1}": "language 必须是以下之一：{1}",
+  // ---- Automatic rebuild of T-Agent.app (services/mac-app-autobuild.js, scripts/build-mac-app.js) ----
+  "swiftc was not found. Install the Xcode command line tools: xcode-select --install": "未找到 swiftc。请安装 Xcode 命令行工具：xcode-select --install",
+  "The build took longer than {1} minutes": "构建超过了 {1} 分钟",
+  "The build exited with code {1}": "构建以退出码 {1} 结束",
+  "The build finished, but the installed app does not carry the new source hash": "构建已完成，但安装的应用没有带上新的源码哈希",
   // ---- Browser extension ----
   "BROWSER_NOT_CONNECTED": "没有连接装有 T-Agent 扩展的浏览器",
   "BROWSER_TIMEOUT": "浏览器没有及时响应",

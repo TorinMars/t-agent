@@ -188,8 +188,11 @@ function readPlistWithPlutil(file) {
 }
 
 // The T-Agent app installed on this Mac: ~/Applications/T-Agent.app, then /Applications/T-Agent.app. Only on macOS (null elsewhere).
-// { installed, path, version, matches_server }; the answer is kept for APP_CACHE_MS.
-function createMacAppProbe({ platform = process.platform, homedir = require('node:os').homedir, exists = fs.existsSync, readPlist = readPlistWithPlutil, serverVersion = () => null, now = Date.now, cacheMs = APP_CACHE_MS } = {}) {
+// { installed, path, version, matches_server, shell_current }; the answer is kept for APP_CACHE_MS, and read again when `refreshKey()` changes
+// (the automatic rebuild installed a new copy). `shell_current` is whether the app's TAgentSourceHash equals `sourceHash()`, the hash of the
+// current shell code (lib/mac-app-source.js): an app built from the same shell code is current even when its version is older. Null when either
+// is not known (not installed, or no hash for the current source).
+function createMacAppProbe({ platform = process.platform, homedir = require('node:os').homedir, exists = fs.existsSync, readPlist = readPlistWithPlutil, serverVersion = () => null, sourceHash = () => null, refreshKey = () => null, now = Date.now, cacheMs = APP_CACHE_MS } = {}) {
   let cached = null;
   async function look() {
     for (const dir of [path.join(homedir(), 'Applications'), '/Applications']) {
@@ -197,22 +200,31 @@ function createMacAppProbe({ platform = process.platform, homedir = require('nod
       const plist = path.join(bundle, 'Contents', 'Info.plist');
       if (!exists(plist)) continue;
       let version = null;
+      let hash = null;
       try {
         const info = await readPlist(plist);
         const value = info && (info.CFBundleShortVersionString || info.CFBundleVersion);
         version = typeof value === 'string' && value.trim() ? value.trim() : null;
+        hash = info && typeof info.TAgentSourceHash === 'string' ? info.TAgentSourceHash : null;
       } catch { version = null; }
-      return { installed: true, path: bundle, version };
+      return { installed: true, path: bundle, version, hash };
     }
-    return { installed: false, path: null, version: null };
+    return { installed: false, path: null, version: null, hash: null };
   }
   async function probe() {
     if (platform !== 'darwin') return null;
     const time = now();
-    if (!cached || time - cached.at >= cacheMs) cached = { at: time, value: await look() };
+    const key = refreshKey();
+    if (!cached || time - cached.at >= cacheMs || cached.key !== key) cached = { at: time, key, value: await look() };
     const server = serverVersion();
-    const { value } = cached;
-    return { ...value, matches_server: Boolean(value.installed && value.version && server && value.version === server) };
+    const { hash, ...value } = cached.value;
+    let current = null;
+    try { current = sourceHash(); } catch { current = null; }
+    return {
+      ...value,
+      matches_server: Boolean(value.installed && value.version && server && value.version === server),
+      shell_current: value.installed && current ? hash === current : null,
+    };
   }
   return { probe };
 }

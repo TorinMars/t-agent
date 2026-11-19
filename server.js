@@ -651,6 +651,12 @@ function startAppInfo(listeningPort) {
   publisher.start();
 }
 
+// An installed T-Agent.app is rebuilt and reinstalled after an update when its shell code changed (services/mac-app-autobuild.js; "Automatic
+// rebuild after an update" in docs/design/mac-app.md). Off with NODE_ENV=test, TA_MAC_APP_AUTOBUILD=0, in CI and off macOS.
+const macAppAutobuild = require('./services/mac-app-autobuild');
+const macAppRebuild = macAppAutobuild.createMacAppAutobuild({ dataDir: dataHome.paths().root });
+macAppAutobuild.setShared(macAppRebuild);
+
 server.listen(config.port, config.host, () => {
   const listeningPort = server.address().port;
   serverLock.update({ port: listeningPort });
@@ -680,6 +686,8 @@ server.listen(config.port, config.host, () => {
   sshTunnelRouter.service.autoStart();
   // <data home>/app.json for the T-Agent macOS app: where this server is, how it runs and its web addresses (services/app-info.js).
   startAppInfo(listeningPort);
+  // T-Agent.app: looked at now, rebuilt about a minute later when its shell code changed; never delays or stops the server.
+  void macAppRebuild.start().catch(() => {});
   console.log(`             LAN: http://${getLocalIP()}:${listeningPort}`);
   const clientAuth = getClientAuth();
   if (clientAuth.accessMode() === 'local') {
@@ -704,5 +712,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

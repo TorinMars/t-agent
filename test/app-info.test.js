@@ -190,20 +190,52 @@ test('the Mac app probe: ~/Applications first, then /Applications, its version a
     serverVersion: () => '2.133.1', ...extra,
   });
   const probe = make();
-  assert.deepEqual(await probe.probe(), { installed: true, path: path.join(home, 'Applications/T-Agent.app'), version: '2.133.1', matches_server: true });
+  assert.deepEqual(await probe.probe(), { installed: true, path: path.join(home, 'Applications/T-Agent.app'), version: '2.133.1', matches_server: true, shell_current: null });
   clock += 29000;
   await probe.probe();
   assert.equal(reads.length, 1, 'cached');
   clock += 2000;
   present.delete(path.join(home, 'Applications/T-Agent.app/Contents/Info.plist'));
-  assert.deepEqual(await probe.probe(), { installed: true, path: '/Applications/T-Agent.app', version: '2.0.0', matches_server: false });
+  assert.deepEqual(await probe.probe(), { installed: true, path: '/Applications/T-Agent.app', version: '2.0.0', matches_server: false, shell_current: null });
   assert.equal(reads.length, 2);
   present.clear();
   clock += 31000;
-  assert.deepEqual(await probe.probe(), { installed: false, path: null, version: null, matches_server: false });
+  assert.deepEqual(await probe.probe(), { installed: false, path: null, version: null, matches_server: false, shell_current: null });
   const unreadable = appInfo.createMacAppProbe({ platform: 'darwin', homedir: () => home, exists: () => true, readPlist: async () => { throw new Error('bad plist'); }, serverVersion: () => '1' });
-  assert.deepEqual(await unreadable.probe(), { installed: true, path: path.join(home, 'Applications/T-Agent.app'), version: null, matches_server: false });
+  assert.deepEqual(await unreadable.probe(), { installed: true, path: path.join(home, 'Applications/T-Agent.app'), version: null, matches_server: false, shell_current: null });
   assert.equal(await make({ platform: 'linux' }).probe(), null);
+});
+
+test('the Mac app probe: shell_current compares TAgentSourceHash with the current source; a new rebuild state reads the plist again', async () => {
+  const home = path.join(root, 'home-hash');
+  const plist = path.join(home, 'Applications/T-Agent.app/Contents/Info.plist');
+  let info = { CFBundleShortVersionString: '2.133.0', CFBundleIdentifier: 'local.t-agent.app', TAgentSourceHash: 'abc' };
+  let key = 'idle:1';
+  let reads = 0;
+  let current = 'abc';
+  const probe = appInfo.createMacAppProbe({
+    platform: 'darwin', homedir: () => home, exists: file => file === plist, now: () => 0,
+    readPlist: async () => { reads += 1; return info; }, serverVersion: () => '2.133.1', sourceHash: () => current, refreshKey: () => key,
+  });
+  let answer = await probe.probe();
+  assert.equal(answer.matches_server, false, 'an older version');
+  assert.equal(answer.shell_current, true, 'built from the same shell code');
+  assert.equal('hash' in answer, false, 'the hash itself is not part of the answer');
+  current = 'def';
+  assert.equal((await probe.probe()).shell_current, false);
+  assert.equal(reads, 1, 'cached');
+  info = { ...info, CFBundleShortVersionString: '2.133.1', TAgentSourceHash: 'def' };
+  key = 'updated:2';
+  answer = await probe.probe();
+  assert.equal(reads, 2, 'read again after the rebuild state changed');
+  assert.equal(answer.shell_current, true);
+  assert.equal(answer.matches_server, true);
+  // No key in an app built before the hash: not current; no hash for the source: unknown.
+  info = { CFBundleShortVersionString: '2.133.0', CFBundleIdentifier: 'local.t-agent.app' };
+  key = 'updated:3';
+  assert.equal((await probe.probe()).shell_current, false);
+  current = null;
+  assert.equal((await probe.probe()).shell_current, null);
 });
 
 test('readPlistWithPlutil reads a real Info.plist (macOS only)', { skip: process.platform !== 'darwin' }, async () => {
@@ -254,8 +286,16 @@ test('GET /api/system/app-info: the addresses of app.json, the installed app and
     addresses,
     app: { installed: true, path: '/Users/me/Applications/T-Agent.app', version: '2.133.0', matches_server: false },
     server: { version: '2.133.1', install_dir: '/opt/t-agent' },
+    autobuild: null,
   });
   assert.equal(probes, 1);
+
+  // The automatic rebuild's state (services/mac-app-autobuild.js) comes with the installed app.
+  const autobuild = require('../services/mac-app-autobuild');
+  const failed = { state: 'failed', at: '2026-11-19T10:00:00.000Z', version: '2.133.1', reason: 'swiftc was not found. Install the Xcode command line tools: xcode-select --install', restart_needed: false, log_tail: 'Building T-Agent.app' };
+  autobuild.setShared({ state: () => ({ ...failed }), currentHash: () => 'abc' });
+  t.after(() => autobuild.setShared(null));
+  assert.deepEqual((await get()).body.autobuild, failed);
 
   // A new address shows up on the next read, and app.json is rewritten with it.
   addresses.push({ kind: 'lan', label: 'Local network (en0)', url: 'http://192.168.1.20:3999' });
@@ -263,9 +303,10 @@ test('GET /api/system/app-info: the addresses of app.json, the installed app and
   assert.equal(answer.body.addresses.length, 2);
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).addresses.length, 2);
 
-  // Not on macOS: app is null.
+  // Not on macOS: app is null, and so is the rebuild state.
   router.setMacAppProbe(appInfo.createMacAppProbe({ platform: 'linux' }));
   assert.equal((await get()).body.app, null);
+  assert.equal((await get()).body.autobuild, null);
 
   world.loggedIn = false;
   assert.equal((await get()).status, 401);

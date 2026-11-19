@@ -13,6 +13,7 @@ const path = require('node:path');
 const childProcess = require('node:child_process');
 const { buildApp, installApp, main, parseArgs, infoPlist, ICON_FILES, NO_TOOLS } = require('../scripts/build-mac-app');
 const { findSwiftToolchain } = require('../lib/swift-toolchain');
+const { hashInputs } = require('../lib/mac-app-source');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -170,7 +171,11 @@ test('a universal build runs the exact commands and lays out a signed bundle wit
       NSMicrophoneUsageDescription: 'T-Agent uses the microphone for voice input.',
       NSPrincipalClass: 'NSApplication',
       NSAppTransportSecurity: { NSAllowsLocalNetworking: true },
+      // The hash of exactly what was compiled: the sorted Swift files, this build script and the icon tool.
+      TAgentSourceHash: hashInputs({ sources, buildScript: path.join(ROOT, 'scripts', 'build-mac-app.js'), iconSource: path.join(ROOT, 'scripts', 'mac-app', 'make-icon.swift') }),
     });
+    assert.equal(result.sourceHash, parsePlist(fs.readFileSync(path.join(fx.app, 'Contents', 'Info.plist'), 'utf8')).TAgentSourceHash);
+    assert.match(result.sourceHash, /^[0-9a-f]{64}$/);
     assert.ok(!/NSCameraUsageDescription|com\.apple\.security/.test(fs.readFileSync(path.join(fx.app, 'Contents', 'Info.plist'), 'utf8')), 'no camera text, no sandbox');
 
     // The self-test ran once, with a temporary data home; the GUI never started.
@@ -192,6 +197,33 @@ test('Info.plist escapes XML and is well-formed for any version string', () => {
   assert.ok(text.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"'));
   assert.equal(parsePlist(text).CFBundleVersion, '1.2.3');
   assert.equal(parsePlist(infoPlist('1&<2>')).CFBundleShortVersionString, '1&<2>');
+});
+
+test('every build writes TAgentSourceHash of its own inputs: a changed Swift file, build script or icon tool gives a new value', async () => {
+  const fx = fixture();
+  try {
+    const script = path.join(fx.dir, 'build-mac-app.js');
+    const icon = path.join(fx.dir, 'make-icon.swift');
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'build-mac-app.js'), script);
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'mac-app', 'make-icon.swift'), icon);
+    const plistHash = () => parsePlist(fs.readFileSync(path.join(fx.app, 'Contents', 'Info.plist'), 'utf8')).TAgentSourceHash;
+    const seen = new Set();
+    const build = async () => { const result = await buildApp(fx.options({ buildScript: script, iconSource: icon })); assert.equal(plistHash(), result.sourceHash); return result.sourceHash; };
+    const first = await build();
+    seen.add(first);
+    assert.equal(await build(), first, 'the same inputs give the same hash');
+    for (const change of [
+      () => fs.appendFileSync(path.join(fx.root, 'apps', 'macos', 'Window.swift'), '// changed\n'),
+      () => fs.writeFileSync(path.join(fx.root, 'apps', 'macos', 'Extra.swift'), ''),
+      () => fs.appendFileSync(script, '\n'),
+      () => fs.appendFileSync(icon, '\n'),
+    ]) {
+      change();
+      const next = await build();
+      assert.ok(!seen.has(next), 'every change gives a new hash');
+      seen.add(next);
+    }
+  } finally { fx.cleanup(); }
 });
 
 test('--arch builds one architecture without lipo -create; the self-test runs only for the host architecture', async () => {
@@ -342,14 +374,16 @@ test('the command line prints errors and returns 1; --help prints the usage', as
   assert.match(printed[0], /^Usage: npm run build:mac-app/);
 });
 
-test('the build is a development tool: npm script, dist/ ignored, never run by the service install or update', () => {
+test('the build: npm script, dist/ ignored, never run by the install or the update; the service runs it only to reinstall an installed app', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts['build:mac-app'], 'node scripts/build-mac-app.js');
   assert.match(fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8'), /^dist\/$/m);
   for (const file of ['install.sh', 'bootstrap.sh', 'services/update-manager.js', 'server.js']) {
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /build-mac-app|build:mac-app/, `${file} never builds the app`);
   }
-  assert.match(fs.readFileSync(path.join(ROOT, 'test', 'production-dependencies.test.js'), 'utf8'), /\^build-mac-app\\\.js\$/);
+  // The automatic rebuild after an update (services/mac-app-autobuild.js) runs it, so it is a production script (Node built-ins only).
+  assert.match(fs.readFileSync(path.join(ROOT, 'services', 'mac-app-autobuild.js'), 'utf8'), /'build-mac-app\.js'\), '--install', '--arch'/);
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'test', 'production-dependencies.test.js'), 'utf8'), /\^build-mac-app\\\.js\$/);
 });
 
 test('findSwiftToolchain never runs xcrun without a developer folder, and returns swiftc with the SDK', async () => {
@@ -396,6 +430,7 @@ test('a real universal build of a stand-in app passes lipo -archs and codesign -
     const plist = JSON.parse(childProcess.execFileSync('plutil', ['-convert', 'json', '-o', '-', path.join(app, 'Contents', 'Info.plist')], { encoding: 'utf8' }));
     assert.equal(plist.CFBundleIdentifier, 'local.t-agent.app');
     assert.equal(plist.CFBundleVersion, require('../VERSION.json').app_version);
+    assert.equal(plist.TAgentSourceHash, result.sourceHash, 'the source hash survives signing and reads back with plutil');
     assert.equal(result.selfTest, 'passed (1 passed, 0 failed)');
     assert.ok(fs.statSync(path.join(app, 'Contents', 'Resources', 'AppIcon.icns')).size > 10000);
     assert.equal(childProcess.execFileSync('sips', ['-g', 'pixelWidth', preview], { encoding: 'utf8' }).trim().split(/\s+/).pop(), '1024');

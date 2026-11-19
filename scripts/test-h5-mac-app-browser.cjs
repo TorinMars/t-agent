@@ -1,7 +1,9 @@
 // "Mac app" in Settings \u2192 Devices (scripts/h5-shell/MacApp.jsx) in real Chromium at 390px, with GET /api/system/app-info mocked: the installed
 // app's version against the server ("Up to date" / "Older than the server: rebuild it"), not installed, the build command with the install folder
 // and a Copy button, the web addresses with their labels and Copy buttons, nothing on a server that is not macOS (`app: null`) or on an older
-// server (404), and no horizontal overflow on a phone. H5_SHOT_DIR=<dir> saves a screenshot.
+// server (404), and no horizontal overflow on a phone; the status line of the automatic rebuild (rebuilding, updated with or without a restart
+// of the app, failed with its reason, nothing when idle or skipped) and an app built from the current shell code counting as up to date.
+// H5_SHOT_DIR=<dir> saves a screenshot.
 const { chromium } = require('playwright');
 const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
@@ -155,6 +157,55 @@ const SCENARIOS = {
       await context.close();
     }
   },
+  async 'the status line of the automatic rebuild after an update'(browser) {
+    const base = { state: 'idle', at: '2026-11-19T10:00:00.000Z', version: '2.101.0', reason: null, restart_needed: false };
+    const cases = [
+      [{ ...base, state: 'idle' }, null],
+      [{ ...base, state: 'skipped', reason: 'Another T-Agent server is rebuilding the app' }, null],
+      [{ ...base, state: 'waiting' }, ['Rebuilding the app for this version\u2026', 'waiting']],
+      [{ ...base, state: 'building' }, ['Rebuilding the app for this version\u2026', 'building']],
+      [{ ...base, state: 'updated', restart_needed: true }, ['Updated to 2.101.0. Quit and reopen the app to use it.', 'updated']],
+      [{ ...base, state: 'updated', restart_needed: false }, ['Updated to 2.101.0.', 'updated']],
+      [{ ...base, state: 'failed', reason: 'swiftc was not found. Install the Xcode command line tools: xcode-select --install' }, ['Could not rebuild the app: swiftc was not found. Install the Xcode command line tools: xcode-select --install', 'failed']],
+    ];
+    for (const [autobuild, expected] of cases) {
+      const w = world();
+      w.appInfo = { ...w.appInfo, autobuild };
+      const { context, page } = await open(browser, w);
+      await openDevices(page);
+      await page.locator('#h5-sec-mac-app').waitFor();
+      if (!expected) assert.equal(await page.locator('#h5-mac-app-autobuild').count(), 0, `nothing for ${autobuild.state}`);
+      else {
+        assert.equal(await text(page, '#h5-mac-app-autobuild-text'), expected[0]);
+        assert.equal(await page.locator('#h5-mac-app-autobuild').getAttribute('data-state'), expected[1]);
+      }
+      // The copy-command row stays in every state (after a failure the person can build by hand).
+      assert.equal(await text(page, '#h5-mac-app-command'), 'cd /Users/me/t-agent && npm run build:mac-app -- --install');
+      if (SHOTS && autobuild.state === 'failed') {
+        await page.locator('#h5-sec-mac-app').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(SHOTS, 'mac-app-failed-390.png') });
+      }
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+      await context.close();
+    }
+    // Not installed: no rebuild line, whatever the state says.
+    const absent = world({ appInfo: { addresses: ADDRESSES, app: { installed: false, path: null, version: null, matches_server: false }, server: { version: '2.101.0', install_dir: '/Users/me/t-agent' }, autobuild: { ...base, state: 'failed', reason: 'x' } } });
+    const { context, page } = await open(browser, absent);
+    await openDevices(page);
+    await page.locator('#h5-sec-mac-app').waitFor();
+    assert.equal(await page.locator('#h5-mac-app-autobuild').count(), 0);
+    await context.close();
+  },
+  async 'an older version built from the current shell code is up to date'(browser) {
+    const w = world({ appInfo: { addresses: ADDRESSES, app: { ...INSTALLED_OLD, shell_current: true }, server: { version: '2.101.0', install_dir: '/Users/me/t-agent' } } });
+    const { context, page } = await open(browser, w);
+    await openDevices(page);
+    await page.locator('#h5-sec-mac-app').waitFor();
+    assert.equal(await text(page, '#h5-mac-app-state'), 'Up to date');
+    assert.equal(await text(page, '#h5-mac-app-version'), 'App v2.100.0 \u00b7 Server v2.101.0');
+    assert.equal(await page.locator('#h5-sec-mac-app .h5-mac-app-label').first().textContent(), 'Build and install it in a terminal on this Mac:');
+    await context.close();
+  },
   async 'Chinese'(browser) {
     const w = world();
     const { context, page } = await open(browser, w, { lang: 'zh' });
@@ -167,6 +218,25 @@ const SCENARIOS = {
     assert.equal(await text(page, '#h5-mac-app-state'), '\u6bd4\u670d\u52a1\u65e7\uff1a\u8bf7\u91cd\u65b0\u6784\u5efa');
     assert.deepEqual(await page.locator('#h5-mac-app-addresses .h5-mac-app-label').allTextContents(), ['\u672c\u673a', '\u5c40\u57df\u7f51 (en0)', '\u8fdc\u7a0b\uff08frp\uff09']);
     await context.close();
+    // The rebuild lines in Chinese, the reason included.
+    const zh = {
+      waiting: [{ state: 'waiting' }, '\u6b63\u5728\u4e3a\u8fd9\u4e2a\u7248\u672c\u91cd\u65b0\u6784\u5efa\u5e94\u7528\u2026'],
+      updated: [{ state: 'updated', restart_needed: true }, '\u5df2\u66f4\u65b0\u5230 2.101.0\u3002\u9000\u51fa\u5e94\u7528\u518d\u91cd\u65b0\u6253\u5f00\u540e\u751f\u6548\u3002'],
+      failed: [{ state: 'failed', reason: 'swiftc was not found. Install the Xcode command line tools: xcode-select --install' }, '\u65e0\u6cd5\u91cd\u65b0\u6784\u5efa\u5e94\u7528\uff1a\u672a\u627e\u5230 swiftc\u3002\u8bf7\u5b89\u88c5 Xcode \u547d\u4ee4\u884c\u5de5\u5177\uff1axcode-select --install'],
+    };
+    for (const [over, expected] of Object.values(zh)) {
+      const wz = world();
+      wz.appInfo = { ...wz.appInfo, autobuild: { at: null, version: '2.101.0', reason: null, restart_needed: false, ...over } };
+      const opened = await open(browser, wz, { lang: 'zh' });
+      await opened.page.locator('#h5-open-tasks').waitFor();
+      await opened.page.evaluate(() => window.H5UI.actions.openSettings());
+      await opened.page.locator('#h5-settings').waitFor({ state: 'visible' });
+      await openGroup(opened.page, 'devices');
+      await opened.page.locator('#h5-mac-app-autobuild').waitFor();
+      await opened.page.waitForFunction(value => document.getElementById('h5-mac-app-autobuild-text').textContent === value, expected).catch(() => {});
+      assert.equal(await text(opened.page, '#h5-mac-app-autobuild-text'), expected);
+      await opened.context.close();
+    }
   },
 };
 

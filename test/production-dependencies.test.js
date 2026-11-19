@@ -29,7 +29,6 @@ const DEV_ONLY_SCRIPTS = [
   /^browser-test-wait\.cjs$/, // the waits of the real-browser tests
   /^h5-shell-test-script\.cjs$/, // serves the page bundles to the browser tests
   /^build-page-bundles\.js$/, // builds public/js/h5-shell.js, public/js/agent-chat-ui.js and public/js/chunks
-  /^build-mac-app\.js$/, // builds dist/T-Agent.app (the person runs it; the service's install and update never do)
 ];
 const CODE = /\.(?:c|m)?js$/;
 

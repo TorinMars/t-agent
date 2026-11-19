@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Builds dist/T-Agent.app, the native macOS front end of T-Agent, from apps/macos/*.swift with the command line tools only (no Xcode project), and
-// optionally installs it into ~/Applications. Run by the person (`npm run build:mac-app`); the service's install and update never run it.
-// See "Building and installing" in docs/design/mac-app.md.
+// optionally installs it into ~/Applications. Run by the person (`npm run build:mac-app`), and by the server after an update when an installed
+// app's shell code changed (services/mac-app-autobuild.js, with --install and the host architecture); install.sh and the update never run it.
+// See "Building and installing" and "Automatic rebuild after an update" in docs/design/mac-app.md.
 //
 //   npm run build:mac-app                       universal (x86_64 + arm64) dist/T-Agent.app
 //   npm run build:mac-app -- --arch arm64       one architecture (faster while developing)
@@ -14,6 +15,7 @@
 // lay out the bundle with Info.plist (written here, checked with `plutil -lint`) and PkgInfo; ad-hoc sign it (`codesign --force --deep --sign -
 // --timestamp=none`); verify it (`codesign --verify --strict`, `lipo -archs`); run `T-Agent --self-test` when the host architecture was built and
 // the sources support that flag (the GUI is never launched); then replace dist/T-Agent.app in one step (the bundle is staged next to it).
+// Info.plist carries TAgentSourceHash, the hash of the build inputs (lib/mac-app-source.js), read before compiling.
 // Intermediate files go to a temporary folder that is removed at the end.
 //
 // TA_MAC_APP_HOME (tests only) replaces the home folder that --install copies into.
@@ -22,6 +24,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { findSwiftToolchain, firstLine } = require('../lib/swift-toolchain');
+const { INFO_KEY, appSources, hashInputs } = require('../lib/mac-app-source');
 
 const ROOT = path.resolve(__dirname, '..');
 const ICON_SOURCE = path.join(__dirname, 'mac-app', 'make-icon.swift');
@@ -87,8 +90,9 @@ function plistValue(value, depth) {
   return `${pad}<string>${xml(value)}</string>`;
 }
 
-// The keys of Contents/Info.plist (the contract of the app: identity, URL scheme, microphone text, category, minimum system).
-function infoDictionary(version) {
+// The keys of Contents/Info.plist (the contract of the app: identity, URL scheme, microphone text, category, minimum system), and the hash
+// of the build inputs when given (TAgentSourceHash: services/mac-app-autobuild.js rebuilds an installed app whose value differs).
+function infoDictionary(version, sourceHash = null) {
   return {
     CFBundleDevelopmentRegion: 'en',
     CFBundleDisplayName: APP_NAME,
@@ -108,25 +112,19 @@ function infoDictionary(version) {
     NSPrincipalClass: 'NSApplication',
     // The page is served over plain http on this Mac (127.0.0.1) or the local network.
     NSAppTransportSecurity: { NSAllowsLocalNetworking: true },
+    ...(sourceHash ? { [INFO_KEY]: sourceHash } : {}),
   };
 }
 
-function infoPlist(version) {
+function infoPlist(version, sourceHash = null) {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
-    plistValue(infoDictionary(version), 0),
+    plistValue(infoDictionary(version, sourceHash), 0),
     '</plist>',
     '',
   ].join('\n');
-}
-
-// The app's Swift files: every *.swift of the folder, sorted by name (a stable order for swiftc), as absolute paths.
-function appSources(dir) {
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return []; }
-  return names.filter(name => name.endsWith('.swift')).sort().map(name => path.join(dir, name));
 }
 
 function readVersion(root) {
@@ -168,12 +166,13 @@ async function must(run, label, file, args, options) {
 }
 
 // Builds the bundle and puts it at <distDir>/T-Agent.app. Every path and tool location can be replaced (tests). Resolves
-// { app, version, archs, seconds, selfTest: 'passed' | 'skipped: ...' }.
+// { app, version, archs, seconds, selfTest: 'passed' | 'skipped: ...', sourceHash }.
 async function buildApp({
   root = ROOT,
   sourceDir = path.join(root, 'apps', 'macos'),
   distDir = path.join(root, 'dist'),
   iconSource = ICON_SOURCE,
+  buildScript = __filename,
   archs = ARCHS.slice(),
   iconPreview = null,
   env = process.env,
@@ -193,6 +192,9 @@ async function buildApp({
   if (!sources.some(file => path.basename(file) === 'main.swift')) {
     throw new BuildError(`No app sources: ${path.relative(root, sourceDir) || sourceDir} needs main.swift (and the other *.swift files of the app)`);
   }
+  // The hash of exactly the files this build compiles, read before compiling (lib/mac-app-source.js).
+  let sourceHash;
+  try { sourceHash = hashInputs({ sources, buildScript, iconSource }); } catch (error) { throw new BuildError(`Cannot read the build inputs: ${error.message}`); }
   const run = createRunner(env);
   const toolchain = await findSwiftToolchain(run, { xcodeSelect, xcrun });
   if (!toolchain) throw new BuildError(`swiftc was not found. ${NO_TOOLS}`);
@@ -252,7 +254,7 @@ async function buildApp({
     fs.chmodSync(executable, 0o755);
     fs.copyFileSync(icns, path.join(contents, 'Resources', 'AppIcon.icns'));
     const plist = path.join(contents, 'Info.plist');
-    fs.writeFileSync(plist, infoPlist(version));
+    fs.writeFileSync(plist, infoPlist(version, sourceHash));
     fs.writeFileSync(path.join(contents, 'PkgInfo'), 'APPL????');
     await must(run, 'plutil -lint', 'plutil', ['-lint', plist]);
 
@@ -294,7 +296,7 @@ async function buildApp({
     fs.renameSync(app, final);
     const seconds = (now() - started) / 1000;
     log(`Built ${final} (${version}, ${found.join(' + ')}) in ${seconds.toFixed(1)} s; self-test ${selfTest}`);
-    return { app: final, version, archs: found, seconds, selfTest };
+    return { app: final, version, archs: found, seconds, selfTest, sourceHash };
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
     fs.rmSync(stagingRoot, { recursive: true, force: true });

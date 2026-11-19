@@ -887,6 +887,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       // Wait for the page's own resize handler (it sets --h5-height and notes the open keyboard), not only for the browser's viewport.
       await page.waitForFunction(height => window.visualViewport.height <= height && parseInt(getComputedStyle(document.documentElement).getPropertyValue('--h5-height'), 10) <= height, fullSize.height - 300);
       await page.waitForTimeout(100);
+      // Typing in the draft box with the phone's keyboard up: the function key row and the tools row step aside (the user's rule, 2026-11-20).
+      await page.waitForFunction(() => document.getElementById('h5-bottom').hasAttribute('data-typing'));
+      for (const id of ['h5-keys', 'h5-actions']) assert.equal(await page.evaluate(el => getComputedStyle(document.getElementById(el)).display, id), 'none', `#${id} is hidden while the draft box types with the phone keyboard`);
+      assert.ok(await page.locator('#h5-translate-button').isVisible(), 'Send stays above the keyboard');
+      assert.ok(await page.locator('#h5-translate-send').isVisible(), 'Send as is stays above the keyboard');
       await page.keyboard.type('MULTI one');
       await page.keyboard.press('Enter');
       await page.keyboard.press('Shift+Enter');
@@ -917,6 +922,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       // A late resize handler would blur the box again (the keyboard went away), so wait for it before focusing.
       await page.waitForFunction(height => window.visualViewport.height >= height && parseInt(getComputedStyle(document.documentElement).getPropertyValue('--h5-height'), 10) >= height, fullSize.height);
       await page.waitForTimeout(100);
+      // The keyboard went away: both rows are back.
+      for (const id of ['h5-keys', 'h5-actions']) assert.notEqual(await page.evaluate(el => getComputedStyle(document.getElementById(el)).display, id), 'none', `#${id} is back once the phone keyboard is down`);
       await input.focus(); await input.fill('MULTI one\n\ntwo');
       // Without bracketed paste the lines are joined, so a shell cannot run them one by one.
       await page.locator('#h5-translate-button').tap();

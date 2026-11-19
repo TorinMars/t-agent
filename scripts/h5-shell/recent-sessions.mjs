@@ -1,8 +1,10 @@
 // The recent sessions of the session switcher ("Session switcher" in docs/design/session-switcher.md): the terminal sessions this page has shown,
 // most recently shown first, remembered on this device. Pure functions: h5.js keeps the list (it sees every change of the shown terminal, by any path)
 // and stores it with its `store` helper; Switcher.jsx draws it as a stack of cards. An entry is
-// { sourceKey, taskId, terminalId, title, agent }: the device (source key), the task and the terminal, plus the session's name and agent kind as they
-// were when it was last shown (a task that is not selected has no terminal list in the page, so its card shows what was seen then).
+// { sourceKey, taskId, terminalId, title, agent, lastUsed? }: the device (source key), the task and the terminal, plus the session's name and agent kind
+// as they were when it was last shown (a task that is not selected has no terminal list in the page, so its card shows what was seen then), and when it
+// was last used (ms; lists stored before 2026-11-19 have no time, and an entry gets one the next time it is shown or left). The "Recent" tab of the task
+// list draws the same list as rows (recent-rows.mjs, RecentList.jsx; "Recent tab" in docs/design/page-task-list.md).
 
 export const RECENT_MAX = 12;
 const AGENTS = new Set(['claude', 'codex']);
@@ -20,18 +22,37 @@ export function cleanEntry(entry) {
   if (!sourceKey || !taskId || !terminalId || sourceKey.length > 200 || taskId.length > 200 || terminalId.length > 200) return null;
   const title = typeof entry.title === 'string' ? entry.title.slice(0, 120) : '';
   const agent = AGENTS.has(entry.agent) ? entry.agent : null;
-  return { sourceKey, taskId, terminalId, title, agent };
+  const lastUsed = Number(entry.lastUsed);
+  return Number.isFinite(lastUsed) && lastUsed > 0 ? { sourceKey, taskId, terminalId, title, agent, lastUsed } : { sourceKey, taskId, terminalId, title, agent };
 }
 
 // The list after `entry` was shown: it goes first, an older copy of it goes away, at most `max` entries. The same list comes back when nothing changed.
-export function noteRecent(list, entry, max = RECENT_MAX) {
+// With `now` the entry is stamped as used then (`lastUsed`), and with `leave` the entry that was first until now too: it was in use until this moment
+// (h5.js passes `leave` only once this page has shown that entry itself, so a list from an earlier visit keeps its times).
+export function noteRecent(list, entry, max = RECENT_MAX, { now = null, leave = false } = {}) {
   const clean = cleanEntry(entry);
   const before = Array.isArray(list) ? list : [];
   if (!clean) return before;
   const key = recentKey(clean);
   const first = before[0];
-  if (first && recentKey(first) === key && first.title === clean.title && first.agent === clean.agent && before.length <= max) return before;
-  return [clean, ...before.filter(item => recentKey(item) !== key)].slice(0, max);
+  const same = first && recentKey(first) === key;
+  if (same && first.title === clean.title && first.agent === clean.agent && before.length <= max) return before;
+  const stamp = item => (now ? { ...item, lastUsed: now } : item);
+  const top = same ? (first.lastUsed ? { ...clean, lastUsed: first.lastUsed } : clean) : stamp(clean);
+  const rest = before.filter(item => recentKey(item) !== key).map((item, index) => (leave && !same && index === 0 && item === first ? stamp(item) : item));
+  return [top, ...rest].slice(0, max);
+}
+
+// The list with one entry (by `recentKey`) renamed (`title`, a string) or forgotten (`title` null): a session renamed or deleted from a menu. The same
+// list comes back when it has no such entry or the name is the same.
+export function editRecent(list, key, title) {
+  const before = Array.isArray(list) ? list : [];
+  const at = before.findIndex(item => recentKey(item) === key);
+  if (at < 0) return before;
+  if (title === null) return before.filter((item, index) => index !== at);
+  const name = String(title).slice(0, 120);
+  if (before[at].title === name) return before;
+  return before.map((item, index) => (index === at ? { ...item, title: name } : item));
 }
 
 // The entries whose session still exists: its task is in the task list (`tasks`: the rows of `state.taskList.tasks`, each with `source` and `id`), and

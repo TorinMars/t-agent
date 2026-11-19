@@ -105,3 +105,33 @@ test('the place of a card: centred, behind on the left (smaller, darker), on top
   assert.equal(settleIndex(9, 5), 4);
   assert.equal(settleIndex(3, 0), 0);
 });
+
+test('lastUsed: a shown entry is stamped, the one left is stamped with `leave`, and old stored lists stay readable', async () => {
+  const { noteRecent, parseRecent, serializeRecent } = await load();
+  let list = noteRecent([], entry('local', 1, 'a'), undefined, { now: 1000 });
+  assert.equal(list[0].lastUsed, 1000);
+  list = noteRecent(list, entry('local', 1, 'b'), undefined, { now: 2000 });
+  assert.deepEqual(list.map(item => [item.terminalId, item.lastUsed]), [['b', 2000], ['a', 1000]], 'without `leave` the one left keeps its time');
+  list = noteRecent(list, entry('local', 1, 'a'), undefined, { now: 5000, leave: true });
+  assert.deepEqual(list.map(item => [item.terminalId, item.lastUsed]), [['a', 5000], ['b', 5000]], 'with `leave` the one left was used until now');
+  assert.equal(noteRecent(list, entry('local', 1, 'a'), undefined, { now: 9000, leave: true }), list, 'shown again while first: the same list');
+  const renamed = noteRecent(list, entry('local', 1, 'a', { title: 'New' }), undefined, { now: 9000, leave: true });
+  assert.deepEqual([renamed[0].title, renamed[0].lastUsed, renamed[1].lastUsed], ['New', 5000, 5000], 'a new name of the first one keeps the times');
+  // A list stored before lastUsed existed: read as it is, with no time, and stamped from then on.
+  const old = parseRecent(JSON.stringify([{ sourceKey: 'local', taskId: '1', terminalId: 'x', title: 'Old', agent: 'claude' }]));
+  assert.deepEqual(old, [{ sourceKey: 'local', taskId: '1', terminalId: 'x', title: 'Old', agent: 'claude' }]);
+  assert.equal(noteRecent(old, entry('local', 2, 'y'), undefined, { now: 7000 })[1].lastUsed, undefined, 'an old entry left by a new visit keeps no time');
+  assert.deepEqual(parseRecent(serializeRecent(list)), list, 'the time is stored');
+  for (const bad of [0, -5, 'soon', null, Infinity]) assert.equal('lastUsed' in parseRecent(JSON.stringify([{ ...entry('local', 1, 'a'), lastUsed: bad }]))[0], false, String(bad));
+});
+
+test('editRecent renames or forgets one entry and keeps the same list when nothing changes', async () => {
+  const { editRecent, recentKey } = await load();
+  const list = [entry('local', 1, 'a', { title: 'One', lastUsed: 5 }), entry('remote:7', 1, 'a', { title: 'Two' })];
+  const renamed = editRecent(list, recentKey(list[1]), 'Second');
+  assert.deepEqual(renamed.map(item => item.title), ['One', 'Second']);
+  assert.equal(renamed[0], list[0]);
+  assert.equal(editRecent(list, recentKey(list[1]), 'Two'), list, 'the same name');
+  assert.equal(editRecent(list, 'local|9|z', 'X'), list, 'no such entry');
+  assert.deepEqual(editRecent(list, recentKey(list[0]), null).map(item => item.sourceKey), ['remote:7'], 'forgotten');
+});

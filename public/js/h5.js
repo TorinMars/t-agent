@@ -3711,13 +3711,18 @@
     ui.set({ translating: true });
     try {
       let outgoing = text;
+      let translated = false;
+      const taskTitle = task ? task.title : '';
       if (translateFirst) {
         const result = await api('POST', '/api/translate', { text });
         outgoing = result && result.text;
+        translated = Boolean(result && result.translated !== false);
         if (!pasteText(outgoing)) throw new Error('Translation result is empty');
       } else if (!typedText(typed).trim()) throw new Error('Nothing to send');
       if (!(translateFirst ? sendTranslation(target, outgoing) : sendTyped(target, typed))) throw new Error('Terminal not connected; the text was not sent');
       setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
+      // Sent after a real translation: the sentence becomes a study card ("Collection hooks" in docs/design/learn-english.md), in the background.
+      if (translated && window.LearnCollect) window.LearnCollect.sentence(outgoing, text, taskTitle);
       const now = translateInput.value; // typed on while the translation ran: keep what came after the sent text
       translateInput.value = now === typed ? '' : now.startsWith(typed) ? now.slice(typed.length) : now;
       translateForm.removeAttribute('data-hold'); // the press on the send button is over: do not keep the box shown

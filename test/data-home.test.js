@@ -405,6 +405,59 @@ test('a schema 11 database gets the usage data tables (schema 12), with a copy t
   assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
 });
 
+test('a schema 12 database gets the English learning tables (schema 13), with a copy taken first; existing data is kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: no learn_cards / learn_reviews, user_version 12.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE learn_reviews; DROP TABLE learn_cards;');
+  old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
+  old.pragma('user_version = 12');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 12 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  for (const table of ['learn_cards', 'learn_reviews']) assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?").get(table).n, 1, table);
+  for (const index of ['idx_learn_cards_due', 'idx_learn_reviews_owner_at', 'idx_learn_reviews_card']) assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?").get(index).n, 1, index);
+  assert.equal(after.prepare('SELECT title FROM tasks').get().title, 'kept task');
+  // One card per owner, kind and normalized text.
+  const insert = after.prepare("INSERT INTO learn_cards (owner, kind, en, norm, source, created_at, due_at) VALUES ('owner', 'word', 'merge', 'merge', 'lookup', 1, 1)");
+  insert.run();
+  assert.throws(() => insert.run(), /UNIQUE/);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-12-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const copy = new Database(path.join(root, 'backups', copies[0]), { readonly: true });
+  assert.equal(copy.pragma('user_version', { simple: true }), 12, 'the copy is the database as it was');
+  assert.equal(copy.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'learn_cards'").get().n, 0);
+  copy.close();
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+  assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
+});
+
+test('a schema 13 database is refused by a version that knows schema 12 at most', t => {
+  // An older app: the same code with schema_version 12 in its VERSION.json (lib/data-home.js reads it from there).
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  const older = spawnSync(process.execPath, ['-e', [
+    "const dataHome = require('./lib/data-home');",
+    'dataHome.codeSchemaVersion = () => 12;',
+    "require('./db').close();",
+  ].join(' ')], { cwd: ROOT, env: childEnv({ TAGENT_HOME: root }), encoding: 'utf8' });
+  assert.notEqual(older.status, 0);
+  assert.match(older.stderr, /was written by a newer T-Agent \(database schema 13; this version supports up to 12\)/);
+  const after = new Database(path.join(root, 'db.sqlite'), { readonly: true });
+  assert.equal(after.pragma('user_version', { simple: true }), 13, 'the stored version is not changed');
+  after.close();
+});
+
 test('a schema 8 database gets the T-Attention tables (schema 9), with a copy taken first; existing data is kept and a second start changes nothing', t => {
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);

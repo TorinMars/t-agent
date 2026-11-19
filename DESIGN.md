@@ -197,3 +197,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.141.2 Keep the focus in the draft box after a send; Mac app title bar in the page's colour
 > v2.142.0 English learning: progress shared across linked engines, company computers keep only a card cache; the page's own keyboard and kept focus on Learn
 > v2.143.0 Shared page state: Recent sessions and the page's other remembered choices are the same on every device and engine; browser storage through one registry with a guard test
+> v2.143.1 Phone: the key row and the tools row step aside while the draft box types with the phone keyboard

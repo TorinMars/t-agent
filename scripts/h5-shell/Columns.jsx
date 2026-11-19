@@ -319,8 +319,8 @@ export function startColumns(ui) {
 }
 
 // The page under the view is hidden: its header, terminal, sidebar, chat and full-window mind map (the Mind maps tab has its own element). Notices and
-// dialogs (higher z-index) stay above the view, and so do the navigation rail (NavRail, left of the view), the T-Attention panel (on the right: the view
-// ends where it starts, as the single view does) and Settings.
+// dialogs (higher z-index) stay above the view, and so do the navigation rail (NavRail, left of the view), the T-Attention side sheet (floating over the
+// right of the view, which keeps its full width, as the single view does) and Settings.
 // The strip's sideways scrollbar is always drawn while the columns overflow, also where the system hides scrollbars until they are used (macOS):
 // a styled ::-webkit-scrollbar is a classic one (Chrome, Edge, Safari). Firefox takes the standard properties instead; they are set only where
 // ::-webkit-scrollbar does not exist, since Chrome would let them win and draw its overlay scrollbar again.
@@ -339,8 +339,6 @@ const EDGE = { position: 'absolute', top: 0, width: 32, pointerEvents: 'none', z
 
 const HIDE_PAGE = {
   'html[data-columns] #h5-app, html[data-columns] #h5-tasks, html[data-columns] #h5-agent, html[data-columns] #h5-mindmap': { display: 'none !important' },
-  'html[data-columns] #h5-attention-sheet .MuiDrawer-paper': { zIndex: 1255 },
-  'html[data-columns][data-side-panel] #h5-columns': { right: 'var(--h5-side-width)' },
   'html[data-columns] #h5-settings': { zIndex: 1255 },
 };
 
@@ -991,7 +989,7 @@ export function ColumnStrip({ ui }) {
   const columnsShownNow = tab === 'columns';
   return (
     <Box id="h5-columns" ref={root} role="region" aria-label={t('Multi-column view')} data-tab={tab}
-      // Right of the navigation rail (NavRail, drawn by App above this view), to the window's right edge or the T-Attention panel (HIDE_PAGE).
+      // Right of the navigation rail (NavRail, drawn by App above this view), to the window's right edge (the T-Attention side sheet floats over it).
       sx={theme => ({ position: 'fixed', top: 0, bottom: 0, left: NAV_WIDTH, right: 0, zIndex: 1250, display: 'flex', flexDirection: 'row', bgcolor: 'background.default', color: 'text.primary', ...DRAG_SX(theme) })}>
       <GlobalStyles styles={HIDE_PAGE} />
       <GlobalStyles styles={STRIP_SCROLLBAR} />

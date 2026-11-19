@@ -1,4 +1,4 @@
-// Publishes where the terminal area (#h5-terminal, the column between the sidebar and the T-Attention panel) really is, as two CSS variables on the root
+// Publishes where the terminal area (#h5-terminal, the column right of the sidebar) really is, as two CSS variables on the root
 // element: --h5-terminal-left and --h5-terminal-width. The top sheets line up with it on a wide screen (TOP_SHEET_PAPER in Design.jsx). The values are
 // measured, not worked out from the sidebar width, so whatever narrows the terminal is followed.
 const ID = 'h5-terminal';

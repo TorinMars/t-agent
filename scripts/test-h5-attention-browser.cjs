@@ -19,8 +19,10 @@
 //   inside the reason, the context card and the history drawn as links (never a javascript: one).
 // - phone 320x640 (touch): seven 44px buttons in row 2 (Docs left out, reached from the saved commands list); the sheet's controls are 44px; the
 //   Plugins rows fit the width with 44px buttons.
-// - computer 1440x900 (mouse): the right side panel (html[data-side-panel]), one at a time with the Docs sheet, Escape closes it, the edit view is a
-//   normal dialog.
+// - computer 1440x900 (mouse): the floating side sheet (480px, 8px from the edges, elevation 16, over the page): the terminal, the page and the
+//   bottom row keep their width and the terminal its cols (no PTY resize); a press outside (the terminal, the translate field) closes it and does nothing
+//   else; the rail's Attention button toggles it once; a dialog inside it does not close it; Escape and the close button close it and the focus goes
+//   back to the control that opened it; one at a time with the Docs sheet; the edit view is a normal dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
 const { openGroup } = require('./settings-test-helper.cjs');
@@ -334,6 +336,8 @@ const editLayout = page => page.evaluate(() => {
       const box = await sheet.boundingBox();
       // A page of its own over the terminal page, ending at the bottom navigation (56px).
       assert.ok(box.width === 390 && Math.abs(box.height - (844 - 56)) <= 1 && box.y === 0, `full-screen sheet above the bottom navigation (${JSON.stringify(box)})`);
+      assert.equal(await sheet.getAttribute('role'), 'dialog', 'the phone keeps its modal page (not the floating side sheet of a computer)');
+      assert.equal(await page.locator('.h5-attention-outside').count(), 0, 'no outside layer on a phone');
       assert.deepEqual(await groupKeys(page), ['needs_you', 'working', 'todo', 'closed']);
       assert.deepEqual(await idsIn(page, 'needs_you'), [1, 2], 'waiting_user, then review');
       assert.deepEqual(await idsIn(page, 'todo'), [8, 5, 4], 'priority, then the earlier due date');
@@ -1064,20 +1068,50 @@ const editLayout = page => page.evaluate(() => {
       await context.close();
     }
 
-    // ── Computer 1440x900, mouse: the right side panel ──
+    // ── Computer 1440x900, mouse: the floating side sheet ──
     {
       const { context, page, errors, calls } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false });
       const resizes = () => page.evaluate(() => window.sockets.reduce((sum, socket) => sum + socket.sent.filter(data => data.includes('"resize"')).length, 0));
+      const sentCount = () => page.evaluate(() => window.sockets.reduce((sum, socket) => sum + socket.sent.length, 0));
+      // The boxes of the page under the sheet, and the cols of the terminal (the xterm grid that the PTY size follows).
+      const layout = () => page.evaluate(() => {
+        const box = id => (r => [r.x, r.y, r.width, r.height])(document.getElementById(id).getBoundingClientRect());
+        const last = window.sockets.flatMap(socket => socket.sent).filter(data => data.includes('"resize"')).at(-1);
+        return { app: box('h5-app'), terminal: box('h5-terminal'), bottom: box('h5-bottom'), chat: box('h5-agent'), cols: last ? JSON.parse(last).cols : null, screen: document.querySelector('#h5-terminal .xterm-screen')?.getBoundingClientRect().width };
+      });
+      // Counts the events that reach the terminal box (a press swallowed by the sheet's outside layer reaches nothing).
+      await page.evaluate(() => { window.termEvents = 0; for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) document.getElementById('h5-terminal').addEventListener(type, () => { window.termEvents += 1; }, true); });
+      const settledPanel = () => page.waitForFunction(() => { const p = document.querySelector('#h5-attention-sheet .h5-attention-panel'); return p && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(p).transform); });
+      await page.waitForTimeout(300); // the first fit has been sent
       const buttons = await row2(page);
       // The computer row ("Bottom bar"): T-Attention is an item of More tools, under its old id.
       assert.deepEqual(buttons.map(b => b.id), ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-cycle', 'h5-more', 'h5-translate-button']);
       assert.equal(await page.locator('#h5-more-menu #h5-attention[role="menuitem"]').count(), 1, 'T-Attention is in More tools');
-      const attention = async () => { await page.locator('#h5-more').click(); await page.locator('#h5-attention').click(); };
+      // (It waits until the menu has gone: its invisible backdrop takes presses until its exit transition ends.)
+      const attention = async () => { await page.locator('#h5-more').click(); await page.locator('#h5-attention').click(); await page.locator('#h5-more-menu').waitFor({ state: 'hidden' }); };
+      const layoutBefore = await layout();
+      const resizesBefore = await resizes();
+      assert.ok(await page.locator('#h5-design').isVisible(), 'the wide row has its Docs button');
       await attention();
       const panel = page.locator('#h5-attention-sheet .h5-attention-panel');
       await panel.waitFor({ state: 'visible' });
-      await page.waitForFunction(() => { const p = document.querySelector('.h5-attention-panel'); return document.documentElement.hasAttribute('data-side-panel') && p && Math.abs(p.getBoundingClientRect().right - innerWidth) <= 1; });
-      assert.equal(await page.locator('#h5-attention-sheet .MuiBackdrop-root').count(), 0, 'not a modal: the page stays usable');
+      await settledPanel();
+      // A floating side sheet: 480px wide, 8px from the top, right and bottom edges, 8px corners, elevation 16 with the dark theme's overlay.
+      const sheetBox = await panel.evaluate(node => { const r = node.getBoundingClientRect(); const style = getComputedStyle(node); return { x: r.x, y: r.y, width: r.width, height: r.height, radius: style.borderTopLeftRadius, shadow: style.boxShadow, image: style.backgroundImage, z: Number(style.zIndex), border: style.borderLeftWidth }; });
+      assert.deepEqual({ x: sheetBox.x, y: sheetBox.y, width: sheetBox.width, height: sheetBox.height }, { x: 1440 - 8 - 480, y: 8, width: 480, height: 900 - 16 }, 'inset 8px, 480px wide');
+      assert.equal(sheetBox.radius, '8px');
+      assert.equal(sheetBox.border, '0px', 'no border: the elevation sets it apart');
+      assert.ok(/rgba\(0, 0, 0/.test(sheetBox.shadow) && sheetBox.shadow.split('rgba').length === 4, `the theme's elevation shadow: ${sheetBox.shadow}`);
+      assert.ok(/linear-gradient\(rgba\(255, 255, 255, 0\.145\)/.test(sheetBox.image), `the dark theme's overlay of elevation 16: ${sheetBox.image}`);
+      assert.ok(sheetBox.z > 1260 && sheetBox.z < 1300, `above the rail, under the menus and dialogs: ${sheetBox.z}`);
+      // Nothing below is squeezed: the same boxes and the same terminal cols, no PTY resize.
+      await page.waitForTimeout(300);
+      assert.deepEqual(await layout(), layoutBefore, 'the page, the terminal, the bottom row and the chat keep their width');
+      assert.equal(await resizes(), resizesBefore, 'no PTY resize when it opens');
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false, 'no layout attribute any more');
+      assert.ok(await page.locator('#h5-design').isVisible(), 'the bottom row stays the wide one (Docs keeps its button)');
+      assert.equal(await page.locator('#h5-attention-sheet .MuiBackdrop-root').count(), 0, 'no scrim');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-attention-outside')).backgroundColor), 'rgba(0, 0, 0, 0)', 'the outside layer is transparent');
       await page.locator('#h5-attention-sheet .h5-attention-row').first().waitFor();
       // The same panel as the phone: header, sections with their counts, rows, statuses, detail lines and row buttons; only the way out differs.
       assert.deepEqual(await panelLayout(page), phoneLayout, 'the side panel shows what the phone shows');
@@ -1092,24 +1126,70 @@ const editLayout = page => page.evaluate(() => {
       assert.deepEqual(await editLayout(page), phoneEdit, 'the same edit view as on the phone');
       assert.equal(await page.locator('#h5-attention-context-command').textContent(), 'npm test -- --watch=false', 'the context card on a wide screen too');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-edit.png') });
+      // Dialogs opened from the panel are not outside: the delete confirmation and a press on the dialog's own backdrop leave the panel open.
+      await page.locator('#h5-attention-edit-delete').click();
+      const confirm = page.locator('#h5-attention-delete .MuiDialog-paper');
+      await confirm.waitFor({ state: 'visible' });
+      await page.locator('#h5-attention-delete-cancel').click();
+      await confirm.waitFor({ state: 'hidden' });
+      assert.ok(await panel.isVisible(), 'the delete confirmation did not close the panel');
+      await page.mouse.click(400, 450); // the edit view's backdrop
+      await edit.waitFor({ state: 'hidden' });
+      assert.ok(await panel.isVisible(), 'a press on the dialog backdrop closes the dialog only');
+      await row(page, 1).locator('.h5-attention-details').click();
+      await edit.waitFor({ state: 'visible' });
       await page.keyboard.press('Escape');
       await edit.waitFor({ state: 'hidden' });
       assert.ok(await panel.isVisible(), 'Escape in the edit view leaves the panel open');
       await page.locator('#h5-attention-close').focus();
       await page.keyboard.press('Escape');
       await panel.waitFor({ state: 'hidden' });
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
-      // One at a time: Docs takes the place of T-Attention; the sheet is a modal, so it is closed before the panel can open again.
-      // With the rail (72px), the task list (304px) and the panel (560px) the row is under 560px at 1440px, so Docs is in More tools
-      // (`#h5-more-docs`, "Bottom bar"); without the panel it has its own button again.
+      // The focus goes back to what had it when the panel opened: the More menu gives the focus back to the terminal before its item runs.
+      const focused = () => page.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.className));
+      assert.equal(await focused(), 'xterm-helper-textarea', 'the focus goes back to where it was when the panel opened (the terminal)');
+      assert.equal(await resizes(), resizesBefore, 'no PTY resize when it closes');
+      assert.deepEqual(await layout(), layoutBefore);
+      // A press on the terminal outside the sheet closes it and does nothing else: no event reaches the terminal, nothing is sent to it, and the
+      // focus goes back to the rail's Attention button that opened it, not to the terminal under the press.
+      await page.locator('#h5-nav-attention').click();
+      await panel.waitFor({ state: 'visible' });
+      await settledPanel();
+      assert.equal(await focused(), '', 'opening blurs the button (the focus is on nothing)');
+      let sent = await sentCount();
+      const term = layoutBefore.terminal;
+      await page.mouse.click(term[0] + term[2] / 3, term[1] + term[3] / 2);
+      await panel.waitFor({ state: 'hidden' });
+      await page.waitForTimeout(200);
+      assert.equal(await page.evaluate(() => window.termEvents), 0, 'the press did not reach the terminal');
+      assert.equal(await focused(), 'h5-nav-attention', 'the focus is back on the rail button, not on the terminal');
+      assert.equal(await sentCount(), sent, 'nothing was sent to the terminal');
+      assert.equal(await page.locator('.h5-attention-outside').count(), 0, 'the outside layer is gone after the press');
+      // The same press after it closed reaches the terminal again.
+      await page.mouse.click(term[0] + term[2] / 3, term[1] + term[3] / 2);
+      assert.ok(await page.evaluate(() => window.termEvents) > 0, 'a later press is the terminal\'s');
+      // The close button closes it, and the focus goes back to More.
+      await attention();
+      await panel.waitFor({ state: 'visible' });
+      await page.locator('#h5-attention-close').click();
+      await panel.waitFor({ state: 'hidden' });
+      assert.equal(await focused(), 'xterm-helper-textarea');
+      // The rail's Attention button opens it and closes it with one press each (no double toggle).
+      await page.locator('#h5-nav-attention').click();
+      await panel.waitFor({ state: 'visible' });
+      await settledPanel();
+      await page.locator('#h5-nav-attention').click({ force: true }); // the outside layer lies over the rail and takes the press
+      await panel.waitFor({ state: 'hidden' });
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => window.H5UI.get().attention.open), false, 'one press closed it and did not open it again');
+      assert.equal(await page.locator('#h5-nav-attention').getAttribute('aria-expanded'), 'false');
+      // One at a time: Docs takes the place of T-Attention; the sheet is a modal, so it is closed before the panel can open again. With the panel open
+      // a press on the Docs button would only close the panel, so it is pressed with the keyboard.
       const docs = async () => {
-        if (await page.locator('#h5-design').isVisible()) { await page.locator('#h5-design').click(); return; }
-        await page.locator('#h5-more').click();
-        await page.locator('#h5-more-docs').click();
+        if (await page.locator('#h5-attention-sheet .h5-attention-panel').isVisible()) { await page.locator('#h5-design').focus(); await page.keyboard.press('Enter'); return; }
+        await page.locator('#h5-design').click();
       };
       await attention();
       await panel.waitFor({ state: 'visible' });
-      assert.equal(await page.locator('#h5-design').isVisible(), false, 'the row beside the open panel is the narrow one');
       await docs();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       await panel.waitFor({ state: 'hidden' });
@@ -1137,10 +1217,15 @@ const editLayout = page => page.evaluate(() => {
       await page.locator('#h5-attention-close').focus();
       await page.keyboard.type('xy');
       assert.equal(await page.evaluate(() => window.sockets.at(-1).sent.filter(data => data === 'x' || data === 'y').length), sentBefore, 'no keys reach the terminal from the panel');
-      await attention();
+      // A press on the translate field of the bottom row (outside, left of the panel) closes the panel and does not focus the field.
+      const field = await page.locator('#h5-translate-input').boundingBox();
+      assert.ok(field.x + 40 < 1440 - 8 - 480, 'the field starts left of the panel');
+      await page.mouse.click(field.x + 40, field.y + field.height / 2);
       await panel.waitFor({ state: 'hidden' });
+      await page.waitForTimeout(200);
+      assert.notEqual(await focused(), 'h5-translate-input', 'the press only closed the panel: the field under it did not get the focus');
       assert.ok(calls.length >= 2);
-      assert.ok(await resizes() >= 1);
+      assert.equal(await resizes(), resizesBefore, 'no PTY resize in all of this');
       // Settings → T-Attention → Plugins on a computer: the same rows; the Refresh button is a compact icon button.
       await openPluginSettings(page, 'click');
       assert.deepEqual(await pluginsFit(page), []);
@@ -1165,7 +1250,6 @@ const editLayout = page => page.evaluate(() => {
       await page.locator('#h5-more').click();
       await page.locator('#h5-attention').click();
       await panel.waitFor({ state: 'visible' });
-      await page.waitForFunction(() => document.documentElement.hasAttribute('data-side-panel'));
       await row(page, 1).locator('.h5-attention-session').waitFor();
       const shown = () => page.evaluate(() => [...document.querySelectorAll('#h5-attention-sheet .h5-attention-row[data-shown="true"]')].map(node => Number(node.dataset.id)));
       const opacity = id => row(page, id).locator('.h5-attention-details').evaluate(node => Number(getComputedStyle(node).opacity));
@@ -1213,7 +1297,9 @@ const editLayout = page => page.evaluate(() => {
       await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="2"][data-shown="true"]'));
       assert.deepEqual(await shown(), [2]);
       // The shown session changed elsewhere (the task list): the mark follows.
-      await page.locator('#h5-tasks .h5-terminal-row[data-session="t2"] .h5-terminal-main').click();
+      // (With the keyboard: a press on the task list would only close the panel.)
+      await page.locator('#h5-tasks .h5-terminal-row[data-session="t2"] .h5-terminal-main').focus();
+      await page.keyboard.press('Enter');
       await page.waitForFunction(() => document.getElementById('h5-session-name').textContent === 'Claude 1');
       await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"][data-shown="true"]'));
       assert.deepEqual(await shown(), [1]);

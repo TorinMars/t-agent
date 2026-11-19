@@ -30,11 +30,11 @@ import {
   groupOf, hasTree, homeDetail, homeGroups, isShownSession, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, readCollapsed, rollbackItems,
   linkParts, safeLink, sessionOf, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
 } from './attention-model.mjs';
-import { TOUCH } from './theme.mjs';
+import { DIALOG_RADIUS, TOUCH } from './theme.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
 // ("Attention" in row 2). One design on both layouts ("One design on both layouts" in docs/design/page-attention.md): the same header, the same Home
-// view sections and rows, the same empty state and the same edit view; only the container differs (wide: the right side panel with a close button;
+// view sections and rows, the same empty state and the same edit view; only the container differs (wide: a floating side sheet on the right with a close button;
 // phone: a full-screen page with a back arrow, and the edit view full screen). The list and the live
 // updates are in attention-feed.mjs (`state.attention`); this file only draws them and calls `ui.actions.attention*`. A tap on the circle marks a
 // task done (from any status; on a done task it opens it again); a tap on the row opens the edit view (a dialog: title, notes, status, priority,
@@ -774,6 +774,45 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
   );
 }
 
+// The side sheet of a wide screen: MD2 elevation 16 (the theme's shadow and, in the dark theme, the surface overlay of that elevation, both from the
+// Paper), 8px from the top, right and bottom edges of the window, about 480px wide but never wider than the window less the rail and 16px, the
+// project's 8px corners. It lies above the page, the columns strip and the rail, under the menus and dialogs (the modal z-index) and the notices.
+const SIDE_SHEET_Z = theme => theme.zIndex.modal - 10;
+const SIDE_SHEET = {
+  top: 8, right: 8, bottom: 8, height: 'auto', width: 'min(480px, calc(100vw - var(--h5-nav-width) - 16px))', borderRadius: `${DIALOG_RADIUS}px`, border: 0,
+  zIndex: SIDE_SHEET_Z, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+};
+
+// A press outside the side sheet: a transparent layer over the whole window under the sheet (no scrim) takes it, closes the sheet and swallows it, so
+// it does not also click, focus or type into what lies below (an iframe column too, which a document listener would never hear). The rail lies
+// under it as well: its Attention button closes the sheet with that one press, as a toggle would. Menus and dialogs opened from the sheet lie above
+// it, so a press on them is not outside. The layer stays until the press has ended (its pointerup and click; a touch's late click a moment more),
+// so the end of the press does not land on the page either.
+function OutsidePress({ active, onPress }) {
+  const [held, setHeld] = useState(false);
+  const timer = useRef(0);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  if (!active && !held) return null;
+  const release = delay => { clearTimeout(timer.current); timer.current = setTimeout(() => setHeld(false), delay); };
+  return (
+    <Box
+      className="h5-attention-outside" aria-hidden="true"
+      onPointerDown={event => {
+        event.preventDefault();
+        clearTimeout(timer.current);
+        setHeld(true);
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* not every pointer can be captured */ }
+        if (active) onPress();
+      }}
+      onPointerUp={event => release(event.pointerType === 'mouse' ? 0 : 400)}
+      onPointerCancel={() => release(0)}
+      onClick={event => { event.preventDefault(); event.stopPropagation(); release(0); }}
+      onContextMenu={event => event.preventDefault()}
+      sx={{ position: 'fixed', inset: 0, zIndex: theme => SIDE_SHEET_Z(theme) - 1, bgcolor: 'transparent', touchAction: 'none' }}
+    />
+  );
+}
+
 export function AttentionPanel({ state, ui }) {
   const attention = state.attention || {};
   const open = Boolean(attention.open);
@@ -933,15 +972,19 @@ export function AttentionPanel({ state, ui }) {
     </>
   );
   if (side) {
-    // A wide screen: a panel on the right beside the terminal (html[data-side-panel], so the terminal refits once). Escape inside it closes it;
-    // keys inside it are never sent to the terminal (h5.js).
+    // A wide screen: a floating side sheet over the page ("Panel" in docs/design/page-attention.md). It changes no layout, so nothing below refits and
+    // no PTY resize is sent. No scrim: a press anywhere outside closes it and does nothing else (OutsidePress). Escape inside it closes it; keys
+    // inside it are never sent to the terminal (h5.js).
     return (
-      <Drawer
-        variant="persistent" anchor="right" id="h5-attention-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
-        slotProps={{ paper: { className: 'h5-attention-panel h5-design-side', role: 'complementary', 'aria-labelledby': 'h5-attention-title', onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: { width: 'var(--h5-side-width)', height: '100%', backgroundImage: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderLeft: 1, borderColor: 'divider' } } }}
-      >
-        {contents}
-      </Drawer>
+      <>
+        <OutsidePress active={open} onPress={close} />
+        <Drawer
+          variant="persistent" anchor="right" id="h5-attention-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
+          slotProps={{ paper: { className: 'h5-attention-panel', role: 'complementary', 'aria-labelledby': 'h5-attention-title', elevation: 16, onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: SIDE_SHEET } }}
+        >
+          {contents}
+        </Drawer>
+      </>
     );
   }
   // A phone: a full-screen page that comes in from the right, with a back arrow. It is a modal: Escape, the Android back button (back.mjs) close it, the

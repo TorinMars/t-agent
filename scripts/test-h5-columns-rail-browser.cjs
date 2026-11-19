@@ -172,6 +172,58 @@ async function run() {
     await shot(page, 'rail-columns.png');
     await shot(page, 'rail-badge.png', { x: 0, y: 0, width: 400, height: 200 });
 
+    // ── T-Attention floats over the columns (a side sheet, "Panel" in docs/design/page-attention.md): nothing below is squeezed or resized ──
+    {
+      const panel = page.locator('#h5-attention-sheet .h5-attention-panel');
+      const sizes = () => page.evaluate(() => ({
+        view: (r => [r.x, r.width, r.height])(document.getElementById('h5-columns').getBoundingClientRect()),
+        frames: [...document.querySelectorAll('#h5-columns iframe')].map(el => { const r = el.getBoundingClientRect(); return [el.dataset.paneId, r.x, r.width, r.height]; }),
+      }));
+      const sent = id => paneFrame(page, id).evaluate(() => window.sockets.filter(s => s.url.includes('/terminal/ws')).reduce((sum, s) => sum + s.sent.length, 0));
+      const resized = id => paneFrame(page, id).evaluate(() => window.sockets.filter(s => s.url.includes('/terminal/ws')).reduce((sum, s) => sum + s.sent.filter(data => data.includes('"resize"')).length, 0));
+      for (const id of ['aaa111', 'bbb222']) await paneFrame(page, id).waitForFunction(() => window.sockets.some(s => s.url.includes('/terminal/ws') && s.readyState === 1), null, { timeout: 10000 });
+      await page.waitForTimeout(300); // the panes' first fit has been sent
+      const before = { sizes: await sizes(), widths: await visibleWidths(page), a: await paneState(paneFrame(page, 'aaa111')), b: await paneState(paneFrame(page, 'bbb222')), ra: await resized('aaa111'), rb: await resized('bbb222') };
+      const open = async () => {
+        await page.locator('#h5-nav-attention').click();
+        await panel.waitFor({ state: 'visible' });
+        await page.waitForFunction(() => { const p = document.querySelector('#h5-attention-sheet .h5-attention-panel'); return p && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(p).transform); });
+      };
+      await open();
+      assert.deepEqual(await rect(page, '#h5-attention-sheet .h5-attention-panel'), { x: 1440 - 8 - 480, y: 8, w: 480, h: 900 - 16 }, 'a sheet 480px wide, 8px from the top, right and bottom edges');
+      await page.waitForTimeout(300);
+      const after = { sizes: await sizes(), widths: await visibleWidths(page), a: await paneState(paneFrame(page, 'aaa111')), b: await paneState(paneFrame(page, 'bbb222')), ra: await resized('aaa111'), rb: await resized('bbb222') };
+      assert.deepEqual(after, before, 'the view and its columns keep their full width: no reflow, no window resize in a pane, no PTY resize');
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false);
+      assert.equal(await page.locator('#h5-nav-attention').getAttribute('aria-expanded'), 'true');
+      await shot(page, 'rail-attention-float.png');
+      // A press on the header of a column outside the sheet closes it and does nothing else: that column is not focused.
+      const focusBefore = (await columns(page)).focus;
+      const other = focusBefore === 'aaa111' ? 'bbb222' : 'aaa111';
+      const head = await rect(page, `.h5-column-head[data-pane-id="${other}"]`);
+      await page.mouse.click(head.x + 40, head.y + head.h / 2);
+      await panel.waitFor({ state: 'hidden' });
+      assert.equal((await columns(page)).focus, focusBefore, 'the press did not focus that column');
+      assert.equal(await page.locator(`.h5-column-head[data-pane-id="${other}"]`).getAttribute('data-focused'), null);
+      // A press on a column's terminal (inside its iframe) closes it too, and nothing reaches that terminal.
+      await open();
+      const sentBefore = await sent('aaa111');
+      const frameBox = (await sizes()).frames.find(([id]) => id === 'aaa111');
+      await page.mouse.click(frameBox[1] + 200, 400);
+      await panel.waitFor({ state: 'hidden' });
+      await page.waitForTimeout(200);
+      assert.equal(await sent('aaa111'), sentBefore, 'nothing was sent to the terminal under the press');
+      assert.equal((await columns(page)).focus, focusBefore, 'and its column was not focused');
+      // The rail's Attention button closes it with one press (the layer takes the press: no second toggle that would open it again).
+      await open();
+      await page.locator('#h5-nav-attention').click({ force: true });
+      await panel.waitFor({ state: 'hidden' });
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => window.H5UI.get().attention.open), false, 'one press, one toggle');
+      assert.deepEqual(await paneState(paneFrame(page, 'aaa111')), before.a, 'the columns were never resized');
+      assert.equal(await resized('bbb222'), before.rb);
+    }
+
     // ── Keyboard on the rail: Tab reaches each destination, arrows move, Enter opens ──
     await page.locator('#h5-nav-sessions').focus();
     await page.keyboard.press('Tab');

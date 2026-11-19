@@ -278,9 +278,13 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
   };
   const blur = () => { const el = document.activeElement; if (el && el !== document.body && typeof el.blur === 'function') el.blur(); };
   const loadAll = ({ notReady = false } = {}) => Promise.all([...entries.values()].filter(entry => !notReady || entry.status !== 'ready').map(entry => load(entry)));
+  // The control that opened the side sheet of a wide screen: the focus goes back to it when the sheet closes, if it is still there and the person
+  // has not put the focus somewhere else meanwhile.
+  let opener = null;
   ui.actions.openAttention = ({ item = null } = {}) => {
-    blur();
     const state = ui.get();
+    if (state.wide && !current().open) { const active = document.activeElement; opener = active && active !== document.body ? active : null; }
+    blur();
     // A wide screen shows one of them at a time: the file viewer and the file tree make way.
     if (state.wide) {
       if (state.design && state.design.open && ui.actions.closeDesign) ui.actions.closeDesign();
@@ -289,7 +293,16 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
     patch({ open: true, focus: item });
     void loadAll({ notReady: true });
   };
-  ui.actions.closeAttention = () => patch({ open: false, focus: null });
+  ui.actions.closeAttention = () => {
+    const back = opener;
+    opener = null;
+    const wasOpen = Boolean(current().open);
+    patch({ open: false, focus: null });
+    if (!wasOpen || !ui.get().wide || !back || !back.isConnected) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !active.closest('#h5-attention-sheet')) return;
+    back.focus({ preventScroll: true });
+  };
   ui.actions.toggleAttention = () => {
     const state = ui.get();
     if (state.wide && state.attention && state.attention.open) ui.actions.closeAttention();

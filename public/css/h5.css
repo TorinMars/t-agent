@@ -15,7 +15,6 @@
   --h5-nav-width: 0px; /* the navigation rail of the wide layout (72px while it is shown: html[data-nav-rail], Columns.jsx NavRail) */
   --h5-sidebar-width: 304px; /* the permanent task list of the wide layout */
   --h5-drawer-width: min(320px, calc(100vw - 56px)); /* the task drawer of a phone (an MD2 modal navigation drawer) */
-  --h5-side-width: min(560px, 42vw); /* the T-Attention panel on the right of a wide screen */
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -166,8 +165,6 @@ html[data-bnav] #h5-attention-sheet > .MuiDrawer-paper { max-height: 100%; paddi
   .h5-copy-text { font-size: 13px; padding: 8px 16px; }
   /* The sidebar folded away (header button): the page and the chat take the whole width. */
   html[data-sidebar-collapsed] { --h5-sidebar-width: 0px; }
-  /* The T-Attention panel is open on the right: the page and the chat end where it starts. */
-  html[data-side-panel] .h5-app, html[data-side-panel] .h5-agent { right: var(--h5-side-width); }
 }
 /* The match that the copy view search jumped to (CSS Custom Highlight API; browsers without it select the match instead). */
 ::highlight(h5-copy-match) { background: #ffd54f; color: #000; }

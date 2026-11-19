@@ -19,7 +19,7 @@
 | `remote_servers` | `owner_id`, `name`, `base_url`, `token_cipher`, `status`, `remote_version` |
 | `engine_access_tokens`, `engine_pairing_codes`, `engine_identity` | Engine side of pairing (hashes only) and the instance id |
 | `remote_access_tokens` | tokens of the old `/api/remote/v1` |
-| `system_state` | key / value: encrypted per-user settings (`translator:<owner>`, `speech:<owner>`, OSS, `agent-config:<owner>`, `attention-notify:<owner>`, `attention-notify:telegram:<owner>`, `attention-plugin:<name>:<owner>`), `file_sync_v1`, update state |
+| `system_state` | key / value: encrypted per-user settings (`translator:<owner>`, `speech:<owner>`, OSS, `agent-config:<owner>`, `attention-notify:<owner>`, `attention-notify:telegram:<owner>`, `attention-plugin:<name>:<owner>`), `file_sync_v1`, update state. Every key is declared with its scope in `lib/server-state-keys.js` and a row with any other key is refused (see [server-state-keys.md](server-state-keys.md)) |
 | `apps`, `repo_cleanups`, `bookmarks` | app list, cleaned repo records, quick links |
 | `attention_items`, `attention_events`, `attention_tokens` | T-Attention (schema 9): the central list, its history (`ON DELETE CASCADE`), its Bearer tokens (sha256 hashes only); `attention_items.parent_id`, `custom_status`, `result` and the index on `parent_id` since schema 11; see "T-Attention" |
 | `ui_events`, `ui_controls` | Usage data (schema 12): one row per button press of the page and the controls the pages showed, kept 90 days; see [usage-data.md](usage-data.md) |

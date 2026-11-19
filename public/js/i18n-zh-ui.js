@@ -560,6 +560,7 @@ I18n.add({
   "Update log": "更新日志",
   "Update not run": "更新未执行",
   "Update now": "立即更新",
+  "What's new": "更新内容",
   "Update package contains unsafe files": "更新包包含不安全的文件",
   "Update package download failed": "更新包下载失败",
   "Update package extraction failed": "更新包解压失败",

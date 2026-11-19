@@ -213,7 +213,9 @@ const REVIEWED_ROUTES = new Set([
 // /device-settings: the allowlisted per-device settings of the page (routes/device-settings.js), never a task, and link tokens only.
 // /attention/notify-relay: takes a notification card a linked device sends to this Telegram sender (services/attention-relay.js); it gives out
 // nothing about this service's tasks, and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/page-state', '/device-settings', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
+// /updated-notice: this service's "Updated to v…" notice (versions, a time and release notes from DESIGN.md; routes/updated-notice.js), never a task,
+// and link tokens only.
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/page-state', '/updated-notice', '/device-settings', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

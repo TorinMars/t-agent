@@ -23,6 +23,10 @@ I18n.add({
   'Access mode · Local access only': '访问模式 · 仅本机访问',
   'Access mode · Authenticator + allow external access': '访问模式 · 身份验证器 + 允许外网访问',
   'Update failed: {1}': '更新失败：{1}',
+  // "Updated to v…" (UpdatedNotice.jsx)
+  'Updated to v{1}': '已更新到 v{1}',
+  'T-Agent on {1} was updated on {2}, from v{3}.': '{1} 上的 T-Agent 已于 {2} 从 v{3} 更新。',
+  '{1} was also updated to v{2}.': '{1} 也已更新到 v{2}。',
   'Up to date {1}': '已是最新 {1}',
   'Updating {1} → {2}…': '正在更新 {1} → {2}…',
   'Code was updated to {1}, but the service is still running the {2} code; restart the service for it to take effect': '代码已更新到 {1}，但服务仍在运行 {2} 的代码，需要重启服务才会生效',

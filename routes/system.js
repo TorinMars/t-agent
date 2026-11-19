@@ -41,9 +41,14 @@ router.put('/engine-name', (req, res) => {
   res.json(engineName.setEngineName(db(), name));
 });
 
+// `updated_notice`: this person has a notice about an update of this service to see ("Notice after an update" in
+// docs/design/update-check-and-versions.md): the page's updater reads it here, so the first screen needs no request of its own for it.
+const updatedNotice = () => require('../services/updated-notice').getUpdatedNotice();
+const noticeDue = req => { try { return updatedNotice().shouldShow(req.session.user.login); } catch { return false; } };
 router.get('/update-status', (req, res) => {
-  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req), restart: updates.restartSupport() });
+  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req), restart: updates.restartSupport(), updated_notice: noticeDue(req) });
 });
+router.use('/updated-notice', require('./updated-notice').createUpdatedNoticeRouter({ service: updatedNotice }));
 
 router.post('/check-update', async (req, res) => {
   try { res.json({ ...(await updates.check({ force: true })), is_update_admin: isAdmin(req) }); }

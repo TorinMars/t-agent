@@ -18,6 +18,7 @@ import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { api, t } from './common.jsx';
 import { localGet, localSet } from './local-keys.mjs';
 import { LinkedList, useLinkedUpdates } from './LinkedUpdates.jsx';
+import { showUpdatedNotice } from './lazy-screens.jsx';
 import { RESTART_GRACE_MS, SLOW_RESTART_MS } from './restart-wait.mjs';
 
 // The texts of the updater (the same as the old desktop page's, so the Chinese dictionary keeps its translations).
@@ -225,6 +226,7 @@ export function UpdateButton({ ui }) {
         setStatus(next);
         setAuto(next.auto_update || null);
         observe(next);
+        if (next.updated_notice) showUpdatedNotice(ui); // "Updated to v…" ("Notice after an update" in docs/design/update-check-and-versions.md)
         return next;
       } catch (error) {
         // No answer, or a gateway's error while the service is away. A refused request (signed out) is not an outage.

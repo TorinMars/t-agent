@@ -6,9 +6,12 @@
 //   at the normal and the slow rate, an article hint); Fill the gap; Say it; Mistakes; Your material (search, kind, edit meaning, suspend); Learn
 //   settings (collect with window.LearnCollect, daily goal, starter list); Escape; Sessions closing the page; the empty states (no cards, nothing due);
 //   a browser without speech output or voice input (no Dictation, no Say it, no Hear it).
-// - 390x844 (touch): the bottom navigation's Learn; the home and the modes as pages above the bar; the system keyboard not covering the answer field or
-//   Check; the grades in the pinned actions; the back button closing the mode, then the page.
-// H5_SHOT_DIR=<dir> saves the screenshots (computer: home, Build after Check, Spell; phone: Spell, Build, Dictation).
+//   The buttons that play or help (Hear it, Show first letter, Hint, Slow) leave the focus in the answer field; no page keyboard on a computer.
+// - 390x844 (touch): the bottom navigation's Learn; the home and the modes as pages above the bar; the page's own keyboard instead of the system one
+//   (inputmode="none"; letters for Spell, the full layout for Dictation and Build; keys type at the caret, Shift, Backspace and its repeat, Hide and a tap
+//   that opens it again, the bottom navigation away while it is open, Check right above it, the focus kept by Hear it and Show first letter); the
+//   system keyboard not covering Say it's box or Check; the grades in the pinned actions; the back button closing the mode, then the page.
+// H5_SHOT_DIR=<dir> saves the screenshots (computer: home, Build after Check, Spell; phone: Spell with the letters, Build, Dictation with the full keyboard).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -163,6 +166,16 @@ const waitFor = async (check, message, timeout = 5000) => {
   const end = Date.now() + timeout;
   for (;;) { if (await check()) return; if (Date.now() > end) throw new Error(`timed out: ${message}`); await new Promise(resolve => setTimeout(resolve, 50)); }
 };
+const active = page => page.evaluate(() => document.activeElement && document.activeElement.id);
+const value = (page, selector) => page.locator(selector).inputValue();
+// Taps keys of the page's keyboard (`#h5-learn-keys`) by their character, or by their name in braces: {Shift}, {Backspace}, {Space}, {Hide}.
+async function tapKeys(page, keys) {
+  for (const key of keys.match(/\{\w+\}|./g)) {
+    const name = /^\{(\w+)\}$/.exec(key);
+    const selector = name ? (name[1] === 'Shift' ? '#h5-learn-keys button[data-shift]' : `#h5-learn-keys button[data-key="${name[1]}"]`) : `#h5-learn-keys button[data-char="${key.toLowerCase()}"]`;
+    await page.locator(selector).tap();
+  }
+}
 const lastAnswer = mock => { const list = mock.posts(/\/answer$/); return list.length ? { id: list.at(-1).path.match(/cards\/(\d+)/)[1], ...list.at(-1).body } : null; };
 // Places the tiles for these words, in order (a word can be on two tiles: the first free one).
 async function placeTiles(page, words) {
@@ -242,8 +255,12 @@ async function placeTiles(page, words) {
       assert.deepEqual(lastAnswer(mock), { id: '11', mode: 'build', grade: 'good', correct: true, answer: 'run the tests  again before you merge' });
       // Card 3: Hint places the first word; Skip posts nothing; the session ends.
       await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '3 / 3', 'the third card');
+      assert.equal(await active(page), 'h5-learn-build-input');
       await page.locator('#h5-learn-hint').click();
       assert.deepEqual(await page.locator('.h5-learn-answer .h5-learn-placed').allTextContents(), ['Deploy']);
+      assert.equal(await active(page), 'h5-learn-build-input', 'Hint leaves the focus in the field');
+      assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'no page keyboard on a computer');
+      assert.equal(await page.locator('#h5-learn-build-input').getAttribute('inputmode'), null, 'the physical keyboard types');
       await page.locator('#h5-learn-skip').click();
       await page.locator('#h5-learn-done').waitFor();
       assert.equal(mock.posts(/\/answer$/).length, 2, 'Skip posts no answer');
@@ -257,10 +274,17 @@ async function placeTiles(page, words) {
       assert.equal(await text(page, '#h5-learn-meaning'), ZH_EXPIRE);
       assert.match(await text(page, '.h5-learn-prompt'), /Used in "after the session cookie ___"/);
       assert.equal(await page.locator('.h5-learn-letter').count(), 6, 'a box per letter');
+      assert.equal(await active(page), 'h5-learn-spell-input', 'the letters have the focus on start');
       await page.locator('#h5-learn-hear').click();
       assert.deepEqual(await page.evaluate(() => window.spoken.at(-1)), { text: 'expire', rate: 1, lang: 'en-US' });
+      assert.equal(await active(page), 'h5-learn-spell-input', 'Hear it leaves the focus in the letters');
       await page.locator('.h5-learn-letters').click();
       await page.keyboard.type('expi');
+      await page.locator('#h5-learn-hear').click();
+      assert.equal(await active(page), 'h5-learn-spell-input', 'Hear it after typing: the caret stays');
+      assert.equal(await page.locator('#h5-learn-spell-input').evaluate(el => el.selectionStart), 4);
+      assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'no page keyboard on a computer');
+      assert.equal(await page.locator('#h5-learn-spell-input').getAttribute('inputmode'), null);
       await shot(page, 'learn-desktop-spell.png');
       await page.keyboard.type('er');
       await page.keyboard.press('Enter');
@@ -274,6 +298,7 @@ async function placeTiles(page, words) {
       assert.deepEqual(mock.posts(/\/meaning$/).at(-1).body, { word: 'deploy' });
       await page.locator('#h5-learn-first').click();
       assert.equal(await page.locator('#h5-learn-spell-input').inputValue(), 'd');
+      assert.equal(await active(page), 'h5-learn-spell-input', 'Show first letter leaves the focus in the letters');
       await page.keyboard.type('eploy');
       await page.keyboard.press('Enter');
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
@@ -301,6 +326,7 @@ async function placeTiles(page, words) {
       await waitFor(() => page.evaluate(() => window.spoken.some(item => item.text === 'Please fix the login redirect loop after the session cookie expires.' && item.rate === 1)), 'read on start');
       await page.locator('#h5-learn-slow').click();
       assert.equal(await page.evaluate(() => window.spoken.at(-1).rate), 0.65);
+      assert.equal(await active(page), 'h5-learn-dictation-input', 'Slow leaves the focus in the field');
       await page.locator('#h5-learn-dictation-input').fill('Please fix login redirect loop after the session cookie expires');
       await page.locator('#h5-learn-check').click();
       await page.locator('#h5-learn-feedback').waitFor();
@@ -321,6 +347,9 @@ async function placeTiles(page, words) {
       const sentence = SENTENCES[0].en;
       const word = sentence.slice(gap.before.length, sentence.length - gap.after.length);
       assert.ok(/^[a-z]+$/i.test(word), `the gap is one word: ${word}`);
+      assert.equal(await active(page), 'h5-learn-gap-input');
+      await page.locator('#h5-learn-hear').click();
+      assert.equal(await active(page), 'h5-learn-gap-input', 'Hear it leaves the focus in the gap');
       await page.locator('#h5-learn-gap-input').fill(word.toUpperCase());
       await page.keyboard.press('Enter');
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
@@ -467,38 +496,107 @@ async function placeTiles(page, words) {
       assert.equal(await page.locator('#h5-bnav').evaluate(el => getComputedStyle(el).display), 'flex', 'the bar stays');
       await page.locator('#h5-learn-due').waitFor();
 
-      // Spell the word: a page with a back arrow; the system keyboard does not cover the field or Check.
+      // Spell the word: a page with a back arrow; the page's letter keyboard instead of the system one, where the system keyboard would be.
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-meaning').waitFor();
       await page.waitForTimeout(400);
       assert.equal(await text(page, '#h5-learn-mode .h5-learn-subtitle'), '1 / 2 · from words you looked up');
+      const spell = '#h5-learn-spell-input';
+      assert.equal(await page.locator(spell).getAttribute('inputmode'), 'none', 'the system keyboard never opens');
+      assert.equal(await active(page), 'h5-learn-spell-input', 'the field has the focus (and the caret) on start');
+      await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
+      assert.equal(await ui(page, 'softKeyboard'), false);
+      const rows = await page.locator('#h5-learn-keys .h5-osk-row').evaluateAll(list => list.map(row => [...row.children].map(key => key.dataset.char || key.dataset.key || (key.hasAttribute('data-shift') ? 'Shift' : '?')).join(' ')));
+      assert.deepEqual(rows, ['q w e r t y u i o p', 'a s d f g h j k l', 'Shift z x c v b n m Backspace', "' - Hide"], 'the letter layout: no Space, no digits');
+      assert.equal(await page.locator('#h5-learn-keys button[data-char="\'"]').getAttribute('aria-label'), 'Apostrophe');
+      assert.equal(await page.locator('#h5-learn-keys button[data-key="Backspace"]').getAttribute('aria-label'), 'Backspace');
+      assert.equal(await page.locator('#h5-learn-keys button[data-shift]').getAttribute('aria-label'), 'Shift');
+      assert.equal(await page.locator('#h5-learn-keys button[data-char]').first().getAttribute('tabindex'), '-1', 'a key never takes the focus');
+      // The bottom navigation steps aside; the page reaches the bottom; the keyboard is at the bottom and Check right above it.
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-bnav'));
+      assert.equal(await page.locator('#h5-bnav').isVisible(), false, 'the bottom navigation is hidden while the keyboard is open');
+      assert.equal(await ui(page, 'learnKeys'), true);
+      await page.waitForTimeout(100);
+      const keyboard = await rect(page, '#h5-learn-keys');
+      assert.equal((await rect(page, '#h5-learn-mode .MuiDialog-paper')).bottom, 844, 'the page reaches the bottom of the screen');
+      assert.ok(keyboard.bottom <= 844 && keyboard.bottom >= 844 - 16, `the keyboard sits at the bottom (${keyboard.bottom})`);
       const check = await rect(page, '#h5-learn-check');
-      assert.ok(check.bottom <= 844 - 56 && check.bottom > 844 - 56 - 80, `Check is pinned just above the bar (${check.bottom})`);
-      await page.locator('#h5-learn-spell-input').focus();
-      await page.keyboard.type('expi');
+      assert.ok(check.bottom <= keyboard.y && check.bottom > keyboard.y - 80, `Check is right above the keyboard (${check.bottom}, ${keyboard.y})`);
+      // Show first letter and Hear it keep the focus in the field.
+      await page.locator('#h5-learn-first').tap();
+      assert.equal(await value(page, spell), 'e');
+      assert.equal(await active(page), 'h5-learn-spell-input', 'Show first letter keeps the focus');
+      await page.locator('#h5-learn-hear').tap();
+      assert.equal(await active(page), 'h5-learn-spell-input', 'Hear it keeps the focus');
+      assert.equal(await page.evaluate(() => window.spoken.at(-1).text), 'expire');
+      // Keys type at the caret; Backspace deletes; Shift is one-shot; the field keeps the focus.
+      await tapKeys(page, 'xpir');
+      assert.equal(await value(page, spell), 'expir');
+      await tapKeys(page, '{Backspace}');
+      assert.equal(await value(page, spell), 'expi');
+      await tapKeys(page, '{Shift}');
+      assert.equal(await page.locator('#h5-learn-keys').getAttribute('data-shift'), 'once');
+      assert.equal(await text(page, '#h5-learn-keys button[data-char="q"]'), 'Q', 'the letters show upper case while Shift is on');
+      await tapKeys(page, 'r');
+      assert.equal(await value(page, spell), 'expiR');
+      assert.equal(await page.locator('#h5-learn-keys').getAttribute('data-shift'), 'off', 'one-shot');
+      assert.equal(await text(page, '#h5-learn-keys button[data-char="q"]'), 'q');
+      await tapKeys(page, '{Backspace}');
+      assert.equal(await active(page), 'h5-learn-spell-input', 'the keys never take the focus');
+      // Backspace repeats while it is held (400 ms, then every 60 ms).
+      const back = page.locator('#h5-learn-keys button[data-key="Backspace"]');
+      await back.dispatchEvent('pointerdown', { button: 0, pointerId: 7, pointerType: 'touch', isPrimary: true });
+      await page.waitForTimeout(650);
+      await back.dispatchEvent('pointerup', { button: 0, pointerId: 7, pointerType: 'touch', isPrimary: true });
+      assert.equal(await value(page, spell), '', 'a held Backspace deleted every letter');
+      await tapKeys(page, 'expi');
+      assert.equal(await value(page, spell), 'expi');
       await shot(page, 'learn-phone-spell.png');
-      await page.setViewportSize({ width: 390, height: 480 });
-      await page.waitForFunction(() => window.H5UI.get().softKeyboard === true, null, { timeout: 5000 });
-      await page.waitForTimeout(300);
-      const visible = await page.evaluate(() => (window.visualViewport ? window.visualViewport.height : window.innerHeight));
-      const checkUp = await rect(page, '#h5-learn-check');
-      const field = await rect(page, '.h5-learn-letters');
-      assert.ok(checkUp.bottom <= visible, `Check above the keyboard (${checkUp.bottom} <= ${visible})`);
-      assert.ok(field.y >= 0 && field.bottom <= checkUp.y, 'the letters are in sight above Check');
-      await page.evaluate(() => document.activeElement.blur());
-      await page.setViewportSize({ width: 390, height: 844 });
-      await page.waitForFunction(() => window.H5UI.get().softKeyboard === false, null, { timeout: 5000 });
-      // The back button closes the mode, then the page.
+      // Hide closes it (the bottom navigation comes back); a tap on the letters opens it again.
+      await tapKeys(page, '{Hide}');
+      await page.locator('#h5-learn-keys').waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+      assert.equal(await page.locator('#h5-bnav').isVisible(), true);
+      await page.locator('.h5-learn-letters').tap();
+      await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-bnav'));
+      await tapKeys(page, 're');
+      assert.equal(await value(page, spell), 'expire');
+      await page.locator('#h5-learn-check').tap();
+      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
+      const grades = await rect(page, '.h5-learn-footer .h5-learn-grades');
+      assert.ok(grades.bottom <= (await rect(page, '#h5-learn-keys')).y, 'the grades stay above the keyboard');
+      assert.equal(await ui(page, 'hasKeyboard'), false, 'the page keys are not a hardware keyboard');
+      // The back button closes the mode (and its keyboard: the bottom navigation comes back), then the page.
       await page.evaluate(() => history.back());
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
       assert.equal(await ui(page, 'learnOpen'), true);
+      await waitFor(async () => (await ui(page, 'learnKeys')) === false, 'the keyboard went with the mode');
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 
       // Build the sentence: tap tiles, Check, the grades pinned at the bottom.
       await page.locator('#h5-learn-mode-build').tap();
       await page.locator('#h5-learn-chinese').waitFor();
       await page.waitForTimeout(400);
+      assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'Build starts with the tiles, without the keyboard');
+      assert.equal(await page.locator('#h5-learn-build-input').getAttribute('inputmode'), 'none');
       for (const word of ['Please', 'fix', 'the', 'login']) await page.locator('.h5-learn-pool .h5-learn-tile:not([disabled])', { hasText: new RegExp(`^${word}$`) }).first().tap();
+      // A tap on the answer opens the full keyboard (Hide where Enter is); Backspace in the empty field takes the last tile back.
+      await page.locator('#h5-learn-build-input').tap();
+      await page.locator('#h5-learn-keys[data-kind="full"]').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-learn-keys button[data-key="Enter"]').count(), 0, 'no Enter: Check is right above');
+      assert.equal(await page.locator('#h5-learn-keys button[data-key="Space"]').count(), 1);
+      await tapKeys(page, '{Backspace}');
+      assert.equal(await page.locator('.h5-learn-answer .h5-learn-placed').count(), 3, 'Backspace took the last tile back');
+      await tapKeys(page, 'login{Space}{Backspace}');
+      assert.equal(await value(page, '#h5-learn-build-input'), 'login');
+      await page.locator('#h5-learn-hint').tap();
+      assert.equal(await active(page), 'h5-learn-build-input', 'Hint keeps the focus');
       await shot(page, 'learn-phone-build.png');
+      await tapKeys(page, '{Backspace}{Backspace}{Backspace}{Backspace}{Backspace}');
+      assert.equal(await value(page, '#h5-learn-build-input'), '');
+      await tapKeys(page, '{Hide}');
+      await page.locator('#h5-learn-keys').waitFor({ state: 'detached' });
       for (const word of ['redirect', 'loop', 'after', 'the', 'session', 'cookie', 'expires']) await page.locator('.h5-learn-pool .h5-learn-tile:not([disabled])', { hasText: new RegExp(`^${word}$`) }).first().tap();
       await page.locator('#h5-learn-check').tap();
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
@@ -514,8 +612,49 @@ async function placeTiles(page, words) {
       await page.locator('#h5-learn-mode-dictation').tap();
       await page.locator('#h5-learn-dictation-input').waitFor();
       await page.waitForTimeout(400);
-      await page.locator('#h5-learn-dictation-input').fill('Please fix the login');
+      const dictation = '#h5-learn-dictation-input';
+      assert.equal(await page.locator(dictation).getAttribute('inputmode'), 'none');
+      assert.equal(await active(page), 'h5-learn-dictation-input');
+      await page.locator('#h5-learn-keys[data-kind="full"]').waitFor({ state: 'visible' });
+      const bottomRow = await page.locator('#h5-learn-keys .h5-osk-row').last().evaluate(row => [...row.children].map(key => key.dataset.layer || key.dataset.key).join(' '));
+      assert.equal(bottomRow, 'num Space Hide');
+      await page.locator('#h5-learn-play').tap();
+      assert.equal(await active(page), 'h5-learn-dictation-input', 'Play keeps the focus');
+      await tapKeys(page, '{Shift}please{Space}fix');
+      await page.locator('#h5-learn-keys button[data-layer="num"]').tap();
+      await page.locator('#h5-learn-keys button[data-char="1"]').tap();
+      assert.equal(await value(page, dictation), 'Please fix1');
+      await page.locator('#h5-learn-keys button[data-key="Backspace"]').tap();
+      await page.locator('#h5-learn-keys button[data-layer="abc"]').tap();
+      assert.equal(await value(page, dictation), 'Please fix');
+      // A key goes in at the caret.
+      await page.locator(dictation).evaluate(el => el.setSelectionRange(0, 0));
+      await tapKeys(page, 'a');
+      assert.equal(await value(page, dictation), 'aPlease fix');
+      assert.equal(await page.locator(dictation).evaluate(el => el.selectionStart), 1, 'the caret is after the new letter');
+      await page.locator(dictation).fill('Please fix the login');
+      assert.equal(await page.locator('#h5-bnav').isVisible(), false);
+      const footer = await rect(page, '.h5-learn-footer');
+      assert.ok(footer.bottom <= (await rect(page, '#h5-learn-keys')).y + 1, 'Check stays right above the keyboard');
       await shot(page, 'learn-phone-dictation.png');
+      await page.evaluate(() => history.back());
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+
+      // Say it keeps the system keyboard: it does not cover the box or Check.
+      await page.locator('#h5-learn-mode-say').tap();
+      await page.locator('#h5-learn-say-text').waitFor();
+      await page.waitForTimeout(400);
+      assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'no page keyboard in Say it');
+      await page.locator('#h5-learn-say-input').focus();
+      await page.setViewportSize({ width: 390, height: 480 });
+      await page.waitForFunction(() => window.H5UI.get().softKeyboard === true, null, { timeout: 5000 });
+      await page.waitForTimeout(300);
+      const visible = await page.evaluate(() => (window.visualViewport ? window.visualViewport.height : window.innerHeight));
+      const checkUp = await rect(page, '#h5-learn-check');
+      assert.ok(checkUp.bottom <= visible, `Check above the keyboard (${checkUp.bottom} <= ${visible})`);
+      await page.evaluate(() => document.activeElement.blur());
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForFunction(() => window.H5UI.get().softKeyboard === false, null, { timeout: 5000 });
       await page.evaluate(() => history.back());
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
       await page.evaluate(() => history.back());

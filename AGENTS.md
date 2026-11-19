@@ -15,6 +15,16 @@
 - Chinese characters may appear only in those dictionaries and in test fixtures that exist to prove that Chinese user content (translator input, terminal output, file names) is handled. `test/i18n.test.js` fails when Chinese shows up anywhere else. Where a regular expression needs a CJK range, write it with `\u` escapes.
 - Content created or entered by users (tasks, documents, file names, terminal input) must keep working with Chinese and any other language.
 
+## One experience on every device and engine
+
+The goal of the project: the person hardly notices which engine (T01, K01, ...) or which client (phone, computer, the Mac app, the Home Screen app) they are using. The same person sees the same things and gets the same behaviour everywhere (the user's rule, 2026-11-19).
+
+- State that describes the person and their work is kept on the server and shared by all linked engines, never only in one browser: recent sessions, the recency of saved commands, progress (Learn), layout and list choices (columns, the chosen task list tab, collapsed groups), the session they last looked at, and preferences. A new feature that remembers something stores it on the server and syncs it over the service links (settings sync, the Learn sync or the same pattern), with a merge rule that loses nothing when two devices change it at the same time.
+- Anything that names a session, task or device in shared state uses an engine-neutral identity (the engine's instance id plus the task and terminal ids), not a page-relative one such as `local` / `remote:<n>`: each page maps it to its own source.
+- Phone and computer differ only where the screen size or the input really requires it (layout, touch targets, keyboards); the content, order and choices stay the same.
+- Allowed per browser or per device only: what is tied to that hardware or that browser (microphone and voice permission, measured terminal widths, the pane of a column, the auto-reload guard), and what the person explicitly sets for one device (scope "device" in Settings, e.g. the company computer flag). Name the reason in a comment where such a key is defined.
+- When a feature cannot behave the same everywhere (an offline engine, an older version), it says so on the page instead of silently showing different data.
+
 ## UI design: Material Design 2, built with MUI 9
 
 - Design specification: every UI design follows Material Design 2 (https://m2.material.io), including mockups and design proposals. Layout on its 8px grid (4px for small details), its type scale (h1–h6, subtitle, body, button, caption, overline), its color system (primary, secondary, surface, background, error, and the "on" colors, in a dark and a light theme), elevation for layering, its component guidelines (app bars, navigation drawer, lists, cards, dialogs, menus, chips, buttons, text fields, snackbars, sheets, tabs) and its state, motion and accessibility guidance. Do not use Material Design 3 patterns (color roles such as `primaryContainer` or `surfaceContainer`, tonal buttons, the M3 shape scale) or another design system's look.

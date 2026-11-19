@@ -95,7 +95,7 @@ func grantsMediaCapture(scheme: String, host: String, port: Int, server: URL) ->
 /// anything else (non-ASCII text, quotes, angle brackets, braces) is percent-encoded as UTF-8. The result must be a valid
 /// URL of the server's origin; otherwise nil.
 func serverPageURL(base: URL, path: String) -> URL? {
-    guard path.hasPrefix("/"), !path.hasPrefix("//") else { return nil }
+    guard path.hasPrefix("/"), !path.hasPrefix("//"), !hasBrokenPercentEscape(path) else { return nil }
     let keep = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~!$&'()*+,;=:@/?#%[]")
     var encoded = ""
     for scalar in path.unicodeScalars {
@@ -109,6 +109,24 @@ func serverPageURL(base: URL, path: String) -> URL? {
     while root.hasSuffix("/") { root.removeLast() }
     guard let url = URL(string: root + encoded), sameOrigin(url, base) else { return nil }
     return url
+}
+
+/// True when a % is not followed by two hex digits. Checked here because URL(string:) cannot be relied on for it: with the
+/// macOS 14 SDK and later it re-encodes a broken escape ("%ZZ" becomes "%25ZZ") instead of refusing the string, so the same
+/// source refused it when built with an older SDK and accepted it with a newer one.
+func hasBrokenPercentEscape(_ text: String) -> Bool {
+    let bytes = Array(text.utf8)
+    func isHex(_ byte: UInt8) -> Bool { (48...57).contains(byte) || (65...70).contains(byte) || (97...102).contains(byte) }
+    var index = 0
+    while index < bytes.count {
+        if bytes[index] == 37 {
+            guard index + 2 < bytes.count, isHex(bytes[index + 1]), isHex(bytes[index + 2]) else { return true }
+            index += 3
+        } else {
+            index += 1
+        }
+    }
+    return false
 }
 
 /// The path, query and fragment of an address of the server (to load the same page at a new base), or nil.

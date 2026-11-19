@@ -222,7 +222,11 @@ func runSelfTest() -> Never {
     check("page URL: quotes and braces are encoded", serverPageURL(base: base3000, path: "/x\"{}")?.absoluteString == "http://127.0.0.1:3000/x%22%7B%7D")
     check("page URL: // and relative paths are refused", serverPageURL(base: base3000, path: "//evil.example") == nil
           && serverPageURL(base: base3000, path: "evil") == nil)
-    check("page URL: a broken escape is refused", serverPageURL(base: base3000, path: "/x%ZZ") == nil)
+    check("page URL: a broken escape is refused", serverPageURL(base: base3000, path: "/x%ZZ") == nil
+          && serverPageURL(base: base3000, path: "/x%2") == nil && serverPageURL(base: base3000, path: "/x%") == nil
+          && serverPageURL(base: base3000, path: "/a%2Fb") != nil)
+    check("escapes: broken ones are found whatever the SDK's URL parser does", hasBrokenPercentEscape("%ZZ") && hasBrokenPercentEscape("a%2")
+          && hasBrokenPercentEscape("%") && !hasBrokenPercentEscape("%2F%e4%b8%ad") && !hasBrokenPercentEscape("plain"))
     check("page path: of a server page", pagePath(of: URL(string: "http://127.0.0.1:3000/t/1?a=b#c"), server: base3000) == "/t/1?a=b#c")
     check("page path: the root", pagePath(of: URL(string: "http://127.0.0.1:3000"), server: base3000) == "/")
     check("page path: not of another origin", pagePath(of: URL(string: "http://127.0.0.1:9/"), server: base3000) == nil && pagePath(of: nil, server: base3000) == nil)

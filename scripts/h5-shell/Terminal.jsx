@@ -156,8 +156,11 @@ const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { b
 // start). Only Send (`#h5-translate-button`) moves between the draft box (touch) and the row (computer); h5.js listens for it on `#h5-bottom`.
 // When the draft box grows over the terminal h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized for it.
 // What the bottom area draws (its rows read it from here): T-Attention and the file sheet only as the counts and flags the buttons show.
+// The touch layout while the draft box types with the phone's keyboard: rows 1 and 2 are not shown (see `typing` in BottomArea).
+const TYPING_HIDES_ROWS = { '&[data-typing] #h5-keys, &[data-typing] #h5-actions': { display: 'none' } };
 const BOTTOM = state => ({
   input: state.input, terminalAgent: state.terminalAgent, translating: state.translating, osk: state.osk, mods: state.mods, keyboard: state.keyboard,
+  softKeyboard: Boolean(state.softKeyboard),
   activeCount: state.pane ? state.activeCount : 0, pane: state.pane, wide: state.wide, paneFocused: Boolean(state.paneFocused), // the count: a column's only
   attentionNeeds: Number(state.attention && state.attention.needs) || 0, attentionOpen: Boolean(state.attention && state.attention.open),
   designOpen: Boolean(state.design && state.design.open), switcherOpen: Boolean(state.switcher),
@@ -219,11 +222,14 @@ export function BottomArea({ ui }) {
     ...(presets.keys ? [{ head: true, label: 'Keys' }, ...presets.keys.map(({ label, send, note }) => ({ label, note, mono: true, keyRow: true, track: 'h5-add-menu-key', detail: label, run: () => run(() => ui.actions.key({ send })) }))] : []),
   ];
   const list = menu ? <CommandsList rows={rows} at={menuAt} fill={!compact && !pointer} /> : null;
+  // Typing in the draft box with the phone's own keyboard up (the user's rule, 2026-11-20): the function key row and the tools row step aside, so only
+  // the draft box and its send actions sit above the keyboard. They are hidden with CSS, never unmounted (h5.js and voice-input.js hold their elements).
+  const typing = !pointer && state.keyboard === 'draft' && state.softKeyboard;
   if (compact) return <CompactBottom state={state} ui={ui} list={list} onMenu={setMenu} pointer={pointer} />;
   return (
     <Paper
-      square elevation={1} className="h5-bottom" id="h5-bottom" data-single={pointer ? '' : undefined} data-focused={pointer ? '' : undefined}
-      sx={pointer ? { ...BAR_SURFACE, ...SINGLE_ROW } : { ...BAR_SURFACE, marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'env(safe-area-inset-bottom)', ...DRAFT_ON }}
+      square elevation={1} className="h5-bottom" id="h5-bottom" data-single={pointer ? '' : undefined} data-focused={pointer ? '' : undefined} data-typing={typing ? '' : undefined}
+      sx={pointer ? { ...BAR_SURFACE, ...SINGLE_ROW } : { ...BAR_SURFACE, marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'env(safe-area-inset-bottom)', ...DRAFT_ON, ...TYPING_HIDES_ROWS }}
     >
       {list}
       <TranslateBar state={state} pointer={pointer} single={pointer} />

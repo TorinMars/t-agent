@@ -307,7 +307,8 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
     }
 
     // Saved commands follow the kind of the open terminal: Claude Code slash commands in a Claude terminal, Codex slash commands in a Codex terminal,
-    // and the "Start an agent" shell list in a plain terminal. Paste text is always first, and a preset is typed WITHOUT Enter.
+    // and the "Start an agent" shell list in a plain terminal. Paste text is always first. A click SENDS a preset (then Enter); the pencil, shown on hover
+    // and keyboard focus with a mouse, types it without Enter; used presets come first in their own kind's list only.
     {
       const saved = TERMINALS[2];
       TERMINALS[2] = [{ terminal_id: 'd1', title: 'Docs shell' }, { terminal_id: 'dc', title: 'Claude docs', agent: 'claude' }, { terminal_id: 'dx', title: 'Codex docs', agent: 'codex' }];
@@ -343,18 +344,53 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.deepEqual(claude.head, ['Claude Code commands', 'Keys']);
       assert.deepEqual(claude.keys, ['Shift+Tab', 'Esc', 'Esc Esc', 'Ctrl+C', 'Ctrl+R', 'Ctrl+O', 'Ctrl+G', 'Ctrl+J'], 'a Claude terminal lists its key combinations after the commands');
       assert.deepEqual(claude.commands, ['/clear', '/compact', '/resume', '/model', '/context', '/usage', '/diff', '/rewind', '/review', '/init', '/memory', '/mcp'], 'a Claude terminal lists Claude Code slash commands');
-      // A preset is typed into the terminal without Enter.
+      // With a mouse the pencil is hidden (opacity, no layout shift) until its row is hovered or holds the keyboard focus.
+      const opacity = text => page.locator('.h5-add-menu-row', { hasText: text }).locator('.h5-add-menu-edit').evaluate(node => getComputedStyle(node).opacity);
+      const opaque = text => page.waitForFunction(want => getComputedStyle([...document.querySelectorAll('.h5-add-menu-row')].find(row => row.querySelector('.h5-add-menu-command').textContent === want).querySelector('.h5-add-menu-edit')).opacity === '1', text);
+      await page.mouse.move(5, 5);
+      assert.equal(await opacity('/resume'), '0', 'pointer: the pencil is hidden at rest');
+      const widthBefore = await page.locator('.h5-add-menu-row', { hasText: '/resume' }).locator('.h5-add-menu-command').evaluate(node => node.getBoundingClientRect().width);
+      await page.locator('.h5-add-menu-row', { hasText: '/resume' }).hover();
+      await opaque('/resume');
+      assert.equal(await page.locator('.h5-add-menu-row', { hasText: '/resume' }).locator('.h5-add-menu-command').evaluate(node => node.getBoundingClientRect().width), widthBefore, 'showing the pencil moves nothing');
+      await page.mouse.move(5, 5);
+      await page.locator('.h5-add-menu-row', { hasText: '/context' }).locator('[role="menuitem"]').first().focus();
+      await opaque('/context');
+      await page.keyboard.press('Tab');
+      assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), 'Edit before sending', 'Tab reaches the pencil of the focused row');
+      // A click sends the preset: the command, then Enter; the list closes.
       const socket = await page.evaluate(() => window.sockets.length - 1);
       const typed = () => page.evaluate(index => window.sockets[index].sent.filter(item => !item.startsWith('{')), socket);
-      const before = (await typed()).length;
+      let before = (await typed()).length;
       await page.locator('.h5-add-menu [role="menuitem"]', { hasText: '/compact' }).click();
-      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length > count, [socket, before]);
-      assert.deepEqual((await typed()).slice(before), ['/compact'], 'the slash command is typed without Enter');
+      await page.waitForFunction(([index, count]) => window.sockets[index].sent.filter(item => !item.startsWith('{')).length > count + 1, [socket, before]);
+      assert.deepEqual((await typed()).slice(before), ['/compact', '\r'], 'the slash command is sent with Enter');
       assert.equal(await page.locator('.h5-add-menu').count(), 0, 'the menu closes after a command is chosen');
+      // The pencil types it without Enter and closes the list.
+      await page.locator('#h5-commands').click();
+      await page.locator('.h5-add-menu-row', { hasText: '/model' }).hover();
+      before = (await typed()).length;
+      await page.locator('.h5-add-menu-row', { hasText: '/model' }).locator('.h5-add-menu-edit').click();
+      await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
+      await page.waitForTimeout(400);
+      assert.deepEqual((await typed()).slice(before), ['/model'], 'the pencil types the command without Enter');
+      // Recently used first in the Claude list.
+      const recent = await menu();
+      assert.deepEqual(recent.head, ['Claude Code commands \u00b7 recently used first', 'Keys']);
+      assert.deepEqual(recent.commands.slice(0, 3), ['/model', '/compact', '/clear'], 'the used commands lead, most recent first');
+      assert.equal(await page.evaluate(() => document.querySelector('.h5-add-menu-divider').previousElementSibling.textContent.includes('/compact')), true, 'the divider sits below the used commands');
+      assert.ok(recent.notes[0].endsWith(' \u00b7 used just now') && recent.notes[1].endsWith(' \u00b7 used just now') && !recent.notes[2].includes('used'), `the used rows say when: ${recent.notes.slice(0, 3)}`);
+      if (SHOTS) {
+        await page.locator('.h5-add-menu-row', { hasText: '/compact' }).hover();
+        await opaque('/compact');
+        await page.screenshot({ path: path.join(SHOTS, 'commands-recent-1440.png') });
+      }
+      await closeMenu();
       await openTerminal(page, 'Write docs', 'Codex docs');
       await history(page);
       const codex = await menu();
-      assert.deepEqual(codex.head, ['Codex commands', 'Keys']);
+      assert.deepEqual(codex.head, ['Codex commands', 'Keys'], 'the Codex list keeps its own order: nothing used there yet');
+      assert.equal(await page.locator('.h5-add-menu-divider').count(), 0);
       assert.deepEqual(codex.commands, ['/new', '/resume', '/compact', '/model', '/permissions', '/status', '/diff', '/review', '/mention', '/plan', '/init', '/mcp'], 'a Codex terminal lists Codex slash commands');
       assert.deepEqual(codex.keys, ['Shift+Tab', 'Shift+Left', 'Esc', 'Esc Esc', 'Ctrl+C', 'Ctrl+R', 'Ctrl+T', 'Ctrl+G', 'Ctrl+J'], 'a Codex terminal lists its key combinations after the commands');
       await closeMenu();

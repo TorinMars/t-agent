@@ -90,6 +90,11 @@ I18n.add({
   // ---- Durations ----
   '{1} min {2}s': '{1} 分 {2} 秒',
 
+  // ---- Saved commands: when a command was last used (command-recency.mjs) ----
+  'used {1} min ago': '{1} 分钟前用过',
+  'used {1} h ago': '{1} 小时前用过',
+  'used {1} days ago': '{1} 天前用过',
+
   // ---- Task status words and misc ----
   'Done': '已完成',
 

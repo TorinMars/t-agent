@@ -3391,11 +3391,23 @@
   ui.actions.clipboardHold = on => { if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.hold(on); };
 
   // A tap on a key of the key bar (the shell keeps the focus where it is, so tapping keys does not open or close the on-screen keyboard).
-  // Types a preset command into the terminal like a paste; no Enter is sent, so the user checks it and presses Enter.
+  // "Edit before sending" (the pencil of a saved command): types the command into the terminal like a paste, WITHOUT Enter, so the user can add to it.
+  // Returns whether it was typed (the list counts it as a use only then).
   ui.actions.insertCommand = command => {
-    if (uploading || !connected(session)) { tell('The terminal is not connected', 'error'); return; }
+    if (uploading || !connected(session)) { tell('The terminal is not connected', 'error'); return false; }
     session.clipboard?.gesture();
     session.term.paste(command);
+    return true;
+  };
+  // A tap on a saved command: types it as the send arrow types text (`sendTyped`: a short line goes in as keys, so a "/command" acts as typed), then one
+  // Enter after SUBMIT_DELAY_MS, as translate-and-send does. No confirmation, /clear included (the user's decision). Returns whether it was sent.
+  ui.actions.sendCommand = command => {
+    const target = session;
+    if (uploading || !connected(target)) { tell('The terminal is not connected', 'error'); return false; }
+    target.clipboard?.gesture();
+    if (!sendTyped(target, command)) return false;
+    setTimeout(() => send(target, '\r'), SUBMIT_DELAY_MS);
+    return true;
   };
   ui.actions.key = item => {
     if (session && !session.disposed && (item.send || item.key || item.shortcut)) session.clipboard?.gesture(); // a key the user sent to this terminal (key bar, on-screen keyboard)

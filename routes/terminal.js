@@ -1110,8 +1110,8 @@ const activityStream = createActivityStream({
   activity: activitySnapshot,
   subagents: () => subagentSnapshot(null),
 });
-function serveActivityStream(req, res, taskIds) {
-  activityStream.serve(req, res, taskIds);
+function serveActivityStream(req, res, taskIds, options) {
+  activityStream.serve(req, res, taskIds, options);
   sharedClock.wake();
 }
 

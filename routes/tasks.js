@@ -202,9 +202,14 @@ router.get('/terminal-activity', (req, res) => {
 });
 
 // The same activity and sub-agent snapshot pushed as server-sent events (`event: activity`), on connect and on every change.
+// `?state=1` (the top page's stream of this machine, public/js/h5.js): the shared page state rides on it too, `event: page-state` with the answer of
+// GET /api/page-state after every change of it, from any device or linked engine ("The page push" in docs/design/shared-page-state.md).
 router.get('/terminal-activity/stream', (req, res) => {
   const owner = ownerFilter(req);
-  terminal.serveActivityStream(req, res, () => taskArchive.activeTaskIds(db, owner));
+  const attach = req.query.state === '1'
+    ? send => require('../services/page-state').getPageState().follow(owner, text => send('page-state', text))
+    : null;
+  terminal.serveActivityStream(req, res, () => taskArchive.activeTaskIds(db, owner), { attach });
 });
 
 // Running sub-agents of the live Claude terminals (the phone's "next running or pending session" button counts them as running).

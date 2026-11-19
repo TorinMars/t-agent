@@ -11,8 +11,11 @@
 //   A device whose instance id is not known (an older Engine) is named `~<source key>` and its entries stay in this browser only.
 // - Changes are shown at once and sent 800 ms later (one request for a burst), kept in the cache until the server took them (a reload sends them
 //   again), and sent with keepalive when the page is hidden. An answer replaces the state; changes made meanwhile stay on top.
-// - Following other devices: the top page reads the state at start, when the tab becomes visible or gets the focus (at most every 3 s) and every
-//   60 s while visible; a pane of the multi-column view and other tabs follow the cache through `storage` events (no requests of their own).
+// - Following other devices: the server pushes the new state to the top page after every change on any device or linked engine (`pushed`, from
+//   this engine's activity stream that h5.js keeps open while the page is visible: "The page push" in docs/design/shared-page-state.md). The light
+//   read stays as the fallback: at start, when the tab becomes visible or gets the focus (at most every 3 s) and every 60 s while visible. A pane of
+//   the multi-column view and other tabs follow the cache through `storage` events (no requests or streams of their own). Every answer has the
+//   `version` of the server's state: an older one than this page took (a read that crossed a push) is not applied.
 // - Before this feature each browser kept its own values: once per browser they are sent as an import (version time 0, so a value set since on
 //   any device wins), the recent list by h5.js (`importRecent`).
 // - An older server (404) keeps everything in this browser, as before.
@@ -207,8 +210,12 @@
 
   // ---- Talking to the server ----
   const headers = { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' };
+  let version = 0; // the newest `version` of the server's state this page took
   function take(answer) {
     if (!answer || !Array.isArray(answer.recent) || !answer.keys || typeof answer.keys !== 'object') return false;
+    const given = Number(answer.version);
+    if (Number.isSafeInteger(given) && given < version) return true; // taken (a change sent is in it), but older than what this page shows
+    if (Number.isSafeInteger(given)) version = given;
     state = { recent: answer.recent, keys: answer.keys };
     peers = Array.isArray(answer.peers) ? answer.peers : [];
     supported = true;
@@ -235,6 +242,20 @@
       return true;
     })().finally(() => { reading = null; });
     return reading;
+  }
+  // The page push (h5.js, `event: page-state` of this engine's activity stream): the JSON of the answer a read would give, or {"read":true} for a
+  // state too large to push (then it is read). The changes this page has not sent yet stay on top, as with a read.
+  function pushed(text) {
+    if (PANE || supported === false) return false;
+    let answer = null;
+    try { answer = typeof text === 'string' ? JSON.parse(text) : text; } catch { return false; }
+    if (answer && answer.read === true) { load(); return true; }
+    if (!take(answer)) return false;
+    readAt = Date.now();
+    writeCache();
+    mirror();
+    emit(null);
+    return true;
   }
   const dirty = () => Object.keys(pending.recent).length + Object.keys(pending.keys).length + Object.keys(imports.recent).length + Object.keys(imports.keys).length > 0;
   let timer = null;
@@ -397,7 +418,7 @@
   }
 
   root.TAPageState = {
-    ...pure, store, get: value, set, importKey, recent, noteRecent, importRecent, setSources, load, send,
+    ...pure, store, get: value, set, importKey, recent, noteRecent, importRecent, setSources, load, send, pushed,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     supported: () => supported,
     peers: () => peers,

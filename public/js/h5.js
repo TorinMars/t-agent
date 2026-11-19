@@ -2969,6 +2969,8 @@
   // polls slowly instead (FALLBACK_POLL_MS). Other failures reconnect with a backoff (1 s doubling to 30 s), polling slowly meanwhile. A stream that is
   // silent for STALL_MS (the server sends a comment every 20 s) is taken as dead. The stream is closed while the page is hidden and opened again, with a
   // fresh snapshot, when it is shown: nothing on a hidden page needs the state, and phones drop background connections anyway. Each tab has its own stream.
+  // This machine's stream asks for `?state=1`: the shared page state rides on it (`event: page-state`, given to TAPageState.pushed), so a change made
+  // on another device or engine shows here in about a second ("The page push" in docs/design/shared-page-state.md); a pane opens no stream.
   const FALLBACK_POLL_MS = 30000;
   const STALL_MS = 50000;
   // One feed per listed service with its own backoff (`feeds`, by source key), none for a service that is hidden or offline. Every stream is a long-lived fetch to this
@@ -3138,7 +3140,7 @@
     const stalled = () => { clearTimeout(f.stall); f.stall = setTimeout(() => ctrl.abort(), STALL_MS); };
     let res;
     try {
-      res = await fetch(`${from.activityBase}/terminal-activity/stream`, { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/event-stream' }, cache: 'no-store', signal: ctrl.signal });
+      res = await fetch(`${from.activityBase}/terminal-activity/stream${from === LOCAL && PageState ? '?state=1' : ''}`, { headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'text/event-stream' }, cache: 'no-store', signal: ctrl.signal });
     } catch { if (f.ctrl === ctrl) retryFeed(f); return; }
     if (f.ctrl !== ctrl) return;
     if (!res.ok || !res.body || !/text\/event-stream/.test(res.headers.get('content-type') || '')) {
@@ -3172,6 +3174,7 @@
             else if (line.startsWith('data:')) data += line.slice(5).replace(/^ /, '');
           }
           if (event === 'activity' && data) { try { applyActivity(f, JSON.parse(data)); } catch { /* a broken message: wait for the next */ } }
+          else if (event === 'page-state' && data && from === LOCAL && PageState && PageState.pushed) PageState.pushed(data);
         }
       }
     } catch { /* aborted or dropped */ }

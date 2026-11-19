@@ -20,6 +20,7 @@ const { createPageState, CAPABILITY } = require('../services/page-state');
 const { createPageStateRouter, createEnginePageStateRouter } = require('../routes/page-state');
 const { createSettingsSync } = require('../services/settings-sync');
 const pageSide = require('../public/js/page-state.js');
+const { createActivityStream } = require('../lib/terminal-activity-stream');
 
 const SCHEMA = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8');
 const ZH = '\u6700\u8fd1\u4efb\u52a1'; // a session name in Chinese travels as it is
@@ -146,7 +147,7 @@ function database(t) {
   return db;
 }
 
-async function makeNetwork(t, names, { links: pairs = [], capabilities = {}, denied = {} } = {}) {
+async function makeNetwork(t, names, { links: pairs = [], capabilities = {}, denied = {}, debounceMs = 30 } = {}) {
   const sides = {};
   for (const name of names) {
     const db = database(t);
@@ -164,7 +165,7 @@ async function makeNetwork(t, names, { links: pairs = [], capabilities = {}, den
       db, serviceLinks: side.links, owner: () => 'me', identity: () => ({ instance_id: instanceId, name }),
       linkKeys: { publicKey: () => side.settingsSync.publicKey(), linkKey: (peer, key) => side.settingsSync.linkKey(peer, key) },
       visibility: () => ({ isDenied: (taskId, linkId) => (denied[name] || []).some(rule => rule.task === taskId && side.peers.some(peer => peer.id === linkId && peer.name === rule.from)) }),
-      log: { warn: message => side.logs.push(message), info() {} }, intervalMs: 0, debounceMs: 30,
+      log: { warn: message => side.logs.push(message), info() {} }, intervalMs: 0, debounceMs,
       request: async (baseUrl, route, token, opts = {}) => {
         const peer = side.peers.find(candidate => candidate.baseUrl === baseUrl);
         if (!peer || !peer.online) throw Object.assign(new Error('REMOTE_OFFLINE'), { statusCode: 502 });
@@ -181,6 +182,9 @@ async function makeNetwork(t, names, { links: pairs = [], capabilities = {}, den
     });
     const app = express();
     app.use(express.json());
+    // The page's activity stream, wired as routes/tasks.js wires it: `?state=1` carries `event: page-state`.
+    const activity = createActivityStream({ activity: () => ({}), subagents: () => ({}), heartbeatMs: 60000 });
+    app.get('/api/tasks/terminal-activity/stream', (req, res) => activity.serve(req, res, () => [], { attach: req.query.state === '1' ? send => side.service.follow('me', text => send('page-state', text)) : null }));
     app.use('/api/page-state', createPageStateRouter({ service: () => side.service, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -200,6 +204,32 @@ async function makeNetwork(t, names, { links: pairs = [], capabilities = {}, den
       return { status: response.status, body: text ? JSON.parse(text) : null };
     };
     side.view = async () => { const { body } = await side.page('GET'); return { recent: body.recent, keys: body.keys }; };
+    // A page's stream: the `page-state` events it got, each with the time it came.
+    side.stream = async (query = '?state=1') => {
+      const ctrl = new AbortController();
+      const response = await fetch(`${side.base}/api/tasks/terminal-activity/stream${query}`, { signal: ctrl.signal });
+      const got = { events: [], close: () => ctrl.abort() };
+      t.after(() => ctrl.abort());
+      (async () => {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        try {
+          for await (const chunk of response.body) {
+            buffer += decoder.decode(chunk, { stream: true });
+            let cut;
+            while ((cut = buffer.indexOf('\n\n')) >= 0) {
+              const block = buffer.slice(0, cut);
+              buffer = buffer.slice(cut + 2);
+              const event = (/^event: (.*)$/m.exec(block) || [])[1];
+              const data = (/^data: (.*)$/m.exec(block) || [])[1];
+              if (event === 'page-state') got.events.push({ at: Date.now(), answer: JSON.parse(data) });
+            }
+          }
+        } catch { /* closed */ }
+      })();
+      await settle(30);
+      return got;
+    };
     sides[name] = side;
   }
   let serial = 0;
@@ -269,6 +299,67 @@ test('two linked engines: the Recent list and a remembered key are the same on b
   await A.service.syncAll();
   assert.deepEqual(A.requests.slice(fromA), ['GET /v1/info', 'GET /v1/page-state'], 'equal digests: nothing is pulled or sent');
   assert.deepEqual(A.logs, []);
+});
+
+test('the page push: a change on one engine reaches an open page of the other in well under 2 s, without a read; bursts are one push; no stream without ?state=1', async t => {
+  const { A, B } = await makeNetwork(t, ['A', 'B'], { links: [['A', 'B']], debounceMs: 200 }); // the real debounce of the push between engines
+  A.service.start();
+  B.service.start();
+  await until(async () => A.service.peers()[0].last_sync_at && B.service.peers()[0].last_sync_at, 'the first rounds');
+  const onB = await B.stream();
+  const onA = await A.stream();
+  const plain = await B.stream(''); // a stream without ?state=1 (another reader of the activity) gets no page-state events
+
+  // A page of A chooses the Recent tab and shows a session: the page of B gets the new state pushed, the same answer a read gives.
+  const startedAt = Date.now();
+  await A.page('PUT', { keys: { 'h5-task-list-tab': 'recent' }, recent: [{ instance: A.instanceId, task: 1, terminal: 'a1', title: 'On A', agent: null, used: 5000 }] });
+  const pushed = await until(() => onB.events.find(event => event.answer.keys['h5-task-list-tab'] === 'recent'), 'the push to the page of B', 2000);
+  assert.ok(pushed.at - startedAt < 2000, `within 2 s (${pushed.at - startedAt} ms)`);
+  const read = (await B.page('GET')).body;
+  assert.deepEqual(pushed.answer, read, 'the pushed answer is what a read answers');
+  assert.equal(pushed.answer.instance_id, B.instanceId);
+  assert.ok(Number.isSafeInteger(pushed.answer.version) && pushed.answer.version > 0, 'it has the version of the state');
+  assert.deepEqual(pushed.answer.recent.map(item => item.terminal), ['a1']);
+  // The page of A that made the change gets it too (another device of the same engine follows the same way).
+  assert.ok(onA.events.some(event => event.answer.keys['h5-task-list-tab'] === 'recent'));
+  assert.equal(plain.events.length, 0, 'no page-state on a stream that did not ask for it');
+
+  // A burst of changes on B: one push per page, one round to A, and A's page follows.
+  await settle(400);
+  const eventsBefore = onB.events.length;
+  const requestsBefore = B.requests.length;
+  for (let i = 0; i < 5; i += 1) await B.page('PUT', { keys: { 'h5-design-outline': String(i) } });
+  await until(() => onA.events.some(event => event.answer.keys['h5-design-outline'] === '4'), 'the burst reached the page of A', 2000);
+  await settle(400);
+  assert.ok(onB.events.length - eventsBefore <= 5, `at most one push per change (${onB.events.length - eventsBefore})`);
+  assert.equal(onB.events.at(-1).answer.keys['h5-design-outline'], '4');
+  const round = B.requests.slice(requestsBefore);
+  assert.deepEqual(round.slice(0, 3), ['GET /v1/page-state', 'POST /v1/page-state/pull', 'PUT /v1/page-state'], 'the push after a change skips /v1/info, which listed the capability a moment ago');
+  assert.ok(round.length <= 6, `no storm of requests: ${round.join(', ')}`);
+  // Versions only go up.
+  const versions = onB.events.map(event => event.answer.version);
+  assert.deepEqual(versions, [...versions].sort((x, y) => x - y));
+  assert.deepEqual(new Set(versions).size, versions.length, 'every push is a newer state');
+
+  // A full round (periodic, a link online) still asks /v1/info.
+  const fromA = A.requests.length;
+  await A.service.syncAll();
+  assert.equal(A.requests[fromA], 'GET /v1/info');
+  assert.deepEqual(A.logs, []);
+  assert.deepEqual(B.logs, []);
+});
+
+test('the page push of a large state only says to read it', async t => {
+  const { A } = await makeNetwork(t, ['A']);
+  const onA = await A.stream();
+  const big = 'x'.repeat(15 * 1024);
+  for (let part = 0; part < 4; part += 1) { // 300 KB in four requests (the JSON parser takes 100 KB)
+    const keys = {};
+    for (let i = 0; i < 5; i += 1) keys[`h5-column:big${part}${i}`] = `${big}${i}`;
+    assert.equal((await A.page('PUT', { keys })).status, 200);
+  }
+  await until(() => onA.events.length && onA.events.at(-1).answer.read, 'the push');
+  assert.deepEqual(onA.events.at(-1).answer, { read: true });
 });
 
 test('a chain A–B–C reaches C and comes back; an older peer without the capability is skipped; a hidden task is not sent', async t => {

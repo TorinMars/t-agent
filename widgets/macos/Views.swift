@@ -509,7 +509,7 @@ final class BackgroundVeilView: NSView {
     }
 }
 
-/// The background of the pill, the panel, its forms and the bubble: the blur of the menu material with the veil on it.
+/// The background of the capsule, the panel, its forms and the bubble: the blur of the menu material with the veil on it.
 func makeBackground(radius: CGFloat) -> NSVisualEffectView {
     let view = NSVisualEffectView()
     view.material = .menu

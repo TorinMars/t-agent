@@ -184,9 +184,12 @@ extension WidgetController {
     var testPanelCanBecomeKey: Bool { detail.canBecomeKey }
     var testToast: String { toast.isHidden ? "" : toastLabel.stringValue }
     var testOverlay: OverlayView? { overlay }
-    var testCount: String { countLabel.stringValue }
-    var testBadge: String { badge.isHidden ? "" : badgeLabel.stringValue }
-    var testCaption: String { caption.stringValue }
+    /// The capsule's rows, top to bottom: open tasks, Needs you, running.
+    var testCount: String { capsule.rows[0].stringValue }
+    var testBadge: String { capsule.rows[1].stringValue }
+    var testRunning: String { capsule.rows[2].stringValue }
+    var testCapsule: CapsuleView { capsule }
+    var testDetailFrame: NSRect { detail.frame }
     var testTooltip: String { widgetRoot?.toolTip ?? "" }
     var testWidgetWidth: CGFloat { widget.frame.width }
     var testWidgetHeight: CGFloat { widget.frame.height }
@@ -224,6 +227,41 @@ extension WidgetController {
     func renderWidget(_ path: String, dark: Bool) -> Bool {
         guard let view = widget.contentView else { return false }
         return renderView(view, to: path, background: dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.94, alpha: 1))
+    }
+
+    /// The capsule showing each of `states`, side by side 24 pt apart, at 2x, on the plain background of renderWidget.
+    func renderCapsuleStates(_ path: String, _ states: [CapsuleCounts], dark: Bool) -> Bool {
+        guard let view = widget.contentView else { return false }
+        defer { updateCollapsed() }
+        let gap: CGFloat = 24
+        let size = NSSize(width: gap + CGFloat(states.count) * (widgetWidth + gap), height: widgetHeight + gap * 2)
+        let scale: CGFloat = 2
+        guard let out = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: out) else { return false }
+        var reps: [NSBitmapImageRep] = []
+        for counts in states {
+            capsule.show(counts)
+            view.layoutSubtreeIfNeeded()
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            reps.append(rep)
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        let transform = NSAffineTransform()
+        transform.scale(by: scale)
+        transform.concat()
+        (dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.94, alpha: 1)).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        for (index, rep) in reps.enumerated() {
+            let rect = NSRect(x: gap + CGFloat(index) * (widgetWidth + gap), y: gap, width: widgetWidth, height: widgetHeight)
+            rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let png = out.representation(using: .png, properties: [:]) else { return false }
+        return (try? png.write(to: URL(fileURLWithPath: path))) != nil
     }
 
     func setAppearance(dark: Bool) {
@@ -304,7 +342,7 @@ extension WidgetController {
         transform.concat()
         (dark ? NSColor(white: 0.09, alpha: 1) : NSColor(white: 0.82, alpha: 1)).setFill()
         NSRect(origin: .zero, size: size).fill()
-        for (window, content, radius) in [(widget as NSWindow, pill, widgetHeight / 2), (bubble as NSWindow, view, CGFloat(12))] {
+        for (window, content, radius) in [(widget as NSWindow, pill, widgetWidth / 2), (bubble as NSWindow, view, CGFloat(12))] {
             content.layoutSubtreeIfNeeded()
             // The blur draws only a grey veil offscreen; the plain fill below stands in for it.
             let blurs = content.subviews.filter { $0 is NSVisualEffectView }

@@ -3,11 +3,11 @@ import AppKit
 
 // MARK: - Controller
 
-/// The collapsed window is a small pill: the count, and a red badge with the Needs you count when there is one.
-/// Its width follows what it shows (widgetMinWidth at least); the height is fixed.
-let widgetHeight: CGFloat = 26
-let widgetMinWidth: CGFloat = 38
-let widgetSize = NSSize(width: widgetMinWidth, height: widgetHeight)
+/// The collapsed window is a vertical capsule of a fixed size with three numbers (CapsuleView): open tasks, Needs you
+/// and agents running now. It never changes size, so the panel and the bubble beside it never move.
+let widgetWidth: CGFloat = 32
+let widgetHeight: CGFloat = 90
+let widgetSize = NSSize(width: widgetWidth, height: widgetHeight)
 let detailWidth: CGFloat = 312
 let detailPadding: CGFloat = 10
 let detailMaxHeight: CGFloat = 440
@@ -53,10 +53,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let detail = makePanel(size: NSSize(width: detailWidth, height: 120))
     var widgetRoot: DragView?
     var detailRoot: HoverView?
-    let countLabel = NSTextField(labelWithString: "\u{2013}")
-    let caption = NSTextField(labelWithString: "")
-    let badge = NSView()
-    let badgeLabel = NSTextField(labelWithString: "")
+    let capsule = CapsuleView(frame: NSRect(origin: .zero, size: widgetSize))
     let scrollView = NSScrollView()
     let documentView = FlippedView()
     let stack = NSStackView()
@@ -131,7 +128,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
-    // Part C: the live agent activity (GET /activity) in the pill and at the top of the panel.
+    // Part C: the live agent activity (GET /activity) in the capsule's numbers and at the top of the panel.
     let live = LiveActivity()
     /// Whether the live activity is shown and polled (`show_activity` of GET /prefs; the prefs code sets it).
     var showActivity = true { didSet { if showActivity != oldValue { showActivityChanged() } } }
@@ -193,6 +190,4 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             done(data, (response as? HTTPURLResponse)?.statusCode ?? 0, error)
         }.resume()
     }
-
-    let badgeHeight: CGFloat = 16
 }

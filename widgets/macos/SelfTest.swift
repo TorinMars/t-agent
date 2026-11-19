@@ -103,7 +103,7 @@ func runSelfTest() -> Never {
     let needsMix = summarize(listOf([it("local:1", "review", order: 90), it("remote:7:1", "waiting_user", order: 99),
                                      it("local:2", "waiting_user", order: 10), it("remote:7:2", "review", order: 5)]))
     check("order: in Needs you each engine has waiting_user before review", keys(needsMix.needs) == "local:2 local:1 remote:7:1 remote:7:2")
-    check("badge counts Needs you", needsMix.needs.count == 4 && needsMix.unfinished == 4)
+    check("Needs you counts waiting_user and review", needsMix.needs.count == 4 && needsMix.unfinished == 4)
 
     let tree = summarize(listOf([
         it("local:1", order: 10), it("local:2", parent: "local:1", order: 50), it("local:3", parent: "local:2", order: 40),
@@ -343,22 +343,14 @@ func runSelfTest() -> Never {
     mouse.loadForTest(board)
     check("panel: the order of the board", mouse.testOrder == "needs[local:1 local:2 local:3 remote:7:1] "
           + "working[local:4 local:5 local:6 local:7 remote:7:2 remote:7:3] todo[local:8 local:9 local:10] done 3")
-    check("panel: count and badge", mouse.testCount == "13" && mouse.testBadge == "4")
-    check("pill: one short line that fits the count and the badge", mouse.testWidgetHeight == widgetHeight
-          && mouse.testWidgetWidth > widgetMinWidth && mouse.testWidgetWidth <= 80)
-    // A count going down (13 -> 9, badge 4 -> 1) must not change the width: the panel sits beside the pill and moved with it.
-    let wideBoard = mouse.testWidgetWidth
-    mouse.loadForTest(listOf([it("local:1", "waiting_user", order: 50), it("local:4", order: 50), it("local:8", "todo", order: 50)]))
-    check("pill: one-digit counts keep the two-digit width", mouse.testCount == "3" && mouse.testBadge == "1" && mouse.testWidgetWidth == wideBoard)
-    mouse.loadForTest(board)
-    check("pill: and back, the same width", mouse.testWidgetWidth == wideBoard)
-    check("pill: while the panel or a bubble is open the width only grows", steadyPillWidth(needed: 50, current: 64, holding: true) == 64
-          && steadyPillWidth(needed: 70, current: 64, holding: true) == 70 && steadyPillWidth(needed: 50, current: 64, holding: false) == 50)
+    check("capsule: open, Needs you and running", mouse.testCount == "13" && mouse.testBadge == "4" && mouse.testRunning == "0")
+    check("capsule: the tooltip and VoiceOver label read the three numbers",
+          mouse.testTooltip == "13 open · 4 need you · 0 running" && mouse.widgetRoot?.accessibilityLabel() == mouse.testTooltip)
+    runCapsuleChecks(check)
     check("panel: section titles, the Finished header and the failed engine", mouse.testLines.contains("Needs you")
           && mouse.testLines.contains("Working") && mouse.testLines.contains("To do")
           && mouse.testLines.contains("Finished") && mouse.testLines.contains("Could not load K02"))
     check("panel: rows carry an engine tag with two engines", mouse.testHasPill("local:4") && mouse.testHasPill("remote:7:2"))
-    check("panel: the caption is the tooltip", mouse.testCaption == "Tasks" && mouse.testTooltip == "Tasks")
     check("panel: nothing was sent while loading", network.isEmpty)
 
     var placed: (String, MoveSpec, String?)?
@@ -523,30 +515,32 @@ func runSelfTest() -> Never {
     answers["GET /api/attention/widget/strings"] = (Data("{\"lang\":\"en\",\"strings\":{}}".utf8), 200)
     _ = mouse.testPressButton("local:3", .reject)
     check("action: success refreshes the list at once", network.map { $0.url?.path ?? "" }.contains("/api/attention/widget/items")
-          && !mouse.testOrder.contains("local:3") && mouse.testCount == "12" && mouse.testBadge == "3")
+          && !mouse.testOrder.contains("local:3") && mouse.testCount == "12" && mouse.testBadge == "3" && mouse.testRunning == "0")
     check("strings: loaded once with the token", network.filter { $0.url?.path == "/api/attention/widget/strings" }.count == 1
           && network.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer t" })
 
     // Unreachable, the token refused, and the language table.
     mouse.testApply(nil)
-    check("unreachable: the count is a dash", mouse.testCount == "\u{2013}" && mouse.testBadge == "")
+    check("unreachable: open and Needs you are dashes, the rows stay", mouse.testCount == "\u{2013}" && mouse.testBadge == "\u{2013}"
+          && mouse.testRunning == "0" && mouse.testWidgetWidth == widgetWidth && mouse.testWidgetHeight == widgetHeight)
+    check("unreachable: the tooltip says why", mouse.testTooltip == "Could not reach T-Agent")
     check("unreachable: the panel says so", mouse.testLines == ["Could not reach T-Agent"])
     answers["GET /api/attention/widget/items"] = (Data("{\"error\":\"UNAUTHORIZED\"}".utf8), 401)
     mouse.testRefresh()
     check("unreachable: a refused token says so", mouse.testLines == ["T-Agent did not accept the widget token"] && mouse.testCount == "\u{2013}")
     mouse.loadForTest(board)
-    stringTable = ["Needs you": "NY", "Finished": "D", "Tasks": "TK", "Quit": "Q"]
+    stringTable = ["Needs you": "NY", "Finished": "D", "{1} open · {2} need you · {3} running": "O{1} N{2} R{3}", "Quit": "Q"]
     mouse.testStringsChanged()
     check("strings: the panel uses the loaded table", mouse.testLines.contains("NY") && mouse.testLines.contains("D")
-          && mouse.testCaption == "TK" && mouse.testPanelMenuTitles() == ["Q"])
+          && mouse.testTooltip == "O13 N4 R0" && mouse.testPanelMenuTitles() == ["Q"])
     stringTable = [:]
     mouse.testStringsChanged()
-    check("strings: the English text comes back without a table", mouse.testLines.contains("Needs you") && mouse.testCaption == "Tasks")
+    check("strings: the English text comes back without a table", mouse.testLines.contains("Needs you") && mouse.testTooltip == "13 open · 4 need you · 0 running")
     let empty = WidgetController(api: WidgetAPI(base: nil, token: nil), parentPID: nil, options: options)
     empty.requestHook = { _, _ in }
     empty.loadForTest(listOf([it("local:1", "todo")], engines: [EngineInfo(key: "local", name: "MacBook", local: true, colorIndex: 0)]))
     check("panel: an empty Needs you says so", empty.testLines.contains("Nothing needs you") && empty.testLines.contains("None"))
-    check("panel: one engine shows no tag", !empty.testHasPill("local:1") && empty.testBadge == "")
+    check("panel: one engine shows no tag", !empty.testHasPill("local:1") && empty.testBadge == "0")
 
     // The Open link button: only on rows with a link, beside the text when it fits, and a click opens the browser only.
     let links = WidgetController(api: WidgetAPI(base: "http://127.0.0.1:3999", token: "t"), parentPID: nil, options: options)
@@ -818,21 +812,21 @@ func runSelfTest() -> Never {
     // The place: toward the middle of the screen, top level with the window, inside the visible frame.
     let screen = NSRect(x: 0, y: 0, width: 1440, height: 875)
     let bubbleSize = NSSize(width: bubbleWidth, height: 90)
-    let rightPill = NSRect(x: 1386, y: 833, width: 38, height: 26)
-    let leftPill = NSRect(x: 16, y: 833, width: 38, height: 26)
+    let rightPill = NSRect(x: 1386, y: 769, width: widgetWidth, height: widgetHeight)
+    let leftPill = NSRect(x: 16, y: 769, width: widgetWidth, height: widgetHeight)
     let atRight = bubbleFrame(size: bubbleSize, pill: rightPill, anchor: rightPill, visible: screen)
     let atLeft = bubbleFrame(size: bubbleSize, pill: leftPill, anchor: leftPill, visible: screen)
     check("place: a window in the right half gets the bubble on its left", atRight.toLeft && atRight.frame.maxX == rightPill.minX - panelGap
           && atRight.frame.maxY == rightPill.maxY)
     check("place: a window in the left half gets it on its right", !atLeft.toLeft && atLeft.frame.minX == leftPill.maxX + panelGap
           && atLeft.frame.maxY == leftPill.maxY)
-    let lowPill = NSRect(x: 16, y: 10, width: 38, height: 26)
+    let lowPill = NSRect(x: 16, y: 0, width: widgetWidth, height: widgetHeight)
     let low = bubbleFrame(size: bubbleSize, pill: lowPill, anchor: lowPill, visible: screen)
-    let narrow = bubbleFrame(size: bubbleSize, pill: NSRect(x: 250, y: 500, width: 38, height: 26),
-                             anchor: NSRect(x: 250, y: 500, width: 38, height: 26), visible: NSRect(x: 0, y: 0, width: 400, height: 875))
+    let narrow = bubbleFrame(size: bubbleSize, pill: NSRect(x: 250, y: 500, width: widgetWidth, height: widgetHeight),
+                             anchor: NSRect(x: 250, y: 500, width: widgetWidth, height: widgetHeight), visible: NSRect(x: 0, y: 0, width: 400, height: 875))
     check("place: kept inside the visible frame", low.frame.minY == screen.minY + screenMargin && narrow.toLeft
           && narrow.frame.minX == screenMargin)
-    let withPanel = bubbleFrame(size: bubbleSize, pill: NSRect(x: 900, y: 833, width: 38, height: 26),
+    let withPanel = bubbleFrame(size: bubbleSize, pill: NSRect(x: 900, y: 769, width: widgetWidth, height: widgetHeight),
                                 anchor: NSRect(x: 900, y: 600, width: 334, height: 259), visible: screen)
     check("place: beside the open panel, never over it", withPanel.toLeft && withPanel.frame.maxX == 900 - panelGap)
     let shown = NSRect(x: 100, y: 100, width: 280, height: 90)
@@ -943,4 +937,127 @@ func runSelfTest() -> Never {
           && !bubbles.testOnScreen)
     print("\(passes) passed, \(failures) failed")
     exit(failures == 0 ? 0 : 1)
+}
+
+/// The capsule: its fixed size, the three rows, the dim zero, "99+", the merged Needs you count, the running count, the
+/// tooltip, the panel that keeps its place, and an old saved spot clamped with the new size.
+func runCapsuleChecks(_ check: (String, Bool) -> Void) {
+    func item(_ key: String, _ status: String, session: (String, String, String)? = nil) -> WidgetItem {
+        let cut = key.range(of: ":", options: .backwards)!
+        var out = WidgetItem(key: key, engine: String(key[..<cut.lowerBound]), id: String(key[cut.upperBound...]), title: key, status: status)
+        if let (engine, task, terminal) = session { out.session = ItemSession(engine: engine, taskId: task, terminalId: terminal) }
+        return out
+    }
+    func terminal(_ task: String, _ id: String, _ state: ActivityState) -> ActivityTerminal {
+        ActivityTerminal(taskID: task, taskTitle: "Task " + task, terminalID: id, state: state, openPath: "/?openTerminal=local:\(task):\(id)")
+    }
+
+    // The merge of Needs you and the waiting terminals.
+    let asking = item("local:1", "waiting_user", session: ("local", "5", "t1"))
+    check("needs: an item and its own waiting terminal count once", needsYouCount([asking], terminals: [terminal("5", "t1", .waiting)]) == 1)
+    check("needs: a waiting terminal without an item counts", needsYouCount([asking], terminals: [terminal("6", "t1", .waiting)]) == 2
+          && needsYouCount([], terminals: [terminal("6", "t1", .waiting)]) == 1)
+    check("needs: another terminal of the same task counts on its own", needsYouCount([asking], terminals: [terminal("5", "t2", .waiting)]) == 2)
+    check("needs: review counts, running and done terminals do not", needsYouCount([asking, item("local:2", "review")],
+          terminals: [terminal("7", "t1", .running), terminal("8", "t1", .done)]) == 2)
+    check("needs: an item of a connected service never takes a local terminal",
+          needsYouCount([item("remote:7:1", "waiting_user", session: ("remote:7", "5", "t1"))], terminals: [terminal("5", "t1", .waiting)]) == 2)
+    check("needs: an item without a session takes none, a terminal listed twice counts once",
+          needsYouCount([item("local:3", "waiting_user")], terminals: [terminal("9", "t1", .waiting), terminal("9", "t1", .waiting)]) == 2)
+
+    // Text and sizes.
+    check("capsule: 99+ above 99, a dash without a number", capsuleText(0) == "0" && capsuleText(99) == "99" && capsuleText(100) == "99+"
+          && capsuleText(128) == "99+" && capsuleText(nil) == "\u{2013}")
+    let room = widgetWidth - capsuleTextInset * 2
+    check("capsule: two digits at 13 pt (12 pt at most less) and 99+ at 10 pt (or 9) fit with 3 pt each side",
+          ["88", "99+", "\u{2013}", "0"].allSatisfy { capsuleTextWidth($0, size: capsuleFontSize($0)) <= room }
+          && [13, 12].contains(capsuleFontSize("88")) && [10, 9].contains(capsuleFontSize("99+")))
+    print("capsule fonts: 88 at \(capsuleFontSize("88")) pt (\(capsuleTextWidth("88", size: capsuleFontSize("88"))) pt wide), "
+          + "99+ at \(capsuleFontSize("99+")) pt (\(capsuleTextWidth("99+", size: capsuleFontSize("99+"))) pt wide), room \(room) pt")
+
+    var options = WidgetOptions()
+    options.persistPosition = false
+    options.offscreen = true
+    let window = WidgetController(api: WidgetAPI(base: "http://127.0.0.1:1", token: "t"), parentPID: nil, options: options)
+    window.requestHook = { _, _ in }
+    window.announce = { _ in }
+    /// A list with `open` unfinished tasks, `needs` of them waiting for the person, and `running` running terminals.
+    func show(_ open: Int, _ needs: Int, _ running: Int) {
+        let items = (0..<open).map { item("local:\($0 + 1)", $0 < needs ? "waiting_user" : "working") } + [item("local:999", "done")]
+        window.loadForTest(ItemList(items: items, engines: [EngineInfo(key: "local", name: "MacBook", local: true, colorIndex: 0)], failed: []))
+        window.testSetActivity((0..<running).map { terminal(String(500 + $0), "t1", .running) })
+    }
+    let rows = window.testCapsule.rows
+    func alpha(_ index: Int) -> CGFloat { rows[index].alphaValue }
+    let chinese = "{1} \u{9879}\u{672A}\u{5B8C}\u{6210} \u{00B7} {2} \u{9879}\u{9700}\u{8981}\u{4F60} \u{00B7} {3} \u{4E2A}\u{8FD0}\u{884C}\u{4E2D}"
+    var sizes: [Bool] = []
+    for table in [[:], ["{1} open · {2} need you · {3} running": chinese]] {
+        stringTable = table
+        window.testStringsChanged()
+        for (open, needs, running) in [(0, 0, 0), (9, 1, 0), (12, 6, 1), (128, 14, 3)] {
+            show(open, needs, running)
+            sizes.append(window.testWidgetWidth == widgetWidth && window.testWidgetHeight == widgetHeight
+                         && window.testCapsule.frame.size == widgetSize && rows.allSatisfy { !$0.isHidden && $0.superview != nil })
+        }
+    }
+    check("capsule: exactly 32 x 90 with all three rows for 0/0/0, 9/1/0, 12/6/1 and 128/14/3, in both languages",
+          sizes.count == 8 && !sizes.contains(false) && widgetSize == NSSize(width: 32, height: 90))
+    check("capsule: the tooltip in the loaded language, with the exact numbers", window.testTooltip == "128 \u{9879}\u{672A}\u{5B8C}\u{6210} \u{00B7} 14 "
+          + "\u{9879}\u{9700}\u{8981}\u{4F60} \u{00B7} 3 \u{4E2A}\u{8FD0}\u{884C}\u{4E2D}")
+    stringTable = [:]
+    window.testStringsChanged()
+    show(128, 14, 3)
+    check("capsule: 99+ in a smaller size, the other rows at the full size", window.testCount == "99+" && window.testBadge == "14"
+          && window.testRunning == "3" && (rows[0].font?.pointSize ?? 0) < 11 && rows[1].font?.pointSize == capsuleFontSize("14")
+          && rows[1].font?.pointSize ?? 0 >= 12)
+    check("capsule: rows top to bottom, inside the capsule, about 26 pt apart", rows[0].frame.minY > rows[1].frame.minY
+          && rows[1].frame.minY > rows[2].frame.minY && abs((rows[0].frame.midY - rows[2].frame.midY) - capsuleRowHeight * 2) <= 1
+          && rows.allSatisfy { $0.frame.minY >= 0 && $0.frame.maxY <= widgetHeight && $0.frame.width == widgetWidth })
+    show(3, 0, 0)
+    check("capsule: a zero stays as a dim 0", window.testBadge == "0" && window.testRunning == "0" && alpha(0) == 1
+          && abs(alpha(1) - capsuleZeroAlpha) < 0.01 && abs(alpha(2) - capsuleZeroAlpha) < 0.01)
+    check("capsule: the colours tell the rows apart: label, the badge red, the activity teal",
+          CapsuleView.colors[0] == NSColor.labelColor && CapsuleView.colors[1] == NSColor.systemRed && CapsuleView.colors[2] === capsuleTeal
+          && rows.indices.allSatisfy { rows[$0].textColor === CapsuleView.colors[$0] })
+    show(12, 6, 1)
+    check("capsule: the tooltip", window.testTooltip == "12 open · 6 need you · 1 running" && alpha(1) == 1 && alpha(2) == 1)
+
+    // The merge in the window: the item's own waiting terminal once, another waiting terminal on top, review counted.
+    let list = ItemList(items: [item("local:1", "waiting_user", session: ("local", "5", "t1")), item("local:2", "review"),
+                                item("local:3", "working", session: ("local", "6", "t1"))],
+                        engines: [EngineInfo(key: "local", name: "MacBook", local: true, colorIndex: 0)], failed: [])
+    window.loadForTest(list)
+    window.testSetActivity([terminal("5", "t1", .waiting), terminal("6", "t1", .waiting), terminal("7", "t1", .running)])
+    check("capsule: Needs you merges the waiting terminals, each thing once", window.testCount == "3" && window.testBadge == "3"
+          && window.testRunning == "1")
+    window.showActivity = false
+    check("capsule: with the activity off, no running count and no waiting terminals", window.testBadge == "2" && window.testRunning == "0")
+    window.showActivity = true
+    window.testSetActivity([])
+
+    // The panel keeps its place while the numbers change.
+    window.testPlaceWidget(right: true)
+    show(9, 1, 0)
+    let before = window.testDetailFrame
+    let capsuleBefore = window.testWidgetFrame
+    show(128, 14, 3)
+    let after = window.testDetailFrame
+    check("capsule: the panel's x stays when the numbers change, its top level with the capsule's",
+          before.minX == after.minX && window.testWidgetFrame == capsuleBefore && after.maxX <= capsuleBefore.minX
+          && abs(after.maxY - capsuleBefore.maxY) < 0.5 && abs(before.maxY - capsuleBefore.maxY) < 0.5)
+
+    // A spot saved by the older pill (26 pt high) right under the top edge: clamped with the capsule's size.
+    if let visible = NSScreen.main?.visibleFrame {
+        let old = NSPoint(x: visible.maxX - 38, y: visible.maxY - 26 - 2)
+        let kept = window.keptOnScreen(NSRect(origin: old, size: widgetSize))
+        let fromSpot = NSRect(origin: absoluteOrigin(relativeSpot(old, size: NSSize(width: 38, height: 26), in: visible), size: widgetSize,
+                                                     in: visible), size: widgetSize)
+        check("position: an old saved spot is clamped on screen with the new size", visible.contains(kept) && visible.contains(fromSpot)
+              && kept.maxY == visible.maxY && fromSpot.maxX == visible.maxX)
+    } else {
+        check("position: an old saved spot is clamped on screen with the new size (no screen, pure check)",
+              absoluteOrigin(NSPoint(x: 1, y: 1), size: widgetSize, in: NSRect(x: 0, y: 0, width: 1440, height: 875))
+              == NSPoint(x: 1440 - widgetWidth, y: 875 - widgetHeight))
+    }
+    check("capsule: no window was put on screen", !window.testOnScreen)
 }

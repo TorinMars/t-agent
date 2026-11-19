@@ -10,14 +10,14 @@ import Carbon  // RegisterEventHotKey: global shortcuts without the Accessibilit
 // - Global shortcuts (Carbon RegisterEventHotKey, no Accessibility permission): Ctrl+Option+T opens the panel and keeps it
 //   open (with the keyboard in the search field) until pressed again, Esc or a click elsewhere; Ctrl+Option+N opens New task.
 //   A shortcut another app holds is reported once on stderr. Never registered with --self-test or --render-sample.
-// - Fade when idle: the pill goes to idleAlpha after idleFadeDelay without the pointer over the pill or the panel, without a
-//   new notice and without a rise of the Needs you count (at once with Reduce motion).
+// - Fade when idle: the capsule goes to idleAlpha after idleFadeDelay without the pointer over the capsule or the panel, without a
+//   new notice and without a rise of the capsule's red Needs you number (at once with Reduce motion).
 // - Search: a field above the list filters the rows by title, notes and custom status (case, diacritics and width ignored).
 //   Cmd+F focuses it while the panel has the keyboard; Esc clears it, a second Esc closes the panel.
 // - Finished group: done, failed and cancelled rows under a "Finished (N)" header, collapsed by default (kept in UserDefaults);
 //   a search shows the matching finished rows.
-// - Position per display: the pill's spot is saved for each display (by its UUID, else its name and frame), as fractions of the
-//   free room so a right or bottom edge stays one; when the displays change the pill goes to the display it was last placed on
+// - Position per display: the capsule's spot is saved for each display (by its UUID, else its name and frame), as fractions of the
+//   free room so a right or bottom edge stays one; when the displays change the capsule goes to the display it was last placed on
 //   (when connected), else to the saved spot of the display it is on now, clamped into the visible frame.
 
 let prefsRetryDelay: TimeInterval = 300
@@ -69,7 +69,7 @@ extension WidgetAPI {
     var prefsRequest: URLRequest { request("GET", "/api/attention/widget/prefs") }
 }
 
-/// The opacity of the pill: idleAlpha after idleFadeDelay without activity, else 1. `active` is the pointer over the pill or
+/// The opacity of the capsule: idleAlpha after idleFadeDelay without activity, else 1. `active` is the pointer over the capsule or
 /// the panel, the panel or a bubble showing, a drag.
 func idleTargetAlpha(enabled: Bool, active: Bool, lastActivity: Date, now: Date) -> CGFloat {
     guard enabled, !active else { return 1 }
@@ -137,8 +137,8 @@ func absoluteOrigin(_ spot: NSPoint, size: NSSize, in visible: NSRect) -> NSPoin
     return clampedOrigin(NSPoint(x: origin.x.rounded(), y: origin.y.rounded()), size: size, in: visible)
 }
 
-/// The display whose saved spot the pill takes: the one it was last placed on when that is connected and has a spot, else
-/// the one it is on now when that has a spot, else none (the pill stays where it is, kept on screen).
+/// The display whose saved spot the capsule takes: the one it was last placed on when that is connected and has a spot, else
+/// the one it is on now when that has a spot, else none (the capsule stays where it is, kept on screen).
 func chooseDisplay(preferred: String?, current: String?, connected: [String], saved: Set<String>) -> String? {
     for key in [preferred, current].compactMap({ $0 }) where connected.contains(key) && saved.contains(key) { return key }
     return nil
@@ -576,7 +576,7 @@ extension WidgetController {
     }
 
     func updateIdleFade() {
-        let needs = summary?.needs.count ?? 0
+        let needs = capsuleCounts().needs ?? 0  // the capsule's red number
         if let last = partD.lastNeeds, needs > last { partD.lastActivity = now() }  // something new needs you
         partD.lastNeeds = needs
         var active = dragging || partD.pinned || overlay != nil || bubbleView != nil || detail.isVisible
@@ -607,7 +607,7 @@ extension WidgetController {
         (defaults.dictionary(forKey: "display_positions") as? [String: [String: Double]]) ?? [:]
     }
 
-    /// Saves the pill's spot for the display it is on and remembers that display.
+    /// Saves the capsule's spot for the display it is on and remembers that display.
     func saveDisplayPosition() {
         guard options.persistPosition else { return }
         let frame = widget.frame
@@ -623,7 +623,7 @@ extension WidgetController {
         defaults.set(screen.key, forKey: "display_last")
     }
 
-    /// The frame for the pill from the spots saved per display (see chooseDisplay), or nil.
+    /// The frame for the capsule from the spots saved per display (see chooseDisplay), or nil.
     func placedForDisplays() -> NSRect? {
         guard options.persistPosition else { return nil }
         let spots = savedSpots
@@ -639,7 +639,7 @@ extension WidgetController {
                                       connected: screens.map { $0.key }, saved: Set(spots.keys)),
               let screen = screens.first(where: { $0.key == key }), let spot = spots[key],
               let x = spot["x"], let y = spot["y"] else { return nil }
-        let size = NSSize(width: frame.width, height: widgetHeight)
+        let size = widgetSize  // the capsule's fixed size: a spot saved by the older, smaller pill is clamped with it
         return NSRect(origin: absoluteOrigin(NSPoint(x: x, y: y), size: size, in: screen.visible), size: size)
     }
 

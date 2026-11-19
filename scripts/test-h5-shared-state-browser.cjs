@@ -5,11 +5,15 @@
 // made on T01 shows on K01 in the same order under K01's own keys (switcher and Recent tab); the task list tab chosen on the phone follows on the
 // computer when it gets the focus again; tap to translate turned on on the computer is on on the phone; a delete on K01 leaves T01's list; the
 // columns turned on on T01, with a session in its first column, are the same columns on a computer of K01, whose first column shows that session.
+// Then the page push ("The page push" in docs/design/shared-page-state.md): each page's stream of its own engine (`?state=1`, the activity stream
+// mock) gets `event: page-state` after every change, as the server sends it; the columns turned off on T01, the task list tab chosen on the phone
+// and a session shown there follow on the other pages within 2 s, without the focus, a read or a reload.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const merge = require('../services/page-state-merge');
+const { activityStreamMock } = require('./h5-activity-stream-mock.cjs');
 const root = path.resolve(__dirname, '..');
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const T = '11111111-1111-4111-8111-111111111111';
@@ -24,14 +28,26 @@ const GROUPS = [{ key: 'doing', name: 'In progress', sort_order: 1 }];
 
 // One shared state for both engines.
 let shared = { recent: {}, keys: {} };
+let version = 1;
 const puts = [];
-function answer(instance) { return { instance_id: instance, ...merge.pageView(shared), peers: [] }; }
+const gets = [];
+function answer(instance) { return { instance_id: instance, version, ...merge.pageView(shared), peers: [] }; }
+// The page push, once turned on: after a change, every open page gets the new state on its stream (the server's follow(), 50 ms later).
+const live = { on: false, pages: [] };
+const STREAM = '/api/tasks/terminal-activity/stream';
+function pushAll() {
+  if (!live.on) return;
+  setTimeout(() => {
+    for (const { page, own } of live.pages) page.evaluate(([url, text]) => window.activityStream.send(url, 'page-state', text), [STREAM, JSON.stringify(answer(own))]).catch(() => {});
+  }, 50);
+}
 
 async function openPage(browser, { origin, own, other, otherId, otherName, viewport, touch, before = null }) {
   const context = await browser.newContext({ viewport, ...(touch ? { isMobile: true, hasTouch: true } : {}) });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(activityStreamMock);
   await page.addInitScript(seed => {
     window.WebSocket = class {
       constructor(url) { this.url = url; this.readyState = 0; setTimeout(() => { this.readyState = 1; this.onopen?.(); this.onmessage?.({ data: JSON.stringify({ type: 'history', data: '$ ', cols: 60, rows: 20 }) }); }, 0); }
@@ -51,11 +67,13 @@ async function openPage(browser, { origin, own, other, otherId, otherName, viewp
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
     if (p === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(p)) return route.fulfill({ contentType: TYPES[path.extname(p)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', p)) });
-    if (p === '/api/page-state' && method === 'GET') return json(answer(own));
+    if (p === '/api/page-state' && method === 'GET') { gets.push(origin); return json(answer(own)); }
     if (p === '/api/page-state' && method === 'PUT') {
       const body = JSON.parse(route.request().postData() || '{}');
       puts.push({ origin, body });
       shared = merge.merge(shared, merge.changeState(body, { at: Date.now() + puts.length, by: own }), Date.now()).state;
+      version += 1;
+      pushAll();
       return json(answer(own));
     }
     if (p === '/api/system/version') return json({ engine_name: own === T ? 'T01' : 'K01', instance_id: own });
@@ -163,8 +181,37 @@ async function refocus(page) {
     const mirrored = paneOf(k01pc.page, ids[0]);
     // A pane has no header of its own: the shown terminal and its target say what it shows (K01 names its own session `local`).
     await mirrored.waitForFunction(() => { const shown = window.H5UI.get().shownTarget; return document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === 'k1' && shown && shown.sourceKey === 'local' && String(shown.taskId) === '5'; }, null, { timeout: 15000 });
+    // ── The page push: the stream of this engine asks for the state; from here on every change is pushed to every open page ──
+    assert.ok(await t01.page.evaluate(url => window.activityStream.opens.some((path, i) => path === url && window.activityStream.queries[i] === '?state=1'), STREAM), 'T01 asks for the state on its own stream');
+    assert.ok(await t01.page.evaluate(() => window.activityStream.opens.every((path, i) => path.startsWith('/api/tasks/') || window.activityStream.queries[i] === '')), 'not on another engine\'s stream');
+    assert.ok(await first.evaluate(() => !window.activityStream || window.activityStream.opens.length === 0), 'a column opens no stream');
+    live.on = true;
+    live.pages = [{ page: t01.page, own: T }, { page: k01.page, own: K }, { page: k01pc.page, own: K }];
+    const getsFrom = origin => gets.filter(item => item === origin).length;
+    // T01 turns the columns off: the computer of K01 follows at once.
+    let since = Date.now();
+    await t01.page.evaluate(() => window.H5UI.actions.toggleColumns());
+    await k01pc.page.waitForFunction(() => !window.H5UI.get().columns.shown, null, { timeout: 2000 });
+    console.log(`  columns off on T01 -> the computer of K01: ${Date.now() - since} ms`);
     assert.deepEqual(k01pc.errors, [], 'no page errors on the computer of K01');
     await k01pc.context.close();
+    live.pages = live.pages.filter(item => item.page !== k01pc.page);
+
+    // The phone chooses the Sessions tab of the task list: the computer follows without the focus and without a read of its own.
+    const tReads = getsFrom('http://t01.test');
+    assert.equal(await t01.page.locator('#h5-tab-recent').getAttribute('aria-selected'), 'true');
+    await k01.page.evaluate(() => window.H5UI.actions.openTasks());
+    await k01.page.locator('#h5-tab-tasks').waitFor();
+    since = Date.now();
+    await k01.page.locator('#h5-tab-tasks').tap();
+    await t01.page.waitForFunction(() => document.getElementById('h5-tab-tasks')?.getAttribute('aria-selected') === 'true', null, { timeout: 2000 });
+    console.log(`  the task list tab on K01 (phone) -> T01: ${Date.now() - since} ms`);
+    // The phone shows a session: it is first in the Recent list of the computer.
+    since = Date.now();
+    await visit(k01.page, 'remote:3|1', 'default', 'Fix login');
+    await t01.page.waitForFunction(() => { const first = window.H5UI.get().recent[0]; return first && `${first.sourceKey}|${first.taskId}|${first.terminalId}` === 'local|1|default'; }, null, { timeout: 2000 });
+    console.log(`  a session shown on K01 (phone) -> first in T01's Recent list: ${Date.now() - since} ms`);
+    assert.equal(getsFrom('http://t01.test'), tReads, 'T01 followed by the push alone: no read of its own');
 
     // Every key the pages kept went through the registry and was declared there (public/js/local-keys.js).
     for (const [name, page] of [['T01', t01.page], ['K01', k01.page]]) {
@@ -174,7 +221,7 @@ async function refocus(page) {
     assert.deepEqual(k01.errors, [], 'no page errors on K01');
     await t01.context.close();
     await k01.context.close();
-    console.log('Shared page state: the old list imported once, the same Recent list on two engines under their own source keys, the chosen tab and tap to translate followed on focus, a delete travels, the columns and the session of a column on a computer of the other engine: passed.');
+    console.log('Shared page state: the old list imported once, the same Recent list on two engines under their own source keys, the chosen tab and tap to translate followed on focus, a delete travels, the columns and the session of a column on a computer of the other engine, and the page push (columns, the tab and the Recent list followed live within 2 s): passed.');
   } finally {
     await browser.close();
   }

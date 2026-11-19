@@ -1,7 +1,9 @@
 // A pushed terminal activity stream for the phone page browser tests (Playwright routes cannot keep a response open).
 // `await page.addInitScript(activityStreamMock)` before the page loads: fetches of `.../terminal-activity/stream` get a live
 // text/event-stream body. In the page, `window.activityStream.opens` lists the stream URLs opened, `window.activityStream.push(url, snapshot)`
-// sends `event: activity` to the newest open stream of that URL, and `window.activityStream.drop(url)` ends it (as a lost connection).
+// sends `event: activity` to the newest open stream of that URL, `window.activityStream.send(url, event, text)` any other event (such as the shared
+// page state's `page-state`), `window.activityStream.queries` lists the query of each stream opened, and `window.activityStream.drop(url)` ends it
+// (as a lost connection).
 function activityStreamMock() {
   const streams = [];
   const encoder = new TextEncoder();
@@ -9,10 +11,12 @@ function activityStreamMock() {
   const find = url => [...streams].reverse().find(entry => entry.path === url && !entry.closed);
   window.activityStream = {
     opens: [],
-    push(url, snapshot) {
+    queries: [],
+    push(url, snapshot) { return window.activityStream.send(url, 'activity', JSON.stringify(snapshot)); },
+    send(url, event, text) {
       const entry = find(url);
       if (!entry) return false;
-      entry.controller.enqueue(encoder.encode(`event: activity\ndata: ${JSON.stringify(snapshot)}\n\n`));
+      entry.controller.enqueue(encoder.encode(`event: ${event}\ndata: ${text}\n\n`));
       return true;
     },
     drop(url) {
@@ -29,6 +33,7 @@ function activityStreamMock() {
     if (!url.pathname.endsWith('/terminal-activity/stream')) return realFetch(input, init);
     const entry = { path: url.pathname, closed: false, controller: null };
     window.activityStream.opens.push(url.pathname);
+    window.activityStream.queries.push(url.search);
     const body = new ReadableStream({ start(controller) { entry.controller = controller; } });
     streams.push(entry);
     if (init.signal) {

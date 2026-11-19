@@ -39,6 +39,7 @@ test.before(async () => {
   const localApp = express();
   localApp.use(express.json());
   localApp.use('/api/tasks', require('../routes/tasks'));
+  localApp.use('/api/page-state', require('../routes/page-state').createPageStateRouter({ clientOrigin: (req, res, next) => next() }));
   localApp.use('/api/fs', require('../routes/fs-read').createFsReadRouter());
   local = await listen(localApp);
 
@@ -299,6 +300,33 @@ test('terminal activity is pushed by the local routes, the Engine and the proxy;
   assert.equal(response.status, 404);
   await response.body.cancel();
   db.prepare('DELETE FROM remote_servers WHERE id = ?').run(oldId);
+});
+
+// "The page push" in docs/design/shared-page-state.md: the top page's stream of this machine asks for `?state=1` and gets `event: page-state` (the
+// answer of GET /api/page-state) after a change of the shared page state; a stream without it (and the Engine's) never does.
+test('the local activity stream carries the shared page state with ?state=1', async () => {
+  const open = async query => {
+    const ctrl = new AbortController();
+    const response = await fetch(`${local}/api/tasks/terminal-activity/stream${query}`, { signal: ctrl.signal });
+    const reader = response.body.getReader();
+    const got = { text: '', close: () => ctrl.abort() };
+    (async () => { try { for (;;) { const { value, done } = await reader.read(); if (done) break; got.text += new TextDecoder().decode(value); } } catch { /* closed */ } })();
+    return got;
+  };
+  const withState = await open('?state=1');
+  const plain = await open('');
+  try {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const put = await fetch(`${local}/api/page-state`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: { 'h5-task-list-tab': 'recent' } }) });
+    assert.equal(put.status, 200);
+    const deadline = Date.now() + 2000;
+    while (!/event: page-state\ndata: .*\n\n/.test(withState.text) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    const pushed = JSON.parse(withState.text.match(/event: page-state\ndata: (.*)\n\n/)[1]);
+    assert.equal(pushed.keys['h5-task-list-tab'], 'recent');
+    assert.deepEqual(pushed, await (await fetch(`${local}/api/page-state`)).json(), 'the answer a read gives');
+    assert.ok(/event: activity/.test(withState.text), 'the activity is still there');
+    assert.ok(!/page-state/.test(plain.text), 'not on a stream that did not ask');
+  } finally { withState.close(); plain.close(); }
 });
 
 test('every Engine token can edit through the proxy, whatever role was requested', async () => {

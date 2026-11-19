@@ -107,6 +107,9 @@ export const initialState = () => ({
   // The copy bar (public/js/terminal-clipboard.js): { id, kind, text, preview, chars }. kind 'ask': a program's copy without a recent gesture
   // of the user, written only on Copy; kind 'tap': the browser refused a copy (page selection or program), Copy on the bar writes it.
   clipboard: null,
+  // The link bar (h5.js, docs/design/open-links.md): a web link a program in the shown terminal opened, waiting for Open.
+  // { id, url, program ('Claude' | 'Codex' | ''), more (links queued behind it), ttl, holding, round }
+  openLink: null,
   upload: null, // { status, progress, count } while images or files go up (progress of the current file: 0-100, or null when it is not known; count: { index, total } of the batch)
   retainUrl: null, // the link (several joined with spaces) of what was uploaded after its terminal went away
   pasteSheet: null, // { open } the Paste sheet (Dialogs.jsx `PasteDialog`) after the browser refused to read the clipboard (h5.js `paste`)

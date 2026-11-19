@@ -91,7 +91,7 @@ test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 test('the shims are committed executable and the folder is first in PATH with the marker', () => {
   for (const name of SHIMS) assert.ok(fs.statSync(path.join(SHIM_DIR, name)).mode & 0o111, `${name} is executable`);
   const env = clipboardShimEnv('/usr/bin:/bin', null, { env: {} });
-  assert.deepEqual(env, { PATH: `${SHIM_DIR}:/usr/bin:/bin`, TA_CLIPBOARD_OSC52: '1', HERDR_ENV: '1' });
+  assert.deepEqual(env, { PATH: `${SHIM_DIR}:/usr/bin:/bin`, TA_CLIPBOARD_OSC52: '1', HERDR_ENV: '1', BROWSER: path.join(SHIM_DIR, 'ta-browser') });
 });
 
 test('HERDR_ENV=1 is set for Codex unless the terminal already inherits a HERDR_ENV', () => {

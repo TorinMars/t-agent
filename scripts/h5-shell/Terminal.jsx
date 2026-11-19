@@ -23,7 +23,7 @@ import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches,
 // sets its mode and thumb and its ARIA values) and the copy bar.
-const TERMINAL_KEYS = ['empty', 'emptyCreate', 'input', 'clipboard'];
+const TERMINAL_KEYS = ['empty', 'emptyCreate', 'input', 'clipboard', 'openLink'];
 export function TerminalArea({ ui }) {
   const state = useStoreKeys(ui, TERMINAL_KEYS);
   countRender('TerminalArea');
@@ -52,6 +52,7 @@ export function TerminalArea({ ui }) {
           the preview, then Copy (a white filled button) and Cancel (a text button). Keyed by the request, so each new request slides in and
           pulses once (h5.css; off with reduced motion). It hides by itself after `bar.ttl`, shown by a countdown line. */}
       {state.clipboard ? <ClipboardBar key={state.clipboard.id} bar={state.clipboard} ui={ui} /> : null}
+      {state.openLink ? <OpenLinkBar key={state.openLink.id} bar={state.openLink} ui={ui} /> : null}
     </Box>
   );
 }
@@ -84,6 +85,44 @@ function ClipboardBar({ bar, ui }) {
       <span className="h5-clipboard-actions">
         <Button id="h5-clipboard-copy" size="small" variant="contained" onClick={() => ui.actions.clipboardConfirm()} sx={CLIPBOARD_COPY}>{t('Copy')}</Button>
         <Button id="h5-clipboard-cancel" size="small" color="inherit" onClick={() => ui.actions.clipboardCancel()} sx={CLIPBOARD_CANCEL}>{t('Cancel')}</Button>
+      </span>
+      <span className="h5-clipboard-timer" aria-hidden="true">
+        <span key={bar.round} className="h5-clipboard-timer-line" style={{ animationDuration: `${bar.ttl}ms` }} />
+      </span>
+    </Paper>
+  );
+}
+
+// The link bar (docs/design/open-links.md): a web link a program in this terminal opened. The copy bar's look and layout (the
+// `.h5-clipboard-*` rules), the link icon, "<Program> wants to open a link", the link on one line in monospace, then Copy, Dismiss and Open
+// (the white filled button, which opens inside its own click). "+N": more links wait behind this one. Escape inside the bar dismisses it
+// (never from the terminal: Esc belongs to the program there). It hides by itself after `bar.ttl`, held while a mouse is over it or the
+// focus is in it, like the copy bar.
+const LINK_TITLES = { Claude: 'Claude wants to open a link', Codex: 'Codex wants to open a link' };
+function OpenLinkBar({ bar, ui }) {
+  const on = useRef({ hover: false, focus: false });
+  const hold = (key, value) => { on.current[key] = value; ui.actions.openLinkHold(on.current.hover || on.current.focus); };
+  const hover = value => event => { if (event.pointerType === 'mouse') hold('hover', value); };
+  return (
+    <Paper
+      className="h5-clipboard-bar h5-open-link-bar" id="h5-open-link-bar" role="toolbar" aria-label={t('Open a link from the terminal')} elevation={8}
+      data-holding={bar.holding ? 'true' : undefined} onMouseDown={event => event.preventDefault()} sx={CLIPBOARD_BAR}
+      onPointerEnter={hover(true)} onPointerLeave={hover(false)}
+      onFocus={() => hold('focus', true)} onBlur={event => hold('focus', event.currentTarget.contains(event.relatedTarget))}
+      onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); ui.actions.openLinkDismiss(); } }}
+    >
+      <span className="h5-clipboard-icon" aria-hidden="true"><Icon name="link" size={22} /></span>
+      <span className="h5-clipboard-body">
+        <span className="h5-clipboard-title" id="h5-open-link-title">
+          {t(LINK_TITLES[bar.program] || 'A program wants to open a link')}
+          {bar.more > 0 ? <span className="h5-open-link-more" title={t('More links are waiting')}>{` +${bar.more}`}</span> : null}
+        </span>
+        <span className="h5-clipboard-preview" id="h5-open-link-url" translate="no" title={bar.url}>{bar.url}</span>
+      </span>
+      <span className="h5-clipboard-actions">
+        <Button id="h5-open-link-copy" size="small" color="inherit" onClick={() => ui.actions.openLinkCopy()} sx={CLIPBOARD_CANCEL}>{t('Copy')}</Button>
+        <Button id="h5-open-link-dismiss" size="small" color="inherit" onClick={() => ui.actions.openLinkDismiss()} sx={CLIPBOARD_CANCEL}>{t('Dismiss')}</Button>
+        <Button id="h5-open-link-open" size="small" variant="contained" onClick={() => ui.actions.openLinkOpen()} sx={CLIPBOARD_COPY}>{t('Open')}</Button>
       </span>
       <span className="h5-clipboard-timer" aria-hidden="true">
         <span key={bar.round} className="h5-clipboard-timer-line" style={{ animationDuration: `${bar.ttl}ms` }} />

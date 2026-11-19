@@ -276,7 +276,7 @@ async function desktop(browser) {
   await b.locator('#h5-more-send').click();
   await until(() => sentText(b, 'plain four'), 'Send as typed sends the text as typed');
   assert.ok(!server.translations.includes('plain four'), 'and does not translate');
-  await b.waitForFunction(() => document.activeElement && document.activeElement.closest('.xterm'), null, { timeout: 3000 });
+  await b.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-translate-input', null, { timeout: 3000 }); // the focus stays in the box after a send
   // The terminal of b changed (the cycle): its size is the new socket's.
   const after = await rows(page);
   sizes[1] = after[1].size; boxes[1] = after[1].terminal; resizeCounts[1] = after[1].resizes;

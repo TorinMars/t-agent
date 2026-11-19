@@ -3703,7 +3703,7 @@
   // (sendTyped), with no translation and no request to the translator. Both are followed by one Enter (after text already on the input line, the translation
   // goes on a new line first, so that Enter sends both). A box with only spaces sends nothing.
   // The box never blocks typing: while a translation runs the user can keep typing; after the send only the text that was sent is taken out of the box, and the
-  // keyboard is dismissed only when nothing is left. When the translation fails nothing is sent, the error is shown and the text stays in the box.
+  // focus stays in the box. When the translation fails nothing is sent, the error is shown and the text stays in the box.
   async function submitBox(translateFirst) {
     const typed = translateInput.value;
     const text = typed.trim();
@@ -3729,14 +3729,13 @@
       const now = translateInput.value; // typed on while the translation ran: keep what came after the sent text
       translateInput.value = now === typed ? '' : now.startsWith(typed) ? now.slice(typed.length) : now;
       translateForm.removeAttribute('data-hold'); // the press on the send button is over: do not keep the box shown
-      // Sent: on a touch screen the on-screen keyboard goes away and the box hides at once (no timer); the terminal is not focused. With a keyboard there is
-      // no on-screen keyboard to dismiss, and blurring would leave the focus nowhere, so the terminal takes it: its answer is right there, and the next keys
-      // (a confirmation, Ctrl+C) reach it. The box itself stays shown on a computer, ready for the next message.
-      // A column the person left while its translation ran does not take the focus back (restingColumn: not the focused column).
-      if (!translateInput.value) {
-        if (deskKeys() && target === session && !target.disposed && !restingColumn()) target.term.focus();
-        else translateInput.blur();
-      }
+      // Sent: the focus stays in the box, on a computer and on a touch screen (the user's rule, 2026-11-19), so the next message can be typed at once; on a
+      // touch screen the on-screen keyboard stays open and the box stays shown. The bar buttons keep the box's focus on press (mousedown is cancelled), and
+      // the focus is put back here in case something else took it. A column the person left while its translation ran does not take the focus back
+      // (restingColumn: not the focused column): its box is blurred instead.
+      if (target === session && !target.disposed && !restingColumn()) {
+        if (document.activeElement !== translateInput) translateInput.focus({ preventScroll: true });
+      } else if (document.activeElement === translateInput) translateInput.blur();
       autosize();
       relayoutBar();
     } catch (error) {

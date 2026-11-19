@@ -24,7 +24,7 @@
 
 | File | What is in it | Size |
 | --- | --- | --- |
-| [terminals.md](docs/design/terminals.md) | PTY lifecycle, protocol v2, ending processes, idle cost, terminal order, restore and history, agent (Claude / Codex) terminals, peer file access (MCP), activity push, file links, clipboard (OSC 52), links opened by programs. | 50 KB |
+| [terminals.md](docs/design/terminals.md) | PTY lifecycle, protocol v2, ending processes, idle cost, terminal order, restore and history, agent (Claude / Codex) terminals, a rename typed into the agent (`/rename`), peer file access (MCP), activity push, file links, clipboard (OSC 52), links opened by programs. | 55 KB |
 | [open-links.md](docs/design/open-links.md) | Web links that programs in a terminal open, opened on the person's device: the cause (Claude Code, Codex), the link shims and relay, the link bar, the Mac app handler, Home Screen apps on iOS and Android. | 11 KB |
 | [agent-chat.md](docs/design/agent-chat.md) | The conversation view of Claude Code / Codex: backends, service, approvals, the chat page. | 43 KB |
 | [tcli.md](docs/design/tcli.md) | The `tcli` command of agent sessions: environment, relay, `tcli oss`, `tcli notify`, exit codes. | 12 KB |

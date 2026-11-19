@@ -18,6 +18,7 @@ const { peerFsSettings } = require('../services/peer-fs-settings');
 const { createPresence } = require('../lib/terminal-presence');
 const { reap, reapSync } = require('../services/terminal-reaper');
 const { sharedClock } = require('../lib/terminal-poll');
+const { createAgentRenamer } = require('../lib/agent-rename');
 
 // The statements of the hot paths (the terminal list, the activity helpers, the desktop window's lookups, the socket's access check) are
 // prepared once, at their first use, and reused: db.prepare compiles the SQL again on every call. Cold paths keep their inline db.prepare.
@@ -534,9 +535,35 @@ function renameTerminal(taskId, value, requestedTitle) {
     `).run(taskId, title);
   } else {
     db.prepare('UPDATE task_terminals SET title = ?, title_custom = 1 WHERE task_id = ? AND terminal_id = ?').run(title, taskId, id);
+    const row = db.prepare('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
+    // The agent in a running Claude / Codex terminal is renamed too (typed at once, or after a permission question is answered).
+    if (row && row.agent) agentRenames.request(sessionKey(taskId, id), row.agent, title);
   }
   return { terminal_id: id, title };
 }
+
+// "Rename reaches the agent" in docs/design/terminals.md: the live shell of a terminal as lib/agent-rename.js sees it. The shell object itself
+// is the token, so a rename that waits is dropped when the terminal gets another shell (it then starts Claude with --name anyway).
+const agentRenames = createAgentRenamer({
+  probe(key) {
+    const s = sessions.get(key);
+    if (!s || !s.pty || s.startupError || s.exiting) return null;
+    return {
+      token: s,
+      state: s.activity ? s.activity.state() : 'idle',
+      awaiting: Boolean(s.activity && s.activity.awaitingAnswer()),
+      foreground: foregroundCommand(s.pty),
+    };
+  },
+  write(key, token, data) {
+    const s = sessions.get(key);
+    if (s !== token || s.exiting) return false;
+    s.activity?.noteInput();
+    s.pty.write(data);
+    return true;
+  },
+  log: message => console.warn(`[terminal] ${message}`),
+});
 
 // The history is a list of chunks, so a PTY chunk is an O(1) push. Whole chunks
 // are dropped from the front once the total is well above the limit; the exact
@@ -682,7 +709,10 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   });
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
-  s.activity = createActivityTracker(pty, shell, () => activityStream.notify());
+  s.activity = createActivityTracker(pty, shell, () => {
+    activityStream.notify();
+    agentRenames.poke(taskId); // a rename that waits for a permission question to be answered
+  });
 
   pty.onExit(() => {
     // The parser queue also owns live delivery. Drain its last bytes before
@@ -713,6 +743,7 @@ function detachSession(taskId, id, reason) {
   const session = sessions.get(key);
   if (!session) return null;
   sessions.delete(key);
+  agentRenames.cancel(key);
   endAttentionToken(taskId, id);
   activityStream.notify();
   session.snapshot.dispose();
@@ -1244,6 +1275,7 @@ function closeTaskTerminals(taskId) {
 function shutdownTerminals() {
   try {
     const live = [...sessions.values(), ...ending];
+    agentRenames.stop();
     sessions.clear();
     ending.clear();
     reapSync(live.map(session => session.pty && session.pty.pid));

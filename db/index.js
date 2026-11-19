@@ -45,6 +45,8 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 require('../services/learn-sync-store').ensureSyncSchema(db);
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
+// Every key of system_state and engine_identity is declared with its scope (lib/server-state-keys.js); a row with any other key is refused.
+require('../lib/server-state-keys').guard(db);
 
 const { randomUUID } = require('crypto');
 const identity = db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get();

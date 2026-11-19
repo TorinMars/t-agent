@@ -194,3 +194,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.141.0 Learn English: a Learn destination with study cards from the person's own translated sentences and looked-up words plus a Programmer English starter list; spaced review, Spell the word, Build the sentence, Dictation, Say it, Fill the gap and Mistakes; progress stored on the server (schema 13)
 > v2.141.1 Renaming a Claude or Codex session row also renames the agent session (/rename typed into its terminal at once; it waits only while a permission question is shown or the agent is not in the foreground)
 > v2.141.2 Keep the focus in the draft box after a send; Mac app title bar in the page's colour
+> v2.142.0 English learning: progress shared across linked engines, company computers keep only a card cache; the page's own keyboard and kept focus on Learn

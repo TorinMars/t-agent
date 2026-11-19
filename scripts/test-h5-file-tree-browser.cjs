@@ -132,7 +132,7 @@ const watchSlides = page => page.evaluate(() => {
 // screen: the left edge and the width of the terminal area.
 async function assertTopSheet(page, selector, label) {
   await settled(page, selector);
-  const { vw, vh, box, terminal, anchored, sidePanel, covered, backdrop } = await page.evaluate(sel => {
+  const { vw, vh, box, terminal, anchored, covered, backdrop } = await page.evaluate(sel => {
     const node = document.querySelector(sel);
     const r = node.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
@@ -140,7 +140,7 @@ async function assertTopSheet(page, selector, label) {
     return {
       vw: innerWidth, vh: innerHeight, box: { x: r.x, y: r.y, width: r.width, height: r.height },
       terminal: (({ x, width }) => ({ x, width }))(document.getElementById('h5-terminal').getBoundingClientRect()),
-      anchored: Boolean(node.closest('.MuiDrawer-anchorTop')), sidePanel: document.documentElement.hasAttribute('data-side-panel'),
+      anchored: Boolean(node.closest('.MuiDrawer-anchorTop')),
       covered: Boolean(hit && node.contains(hit)), backdrop: Boolean(below && below.classList.contains('MuiBackdrop-root')),
     };
   }, selector);
@@ -150,7 +150,6 @@ async function assertTopSheet(page, selector, label) {
   assert.ok(Math.abs(box.width - expected.width) <= 0.5 && Math.abs(box.x - expected.x) <= 0.5, `${label}: in line with ${vw >= 900 ? 'the terminal area' : 'the window'} (sheet ${JSON.stringify(box)}, expected ${JSON.stringify(expected)})`);
   assert.ok(covered, `${label}: nothing lies over the sheet`);
   assert.ok(backdrop, `${label}: the strip below the sheet is the dimmed backdrop`);
-  assert.equal(sidePanel, false, `${label}: the page makes no room for the sheet`);
 }
 // The sheet left through the top of the screen (a negative translateY).
 const assertSlidUp = async (page, label) => assert.ok((await page.evaluate(() => window.slides)).some(value => /translateY\(-\d/.test(value)), `${label}: left through the top`);
@@ -253,17 +252,18 @@ async function checkTerminalAlignment(browser) {
     await close();
     await page.locator('#h5-sidebar-toggle').click();
 
-    // The T-Attention panel gives way to a sheet (attention-feed.mjs): opening one closes it, so the terminal is wide again and the sheet takes that width.
-    await page.locator('#h5-more').click(); // T-Attention is an item of More tools on the computer row
-    await page.locator('#h5-attention').click();
-    await page.waitForFunction(() => document.documentElement.hasAttribute('data-side-panel'));
-    await open();
-    await page.waitForFunction(() => !document.documentElement.hasAttribute('data-side-panel'));
+    // The T-Attention side sheet gives way to a sheet (attention-feed.mjs): opening one closes it. The side sheet floats over the page, so the terminal
+    // keeps its width either way. With it open, a press outside would only close it, so the sheet is opened from the store.
+    await page.evaluate(() => window.H5UI.actions.openAttention());
+    await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
+    await page.evaluate(name => (name === 'file tree' ? window.H5UI.actions.openFiles() : window.H5UI.actions.openDesign()), view.name);
+    await page.locator(view.selector).waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !window.H5UI.get().attention.open);
     await assertAligned(page, view.selector, `${view.name}, opened from the T-Attention panel`, SIDEBAR, 1440 - SIDEBAR);
-    // Any column that narrows the terminal from the right is followed too (the panel's own layout rule, set by hand: it cannot open over a modal sheet).
-    await page.evaluate(() => document.documentElement.setAttribute('data-side-panel', ''));
+    // Any column that narrows the terminal from the right is followed too (set by hand on the page box).
+    await page.evaluate(() => { document.getElementById('h5-app').style.right = '560px'; });
     await assertAligned(page, view.selector, `${view.name}, a column on the right`, SIDEBAR, 1440 - SIDEBAR - 560);
-    await page.evaluate(() => document.documentElement.removeAttribute('data-side-panel'));
+    await page.evaluate(() => { document.getElementById('h5-app').style.right = ''; });
     await assertAligned(page, view.selector, `${view.name}, the column gone`, SIDEBAR, 1440 - SIDEBAR);
     await close();
 

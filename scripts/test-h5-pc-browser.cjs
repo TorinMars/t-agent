@@ -270,7 +270,6 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.ok(Math.abs(panel.y) <= 1 && Math.abs(panel.height - viewport.height * 0.88) <= 2, `${label}: 88% of the height, at the top (${JSON.stringify(panel)})`);
       assert.ok(Math.abs(panel.width - terminalBox.width) <= 0.5 && Math.abs(panel.x - terminalBox.x) <= 0.5, `${label}: in line with the terminal area (${JSON.stringify({ panel, terminalBox })})`);
       assert.equal(await page.evaluate(() => Boolean(document.querySelector('.h5-design-panel').closest('.MuiDrawer-anchorTop'))), true, `${label}: anchored to the top`);
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-side-panel')), false, `${label}: the page makes no room for it`);
       assert.deepEqual(await page.locator('#h5-app').boundingBox(), app, `${label}: the page behind is not resized`);
       assert.ok(await page.locator('#h5-design-sheet .MuiBackdrop-root').isVisible(), `${label}: the page is dimmed`);
       assert.equal((await resizes(page)).at(-1).cols, colsBefore, `${label}: no terminal refit`);

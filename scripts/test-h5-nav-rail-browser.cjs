@@ -151,10 +151,9 @@ async function openTerminal(page, task, terminal, how = 'click') {
       await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#h5-nav-attention').getAttribute('aria-expanded'), 'true');
       assert.equal(await page.locator('#h5-nav-attention').getAttribute('data-active'), '');
-      const panel = await rect(page, '#h5-attention-sheet .h5-attention-panel');
-      assert.equal((await rect(page, '#h5-app')).right, panel.x, 'the page ends where the panel starts');
+      assert.equal((await rect(page, '#h5-app')).right, 1440, 'the panel floats over the page, which keeps its full width');
       assert.deepEqual(await current(page), ['h5-nav-sessions'], 'the panel is not a page');
-      await page.locator('#h5-nav-attention').click();
+      await page.locator('#h5-nav-attention').click({ force: true }); // the panel's outside layer takes the press and closes it
       await page.waitForFunction(() => !window.H5UI.get().attention.open);
       assert.equal(await page.locator('#h5-nav-attention').getAttribute('aria-expanded'), 'false');
 
@@ -166,7 +165,7 @@ async function openTerminal(page, task, terminal, how = 'click') {
       await page.locator('#h5-nav-attention').click();
       await page.waitForFunction(() => !window.H5UI.get().settingsOpen && window.H5UI.get().attention.open);
       assert.deepEqual(await current(page), ['h5-nav-sessions']);
-      await page.locator('#h5-nav-attention').click();
+      await page.locator('#h5-nav-attention').click({ force: true });
       await page.waitForFunction(() => !window.H5UI.get().attention.open);
       await page.locator('#h5-nav-settings').click();
       await page.waitForFunction(() => window.H5UI.get().settingsOpen);

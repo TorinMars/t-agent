@@ -51,7 +51,6 @@ const SWITCHER_KEYS = ['switcher']; // the open switcher reads the rest itself (
 const OPEN = state => ({
   tasksModal: state.tasksOpen && !state.wide,
   folded: state.wide && state.sidebarCollapsed,
-  sidePanel: state.wide && Boolean(state.attention && state.attention.open),
   settings: state.settingsOpen,
   menu: Boolean(state.menu),
   copy: state.copyText !== null,
@@ -73,7 +72,7 @@ const OPEN = state => ({
 export function App({ ui }) {
   const open = useStore(ui, OPEN, shallowEqual);
   countRender('App');
-  const { tasksModal, folded, sidePanel } = open;
+  const { tasksModal, folded } = open;
   useLayoutEffect(() => {
     document.body.classList.toggle('h5-tasks-open', tasksModal);
     const chat = document.getElementById('h5-agent');
@@ -83,13 +82,13 @@ export function App({ ui }) {
       if (chat) chat.inert = false;
     };
   }, [tasksModal]);
-  // The wide layout's folded sidebar and the right side panel (T-Attention) change the page's side offsets in h5.css (with the navigation rail, which sets
-  // `data-nav-rail` itself: left to right, the rail, the task list, then the header, terminal and bottom row; "Page layout" in docs/design/page-navigation.md).
+  // The wide layout's folded sidebar changes the page's left offset in h5.css (with the navigation rail, which sets `data-nav-rail` itself: left to
+  // right, the rail, the task list, then the header, terminal and bottom row; "Page layout" in docs/design/page-navigation.md). The T-Attention side
+  // sheet floats over the page and changes no offset.
   useLayoutEffect(() => {
     document.documentElement.toggleAttribute('data-sidebar-collapsed', folded);
-    document.documentElement.toggleAttribute('data-side-panel', sidePanel);
     measureTerminalBox(); // in the same frame as the new layout
-  }, [folded, sidePanel]);
+  }, [folded]);
   // The top sheets line up with the terminal area on a wide screen (terminal-box.mjs). It always runs, so a sheet has the right place from its first frame.
   useLayoutEffect(() => trackTerminalBox(), []);
   return (

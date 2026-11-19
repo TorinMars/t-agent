@@ -1,8 +1,10 @@
-// The session switcher ("Session switcher" in docs/design/session-switcher.md): the switch button (`#h5-cycle`, Terminal.jsx) opens a stack of the
-// recently shown sessions, like the iPhone app switcher. The current session is the top card, peeking in from the right; the previous one is centred;
-// older ones lie behind it to the left, each a little smaller and darker. Above each card: what the session is (Claude / Codex / shell), its device
-// tag, its name and its state dot; inside: its last lines; at the bottom: the task, the state and "Current". A session that needs the person has an
-// orange edge. A swipe or a drag, a sideways scroll or the arrow keys move the stack; it settles with one card centred. A tap on a card, Enter or
+// The session switcher ("Session switcher" in docs/design/session-switcher.md): the switch button (`#h5-cycle`, Terminal.jsx) opens the recently
+// shown sessions. On a phone-sized area a stack like the iPhone app switcher: the current session is the top card, peeking in from the right; the
+// previous one is centred; older ones lie behind it to the left, each a little smaller and darker. Above each card: what the session is (Claude /
+// Codex / shell), its device tag, its name and its state dot; inside: its last lines; at the bottom: the task, the state and "Current". A swipe or a
+// drag, a sideways scroll or the arrow keys move the stack; it settles with one card centred. On a wider area ("The wide row") a row of cards that do
+// not overlap, most recent first from the left (the current one, then the selected previous one, then older ones), each with a header that names its
+// task; the row scrolls sideways and keeps the selected card in view. A session that needs the person has an orange edge. A tap on a card, Enter or
 // another press of the switch button switches to it (the card grows into the page) and closes; a tap on the empty space, Escape, the back button
 // (back.mjs: a layer) or a downward swipe close without switching.
 // It covers the terminal area on a computer (between the header and the bottom row) and the header, the terminal and the key row on a touch screen,
@@ -14,12 +16,12 @@ import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { alpha, lighten } from '@mui/material/styles';
+import { alpha, getOverlayAlpha, lighten } from '@mui/material/styles';
 import { Pill, deviceText, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { DeviceTag, SessionKindIcon } from './TaskDrawer.jsx';
 import { columnStatus } from './columns.mjs';
-import { cardPlace, recentKey, recentTaskRef, settleIndex, startIndex, switcherCards } from './recent-sessions.mjs';
+import { cardPlace, recentKey, recentTaskRef, rowPick, rowScrollFor, settleIndex, startIndex, switcherCards, switcherRow } from './recent-sessions.mjs';
 import { useStoreKeys } from './use-store.mjs';
 
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
@@ -34,6 +36,9 @@ const SETTLE_MS = 140; // a sideways scroll settles this long after its last ste
 const TITLE_SPACE = 56; // the title row
 const LABEL_SPACE = 34; // the line above a card
 const ICON = 24;
+const HEAD = 52; // the header of a card in the wide row
+// The MD2 dark theme's elevation overlay: the header of a wide card is the surface at 8dp, a step lighter than the card's own page.
+const overlay = (theme, dp) => { const tint = alpha(theme.palette.common.white, Number(getOverlayAlpha(dp))); return `linear-gradient(${tint}, ${tint})`; };
 const MONO = 'ui-monospace, Menlo, Consolas, monospace';
 
 // Drawn by App.jsx from the lazy chunk (lazy-screens.jsx) with the `switcher` key only: closed, it draws nothing and reads nothing else.
@@ -80,6 +85,7 @@ function geometry(area) {
   const centreX = Math.round((area.width - cardW) / 2 - (narrow ? 0 : 40));
   return { narrow, cardW, cardH, step, offset, top, centreX, far: area.width };
 }
+const isWide = area => area.width >= 600; // the other side of `narrow` in geometry()
 
 // A hint with the switch button's icon in place of "⇋" (the translated text keeps the mark where its language puts it).
 function withSwitchIcon(text) {
@@ -113,6 +119,14 @@ function OpenSwitcher({ ui, switcher }) {
   const wheel = useRef({ timer: 0 });
   const count = cards.length;
   const centred = settleIndex(pos, count);
+  // The wide row (an area of 600px and more): its sizes, its scroller and the scroll position a growing card starts from.
+  const wide = !!area && isWide(area);
+  const row = useMemo(() => (area && isWide(area) ? switcherRow(area, count) : null), [area, count]);
+  const scrollerRef = useRef(null);
+  const handScroll = useRef(false); // the selection follows a scroll by hand: that does not scroll the row again
+  const scrolledOnce = useRef(false);
+  const scrollTimer = useRef(0);
+  const leaveScroll = useRef(0);
 
   const statusOf = card => columnStatus({ target: card }, { activity: state.terminalActivity, items: state.attention && state.attention.items }).state;
 
@@ -121,6 +135,7 @@ function OpenSwitcher({ ui, switcher }) {
     const card = cards[index];
     if (!card || leavingRef.current !== null) { if (!card) close(); return; }
     leavingRef.current = index;
+    leaveScroll.current = scrollerRef.current ? scrollerRef.current.scrollLeft : 0;
     setLeaving(index);
     const done = () => {
       document.getElementById('h5-cycle')?.focus({ preventScroll: true }); // the focus leaves the stack before it goes (the terminal may take it next)
@@ -146,6 +161,16 @@ function OpenSwitcher({ ui, switcher }) {
     const active = document.activeElement;
     if (!active || active === document.body || root.contains(active)) (card || root).focus({ preventScroll: true });
   }, [centred, area]);
+  // The wide row keeps the selected card in view (at once when it opens, smoothly after a key), unless the selection followed a scroll by hand.
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!row || !scroller || leavingRef.current !== null) return;
+    if (handScroll.current) { handScroll.current = false; return; }
+    const left = rowScrollFor(row, centred, scroller.scrollLeft, scroller.clientWidth);
+    if (Math.abs(left - scroller.scrollLeft) >= 1) scroller.scrollTo({ left, behavior: reduced || !scrolledOnce.current ? 'auto' : 'smooth' });
+    scrolledOnce.current = true;
+  }, [centred, row, reduced]);
+  useEffect(() => () => clearTimeout(scrollTimer.current), []);
   useLayoutEffect(() => () => {
     const active = document.activeElement;
     const root = rootRef.current;
@@ -158,6 +183,14 @@ function OpenSwitcher({ ui, switcher }) {
     if (!root || !area) return undefined;
     const { step } = geometry(area);
     const onWheel = event => {
+      if (isWide(area)) {
+        // The row scrolls itself sideways (trackpad, a tilting wheel); an upright wheel scrolls it too.
+        const scroller = scrollerRef.current;
+        if (!scroller || leavingRef.current !== null || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+        event.preventDefault();
+        scroller.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientWidth : 1);
+        return;
+      }
       const dx = event.deltaX * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? step : 1);
       if (!dx || Math.abs(event.deltaX) < Math.abs(event.deltaY) || leavingRef.current !== null) return;
       event.preventDefault();
@@ -179,8 +212,9 @@ function OpenSwitcher({ ui, switcher }) {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return; }
     if (event.key === 'Tab') { event.preventDefault(); return; } // one stop: the centred card (a modal keeps the focus)
     if (leavingRef.current !== null) return;
-    if (event.key === 'ArrowLeft') { event.preventDefault(); go(centred + 1); } // the older cards lie to the left
-    else if (event.key === 'ArrowRight') { event.preventDefault(); go(centred - 1); }
+    // The older cards lie to the left in the stack, to the right in the wide row.
+    if (event.key === 'ArrowLeft') { event.preventDefault(); go(wide ? centred - 1 : centred + 1); }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); go(wide ? centred + 1 : centred - 1); }
     else if (event.key === 'Home') { event.preventDefault(); go(0); }
     else if (event.key === 'End') { event.preventDefault(); go(count - 1); }
     else if (event.key === 'Enter' && !event.target.closest('.h5-switcher-card')) { event.preventDefault(); choose(centred); } // a card's own Enter is its click
@@ -188,7 +222,7 @@ function OpenSwitcher({ ui, switcher }) {
   const onPointerDown = event => {
     if (leavingRef.current !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
     dragged.current = false;
-    gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pos: posRef.current, axis: null, touch: event.pointerType !== 'mouse', lastX: event.clientX, lastT: event.timeStamp, v: 0 };
+    gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pos: posRef.current, axis: null, touch: event.pointerType !== 'mouse', lastX: event.clientX, lastT: event.timeStamp, v: 0, scroll: scrollerRef.current ? scrollerRef.current.scrollLeft : 0 };
   };
   const onPointerMove = event => {
     const s = gesture.current;
@@ -199,10 +233,13 @@ function OpenSwitcher({ ui, switcher }) {
       if (Math.hypot(dx, dy) < 8) return;
       s.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
       dragged.current = true;
-      try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* the pointer is gone */ }
+      // A finger moving the wide row sideways is the browser's own scroll (it cancels this pointer): nothing to capture.
+      if (!(wide && s.axis === 'x' && s.touch)) { try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* the pointer is gone */ } }
       setDragging(true);
     }
-    if (s.axis === 'x') {
+    if (s.axis === 'x' && wide) {
+      if (!s.touch && scrollerRef.current) scrollerRef.current.scrollLeft = s.scroll - dx; // a mouse drag scrolls the row
+    } else if (s.axis === 'x') {
       const dt = Math.max(1, event.timeStamp - s.lastT);
       s.v = (event.clientX - s.lastX) / dt;
       s.lastX = event.clientX;
@@ -221,6 +258,7 @@ function OpenSwitcher({ ui, switcher }) {
     gesture.current = null;
     if (!s.axis) return;
     setDragging(false);
+    if (s.axis === 'x' && wide) return; // the row stays where it was scrolled
     if (s.axis === 'x') {
       const flick = Math.abs(s.v) > 0.5 ? Math.sign(s.v) * 0.5 : 0; // a quick flick goes on to the next card
       setPos(settleIndex(posRef.current + flick, count));
@@ -230,6 +268,18 @@ function OpenSwitcher({ ui, switcher }) {
       if (down) close();
     }
   };
+  // A scroll of the wide row by hand (wheel, trackpad, drag, finger): once it rests, a selected card that went out of view gives the selection to the
+  // card most in view, so the switch button's next press goes to a card that can be seen.
+  const onRowScroll = () => {
+    clearTimeout(scrollTimer.current);
+    scrollTimer.current = setTimeout(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || !row || leavingRef.current !== null) return;
+      const selected = settleIndex(posRef.current, count);
+      const next = rowPick(row, selected, scroller.scrollLeft, scroller.clientWidth);
+      if (next !== selected) { handScroll.current = true; setPos(next); }
+    }, SETTLE_MS);
+  };
   const onBackdropClick = event => {
     if (dragged.current) { dragged.current = false; return; }
     if (!event.target.closest('.h5-switcher-card') && leavingRef.current === null) close();
@@ -238,7 +288,7 @@ function OpenSwitcher({ ui, switcher }) {
   const motion = reduced || dragging ? 'none'
     : 'transform 200ms cubic-bezier(0.4, 0, 0.2, 1), left 200ms cubic-bezier(0.4, 0, 0.2, 1), top 200ms cubic-bezier(0.4, 0, 0.2, 1), width 200ms cubic-bezier(0.4, 0, 0.2, 1), height 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms linear';
   const lineHeight = 1.6;
-  const previewRows = Math.max(1, Math.floor((g.cardH - 24 - 40) / (12 * lineHeight)));
+  const previewRows = Math.max(1, Math.floor(((row ? row.cardH - HEAD : g.cardH - 40) - 24) / (12 * lineHeight)));
   const empty = count < 2;
 
   const content = (
@@ -248,7 +298,7 @@ function OpenSwitcher({ ui, switcher }) {
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
       sx={theme => ({
         position: 'fixed', left: area.left, top: area.top, width: area.width, height: area.height, zIndex: 1100, overflow: 'hidden', outline: 'none',
-        color: 'text.primary', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
+        color: 'text.primary', touchAction: wide ? 'pan-x' : 'none', userSelect: 'none', WebkitUserSelect: 'none',
         background: `radial-gradient(90% 80% at 50% 45%, ${lighten(theme.palette.background.default, 0.12)} 0%, ${theme.palette.background.default} 75%)`,
         animation: reduced ? 'none' : 'h5-switcher-in 150ms cubic-bezier(0, 0, 0.2, 1)',
         '@keyframes h5-switcher-in': { from: { opacity: 0 }, to: { opacity: 1 } },
@@ -258,7 +308,24 @@ function OpenSwitcher({ ui, switcher }) {
         {t('Recent sessions')}
       </Typography>
       <Box className="h5-switcher-stack" sx={{ position: 'absolute', inset: 0, transform: pull ? `translateY(${pull / 2}px)` : 'none', opacity: pull ? Math.max(0.4, 1 - pull / 300) : 1 }}>
-        {cards.map((card, index) => {
+        {row ? (
+          // The wide row: a sideways scroller over the whole area (its empty space still closes the switcher), the cards at their places in it.
+          <Box
+            ref={scrollerRef} className="h5-switcher-row" onScroll={onRowScroll}
+            sx={{ position: 'absolute', inset: 0, overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none', overscrollBehaviorX: 'contain', touchAction: 'pan-x' }}
+          >
+            <Box sx={{ position: 'relative', width: row.contentW, height: '100%' }}>
+              {cards.map((card, index) => (
+                <WideCard
+                  key={recentKey(card)} card={card} index={index} row={row} area={area} status={statusOf(card)} taskRow={tasks.get(recentTaskRef(card))}
+                  preview={(switcher.previews || {})[recentKey(card)]} previewRows={previewRows} selected={index === centred} leaving={leaving}
+                  growLeft={leaveScroll.current} motion={motion} reduced={reduced} cardRef={el => { cardRefs.current[index] = el; }}
+                  onChoose={() => { if (dragged.current) { dragged.current = false; return; } choose(index); }}
+                />
+              ))}
+            </Box>
+          </Box>
+        ) : cards.map((card, index) => {
           const rel = index - pos;
           const place = cardPlace(rel, { step: g.step, offset: g.offset, far: g.far });
           const status = statusOf(card);
@@ -343,7 +410,7 @@ function OpenSwitcher({ ui, switcher }) {
         <Typography variant="body2" color="text.secondary" sx={{ position: 'absolute', left: 16, right: 16, top: '45%', textAlign: 'center' }}>{t('No other recent sessions')}</Typography>
       )}
       {/* The position dots (oldest on the left, as the stack lies) and the hint. */}
-      {count > 1 ? (
+      {count > 1 && !row ? (
         <Box className="h5-switcher-dots" aria-hidden="true" sx={{ position: 'absolute', left: 0, right: 0, bottom: g.narrow ? 34 : 48, display: 'flex', justifyContent: 'center', gap: 0.75, pointerEvents: 'none' }}>
           {cards.map((card, index) => count - 1 - index).map(index => (
             <Box key={index} data-index={index} sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: index === centred ? 'primary.main' : 'action.disabled' }} />
@@ -372,6 +439,73 @@ function OpenSwitcher({ ui, switcher }) {
     </Box>
   );
   return createPortal(content, document.body);
+}
+
+// A card of the wide row: a header that names the task (the agent's tile, the task as the title, then the device tag, the session, the state dot and
+// word), "Current" on the current card, then the preview lines or the quiet placeholder. The selected card has the primary edge (it holds the focus),
+// one that needs the person the orange one.
+function WideCard({ card, index, row, area, status, taskRow, preview, previewRows, selected, leaving, growLeft, motion, reduced, cardRef, onChoose }) {
+  const device = taskRow ? taskRow.device : null;
+  const taskTitle = (taskRow && taskRow.title) || '';
+  const name = card.title || t(kindOf(card.agent));
+  const heading = taskTitle || name;
+  const lines = preview && Array.isArray(preview.lines) ? preview.lines.slice(-previewRows) : [];
+  const grow = leaving === index;
+  const label = [device ? deviceText(device) : '', name, taskTitle, t(STATE_WORDS[status]), card.current ? t('Current') : ''].filter(Boolean).join(', ');
+  const edge = selected ? 'primary' : status === 'waiting' ? 'warning' : null;
+  const lineHeight = 1.6;
+  return (
+    <ButtonBase
+      ref={cardRef} className="h5-switcher-card" disableRipple
+      data-key={recentKey(card)} data-index={index} data-status={status} data-centred={selected ? 'true' : undefined} data-current={card.current ? 'true' : undefined}
+      aria-label={label} aria-current={card.current ? 'true' : undefined} tabIndex={selected ? 0 : -1}
+      onClick={event => { event.stopPropagation(); onChoose(); }}
+      sx={{
+        position: 'absolute', display: 'block', textAlign: 'left', p: 0,
+        left: grow ? growLeft : row.xs[index], top: grow ? 0 : row.top, width: grow ? area.width : row.cardW, height: grow ? area.height : row.cardH,
+        zIndex: grow ? 100 : 1, transition: motion, opacity: leaving !== null && !grow ? 0 : 1,
+        outline: 'none', // the selected card's primary edge shows the focus: no second ring
+      }}
+    >
+      <Box
+        className="h5-switcher-body"
+        sx={theme => ({
+          position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: grow ? 0 : 2, bgcolor: 'background.default',
+          boxShadow: `${edge ? `0 0 0 2px ${theme.palette[edge].main}` : `0 0 0 1px ${theme.palette.divider}`}, ${theme.shadows[8]}`,
+          transition: reduced ? 'none' : 'border-radius 200ms cubic-bezier(0.4, 0, 0.2, 1)',
+        })}
+      >
+        <Box
+          className="h5-switcher-head"
+          sx={theme => ({ flex: `0 0 ${HEAD}px`, display: 'flex', alignItems: 'center', gap: 1.25, px: 1.5, bgcolor: 'background.paper', backgroundImage: overlay(theme, 8), borderBottom: 1, borderColor: 'divider' })}
+        >
+          <SessionKindIcon agent={card.agent} title={t(kindOf(card.agent))} size={28} />
+          <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+            <Typography component="div" variant="subtitle1" className="h5-switcher-task" title={heading} sx={{ fontWeight: 500, lineHeight: 1.4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{heading}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, height: 20, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              {device ? <DeviceTag device={device} /> : null}
+              <Typography component="span" variant="caption" className="h5-switcher-name" sx={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: 'text.secondary' }}>{name}</Typography>
+              <Box component="span" className="h5-switcher-dot" sx={{ flex: '0 0 auto', width: 6, height: 6, borderRadius: '50%', bgcolor: STATE_DOT[status] }} />
+              <Typography component="span" variant="caption" className="h5-switcher-state" sx={{ flex: '0 0 auto', color: STATE_TEXT[status] }}>{t(STATE_WORDS[status])}</Typography>
+            </Box>
+          </Box>
+        </Box>
+        <Box sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
+          {card.current ? <Pill className="h5-switcher-current" label={t('Current')} filled sx={{ position: 'absolute', top: 8, right: 8, zIndex: 1, height: 20, px: 1, typography: 'caption', lineHeight: 1 }} /> : null}
+          {lines.length ? (
+            <Box className="h5-switcher-lines" translate="no" sx={{ p: 1.5, typography: 'caption', fontFamily: MONO, lineHeight, color: 'text.primary', overflow: 'hidden' }}>
+              {lines.map((line, at) => <Box key={at} sx={{ whiteSpace: 'pre', overflow: 'hidden', minHeight: `${lineHeight}em` }}>{line}</Box>)}
+            </Box>
+          ) : (
+            <Box className="h5-switcher-placeholder" sx={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, color: 'text.disabled' }}>
+              <SessionKindIcon agent={card.agent} size={40} />
+              <Typography variant="caption" color="text.secondary">{t('No preview yet')}</Typography>
+            </Box>
+          )}
+        </Box>
+      </Box>
+    </ButtonBase>
+  );
 }
 
 function Keys({ keys }) {

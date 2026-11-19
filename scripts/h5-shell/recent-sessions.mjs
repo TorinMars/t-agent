@@ -89,5 +89,37 @@ export function cardPlace(rel, { step, offset, far = offset, shrink = 0.04, dark
   return { x: offset + (-rel - 1) * far, scale: 1, dim: 0 };
 }
 
+// The row of the wide switcher: the cards side by side, most recent first from the left, `gap` px apart, never overlapping. The card height follows
+// the area (two thirds of it, within the space between the title and the hint), the width is 0.65 of the height, 280 to 380 px, so a wider window
+// shows more cards. `xs` are the cards' left edges in the row, `contentW` the row's whole width.
+export function switcherRow({ width, height }, count, { pad = 24, gap = 20, top = 86, foot = 56 } = {}) {
+  const avail = Math.max(0, height - top - foot);
+  const cardH = Math.max(160, Math.min(avail, Math.round(height * 0.66)));
+  const cardW = Math.max(280, Math.min(380, Math.round(cardH * 0.65)));
+  const xs = Array.from({ length: count }, (_, index) => pad + index * (cardW + gap));
+  return { cardW, cardH, top, pad, gap, xs, contentW: count ? pad * 2 + count * cardW + (count - 1) * gap : width };
+}
+
+// The scroll position of the row that shows card `index` whole (with the side padding), moving as little as possible from `scroll`.
+export function rowScrollFor(row, index, scroll, width) {
+  const left = row.xs[index];
+  if (left === undefined) return scroll;
+  let next = scroll;
+  if (left + row.cardW + row.pad > next + width) next = left + row.cardW + row.pad - width;
+  if (left - row.pad < next) next = left - row.pad;
+  return Math.max(0, Math.min(Math.max(0, row.contentW - width), next));
+}
+
+// The card to select after the row was scrolled by hand: the selected one while at least 60% of it is in view, else the one most in view (the
+// leftmost of equals).
+export function rowPick(row, selected, scroll, width) {
+  const seen = left => Math.max(0, Math.min(left + row.cardW, scroll + width) - Math.max(left, scroll)) / row.cardW;
+  if (row.xs[selected] !== undefined && seen(row.xs[selected]) >= 0.6) return selected;
+  let best = selected;
+  let most = -1;
+  row.xs.forEach((left, index) => { const part = seen(left); if (part > most + 1e-9) { most = part; best = index; } });
+  return best;
+}
+
 // The centred card after a drag or a key: the nearest whole index inside the stack.
 export const settleIndex = (position, count) => Math.max(0, Math.min(Math.max(0, count - 1), Math.round(Number(position) || 0)));

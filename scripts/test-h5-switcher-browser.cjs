@@ -1,11 +1,14 @@
 // The session switcher (Switcher.jsx, "Session switcher" in docs/design/session-switcher.md) in real Chromium with mocked servers, on a phone
-// (390x844, touch) and a computer (1440x900, a mouse): the switch button (#h5-cycle) opens a stack of the recently shown sessions with the previous one
-// centred and the current one on top at the right, labels above the cards, an orange edge on a session that needs the person, the preview lines of
-// warm terminals and of one closed earlier; a swipe, a sideways scroll and the arrow keys move it; a tap, Enter or another press switches (task and
-// terminal shown), two quick presses go back and forth; Escape, Back, the empty space and a downward swipe close without switching and give the focus
-// back to the button. No count on the button; on a computer it is a button of the row (not in "More tools") that stays in the narrow row. A pane has
-// no switcher. A session of another engine (K01) is a card too, and the list is remembered on the device.
-// H5_SHOT_DIR=<dir> saves screenshots there (phone: first press, after a swipe; computer: open).
+// (390x844, touch) and a computer (1440x900, a mouse). Phone: the switch button (#h5-cycle) opens a stack of the recently shown sessions with the
+// previous one centred and the current one on top at the right, labels above the cards, an orange edge on a session that needs the person, the preview
+// lines of warm terminals and of one closed earlier; a swipe moves it; a tap or another press switches (task and terminal shown), two quick presses go
+// back and forth; Back, the empty space and a downward swipe close without switching and give the focus back to the button. Computer ("The wide
+// row"): a row of cards side by side without overlap, most recent first from the left, the previous one selected, each card's header naming its task,
+// the session and the state; a wider window shows more cards; the arrow keys move the selection along the row and scroll it into view; an upright
+// wheel and a mouse drag scroll the row; Enter, a second press of the button and a click switch; Escape and the empty space close. No count on the
+// button; on a computer it is a button of the row (not in "More tools") that stays in the narrow row. A pane has no switcher. A session of another
+// engine (K01) is a card too, and the list is remembered on the device.
+// H5_SHOT_DIR=<dir> saves screenshots there (phone: first press, after a swipe; computer: open at 1440x900, open at 1920x1080 with the sidebar folded).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -96,17 +99,32 @@ async function visitAll(page) {
 }
 const switcher = page => page.locator('#h5-switcher');
 const hint = async page => (await page.locator('.h5-switcher-hint').textContent()).replace(/\s+/g, ' ').trim(); // the icon stands for the button
-// The cards: index, key, centred, current, status, name (none behind), box, edge colour, preview text.
+// The cards: index, key, centred, current, status, name (none behind in the stack), box, edge colour, preview text; in the wide row also the header's
+// task title (and its tooltip), its state word and where the "Current" pill sits.
 const cards = page => page.evaluate(() => [...document.querySelectorAll('#h5-switcher .h5-switcher-card')].map(card => {
   const body = card.querySelector('.h5-switcher-body');
   const box = body.getBoundingClientRect();
+  const head = card.querySelector('.h5-switcher-head');
+  const pill = card.querySelector('.h5-switcher-current');
   return {
     index: Number(card.dataset.index), key: card.dataset.key, centred: card.dataset.centred === 'true', current: card.dataset.current === 'true', status: card.dataset.status,
-    name: card.querySelector('.h5-switcher-name')?.textContent || null, tag: card.querySelector('.h5-switcher-label .h5-device-tag')?.textContent || null,
-    left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width), opacity: Number(getComputedStyle(card).opacity),
+    name: card.querySelector('.h5-switcher-name')?.textContent || null, tag: card.querySelector('.h5-switcher-label .h5-device-tag, .h5-switcher-head .h5-device-tag')?.textContent || null,
+    left: Math.round(box.left), right: Math.round(box.right), top: Math.round(box.top), bottom: Math.round(box.bottom), width: Math.round(box.width), opacity: Number(getComputedStyle(card).opacity),
     shadow: getComputedStyle(body).boxShadow, lines: card.querySelector('.h5-switcher-lines')?.textContent || '', label: card.getAttribute('aria-label'),
+    task: head?.querySelector('.h5-switcher-task')?.textContent ?? null, taskTip: head?.querySelector('.h5-switcher-task')?.getAttribute('title') ?? null,
+    state: head?.querySelector('.h5-switcher-state')?.textContent ?? null, headBottom: head ? Math.round(head.getBoundingClientRect().bottom) : null,
+    pill: pill ? { top: Math.round(pill.getBoundingClientRect().top), right: Math.round(pill.getBoundingClientRect().right) } : null,
+    label2: Boolean(card.querySelector('.h5-switcher-label')), foot: Boolean(card.querySelector('.h5-switcher-foot')),
   };
 }));
+// The wide row: its scroll position, its visible width and the cards wholly in view.
+const rowState = page => page.evaluate(() => {
+  const scroller = document.querySelector('#h5-switcher .h5-switcher-row');
+  const box = scroller.getBoundingClientRect();
+  const whole = [...scroller.querySelectorAll('.h5-switcher-card')].filter(card => { const r = card.getBoundingClientRect(); return r.left >= box.left - 0.5 && r.right <= box.right + 0.5; });
+  return { scroll: scroller.scrollLeft, max: scroller.scrollWidth - scroller.clientWidth, left: box.left, right: box.right, whole: whole.map(card => card.dataset.key) };
+});
+const cardBox = (page, key) => page.evaluate(want => { const r = document.querySelector(`#h5-switcher .h5-switcher-card[data-key="${want}"]`).getBoundingClientRect(); return { left: r.left, right: r.right }; }, key);
 const centredKey = async page => (await cards(page)).find(card => card.centred)?.key;
 const waitCentred = (page, key) => page.waitForFunction(want => document.querySelector('#h5-switcher .h5-switcher-card[data-centred="true"]')?.dataset.key === want, key);
 const waitClosed = page => page.waitForFunction(() => !document.getElementById('h5-switcher') && !window.H5UI.get().switcher);
@@ -261,59 +279,123 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       assert.ok(Math.abs(place.top - place.terminal) <= 1 && Math.abs(place.bottom - place.row) <= 1, `it covers the terminal area between the header and the row: ${JSON.stringify(place)}`);
       assert.equal(await cycle.isVisible(), true);
       assert.equal(await cycle.getAttribute('aria-expanded'), 'true');
+      // The wide row: side by side, never overlapping, most recent first from the left; the previous one is selected.
       let list = await cards(page);
-      assert.equal(list[1].centred, true);
-      assert.ok(list[0].left >= list[1].right - 30, 'the current card lies to the right of the centred one');
+      assert.deepEqual(list.map(card => card.key), ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'], 'most recent first from the left');
+      for (let i = 1; i < list.length; i += 1) {
+        const gap = list[i].left - list[i - 1].right;
+        assert.ok(gap >= 16 && gap <= 20, `cards side by side, 16-20px apart, no overlap: ${gap}`);
+        assert.equal(list[i].top, list[0].top, 'one row');
+        assert.equal(list[i].width, list[0].width, 'cards of one size');
+      }
+      assert.ok(list[0].width >= 280 && list[0].width <= 380, `the card width stays within 280-380px: ${list[0].width}`);
+      assert.equal(list[0].current, true, 'the current session comes first');
+      assert.equal(list[1].centred, true, 'the previous session is selected');
+      assert.equal(await page.evaluate(() => document.activeElement.dataset.key), 'remote:7|5|k1', 'the focus is on the selected card');
+      assert.ok(list[1].shadow.includes(PRIMARY), 'the selected card has the primary edge');
       assert.ok(list[2].shadow.includes(WARNING), 'the orange edge');
+      // Each card's header names its task, then the device tag, the session and the state; no label above the card and no bottom line.
+      assert.deepEqual(list.map(card => card.task), ['Fix login', 'Build server', 'Write docs', 'Fix login'], 'the header names the task of every card');
+      assert.deepEqual(list.map(card => card.taskTip), ['Fix login', 'Build server', 'Write docs', 'Fix login'], 'the full task name in the tooltip');
+      assert.deepEqual(list.map(card => card.name), ['Claude work', 'Build shell', 'Docs shell', 'Terminal 1'], 'and the session name, on the cards further right too');
+      assert.equal(list[1].tag, 'K01', 'the device tag of the other engine');
+      assert.deepEqual(list.map(card => card.state), ['Idle', 'Running', 'Needs you', 'Idle']);
+      assert.ok(list.every(card => !card.label2 && !card.foot), 'no label above a card and no bottom line in the wide row');
+      assert.ok(list[0].pill && list[0].pill.top >= list[0].headBottom && list[0].pill.right <= list[0].right, `"Current" sits in the card under the header: ${JSON.stringify(list[0])}`);
+      assert.equal(list.filter(card => card.pill).length, 1);
+      assert.match(list[1].label, /^K01, Build shell, Build server, Running$/, 'the card names device, session, task and state');
+      assert.match(list[0].label, /, Current$/);
+      assert.ok(list[1].lines.includes('PREVIEW-k1'), 'a warm terminal shows its last lines');
+      assert.equal(await page.locator('#h5-switcher .h5-switcher-dots').count(), 0, 'the row needs no position dots');
+      const narrowRow = await rowState(page);
+      assert.equal(narrowRow.scroll, 0, 'the selected card is in view without scrolling');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'switcher-desktop-open.png') });
-      // The arrow keys: left shows older, right newer; Enter switches to the centred card.
-      await page.keyboard.press('ArrowLeft');
-      await waitCentred(page, 'local|2|d1');
-      await page.keyboard.press('ArrowLeft');
-      await waitCentred(page, 'local|1|default');
-      await page.keyboard.press('ArrowLeft');
-      await waitCentred(page, 'local|1|default'); // the end of the stack
+      // The arrow keys move the selection along the row (right: older) and scroll it into view; Enter switches to it.
       await page.keyboard.press('ArrowRight');
+      await waitCentred(page, 'local|2|d1');
+      await page.keyboard.press('ArrowRight');
+      await waitCentred(page, 'local|1|default');
+      await page.waitForFunction(() => { const s = document.querySelector('#h5-switcher .h5-switcher-row'); const c = document.querySelector('#h5-switcher .h5-switcher-card[data-centred="true"]').getBoundingClientRect(); return c.right <= s.getBoundingClientRect().right + 0.5; });
+      let state = await rowState(page);
+      assert.ok(state.whole.includes('local|1|default'), `the selected last card is scrolled into view: ${JSON.stringify(state)}`);
+      if (narrowRow.max > 0) assert.ok(state.scroll > 0, 'the row scrolled');
+      await page.keyboard.press('ArrowRight');
+      await waitCentred(page, 'local|1|default'); // the end of the row
+      await page.keyboard.press('ArrowLeft');
+      await page.keyboard.press('ArrowLeft');
+      await waitCentred(page, 'remote:7|5|k1');
+      await page.keyboard.press('Home');
+      await waitCentred(page, 'local|1|c1');
+      await page.waitForFunction(() => document.querySelector('#h5-switcher .h5-switcher-row').scrollLeft === 0);
       await page.keyboard.press('ArrowRight');
       await waitCentred(page, 'remote:7|5|k1');
       await page.keyboard.press('Enter');
       await waitShown(page, 'Build server', 'k1');
       await waitClosed(page);
-      // A sideways scroll moves the stack too (fingers to the right: older).
+      // A second press of the button switches to the selected card: open, move to the third card, press again.
       await cycle.click();
       await switcher(page).waitFor();
       await settled(page);
-      assert.equal(await centredKey(page), 'local|1|c1');
-      await page.mouse.move(700, 400);
-      await page.mouse.wheel(-70, 0);
+      assert.equal(await centredKey(page), 'local|1|c1', 'the previous one is selected on open');
+      await page.keyboard.press('ArrowRight');
       await waitCentred(page, 'local|2|d1');
-      // A drag with the mouse as well, back to the right.
-      await page.mouse.move(700, 400);
-      await page.mouse.down();
-      for (let i = 1; i <= 10; i += 1) { await page.mouse.move(700 - 8 * i, 401); await page.waitForTimeout(16); }
-      await page.waitForTimeout(120);
-      await page.mouse.up();
-      await waitCentred(page, 'local|1|c1');
-      assert.equal(await page.locator('#h5-switcher').count(), 1, 'a drag is not a click: still open');
+      await cycle.click();
+      await waitShown(page, 'Write docs', 'd1');
+      await waitClosed(page);
+      // An upright wheel scrolls the row sideways, and a mouse drag scrolls it back; neither is a click.
+      await cycle.click();
+      await switcher(page).waitFor();
+      await settled(page);
+      state = await rowState(page);
+      if (state.max > 0) {
+        await page.mouse.move(700, 400);
+        await page.mouse.wheel(0, 120);
+        await page.waitForFunction(() => document.querySelector('#h5-switcher .h5-switcher-row').scrollLeft > 0);
+        await page.mouse.move(700, 400);
+        await page.mouse.down();
+        for (let i = 1; i <= 10; i += 1) { await page.mouse.move(700 + 20 * i, 401); await page.waitForTimeout(16); }
+        await page.mouse.up();
+        await page.waitForFunction(() => document.querySelector('#h5-switcher .h5-switcher-row').scrollLeft === 0);
+        assert.equal(await page.locator('#h5-switcher').count(), 1, 'a drag is not a click: still open');
+      }
       // Escape closes without switching; the focus is back on the button.
       await page.keyboard.press('Escape');
       await waitClosed(page);
-      assert.deepEqual(await shown(page), { terminal: 'k1', task: 'Build server' });
+      assert.deepEqual(await shown(page), { terminal: 'd1', task: 'Write docs' });
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-cycle');
-      // A click on the empty space closes too; a click on a card behind switches to it.
+      // A click on the empty space closes too; a click on a card switches to it.
       await cycle.click();
       await switcher(page).waitFor();
       await settled(page);
-      await page.mouse.click(700, 800);
+      const empty = await page.evaluate(() => { const r = document.getElementById('h5-switcher').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom - 60 }; });
+      await page.mouse.click(empty.x, empty.y);
       await waitClosed(page);
-      assert.deepEqual(await shown(page), { terminal: 'k1', task: 'Build server' });
+      assert.deepEqual(await shown(page), { terminal: 'd1', task: 'Write docs' });
       await cycle.click();
       await switcher(page).waitFor();
       await settled(page);
-      const back = (await cards(page)).find(card => card.key === 'local|1|default');
-      await page.mouse.click(back.left + 20, 400);
-      await waitShown(page, 'Fix login', 'default');
+      const third = await cardBox(page, 'local|1|c1');
+      await page.mouse.click(third.left + 40, 400);
+      await waitShown(page, 'Fix login', 'c1');
       await waitClosed(page);
+
+      // A wider window (1920x1080, the sidebar folded) shows more whole cards.
+      const before = narrowRow.whole.length;
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      await page.evaluate(() => window.H5UI.actions.toggleSidebar());
+      await page.waitForFunction(() => window.H5UI.get().sidebarCollapsed === true);
+      await cycle.click();
+      await switcher(page).waitFor();
+      await settled(page);
+      state = await rowState(page);
+      assert.ok(state.whole.length > before, `a wider window shows more whole cards: ${before} -> ${state.whole.length}`);
+      list = await cards(page);
+      assert.ok(list[0].width <= 380, 'at most 380px wide');
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'switcher-desktop-wide.png') });
+      await page.keyboard.press('Escape');
+      await waitClosed(page);
+      await page.evaluate(() => window.H5UI.actions.toggleSidebar());
+      await page.waitForFunction(() => window.H5UI.get().sidebarCollapsed === false);
 
       // The narrow row (under 560px): Saved commands and Docs go into More tools; the switch button stays.
       await page.setViewportSize({ width: 900, height: 900 });
@@ -339,6 +421,6 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       assert.deepEqual(errors, []);
       await context.close();
     }
-    console.log('Session switcher: phone and computer layouts, order, labels, edges, previews, swipe, scroll, drag, keys, tap, double press, Back, Escape, empty space, downward swipe, focus, no badge, row placement, narrow row and pane passed.');
+    console.log('Session switcher: phone stack (order, labels, edges, previews, swipe, tap, double press, Back, empty space, downward swipe, focus) and the wide row (order, no overlap, card headers, wider window, keys and scroll into view, wheel, drag, Enter, second press, click, Escape, empty space), no badge, row placement, narrow row and pane passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

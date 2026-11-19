@@ -18,8 +18,8 @@ const SHOTS = process.env.H5_SHOT_DIR || '';
 const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-const GROUPS = ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access'];
-const ZH_GROUPS = ['\u4efb\u52a1\u548c\u6587\u4ef6', '\u8bed\u97f3\u548c\u7ffb\u8bd1', '\u8bbe\u5907', 'T-Attention', '\u8d26\u53f7\u548c\u8bbf\u95ee'];
+const GROUPS = ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data'];
+const ZH_GROUPS = ['\u4efb\u52a1\u548c\u6587\u4ef6', '\u8bed\u97f3\u548c\u7ffb\u8bd1', '\u8bbe\u5907', 'T-Attention', '\u8d26\u53f7\u548c\u8bbf\u95ee', '\u4f7f\u7528\u6570\u636e'];
 
 // The fetch of the page: enough for every group to draw its parts. A linked service and one plain remote engine make the device list a real one.
 function mockServer() {
@@ -137,7 +137,7 @@ async function testPhone(browser, width) {
   // The first page: the groups as two-line rows, no group open, Log out at the end.
   assert.deepEqual(await listedTitles(page), GROUPS);
   assert.equal(await shownGroup(page), null, 'the phone starts on the group list');
-  assert.equal(await page.locator('#h5-settings-groups .MuiListItemText-secondary').count(), 5, 'every row says what its group holds');
+  assert.equal(await page.locator('#h5-settings-groups .MuiListItemText-secondary').count(), GROUPS.length, 'every row says what its group holds');
   assert.equal(await page.locator('#h5-settings-groups [role="tab"]').count(), 0, 'a list of rows, not tabs, on a phone');
   const box = await page.locator('#h5-settings .MuiDialog-paper').boundingBox();
   assert.deepEqual([box.x, box.y, box.width], [0, 0, width], 'a full-screen page');
@@ -255,7 +255,7 @@ async function testWide(browser) {
   // The group list is a vertical tab list; the first group is shown and its tab has the focus.
   assert.equal(await page.getAttribute('#h5-settings-groups', 'role'), 'tablist');
   assert.equal(await page.getAttribute('#h5-settings-groups', 'aria-orientation'), 'vertical');
-  assert.deepEqual(await listedGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account']);
+  assert.deepEqual(await listedGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account', 'usage-data']);
   assert.equal(await shownGroup(page), 'tasks-files', 'a computer always shows a group');
   assert.equal(await page.getAttribute('#h5-settings-group-tasks-files', 'aria-selected'), 'true');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-tasks-files', 'the focus moves into the page');
@@ -267,9 +267,10 @@ async function testWide(browser) {
   assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-devices');
   assert.equal(await shownGroup(page), 'tasks-files', 'moving the focus does not change the group yet');
   await page.keyboard.press('End');
-  assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-account');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-usage-data');
   await page.keyboard.press('ArrowDown');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-tasks-files', 'it wraps around');
+  await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
@@ -282,6 +283,7 @@ async function testWide(browser) {
     'voice-translate': ['Voice input', 'Translation'],
     devices: ['Link a device', 'Rules and skills sync', 'Advanced'],
     account: ['Access mode', 'Authenticator'],
+    'usage-data': ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'],
   };
   for (const [id, headings] of Object.entries(expected)) {
     await openGroup(page, id);

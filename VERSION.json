@@ -1,7 +1,7 @@
 {
   "app_version": "2.138.1",
   "api_version": 1,
-  "schema_version": 11,
+  "schema_version": 12,
   "min_remote_api_version": 1,
   "max_remote_api_version": 1,
   "published_at": "2026-11-19T02:45:20.083Z",

@@ -260,3 +260,33 @@ CREATE TABLE IF NOT EXISTS attention_tokens (
   revoked_at   TEXT,
   scopes       TEXT   -- extra permissions, space separated: 'market' = "Can manage plugins" (/api/attention/market); NULL = none
 );
+
+-- Usage data (schema 12, services/ui-events.js, "Usage data" in docs/design/usage-data.md): one row per press of a button of the page, written by
+-- POST /api/ui-events while the switch in Settings > Usage data is on. A control is named by its stable identity (data-track, id, data-action, a
+-- class name of the page), never by its text; no input, name, path or terminal text is stored. Rows older than 90 days are deleted.
+CREATE TABLE IF NOT EXISTS ui_events (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  at      INTEGER NOT NULL,            -- milliseconds since 1970, on the server's clock
+  page    TEXT    NOT NULL,            -- a random id of one page load (the next-click pairs stay inside one)
+  key     TEXT    NOT NULL,            -- the control, e.g. 'h5-cycle', 'action:more', 'key:Escape', 'h5-terminal-main'
+  detail  TEXT,                        -- a fixed product string of a list row (a preset command, a menu action), or NULL
+  surface TEXT    NOT NULL,            -- where it is: 'header', 'rail', 'bottom-row', 'settings:<group>', 'dialog:<id>', ...
+  view    TEXT    NOT NULL,            -- sessions | columns | maps
+  layout  TEXT    NOT NULL,            -- wide | narrow
+  input   TEXT    NOT NULL,            -- pointer | touch
+  pane    INTEGER NOT NULL DEFAULT 0,  -- 1: pressed inside a column of the multi-column view
+  device  TEXT    NOT NULL,            -- local | remote: where the shown session runs (never its name)
+  state   TEXT,                        -- on | off: the new state of a switch, or NULL
+  version TEXT                         -- the app version that recorded it
+);
+CREATE INDEX IF NOT EXISTS idx_ui_events_at ON ui_events (at);
+
+-- The controls the pages have shown (so "Not used in 30 days" can be computed), per surface and layout, with the first and last time seen.
+CREATE TABLE IF NOT EXISTS ui_controls (
+  key        TEXT    NOT NULL,
+  surface    TEXT    NOT NULL,
+  layout     TEXT    NOT NULL,
+  first_seen INTEGER NOT NULL,
+  last_seen  INTEGER NOT NULL,
+  PRIMARY KEY (key, surface, layout)
+);

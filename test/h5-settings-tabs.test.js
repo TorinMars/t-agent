@@ -18,7 +18,7 @@ test('each tab holds exactly its parts: Shared the shared ones and Telegram, a d
   const { PARTS, partShown } = await load('settings-tabs.mjs');
   const inTab = scope => Object.keys(PARTS).filter(id => partShown(id, scope));
   assert.deepEqual(inTab('shared'), ['oss', 'browser-sites', 'voice', 'translate', 'settings-sync', 'task-list-devices', 'notifier-plugins', 'telegram', 'notify-rules', 'widget-language', 'attention-summary']);
-  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'engine-name', 'link', 'peer-fs', 'rule-sync', 'advanced', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator']);
+  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'engine-name', 'link', 'peer-fs', 'rule-sync', 'advanced', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'usage-record', 'usage-top', 'usage-unused', 'usage-store']);
   assert.equal(inTab(null).length, Object.keys(PARTS).length, 'without tabs every part is drawn');
   assert.equal(partShown('something-new', 'shared'), true, 'an unknown part is never lost');
 });
@@ -27,7 +27,7 @@ test('a group with nothing in a tab is hidden there', async () => {
   const { groupShown } = await load('settings-tabs.mjs');
   const { SETTINGS_GROUPS } = await load('settings-target.mjs');
   assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'shared')), ['tasks-files', 'voice-translate', 'devices', 'attention']);
-  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'device')), ['tasks-files', 'devices', 'attention', 'account']);
+  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'device')), ['tasks-files', 'devices', 'attention', 'account', 'usage-data']);
   assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, null)), SETTINGS_GROUPS);
 });
 

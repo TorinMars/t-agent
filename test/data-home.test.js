@@ -376,6 +376,35 @@ test('a schema 10 database gets the T-Attention tree columns (schema 11), with a
   assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
 });
 
+test('a schema 11 database gets the usage data tables (schema 12), with a copy taken first; existing data is kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: no ui_events / ui_controls, user_version 11.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE ui_events; DROP TABLE ui_controls;');
+  old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
+  old.pragma('user_version = 11');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 11 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  for (const table of ['ui_events', 'ui_controls']) assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?").get(table).n, 1, table);
+  assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = 'idx_ui_events_at'").get().n, 1);
+  assert.equal(after.prepare('SELECT title FROM tasks').get().title, 'kept task');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-11-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+  assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
+});
+
 test('a schema 8 database gets the T-Attention tables (schema 9), with a copy taken first; existing data is kept and a second start changes nothing', t => {
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);

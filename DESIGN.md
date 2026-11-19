@@ -58,6 +58,7 @@
 | [toast.md](docs/design/toast.md) | The global notice function and how the page shows notices. | 3 KB |
 | [interface-language.md](docs/design/interface-language.md) | English source text and the Chinese translation layer (`public/js/i18n*.js`). | 4 KB |
 | [static-asset-caching.md](docs/design/static-asset-caching.md) | Content-hash URLs, long cache, pre-compressed and combined files. | 8 KB |
+| [usage-data.md](docs/design/usage-data.md) | Usage data: local, private tracking of button presses on the page (what is and is not recorded, keys, surfaces, batches, storage and retention, the switch, the `/api/ui-events` API, the Settings group). | 11 KB |
 | [mind-maps.md](docs/design/mind-maps.md) | The mind map editor: why this shape, maps of every service, the editor library, the page, the Mind maps tab of the multi-column view, editing, saving, .xmind. | 19 KB |
 
 ### T-Attention

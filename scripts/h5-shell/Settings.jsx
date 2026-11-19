@@ -29,6 +29,7 @@ import { groupShown, tabForTarget } from './settings-tabs.mjs';
 import { ScopeLabel, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
 import { InTab, LocalOnly, chooseTab, refreshDeviceTargets, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 import { SettingsTabs } from './SettingsTabs.jsx';
+import { UsageDataGroup } from './UsageData.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -547,9 +548,9 @@ function GroupList({ groups, current, wide, onChoose }) {
 
 // The Settings page ("Settings page" in docs/design/page-files-and-settings.md). Opened by `state.settingsOpen` (`ui.actions.openSettings(id?)`,
 // `ui.actions.closeSettings()`); `state.settingsTarget` ({ id, seq }, settings-target.mjs) shows one group and brings one part of it into view, on the
-// device tab that holds that part. The groups: Tasks and files, Voice and translation, Devices (Engines.jsx), T-Attention, Account and access; a group
-// with nothing in the chosen device tab is left out (settings-tabs.mjs). Every group stays mounted while the page is open, so edits survive a change
-// of group or device tab; each reads its data when it is shown.
+// device tab that holds that part. The groups: Tasks and files, Voice and translation, Devices (Engines.jsx), T-Attention, Account and access, Usage
+// data (UsageData.jsx); a group with nothing in the chosen device tab is left out (settings-tabs.mjs). Every group stays mounted while the page is
+// open, so edits survive a change of group or device tab; each reads its data when it is shown.
 // - Computer (`state.wide`): the page fills the window to the right of the navigation rail (left NAV_WIDTH, no backdrop: the rail stays usable;
 //   a column of the multi-column view has no rail and starts at its left edge).
 //   (A column of the multi-column view has no rail: there it starts at the left edge.) Left, a 280px pane: the title, the device switch (SettingsTabs.jsx), the groups as a vertical tab list, Language, Log out and the version.
@@ -613,6 +614,7 @@ function SettingsPage({ state, ui }) {
         <DevicesGroup state={state} ui={ui} request={requestFor('devices')} />
         <AttentionSettings ui={ui} request={requestFor('attention')} />
         <AccountGroup request={requestFor('account')} />
+        <UsageDataGroup ui={ui} request={requestFor('usage-data')} />
       </GroupShown.Provider>
     </SettingsNav.Provider>
   );

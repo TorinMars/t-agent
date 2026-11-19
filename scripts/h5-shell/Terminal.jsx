@@ -162,13 +162,13 @@ export function BottomArea({ ui }) {
   const { used, rest } = menu ? orderCommands(presets.commands, usesFor(agent)) : { used: [], rest: presets.commands };
   const now = Date.now();
   const command = ({ command: text, note, usedAt }) => ({
-    label: text, note, used: usedAt ? usedLabel(usedAt, now) : null, mono: true,
+    label: text, note, used: usedAt ? usedLabel(usedAt, now) : null, mono: true, track: 'h5-add-menu-command', detail: text, // a preset of commands.mjs: a fixed product string (usage data)
     // A tap SENDS the command with Enter and closes the list; the pencil types it without Enter ("Edit before sending"). Both count as a use.
     run: () => run(() => { if (ui.actions.sendCommand(text)) recordUse(agent, text); }),
     edit: () => run(() => { if (ui.actions.insertCommand(text)) recordUse(agent, text); }),
   });
   const rows = [
-    { icon: <Icon name="paste" size={20} />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
+    { icon: <Icon name="paste" size={20} />, label: 'Paste text', track: 'h5-paste-text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
     // The presets of the open terminal's kind (Claude Code, Codex or a plain shell; `state.terminalAgent`, set by h5.js), under a header naming the list (scripts/h5-shell/commands.mjs):
     // the used ones first, then a divider and the never used ones in their usual order.
     { head: true, label: presets.title, recent: used.length > 0 },
@@ -177,7 +177,7 @@ export function BottomArea({ ui }) {
     ...rest.map(command),
     // Claude Code and Codex also list common key combinations under "Keys". A tap SENDS the key at once (h5.js `ui.actions.key({ send })`, which drops a latched Ctrl / Alt / Shift)
     // and closes the list, like a command.
-    ...(presets.keys ? [{ head: true, label: 'Keys' }, ...presets.keys.map(({ label, send, note }) => ({ label, note, mono: true, keyRow: true, run: () => run(() => ui.actions.key({ send })) }))] : []),
+    ...(presets.keys ? [{ head: true, label: 'Keys' }, ...presets.keys.map(({ label, send, note }) => ({ label, note, mono: true, keyRow: true, track: 'h5-add-menu-key', detail: label, run: () => run(() => ui.actions.key({ send })) }))] : []),
   ];
   const list = menu ? <CommandsList rows={rows} at={menuAt} fill={!compact && !pointer} /> : null;
   if (compact) return <CompactBottom state={state} ui={ui} list={list} onMenu={setMenu} pointer={pointer} />;
@@ -231,7 +231,7 @@ function CommandsList({ rows, at = null, fill = false }) {
         if (row.divider) return <Divider key="divider" className="h5-add-menu-divider" role="presentation" variant="middle" sx={{ my: 0.5 }} />;
         const item = (
           <Button
-            key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} id={row.id} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
+            key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} id={row.id} data-track={row.track} data-track-detail={row.detail} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
             sx={{
               justifyContent: 'flex-start', minHeight: 40, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, typography: 'body1', fontWeight: 400, [TOUCH]: { minHeight: 48 },
               '& .MuiButton-startIcon': { mr: 2, color: 'text.secondary' }, ...(row.edit ? { flex: '1 1 auto', minWidth: 0, pr: 1 } : null),
@@ -251,7 +251,7 @@ function CommandsList({ rows, at = null, fill = false }) {
         return (
           <Box key={`row-${row.label}`} className="h5-add-menu-row" role="none" sx={COMMAND_ROW}>
             {item}
-            <IconButton className="h5-add-menu-edit" role="menuitem" aria-label={t('Edit before sending')} title={t('Edit before sending')} onClick={row.edit} sx={EDIT_BUTTON}>
+            <IconButton className="h5-add-menu-edit" data-track-detail={row.detail} role="menuitem" aria-label={t('Edit before sending')} title={t('Edit before sending')} onClick={row.edit} sx={EDIT_BUTTON}>
               <Icon name="edit" size={20} />
             </IconButton>
           </Box>

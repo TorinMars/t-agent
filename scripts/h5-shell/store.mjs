@@ -126,4 +126,6 @@ export const initialState = () => ({
   // presses of the switch button while open), previews: { '<sourceKey>|<taskId>|<terminalId>': { lines, live } } }.
   recent: [],
   switcher: null,
+  // Usage data (usage-track.mjs): whether this server records button use; null until the page has read the switch (Settings > Usage data sets it).
+  usageRecording: null,
 });

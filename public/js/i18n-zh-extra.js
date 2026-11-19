@@ -5,6 +5,11 @@ I18n.add({
   '{1}: Waiting for 1 sub-agent': '{1}：正在等待 1 个子智能体',
   '{1}: Waiting for {2} sub-agents': '{1}：正在等待 {2} 个子智能体',
 
+  // ---- Usage data (Settings → Usage data, UsageData.jsx) ----
+  '{1} key': '{1} 键',
+  '{1} events since {2}': '自 {2} 起 {1} 次操作',
+  'kept for {1} days': '保留 {1} 天',
+
   // ---- Agent config ----
   'Common:': '常用：',
   '{1} · failed: {2}': '{1} · 失败：{2}',

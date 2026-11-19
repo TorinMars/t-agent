@@ -9,6 +9,7 @@ import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
 import { TOUCH } from './theme.mjs';
+import { menuDetail } from './usage-track.mjs';
 
 const POPUP_MARGIN = 8; // the popup keeps this far from the edges of what can be seen
 
@@ -94,7 +95,7 @@ function SessionPopup({ menu, ui, keepFocus }) {
     >
       {menu ? menu.items.map((item, index) => (
         <MenuItem
-          key={`${index}:${item.label}`} className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => run(index)}
+          key={`${index}:${item.label}`} className={item.kind === 'danger' ? 'danger' : undefined} onClick={() => run(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
           sx={{ minHeight: 36, px: 1.5, fontSize: 14, whiteSpace: 'normal', overflowWrap: 'anywhere', color: item.kind === 'danger' ? 'error.main' : undefined, [TOUCH]: { minHeight: 44 } }}
         >
           {item.kind === 'raw' ? item.label : t(item.label)}
@@ -128,7 +129,7 @@ export function TermMenu({ state, ui }) {
             <Typography id="h5-term-menu-title" variant="subtitle2" component="h3" color="text.secondary" sx={{ mb: 1, overflowWrap: 'anywhere' }}>{menu.title}</Typography>
             <List id="h5-term-menu-actions" className="h5-menu-actions" disablePadding sx={{ overflowY: 'auto' }}>
               {menu.items.map((item, index) => (
-                <ListItemButton key={`${index}:${item.label}`} component="button" className={item.kind === 'danger' ? 'danger' : undefined} disabled={Boolean(item.disabled)} onClick={() => ui.actions.menuRun(index)}
+                <ListItemButton key={`${index}:${item.label}`} component="button" className={item.kind === 'danger' ? 'danger' : undefined} disabled={Boolean(item.disabled)} onClick={() => ui.actions.menuRun(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
                   sx={{ width: '100%', borderRadius: 1, color: item.kind === 'danger' ? 'error.main' : undefined, overflowWrap: 'anywhere', textAlign: 'left' }}>
                   {item.kind === 'raw' ? item.label : t(item.label)}
                 </ListItemButton>

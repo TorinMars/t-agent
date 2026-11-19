@@ -98,14 +98,18 @@ const CASES = [
   ['a tap on the task list behind the dialog only closes the dialog', async t => {
     await t.openPanel('Alpha');
     assert.equal(await t.owner(), 'Alpha', 'the dialog names its task');
-    // Where the row of Alpha is (above the dialog): the backdrop of the dialog is there, so the tap closes the dialog and does not collapse Alpha.
-    const box = await t.item('Alpha').boundingBox();
+    // A control of the task list above the dialog: the row of Alpha when it is above the dialog, else (the phone, where the list's tabs push
+    // the rows under the centred dialog) the Recent tab. The backdrop of the dialog is there, so the tap only closes the dialog: Alpha is not
+    // collapsed and the list does not switch to Recent.
     const paper = await t.page.locator('#h5-new-session .MuiDialog-paper').boundingBox();
+    let box = await t.item('Alpha').boundingBox();
+    if (box.y + box.height / 2 >= paper.y) box = await t.page.locator('#h5-tab-recent').boundingBox();
     const y = box.y + box.height / 2;
-    assert.ok(y < paper.y, `the row is outside the dialog (${y} < ${paper.y})`);
+    assert.ok(y < paper.y, `the control is outside the dialog (${y} < ${paper.y})`);
     if (t.wide) await t.page.mouse.click(box.x + 20, y); else await t.page.touchscreen.tap(box.x + 20, y);
     await t.gone('after a tap beside it');
     assert.equal(await t.item('Alpha').getAttribute('aria-expanded'), 'true', 'Alpha was not collapsed');
+    if (await t.page.locator('#h5-tab-recent').count()) assert.equal(await t.page.locator('#h5-tab-recent').getAttribute('aria-selected'), 'false', 'the list did not switch to Recent');
     await t.list('Phone terminals').waitFor();
     assert.equal(await t.page.locator('#h5-task-name').textContent(), 'Alpha', 'the shown task did not change');
     if (!t.wide) assert.equal(await t.page.locator('#h5-tasks').isVisible(), true, 'the sheet stays');

@@ -108,7 +108,17 @@ async function openPage(browser, { viewport, touch = false, speech = true }) {
       localStorage.setItem('voice-enabled', '0');
     }
     window.collectCalls = [];
-    window.LearnCollect = { set(on) { window.collectCalls.push(on); } };
+    // The page's own public/js/learn-collect.js (h5.html) defines window.LearnCollect when it runs; until then a stand-in. Either way the calls of
+    // set() are counted: the real object's set is wrapped once it appears (the property's setter), the stand-in records them directly.
+    let current = { set(on) { window.collectCalls.push(on); } };
+    Object.defineProperty(window, 'LearnCollect', {
+      configurable: true,
+      get: () => current,
+      set: real => {
+        const original = real && typeof real.set === 'function' ? real.set.bind(real) : null;
+        current = { ...real, set(on) { window.collectCalls.push(on); return original ? original(on) : undefined; } };
+      },
+    });
   }, speech);
   await page.addInitScript(activityStreamMock);
   await page.route(`${ORIGIN}/**`, async route => {

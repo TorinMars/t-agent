@@ -105,3 +105,23 @@ test('the place of a card: centred, behind on the left (smaller, darker), on top
   assert.equal(settleIndex(9, 5), 4);
   assert.equal(settleIndex(3, 0), 0);
 });
+
+test('the wide row: cards side by side without overlap, sized by the area, scrolled to show the selected card, and the pick after a hand scroll', async () => {
+  const { switcherRow, rowScrollFor, rowPick } = await load();
+  const row = switcherRow({ width: 1064, height: 796 }, 4);
+  assert.equal(row.cardH, 525, 'two thirds of the area');
+  assert.equal(row.cardW, 341, '0.65 of the height');
+  assert.deepEqual(row.xs, [24, 385, 746, 1107], 'most recent first from the left, 20px apart');
+  assert.equal(row.contentW, 24 * 2 + 4 * 341 + 3 * 20);
+  assert.equal(switcherRow({ width: 1848, height: 976 }, 4).cardW, 380, 'at most 380px wide');
+  assert.equal(switcherRow({ width: 700, height: 420 }, 4).cardW, 280, 'at least 280px wide');
+  const fits = (width, height) => { const r = switcherRow({ width, height }, 12); return r.xs.filter(x => x + r.cardW <= width).length; };
+  assert.ok(fits(1848, 976) > fits(1064, 796), 'a wider window shows more whole cards');
+  assert.equal(rowScrollFor(row, 1, 0, 1064), 0, 'already in view: no scroll');
+  assert.equal(rowScrollFor(row, 3, 0, 1064), 1107 + 341 + 24 - 1064, 'the last card: its right edge comes into view');
+  assert.equal(rowScrollFor(row, 0, 300, 1064), 0, 'back to the first card');
+  assert.equal(rowScrollFor(row, 9, 120, 1064), 120, 'no such card: unchanged');
+  assert.equal(rowPick(row, 1, 0, 1064), 1, 'the selected card is in view');
+  assert.equal(rowPick(row, 0, 380, 1064), 1, 'scrolled away from it: the card most in view');
+  assert.equal(rowPick(row, 1, 560, 1064), 2, 'less than 60% of it in view');
+});

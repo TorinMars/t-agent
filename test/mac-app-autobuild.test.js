@@ -219,6 +219,7 @@ test('the lock: a build held by another live server is skipped; a stale lock is 
   const second = world({ dataDir: stale.dataDir, root: stale.root });
   second.service = autobuild.createMacAppAutobuild({
     dataDir: stale.dataDir, root: stale.root, platform: 'darwin', env: { pm_id: '1' }, arch: 'arm64', homedir: () => stale.home, pid: 4343,
+    now: () => stale.clock, // the lock's age is read on the same fake clock that wrote it (with the real clock the lock looked stale after 10:11Z)
     spawn: second.spawn, execFile: () => {}, readPlist: async file => JSON.parse(fs.readFileSync(file, 'utf8')),
     schedule: (fn, ms) => { const timer = { fn, ms }; second.timers.push(timer); return timer; }, cancel: () => {},
     isAlive: otherPid => otherPid === 4242, log: () => {},

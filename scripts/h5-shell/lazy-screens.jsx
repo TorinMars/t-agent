@@ -60,6 +60,8 @@ export const AttentionPanel = screen(() => import('./screen-attention.jsx'), 'At
 export const DesignSheet = screen(() => import('./screen-design.jsx'), 'DesignSheet', state => Boolean(state.design && state.design.open), ui => ui.actions.closeDesign && ui.actions.closeDesign());
 export const FileTreeSheet = screen(() => import('./screen-files.jsx'), 'FileTreeSheet', state => Boolean(state.files && state.files.open), ui => ui.actions.closeFiles && ui.actions.closeFiles());
 export const SwitcherScreen = screen(() => import('./screen-switcher.jsx'), 'Switcher', state => Boolean(state.switcher), ui => ui.actions.closeSwitcher && ui.actions.closeSwitcher());
+// The Recent tab of the task list (TaskDrawer.jsx draws it only while the tab is chosen); nothing to close after a failed load.
+export const RecentScreen = screen(() => import('./screen-recent.jsx'), 'RecentList', () => true, () => {});
 export const TaskDialogScreen = screen(() => import('./screen-task-dialog.jsx'), 'TaskDialog', state => Boolean(state.taskDialog), ui => ui.set && ui.set({ taskDialog: null }));
 
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
@@ -70,6 +72,7 @@ const OPENERS = [
   ['#h5-design, #h5-commands-docs, #h5-files-design', DesignSheet],
   ['#h5-design-files', FileTreeSheet],
   ['#h5-cycle', SwitcherScreen],
+  ['#h5-tab-recent', RecentScreen],
 ];
 export function preloadOnIntent(root = document) {
   const handle = event => {

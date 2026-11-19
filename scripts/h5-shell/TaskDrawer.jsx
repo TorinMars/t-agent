@@ -18,6 +18,7 @@ import { alpha, getOverlayAlpha } from '@mui/material/styles';
 import Chip from '@mui/material/Chip';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
+import ButtonBase from '@mui/material/ButtonBase';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -26,6 +27,7 @@ import { shortName, tagColor } from './task-order.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
+import { RecentScreen } from './lazy-screens.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
@@ -38,9 +40,9 @@ const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 
 // The live state of a session (h5.js `sessionState`, from the pushed terminal activity): its words and the colours of the column headers (Columns.jsx
 // `STATE_COLORS`: green running, orange needs you, grey idle). The dot takes the main shade; the status line the light one, which reads better as text.
-const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
-const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
-const STATE_TEXT = { running: 'success.light', waiting: 'warning.light', idle: 'text.secondary' };
+export const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
+export const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
+export const STATE_TEXT = { running: 'success.light', waiting: 'warning.light', idle: 'text.secondary' };
 
 // What a session row is: "Claude session", "Codex session" or "Terminal" (the glyph of its tile shows it; screen readers get the words).
 const kindOf = row => (AGENT_NAMES[row.agent] ? `${AGENT_NAMES[row.agent]} session` : 'Terminal');
@@ -54,15 +56,15 @@ function subtitle(row) {
 }
 
 // The selected row, a task or a session: the MD2 selected list item (primary at 12% with a 3px indicator at the left edge, drawn inside the row so it takes no width).
-const SELECTED_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.12), boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` });
+export const SELECTED_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.12), boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` });
 // The hover look of a whole row line (the tag, the name and the buttons), where a pointer can hover.
-const HOVER_SX = { '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } } };
+export const HOVER_SX = { '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } } };
 // A status dot (8px), in the colour of its state.
-const DOT_SX = { flex: '0 0 auto', display: 'inline-block', width: 8, height: 8, borderRadius: '50%' };
+export const DOT_SX = { flex: '0 0 auto', display: 'inline-block', width: 8, height: 8, borderRadius: '50%' };
 // The buttons of a row on a computer appear while the pointer is over its line or the keyboard focus is inside it (`:focus-visible`, so a click that
 // leaves the focus on the row does not keep them shown); they keep their place (opacity only), so nothing moves, and Tab still reaches them. On a touch
 // screen they are always shown.
-const REVEAL_SX = {
+export const REVEAL_SX = {
   '& .h5-row-act': { opacity: 0, transition: 'opacity 120ms ease-out' },
   '&:hover .h5-row-act, &:has(:focus-visible) .h5-row-act': { opacity: 1 },
   '@media (prefers-reduced-motion: reduce)': { '& .h5-row-act': { transition: 'none' } },
@@ -225,7 +227,7 @@ export function NewSessionDialog({ state, ui }) {
 
 // The rename field, in place of the row being renamed (same place, indentation and height). Enter or Save keeps the name; Escape or leaving the field
 // cancels. The Save button does not take the focus (its pointerdown is cancelled), so pressing it does not first cancel through the blur.
-function RenameRow({ menu, ui, row }) {
+export function RenameRow({ menu, ui, row }) {
   const ref = useRef(null);
   useInView(ref);
   useEffect(() => {
@@ -437,7 +439,7 @@ function TaskTag({ task, ui, drag }) {
   }
   return <Box component="span" className="h5-task-tag" onClick={() => ui.actions.toggleTask(task.ref)} sx={TAG_SX}>{tag}</Box>;
 }
-const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
+export const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
 
 function Tasks({ taskList, rename, ui, query, filter, drag, sessionDrag }) {
   const { note, tasks } = taskList;
@@ -622,11 +624,50 @@ const CHIP_SX = on => theme => ({
   '&::after': { content: '""', position: 'absolute', inset: '-4px 0' },
   [TOUCH]: { height: 32, minWidth: 44, borderRadius: 16, '& .MuiChip-label': { px: 1 }, '& .MuiChip-icon': { ml: 1 }, '&::after': { inset: '-6px 0' } },
 });
+// The two views of the list ("Recent tab" in docs/design/page-task-list.md): By task (the tasks with their sessions) and Recent (the sessions used on
+// this device, most recent first; RecentList.jsx). The choice is remembered on this device.
+const TAB_KEY = 'h5-task-list-tab';
+const readTab = () => { try { return localStorage.getItem(TAB_KEY) === 'recent' ? 'recent' : 'tasks'; } catch { return 'tasks'; } };
+const writeTab = value => { try { if (value === 'recent') localStorage.setItem(TAB_KEY, value); else localStorage.removeItem(TAB_KEY); } catch { /* not remembered */ } };
+// MD2 fixed tabs: two equal tabs over the full width, the chosen one in primary with a 2px indicator, the other in medium emphasis. Drawn on MUI's
+// ButtonBase (its ripple and focus ring) in a tablist of our own: MUI `Tabs` with `Tab` would add about 20 KB to the first screen (its scrolling code),
+// over the budget of test/page-bundles.test.js. The arrow keys, Home and End move to the other tab and choose it; only the chosen tab is a Tab stop.
+const TAB_SX = on => theme => ({
+  flex: '1 1 0', minWidth: 0, minHeight: 40, px: 2, ...theme.typography.subtitle2, color: on ? 'primary.main' : 'text.secondary',
+  boxShadow: on ? `inset 0 -2px 0 ${theme.palette.primary.main}` : 'none', '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } },
+  '&.Mui-focusVisible': { bgcolor: 'action.focus' }, [TOUCH]: { minHeight: 48 },
+});
+const TABS = [['tasks', 'By task', 'h5-task-list'], ['recent', 'Recent', 'h5-recent-list']];
+function ListTabs({ tab, choose }) {
+  const key = event => {
+    const next = { ArrowLeft: -1, ArrowRight: 1, Home: -9, End: 9 }[event.key];
+    if (!next) return;
+    event.preventDefault();
+    const at = Math.max(0, Math.min(TABS.length - 1, TABS.findIndex(([value]) => value === tab) + next));
+    choose(TABS[at][0]);
+    document.getElementById(`h5-tab-${TABS[at][0]}`)?.focus();
+  };
+  return (
+    <Box id="h5-task-tabs" role="tablist" aria-label={t('Task list view')} onKeyDown={key} sx={{ display: 'flex', flex: '0 0 auto', mb: 1, boxShadow: theme => `inset 0 -1px 0 ${theme.palette.divider}` }}>
+      {TABS.map(([value, label, panel]) => (
+        <ButtonBase
+          key={value} id={`h5-tab-${value}`} role="tab" aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} aria-controls={tab === value ? panel : undefined}
+          onClick={() => choose(value)} sx={TAB_SX(tab === value)}
+        >{t(label)}</ButtonBase>
+      ))}
+    </Box>
+  );
+}
 function Panel({ ui, wide }) {
   const state = useStore(ui, PANEL, shallowEqual);
   countRender('TaskPanel');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [tab, setTab] = useState(readTab);
+  const pane = useStore(ui, DRAWER_NAV); // a pane of the multi-column view keeps no recent sessions (h5.js): no tabs there
+  const recent = tab === 'recent' && !pane;
+  const [recentCount, setRecentCount] = useState(null); // { running, pending } of the Recent tab's sessions, from RecentList
+  const chooseTab = value => { setTab(value); writeTab(value); };
   const [options, setOptions] = useState(null); // the "List options" button while its menu is open
   const listRef = useRef(null);
   const floatRef = useRef(null);
@@ -644,6 +685,7 @@ function Panel({ ui, wide }) {
         <Button id="h5-add-task" color="primary" size="medium" startIcon={<Icon name="add" size={18} />} aria-haspopup="dialog" onClick={() => ui.actions.openNewTask()} sx={{ flex: '0 0 auto', px: 1.25 }}>{t('New task')}</Button>
         {wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} title={t('Close')} onClick={() => ui.actions.closeTasks()}><Icon name="close" size={20} /></IconButton>}
       </Box>
+      {pane ? null : <ListTabs tab={recent ? 'recent' : 'tasks'} choose={chooseTab} />}
       <Box className="h5-task-search" sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
         <TextField
           size="small" fullWidth type="search" placeholder={t('Search sessions')} value={query} onChange={event => setQuery(event.target.value)}
@@ -670,7 +712,7 @@ function Panel({ ui, wide }) {
         <Box className="h5-task-filters" role="group" aria-label={t('Filter')} sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, flex: '1 1 auto', minWidth: 0, [TOUCH]: { columnGap: 0.75, rowGap: 1.5 } }}>
           {FILTERS.map(([key, label, look]) => {
             const on = filter === key;
-            const count = look ? countOf(tasks, key) : 0;
+            const count = !look ? 0 : recent ? (recentCount ? recentCount[key] : 0) : countOf(tasks, key);
             return (
               <Chip
                 key={key} component="button" clickable variant="outlined" data-filter={key} aria-pressed={on} onClick={() => setFilter(key)}
@@ -689,16 +731,24 @@ function Panel({ ui, wide }) {
           id="h5-task-list-menu" anchorEl={options} open={Boolean(options)} onClose={() => setOptions(null)}
           anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         >
-          <MenuItem id="h5-expand-all" onClick={option(() => ui.actions.expandAll())} sx={{ typography: 'body2', minHeight: 36 }}>{t('Expand all')}</MenuItem>
-          <MenuItem id="h5-collapse-all" onClick={option(() => ui.actions.collapseAll())} sx={{ typography: 'body2', minHeight: 36 }}>{t('Collapse all')}</MenuItem>
+          {/* Opening and closing the tasks' session lists has nothing to do on the Recent tab. */}
+          <MenuItem id="h5-expand-all" disabled={recent} onClick={option(() => ui.actions.expandAll())} sx={{ typography: 'body2', minHeight: 36 }}>{t('Expand all')}</MenuItem>
+          <MenuItem id="h5-collapse-all" disabled={recent} onClick={option(() => ui.actions.collapseAll())} sx={{ typography: 'body2', minHeight: 36 }}>{t('Collapse all')}</MenuItem>
         </Menu>
       </Box>
-      {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). */}
-      <List id="h5-task-list" ref={listRef} className="h5-task-list" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
-        <Tasks taskList={state.taskList} rename={state.rename} ui={ui} query={query} filter={filter} drag={drag} sessionDrag={sessionDrag} />
-        {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
-        {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
-      </List>
+      {/* Basis 0: a long list (many open tasks) scrolls inside its own space instead of squeezing the rows below it (the settings row). Dragging, the
+          rename field kept in view and the Archived section belong to the By task tab; the Recent tab is its own list. */}
+      {recent ? (
+        <Box id="h5-recent-list" role="tabpanel" aria-labelledby="h5-tab-recent" className="h5-recent-list" sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 1, pb: 0.5 }}>
+          <RecentScreen ui={ui} query={query} filter={filter} rename={state.rename} onCounts={setRecentCount} />
+        </Box>
+      ) : (
+        <List id="h5-task-list" ref={listRef} className="h5-task-list" role="tabpanel" aria-labelledby="h5-tab-tasks" disablePadding sx={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', px: 0.5, pb: 0.5 }}>
+          <Tasks taskList={state.taskList} rename={state.rename} ui={ui} query={query} filter={filter} drag={drag} sessionDrag={sessionDrag} />
+          {/* Archived tasks are not searched: the entry goes away while a search or a filter is on. */}
+          {query.trim() || filter !== 'all' ? null : <ArchivedTasks archived={state.archived} ui={ui} />}
+        </List>
+      )}
       {/* The floating copy of a dragged row goes in here (useListDrag), and a keyboard move or a session moved is announced in the live region. */}
       <Box ref={floatRef} className="h5-task-float-host" />
       <Box id="h5-task-order-live" ref={liveRef} aria-live="assertive" aria-atomic="true" sx={VISUALLY_HIDDEN} />

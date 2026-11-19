@@ -1016,17 +1016,42 @@
   }
   let recentTaskList = null;
   ui.subscribe(() => { const list = ui.get().taskList; if (list !== recentTaskList) { recentTaskList = list; publishRecent(); } });
+  let recentShownHere = false; // this page has shown the first entry itself, so leaving it stamps the time it was last used (`leave`)
   function noteShown(target, row) {
     if (PANE || !target) return;
     const before = recentList[0];
     const same = before && ui.recent.key(before) === ui.recent.key(target);
-    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null });
+    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null }, undefined, { now: Date.now(), leave: recentShownHere });
+    recentShownHere = true;
     if (!same && ui.get().switcher) ui.actions.closeSwitcher(); // shown another way (the task list, T-Attention): the switcher is out of date
     if (next === recentList) return;
     recentList = next;
     store.set(RECENT_STORE, ui.recent.serialize(recentList));
     publishRecent();
   }
+  // A session renamed (`title`) or deleted (null) from a menu: its entry follows at once, also when its task's terminals are not known to the page.
+  function changeRecent(target, terminal, title) {
+    if (PANE) return;
+    const next = ui.recent.edit(recentList, ui.recent.key({ sourceKey: target.from.key, taskId: String(target.taskId), terminalId: String(terminal) }), title);
+    if (next === recentList) return;
+    if (title === null && next[0] !== recentList[0]) recentShownHere = false; // the shown one went: the next first entry was not in use until now
+    recentList = next;
+    store.set(RECENT_STORE, ui.recent.serialize(recentList));
+    publishRecent();
+  }
+  // The "⋯" of a row of the Recent tab (RecentList.jsx): the menu of a session row of the task list. The task's terminals are known when it is shown
+  // or open in the list; otherwise they are read first, and the menu opens under the button if it is still there.
+  ui.actions.recentMore = async (ref, row, anchor) => {
+    const hit = resolveRef(ref);
+    if (!hit) return;
+    const { from, item } = hit;
+    const peek = peeks.get(ref);
+    if (isShown(from, item.id) || (peek && peek.status === 'ready')) { ui.actions.rowMore(ref, row, anchor); return; }
+    const rows = await api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => null);
+    const entry = Array.isArray(rows) ? rows.find(candidate => String(candidate.terminal_id) === String(row.id)) : null;
+    if (!entry) { if (Array.isArray(rows)) changeRecent({ from, taskId: item.id }, row.id, null); return; } // gone meanwhile
+    if (anchor && anchor.isConnected && !ui.get().menu) openOtherMenu(from, item, row, entry, anchor);
+  };
   // The last lines of a terminal's buffer (trailing empty rows left out), plain text.
   function linesOf(term) {
     try {
@@ -1837,6 +1862,7 @@
     closeTerminalMenu();
     try {
       const wasCurrent = await controlTerminal(target, 'delete');
+      changeRecent(target, row.terminal_id, null);
       if (!isSelected(target)) { showPeekChange(target, 'terminal'); return; }
       terminals = terminals.filter(item => item.terminal_id !== row.terminal_id);
       if (wasCurrent && terminals.length) { switchTerminal(terminals[0]); closeTasks(); }
@@ -1862,6 +1888,7 @@
     try {
       const renamed = await api('PATCH', `${base}/terminals/${encodeURIComponent(row.terminal_id)}`, { title });
       closeTerminalMenu();
+      changeRecent(scope, row.terminal_id, (renamed && renamed.title) || title);
       await showRenamed(scope, row.terminal_id, (renamed && renamed.title) || title);
     } catch (error) { tell(`Could not rename the terminal: ${error.message}`, 'error'); }
   };

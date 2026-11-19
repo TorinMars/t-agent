@@ -134,6 +134,28 @@ function instrument() {
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-tasks .h5-task-title')].map(node => node.textContent).join() === 'Task 05');
       await push({ activity: { 5: { default: 'running' }, 7: { c7: 'running' } }, subagents: {} });
       await page.waitForFunction(() => [...document.querySelectorAll('#h5-tasks .h5-task-title')].map(node => node.textContent).join() === 'Task 05,Task 07');
+
+      // (d) The Recent tab ("Recent tab" in docs/design/page-task-list.md): two sessions shown, then one pushed change of one of them draws its row
+      // alone (and no task row: the By task list is not drawn on Recent).
+      await page.locator('#h5-tasks .h5-task-filters button', { hasText: 'All' }).click();
+      await page.evaluate(() => window.H5UI.actions.openRow('local|2', { kind: 'terminal', id: 'default' }));
+      await page.waitForFunction(() => (window.H5UI.get().shownTarget || {}).taskId === 2);
+      await page.evaluate(() => window.H5UI.actions.openRow('local|1', { kind: 'terminal', id: 'c1' }));
+      await page.waitForFunction(() => window.H5UI.get().recent.length === 2 && (window.H5UI.get().shownTarget || {}).terminalId === 'c1');
+      await page.locator('#h5-tab-recent').click();
+      await page.waitForFunction(() => document.querySelectorAll('#h5-recent-list .h5-recent-row').length === 2);
+      await settle();
+      await page.waitForTimeout(300);
+      await reset();
+      await push({ activity: { 5: { default: 'running' }, 7: { c7: 'running' }, 2: { default: 'running' } }, subagents: {} });
+      await page.waitForFunction(() => document.querySelector('#h5-recent-list .h5-recent-row[data-key="local|2|default"]')?.dataset.status === 'running');
+      await settle();
+      const recentPush = await read();
+      console.log(`Render counts on the Recent tab: ${JSON.stringify(recentPush)}`);
+      assert.equal(count(recentPush, 'RecentRow'), 1, `one activity push draws one row of the Recent tab: ${JSON.stringify(recentPush)}`);
+      assert.equal(count(recentPush, 'TaskRow'), 0, `no task row is drawn on the Recent tab: ${JSON.stringify(recentPush)}`);
+      for (const name of ['Header', 'TerminalArea', 'ColumnStrip', 'App']) assert.equal(count(recentPush, name), 0, `the Recent tab's push does not draw ${name}: ${JSON.stringify(recentPush)}`);
+      await page.evaluate(() => { try { localStorage.removeItem('h5-task-list-tab'); } catch { /* none */ } });
     }
     await context.close();
     assert.deepEqual(pageErrors, [], 'no browser runtime errors');

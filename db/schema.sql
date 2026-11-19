@@ -291,7 +291,7 @@ CREATE TABLE IF NOT EXISTS ui_controls (
   PRIMARY KEY (key, surface, layout)
 );
 
--- English learning (schema 13; "Learn English" in docs/design/learn-english.md, services/learn.js). One card per English word or sentence of an owner:
+-- English learning (schema 13, sync columns schema 14; "Learn English" in docs/design/learn-english.md, services/learn.js). One card per English word or sentence of an owner:
 -- the person's own translated sentences, the words they looked up, and the starter list. Times are milliseconds since 1970 on the server's clock.
 CREATE TABLE IF NOT EXISTS learn_cards (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,9 +312,18 @@ CREATE TABLE IF NOT EXISTS learn_cards (
   last_at       INTEGER,
   last_correct  INTEGER,                         -- 1 / 0: whether the last answer was right, NULL before the first answer
   suspended     INTEGER NOT NULL DEFAULT 0,
+  -- Schema 14, the sync between linked devices ("Sync across linked devices" in docs/design/learn-english.md; services/learn-sync-store.js adds
+  -- them to an older database): two hybrid clocks with the device that made each change ('' is this device), one for the content (en, zh,
+  -- source, context, suspended) and one for the review state (due_at ... last_correct), and the change number the sync pages by.
+  content_at    INTEGER NOT NULL DEFAULT 0,
+  content_by    TEXT    NOT NULL DEFAULT '',
+  state_at      INTEGER NOT NULL DEFAULT 0,
+  state_by      TEXT    NOT NULL DEFAULT '',
+  sync_seq      INTEGER NOT NULL DEFAULT 0,
   UNIQUE (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);
+CREATE INDEX IF NOT EXISTS idx_learn_cards_seq ON learn_cards (owner, sync_seq);
 
 -- Every answer, for the streak, "done today" and the mistakes list. A card's answers go with it.
 CREATE TABLE IF NOT EXISTS learn_reviews (
@@ -325,7 +334,25 @@ CREATE TABLE IF NOT EXISTS learn_reviews (
   mode    TEXT    NOT NULL,                      -- review | spell | build | dictation | say | fill | mistakes
   grade   TEXT    NOT NULL,                      -- again | hard | good
   correct INTEGER NOT NULL,                      -- 1 / 0
-  answer  TEXT                                   -- what the person answered, at most 500 characters
+  answer  TEXT,                                  -- what the person answered, at most 500 characters
+  uid     TEXT,                                  -- schema 14: the id of the answer on every linked device (a random UUID), always set
+  sync_seq INTEGER NOT NULL DEFAULT 0            -- schema 14: the change number the sync pages by
 );
 CREATE INDEX IF NOT EXISTS idx_learn_reviews_owner_at ON learn_reviews (owner, at);
 CREATE INDEX IF NOT EXISTS idx_learn_reviews_card ON learn_reviews (card_id, at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_learn_reviews_uid ON learn_reviews (uid);
+CREATE INDEX IF NOT EXISTS idx_learn_reviews_seq ON learn_reviews (owner, sync_seq);
+
+-- Schema 14: where a card went when its English text was changed to another text (PATCH en), so a linked device that still has the card under the
+-- old text moves it too instead of sending it back. Cards are never deleted otherwise.
+CREATE TABLE IF NOT EXISTS learn_card_moves (
+  owner    TEXT    NOT NULL,
+  kind     TEXT    NOT NULL,
+  norm     TEXT    NOT NULL,                     -- the old normalized text
+  moved_to TEXT    NOT NULL,                     -- the normalized text the card has now
+  at       INTEGER NOT NULL,                     -- the hybrid clock of the change
+  by       TEXT    NOT NULL DEFAULT '',          -- the device that made it ('' is this device)
+  sync_seq INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, kind, norm)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_card_moves_seq ON learn_card_moves (owner, sync_seq);

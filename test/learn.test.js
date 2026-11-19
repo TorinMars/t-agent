@@ -298,6 +298,8 @@ test('the summary: due, new and done today, the goal, the streak in the server\'
   await call('POST', `/cards/${old.id}/answer`, { mode: 'review', grade: 'hard', correct: true });
   assert.deepEqual((await call('GET', '/summary')).body, {
     due: 0, new_today: 2, done_today: 3, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1, collecting: true, starter: null,
+    // Where the data is kept (services/learn-sync.js): a normal machine, nothing waiting.
+    device: { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0, offline_copy_at: null },
   });
   clock.now = NOW + 11 * 60 * 1000;
   assert.equal((await call('GET', '/summary')).body.due, 1, 'the "again" card is due after 10 minutes');

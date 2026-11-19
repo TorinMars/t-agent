@@ -17,7 +17,7 @@
 | File | What is in it | Size |
 | --- | --- | --- |
 | [architecture-overview.md](docs/design/architecture-overview.md) | The map of the system: overview diagrams, purpose and users, deployment topology, every server module (part A to C). | 32 KB |
-| [architecture-data.md](docs/design/architecture-data.md) | Data storage, the data directory (`~/.tagent`), the data model and core concepts, terminal start directory, task rename (part D and E). | 31 KB |
+| [architecture-data.md](docs/design/architecture-data.md) | Data storage, the data directory (`~/.tagent`), the data model and core concepts, terminal start directory, task rename (part D and E). | 33 KB |
 | [architecture-features-and-page.md](docs/design/architecture-features-and-page.md) | T-Attention data, API and tokens; mind maps; the client UI; routes, layout and input mode of the page (part F and G). | 35 KB |
 
 ### Terminals and agent sessions
@@ -38,7 +38,7 @@
 | [service-links.md](docs/design/service-links.md) | Two services that operate each other as remote Engines: joining, tokens, linked capabilities, per-task visibility, shared task order. | 16 KB |
 | [service-links-tunnel.md](docs/design/service-links-tunnel.md) | The reverse WebSocket tunnel that lets a service behind NAT be reached by its linked service. | 6 KB |
 | [settings-sync.md](docs/design/settings-sync.md) | One set of settings for all linked devices: what is shared, registry, rounds, conflict rule, encryption, known limits. | 11 KB |
-| [linked-device-settings.md](docs/design/linked-device-settings.md) | Reading and changing the per-device settings of a linked device from this page; the settings tabs. | 14 KB |
+| [linked-device-settings.md](docs/design/linked-device-settings.md) | Reading and changing the per-device settings of a linked device from this page; the settings tabs; the "Company computer" device tier. | 16 KB |
 | [peer-file-access.md](docs/design/peer-file-access.md) | Read-only file access of agent sessions to linked Engines (MCP tools, scope, the switch). | 8 KB |
 | [engine-names.md](docs/design/engine-names.md) | One name per Engine, kept by that Engine and shown everywhere. | 3 KB |
 
@@ -61,7 +61,7 @@
 | [static-asset-caching.md](docs/design/static-asset-caching.md) | Content-hash URLs, long cache, pre-compressed and combined files. | 8 KB |
 | [usage-data.md](docs/design/usage-data.md) | Usage data: local, private tracking of button presses on the page (what is and is not recorded, keys, surfaces, batches, storage and retention, the switch, the `/api/ui-events` API, the Settings group). | 11 KB |
 | [mind-maps.md](docs/design/mind-maps.md) | The mind map editor: why this shape, maps of every service, the editor library, the page, the Mind maps tab of the multi-column view, editing, saving, .xmind. | 19 KB |
-| [learn-english.md](docs/design/learn-english.md) | Learn English: study cards from the person's translated sentences, looked-up words and a starter list; the tables, the spaced review rules, the `/api/learn` API, meanings through the translator, the collection hooks of the page. | 9 KB |
+| [learn-english.md](docs/design/learn-english.md) | Learn English: study cards from the person's translated sentences, looked-up words and a starter list; the tables, the spaced review rules, the `/api/learn` API, meanings through the translator, the collection hooks of the page; the sync across linked devices and the company computer (cache only, home, offline queue). | 21 KB |
 | [learn-english-page.md](docs/design/learn-english-page.md) | The Learn page: the Learn destination, the home, the practice modes (Review, Spell the word, Build the sentence, Dictation, Say it, Fill the gap), Mistakes, Your material, Learn settings; grading in the browser, speech, tests. | 10 KB |
 
 ### T-Attention

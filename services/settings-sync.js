@@ -548,6 +548,8 @@ function createSettingsSync(options) {
     meta: () => { prepare(); return readMeta(); },
     peerStates: readPeers,
     publicKey: () => ownKeys().publicKey,
+    // The key of one link for another sync over the same links (services/learn-sync.js derives its own key from it).
+    linkKey: (peer, publicKey) => linkKeyFor(peer, publicKey),
     keys: () => [...byKey.keys()],
   };
 }

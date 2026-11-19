@@ -40,6 +40,9 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 
 // schema.sql creates missing tables on every start; schema 9 added the T-Attention tables (attention_items, attention_events, attention_tokens) this way,
 // schema 12 the usage data tables and schema 13 the English learning tables (learn_cards, learn_reviews).
+// Schema 14: the sync columns of learn_cards and learn_reviews and the table learn_card_moves. They are added to a schema 13 database before
+// schema.sql runs, because schema.sql makes indexes on them (services/learn-sync-store.js; a database without learn_cards gets it all from schema.sql).
+require('../services/learn-sync-store').ensureSyncSchema(db);
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 

@@ -2,7 +2,10 @@
 // the starter list), spaced review (services/learn-review.js), the practice queues, the mistakes, the day's numbers and the settings. Stored in
 // learn_cards and learn_reviews (schema 13) and the system_state key `learn_v1:<owner>`. Meanings come from the translator the person already set
 // up, through `lookupWord` (routes/learn.js hands in the same path as POST /api/translate/word); no other outside service is called.
+// Every change stamps the hybrid clock and the change number of the sync (services/learn-sync-store.js, "Sync across linked devices" there): the
+// content clock for an edit, the review-state clock for an answer, a random id for an answer, and a move record when a card's text changes.
 const { readState, writeState, isPlainObject } = require('./settings-sync-store');
+const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('./learn-starter');
 
@@ -97,9 +100,21 @@ function cardJson(row) {
   };
 }
 
-function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWord = null } = {}) {
+const settingsKey = owner => `learn_v1:${owner}`;
+// The version of an owner's learning settings for the sync: { at, by, seq } (hybrid clock, '' for this device, change number).
+const settingsVersionKey = owner => `learn_v1_sync:${owner}`;
+
+// `cacheOnly()`: this machine is a company computer whose learning data lives on a normal machine (services/learn-sync.js); it then imports no
+// starter list of its own (the cards come from that machine).
+function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false } = {}) {
   const meanings = new Map(); // `${owner}|${word}` -> zh, least recently used first
-  const settingsKey = owner => `learn_v1:${owner}`;
+  const stamp = () => syncStore.stamp(db, now());
+  const seq = () => syncStore.nextSeq(db);
+  const changed = () => syncStore.learnChanged(db);
+  function settingsChanged(owner) {
+    writeState(db, settingsVersionKey(owner), { at: stamp(), by: '', seq: seq() });
+    changed();
+  }
 
   function settings(owner) {
     const stored = readState(db, settingsKey(owner));
@@ -126,6 +141,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       next.starter = body.starter;
     }
     writeState(db, settingsKey(owner), next);
+    settingsChanged(owner);
     if (next.starter) importStarter(owner, next.starter);
     return next;
   }
@@ -154,14 +170,21 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     const existing = db.prepare('SELECT * FROM learn_cards WHERE owner = ? AND kind = ? AND norm = ?').get(owner, body.kind, norm);
     if (existing) {
       if (!existing.zh && zh) {
-        db.prepare('UPDATE learn_cards SET zh = ? WHERE id = ?').run(zh, existing.id);
+        // A filled-in meaning keeps the content clock: an empty meaning never wins over one in the merge, so it reaches every device anyway.
+        db.prepare('UPDATE learn_cards SET zh = ?, sync_seq = ? WHERE id = ?').run(zh, seq(), existing.id);
         existing.zh = zh;
+        changed();
       }
       return { card: cardJson(existing), created: false };
     }
     const at = now();
-    const { lastInsertRowid } = db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, interval_days, ease)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`).run(owner, body.kind, en, norm, zh, source, context, at, at, review.EASE_START);
+    const { lastInsertRowid } = db.transaction(() => {
+      // The text comes back after a move away from it: the card lives here again.
+      db.prepare('DELETE FROM learn_card_moves WHERE owner = ? AND kind = ? AND norm = ?').run(owner, body.kind, norm);
+      return db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, source, context, at, at, review.EASE_START, stamp(), seq());
+    })();
+    changed();
     return { card: cardJson(getCard(owner, lastInsertRowid)), created: true };
   }
 
@@ -180,7 +203,19 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       if (typeof body.suspended !== 'boolean') throw bad('Invalid card change');
       next.suspended = body.suspended ? 1 : 0;
     }
-    db.prepare('UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended WHERE id = @id').run({ ...next, id: row.id });
+    const at = stamp();
+    db.transaction(() => {
+      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, content_at = @at, content_by = '', sync_seq = @seq
+        WHERE id = @id`).run({ ...next, at, seq: seq(), id: row.id });
+      if (next.norm !== row.norm) {
+        // The card leaves its old text: a move record tells the linked devices that still have it there (services/learn-sync.js).
+        db.prepare('DELETE FROM learn_card_moves WHERE owner = ? AND kind = ? AND norm = ?').run(owner, row.kind, next.norm);
+        db.prepare(`INSERT INTO learn_card_moves (owner, kind, norm, moved_to, at, by, sync_seq) VALUES (?, ?, ?, ?, ?, '', ?)
+          ON CONFLICT (owner, kind, norm) DO UPDATE SET moved_to = excluded.moved_to, at = excluded.at, by = '', sync_seq = excluded.sync_seq`)
+          .run(owner, row.kind, row.norm, next.norm, at, seq());
+      }
+    })();
+    changed();
     return { card: cardJson(getCard(owner, row.id)) };
   }
 
@@ -196,10 +231,12 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     const next = review.applyAnswer(row, body.grade, body.correct, at);
     db.transaction(() => {
       db.prepare(`UPDATE learn_cards SET due_at = @due_at, interval_days = @interval_days, ease = @ease, reps = @reps, lapses = @lapses,
-        last_result = @last_result, last_at = @last_at, last_correct = @last_correct WHERE id = @id`).run({ ...next, id: row.id });
-      db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(row.id, owner, at, body.mode, body.grade, body.correct ? 1 : 0, text);
+        last_result = @last_result, last_at = @last_at, last_correct = @last_correct, state_at = @state_at, state_by = '', sync_seq = @seq WHERE id = @id`)
+        .run({ ...next, state_at: stamp(), seq: seq(), id: row.id });
+      db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(row.id, owner, at, body.mode, body.grade, body.correct ? 1 : 0, text, syncStore.reviewId(), seq());
     })();
+    changed();
     return { card: cardJson(getCard(owner, row.id)) };
   }
 
@@ -253,7 +290,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     } else meanings.delete(key);
     meanings.set(key, zh);
     if (meanings.size > MEANING_CACHE_SIZE) meanings.delete(meanings.keys().next().value);
-    db.prepare("UPDATE learn_cards SET zh = ? WHERE owner = ? AND kind = 'word' AND norm = ? AND zh = ''").run(zh, owner, norm);
+    if (db.prepare("UPDATE learn_cards SET zh = ?, sync_seq = ? WHERE owner = ? AND kind = 'word' AND norm = ? AND zh = ''").run(zh, seq(), owner, norm).changes) changed();
     return { zh };
   }
 
@@ -315,28 +352,38 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
   function importStarter(owner, id) {
     const list = STARTER_LISTS[id];
     if (!list) throw bad('Unknown starter list');
+    // A company computer gets the starter words of the normal machine with the other cards.
+    if (cacheOnly()) return 0;
     if (db.prepare("SELECT 1 FROM learn_cards WHERE owner = ? AND source = 'starter' LIMIT 1").get(owner)) return 0;
     const at = now();
-    const insert = db.prepare(`INSERT OR IGNORE INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, interval_days, ease)
-      VALUES (?, 'word', ?, ?, '', 'starter', ?, ?, ?, 0, ?)`);
+    // Both clocks stay 0: the same list imported on two linked devices is the same cards, and any real answer or edit wins over it.
+    const insert = db.prepare(`INSERT OR IGNORE INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, interval_days, ease, sync_seq)
+      VALUES (?, 'word', ?, ?, '', 'starter', ?, ?, ?, 0, ?, ?)`);
     let added = 0;
     db.transaction(() => {
       list.words.forEach(word => {
         const due = at + Math.floor(added / STARTER_PER_DAY) * review.DAY;
-        added += insert.run(owner, word, word.toLowerCase(), list.title, at, due, review.EASE_START).changes;
+        added += insert.run(owner, word, word.toLowerCase(), list.title, at, due, review.EASE_START, seq()).changes;
       });
     })();
+    if (added) changed();
     return added;
   }
   function starter(owner, body) {
     if (!isPlainObject(body) || !Object.hasOwn(STARTER_LISTS, body.list)) throw bad('Unknown starter list');
     const added = importStarter(owner, body.list);
     const current = settings(owner);
-    if (current.starter !== body.list) writeState(db, settingsKey(owner), { ...current, starter: body.list });
+    if (current.starter !== body.list) {
+      writeState(db, settingsKey(owner), { ...current, starter: body.list });
+      settingsChanged(owner);
+    }
     return { added };
   }
 
   return { settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter };
 }
 
-module.exports = { createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS };
+module.exports = {
+  createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS,
+};

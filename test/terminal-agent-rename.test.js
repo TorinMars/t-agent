@@ -110,8 +110,11 @@ test('idle Claude: the rename is typed at once, Enter on its own; the answer and
   await sleep(600); // the settle time of that activity change passes with nothing pending
   session.mark = session.pty.input.length;
   assert.deepEqual(await rename(`${local}/api/tasks`, task.id, claude.terminal_id, 'MAIN-CC'), { terminal_id: claude.terminal_id, title: 'MAIN-CC' });
-  assert.deepEqual(typedSince(session), [CLEAR_PROMPT]);
-  await sleep(300);
+  // The clear keys go first (at once); the command and Enter follow as separate writes. How many have arrived when the route answers depends on
+  // the machine's load, so only the order and the final writes are checked.
+  assert.deepEqual(typedSince(session)[0], CLEAR_PROMPT, 'the input box is cleared first, at once');
+  const deadline = Date.now() + 3000;
+  while (typedSince(session).length < 3 && Date.now() < deadline) await sleep(25);
   assert.deepEqual(typedSince(session), expected('MAIN-CC'));
   const row = terminal.listTerminals(task.id).find(item => item.terminal_id === claude.terminal_id);
   assert.equal(row.title, 'MAIN-CC');

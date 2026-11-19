@@ -1,9 +1,9 @@
 // The preset commands of the "Saved commands" list (row 2 of the phone bottom bar), chosen by the kind of the open terminal.
-// Edit these tables to change the presets (there is no user editing yet). `command` is typed into the terminal like a paste,
-// WITHOUT Enter, so the user checks it and presses Enter. `note` is the short English description shown under it
+// Edit these tables to change the presets (there is no user editing yet). A tap on a `command` sends it with Enter; its pencil
+// ("Edit before sending") types it without Enter (command-recency.mjs keeps the recently used ones first). `note` is the short English description shown under it
 // (its Chinese text is in public/js/i18n-zh-ui.js, keyed by the exact English text; test/i18n.test.js checks it).
 //
-// `keys` (Claude Code and Codex only) are common key combinations, shown under a "Keys" header. Unlike a command, a key is SENT
+// `keys` (Claude Code and Codex only) are common key combinations, shown under a "Keys" header. Like a command, a key is SENT
 // at once: `send` is the exact byte string (or a list of them, sent one after another with a short gap, so "Esc Esc" arrives as two presses).
 // A latched Ctrl / Alt / Shift from row 1 is never added to them (h5.js drops the latch).
 //

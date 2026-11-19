@@ -589,7 +589,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal((await barRects()).resizes, rest.resizes);
     }
 
-    // The saved commands menu: Paste text, then the presets of the terminal kind (a plain shell here; the Claude / Codex lists are checked in test-h5-pc-browser.cjs); a preset command is typed WITHOUT Enter.
+    // The saved commands menu: Paste text, then the presets of the terminal kind (a plain shell here; the Claude / Codex lists are checked in test-h5-pc-browser.cjs).
+    // A tap SENDS the command (then Enter) and closes the list; the pencil (always shown on a touch screen, a 44px target) types it without Enter;
+    // both put the command first next time, with "used ..." on its second line and a divider below the used ones.
     {
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
       await barSettled();
@@ -602,11 +604,32 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.deepEqual(await page.locator('.h5-add-menu .h5-add-menu-head').allTextContents(), ['Start an agent'], 'a plain terminal shows the shell list');
       const commands = await page.locator('.h5-add-menu .h5-add-menu-command').allTextContents();
       assert.deepEqual(commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'git status'], 'the menu lists the commands that start an agent');
+      const pencils = await page.locator('.h5-add-menu .h5-add-menu-edit').evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { label: node.getAttribute('aria-label'), title: node.title, opacity: getComputedStyle(node).opacity, w: r.width, h: r.height }; }));
+      assert.equal(pencils.length, commands.length, 'every command row has a pencil');
+      assert.ok(pencils.every(p => p.label === 'Edit before sending' && p.title === 'Edit before sending' && p.opacity === '1' && p.w >= 44 && p.h >= 44), `touch: the pencil is always shown, 44px: ${JSON.stringify(pencils[0])}`);
       await page.locator('.h5-add-menu [role="menuitem"]', { hasText: 'git status' }).tap();
-      await page.waitForFunction(count => window.sockets[0].sent.filter(item => !item.startsWith('{')).length > count, sentBefore);
-      const typedAfter = (await sent()).slice(sentBefore);
-      assert.deepEqual(typedAfter, ['git status'], 'a preset is typed into the terminal without Enter');
+      await page.waitForFunction(count => window.sockets[0].sent.filter(item => !item.startsWith('{')).length > count + 1, sentBefore);
+      assert.deepEqual((await sent()).slice(sentBefore), ['git status', '\r'], 'a tap sends the preset: the command, then Enter');
       assert.equal(await page.locator('.h5-add-menu').count(), 0, 'the menu closes after a command is chosen');
+      // The pencil: "Edit before sending" types the command WITHOUT Enter and closes the list.
+      await page.locator('#h5-commands').tap();
+      await page.locator('.h5-add-menu-row', { hasText: 'codex resume' }).locator('.h5-add-menu-edit').tap();
+      await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
+      await page.waitForTimeout(400);
+      assert.deepEqual((await sent()).slice(sentBefore + 2), ['codex resume'], 'the pencil types the command without Enter');
+      // Recently used first: the two used commands lead, most recent first, with "used ..." and a divider below them; the header says so.
+      await page.locator('#h5-commands').tap();
+      const recent = await page.evaluate(() => {
+        const menu = document.querySelector('.h5-add-menu');
+        const order = [...menu.querySelectorAll('.h5-add-menu-command, .h5-add-menu-divider')].map(node => (node.classList.contains('h5-add-menu-divider') ? '|' : node.textContent));
+        return { order, head: menu.querySelector('.h5-add-menu-head').textContent, used: [...menu.querySelectorAll('.h5-add-menu-used')].map(node => node.textContent) };
+      });
+      assert.deepEqual(recent.order, ['codex resume', 'git status', '|', 'claude', 'claude --continue', 'claude --resume', 'codex'], 'used first, most recent at the top, then the divider and the usual order');
+      assert.equal(recent.head, 'Start an agent \u00b7 recently used first');
+      assert.deepEqual(recent.used, ['used just now', 'used just now']);
+      if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-commands-recent.png') });
+      await page.locator('#h5-commands').tap();
+      await page.locator('.h5-add-menu').waitFor({ state: 'detached' });
       await page.evaluate(() => document.activeElement && document.activeElement.blur());
       // A tap outside closes the menu, and so does Escape.
       await page.locator('#h5-commands').tap();
@@ -759,8 +782,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-translate-input').focus(); await page.locator('#h5-translate-input').fill('run the tests, and please make the text long enough that the box grows to two lines on the phone');
     await page.locator('#h5-translate-input').blur();
     await page.evaluate(() => document.getElementById('h5-translate-input').focus()); // the bar is still animating when the tap lands
+    const entersBefore = (await sent()).filter(item => item === '\r').length; // a saved command sent above already ended with one
     await page.locator('#h5-translate-button').tap();
-    await page.waitForFunction(() => window.sockets[0].sent.includes('\r'));
+    await page.waitForFunction(count => window.sockets[0].sent.filter(item => item === '\r').length > count, entersBefore);
     assert.deepEqual((await sent()).slice(-2), ['Run the tests [2J', '\r'], 'ESC is removed, so no escape sequence reaches the shell');
     assert.equal(await page.locator('#h5-translate-input').inputValue(), '');
     {

@@ -36,6 +36,7 @@
 | Add subtopic (mind map bar) | subnode | 8094810 | `subnode` |
 | Add topic after (mind map bar) | sisternode | 8094823 | `sisternode` |
 | Edit topic (mind map bar) | edit | 4766959 | `edit` |
+| Edit before sending (a saved command row) | edit | 4766959 | `edit` |
 | Delete topic, delete map (mind map bar and list) | delete | 4766676 | `delete` |
 | Collapse / expand (mind map bar) | minus-square / plus-square | 4765972 / 4765973 | `minusSquare`, `plusSquare` |
 | Undo / redo (mind map bar) | undo / redo | 4765837 / 4765838 | `undo`, `redo` |

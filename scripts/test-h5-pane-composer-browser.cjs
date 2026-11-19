@@ -226,6 +226,27 @@ async function desktop(browser) {
   await b.locator('.h5-add-menu').getByText('git status').click();
   await until(() => sentText(b, 'git status'), 'a saved command is typed into the terminal');
   await b.locator('.h5-add-menu').waitFor({ state: 'detached' });
+  const typedIn = () => b.evaluate(() => window.sockets.flatMap(s => s.sent.filter(item => !item.startsWith('{'))));
+  await until(async () => (await typedIn()).slice(-2).join('|') === 'git status|\r', 'a tap sends the saved command, then Enter');
+  // The same list in a column: the pencil types without Enter, and the used commands come first with "used ...", above a divider.
+  await openMore();
+  await b.locator('#h5-more-commands').click();
+  await b.locator('.h5-add-menu').waitFor();
+  assert.equal(await b.locator('.h5-add-menu-row', { hasText: 'codex resume' }).locator('.h5-add-menu-edit').evaluate(node => getComputedStyle(node).opacity), '0', 'pointer: the pencil waits for hover');
+  await b.locator('.h5-add-menu-row', { hasText: 'codex resume' }).hover();
+  const typedBefore = (await typedIn()).length;
+  await b.locator('.h5-add-menu-row', { hasText: 'codex resume' }).locator('.h5-add-menu-edit').click();
+  await b.locator('.h5-add-menu').waitFor({ state: 'detached' });
+  await page.waitForTimeout(400);
+  assert.deepEqual((await typedIn()).slice(typedBefore), ['codex resume'], 'the pencil types the command without Enter');
+  await openMore();
+  await b.locator('#h5-more-commands').click();
+  await b.locator('.h5-add-menu').waitFor();
+  assert.deepEqual(await b.evaluate(() => [...document.querySelectorAll('.h5-add-menu .h5-add-menu-command, .h5-add-menu .h5-add-menu-divider')].slice(0, 3).map(node => (node.classList.contains('h5-add-menu-divider') ? '|' : node.textContent))),
+    ['codex resume', 'git status', '|'], 'used first, most recent at the top, then the divider');
+  assert.equal(await b.locator('.h5-add-menu-used').count(), 2);
+  await b.locator('.h5-terminal').click({ position: { x: 20, y: 20 } }); // a press outside closes the list
+  await b.locator('.h5-add-menu').waitFor({ state: 'detached' });
   // Docs: the design document sheet.
   await b.evaluate(() => { const own = window.H5UI.actions.openDesign; window.designCalls = 0; window.H5UI.actions.openDesign = (...args) => { window.designCalls += 1; return own(...args); }; });
   await openMore();

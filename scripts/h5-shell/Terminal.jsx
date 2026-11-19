@@ -15,6 +15,7 @@ import ToggleButton from '@mui/material/ToggleButton';
 import { Pill, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { commandsFor } from './commands.mjs';
+import { orderCommands, recordUse, usedLabel, usesFor } from './command-recency.mjs';
 import { TerminalKeyboard } from './Osk.jsx';
 import { TOUCH } from './theme.mjs';
 import { shallowEqual } from './store.mjs';
@@ -155,18 +156,30 @@ export function BottomArea({ ui }) {
   };
   // A computer (input mode 'pointer'): no function key row (a real keyboard has the keys), the draft box always shown, one row.
   const pointer = state.input === 'pointer';
-  const presets = commandsFor(state.terminalAgent);
+  const agent = state.terminalAgent;
+  const presets = commandsFor(agent);
+  // Recently used first (scripts/h5-shell/command-recency.mjs, one order per kind on this device): read only while the list is open.
+  const { used, rest } = menu ? orderCommands(presets.commands, usesFor(agent)) : { used: [], rest: presets.commands };
+  const now = Date.now();
+  const command = ({ command: text, note, usedAt }) => ({
+    label: text, note, used: usedAt ? usedLabel(usedAt, now) : null, mono: true,
+    // A tap SENDS the command with Enter and closes the list; the pencil types it without Enter ("Edit before sending"). Both count as a use.
+    run: () => run(() => { if (ui.actions.sendCommand(text)) recordUse(agent, text); }),
+    edit: () => run(() => { if (ui.actions.insertCommand(text)) recordUse(agent, text); }),
+  });
   const rows = [
     { icon: <Icon name="paste" size={20} />, label: 'Paste text', run: () => run(() => ui.actions.key({ action: 'paste' })) },
-    // The presets of the open terminal's kind (Claude Code, Codex or a plain shell; `state.terminalAgent`, set by h5.js), under a header naming the list (scripts/h5-shell/commands.mjs).
-    // A tap types the command WITHOUT Enter, so the user checks it and presses Enter.
-    { head: true, label: presets.title },
-    ...presets.commands.map(({ command, note }) => ({ label: command, note, mono: true, run: () => run(() => ui.actions.insertCommand(command)) })),
+    // The presets of the open terminal's kind (Claude Code, Codex or a plain shell; `state.terminalAgent`, set by h5.js), under a header naming the list (scripts/h5-shell/commands.mjs):
+    // the used ones first, then a divider and the never used ones in their usual order.
+    { head: true, label: presets.title, recent: used.length > 0 },
+    ...used.map(command),
+    ...(used.length && rest.length ? [{ divider: true }] : []),
+    ...rest.map(command),
     // Claude Code and Codex also list common key combinations under "Keys". A tap SENDS the key at once (h5.js `ui.actions.key({ send })`, which drops a latched Ctrl / Alt / Shift)
     // and closes the list, like a command.
     ...(presets.keys ? [{ head: true, label: 'Keys' }, ...presets.keys.map(({ label, send, note }) => ({ label, note, mono: true, keyRow: true, run: () => run(() => ui.actions.key({ send })) }))] : []),
   ];
-  const list = menu ? <CommandsList rows={rows} at={menuAt} /> : null;
+  const list = menu ? <CommandsList rows={rows} at={menuAt} fill={!compact && !pointer} /> : null;
   if (compact) return <CompactBottom state={state} ui={ui} list={list} onMenu={setMenu} pointer={pointer} />;
   return (
     <Paper
@@ -183,36 +196,67 @@ export function BottomArea({ ui }) {
 }
 
 // The saved commands list (and Paste text), above the bottom area: opened by the saved commands button, or from "More tools". An MD2 menu: a Paper at
-// elevation 8, 4px corners, rows of body text (commands in monospace with a caption under them) and list subheaders with a divider above them.
-// `at`: the left edge of the button that opened it on the computer row (kept inside the area); otherwise 8px from the left.
-function CommandsList({ rows, at = null }) {
-  const left = at == null ? 8 : `max(8px, min(${at}px, calc(100% - 308px)))`;
+// elevation 8, rows of body text (commands in monospace with a caption under them) and list subheaders with a divider above them.
+// `at`: the left edge of the button that opened it on the computer row (kept inside the area); otherwise 8px from the left. 340px wide (the header
+// "Claude Code commands · recently used first" fits on one line); `fill` (the phone layout): the width of the area less 8px on each side, at most 560px.
+// A command row (`edit`) ends with the pencil "Edit before sending": always shown in touch input mode (a 44px target), with a pointer only while the row is
+// hovered or holds the keyboard focus (opacity, so nothing moves; it stays reachable with Tab). Used commands say when on their second line, and a
+// middle divider (16px inset) separates them from the never used ones ("Saved commands" in docs/design/page-terminal-and-bottom-bar.md).
+const COMMAND_ROW = {
+  display: 'flex', alignItems: 'center', pr: 0.5,
+  '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } },
+  '& > .MuiButton-root:hover': { bgcolor: 'transparent' },
+};
+const EDIT_BUTTON = theme => ({
+  flex: '0 0 auto', width: 36, height: 36, color: 'text.secondary', opacity: 0, transition: theme.transitions.create('opacity', { duration: theme.transitions.duration.shortest }),
+  '.h5-add-menu-row:hover &, .h5-add-menu-row:focus-within &': { opacity: 1 },
+  [TOUCH]: { width: 44, height: 44, opacity: 1 },
+});
+function CommandsList({ rows, at = null, fill = false }) {
+  const left = at == null ? 8 : `max(8px, min(${at}px, calc(100% - 348px)))`;
   return (
     <Paper
       className="h5-add-menu" role="menu" aria-label={t('Saved commands')} elevation={8} onMouseDown={event => event.preventDefault()}
-      sx={{ position: 'absolute', left, bottom: 'calc(100% + 8px)', width: 300, maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box', maxHeight: '60vh', overflowY: 'auto', py: 1, zIndex: 4 }}
+      sx={{ position: 'absolute', left, bottom: 'calc(100% + 8px)', width: fill ? 'calc(100% - 16px)' : 340, maxWidth: fill ? 560 : 'calc(100vw - 16px)', boxSizing: 'border-box', maxHeight: '60vh', overflowY: 'auto', py: 1, zIndex: 4 }}
     >
-      {rows.map((row, index) => (row.head ? (
-        <Box
-          key={`head-${row.label}`} className="h5-add-menu-head" role="presentation"
-          sx={{ px: 2, pt: index ? 1.5 : 1, pb: 0.5, mt: index ? 1 : 0, typography: 'body2', fontWeight: 500, color: 'text.secondary', borderTop: index ? 1 : 0, borderColor: 'divider' }}
-        >{t(row.label)}</Box>
-      ) : (
-        <Button
-          key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} id={row.id} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
-          sx={{
-            justifyContent: 'flex-start', minHeight: 40, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, typography: 'body1', fontWeight: 400, [TOUCH]: { minHeight: 48 },
-            '& .MuiButton-startIcon': { mr: 2, color: 'text.secondary' },
-          }}
-        >
-          {row.note ? (
-            <Box component="span" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', flex: '1 1 auto', minWidth: 0, textAlign: 'left' }}>
-              <Box component="span" className={row.keyRow ? 'h5-add-menu-key' : 'h5-add-menu-command'} translate="no" sx={{ typography: 'body2', fontFamily: 'ui-monospace, Menlo, monospace', fontWeight: 500, overflowWrap: 'anywhere' }}>{row.label}</Box>
-              <Box component="span" className="h5-add-menu-note" sx={{ typography: 'caption', color: 'text.secondary', overflowWrap: 'anywhere', textWrap: 'pretty' }}>{t(row.note)}</Box>
-            </Box>
-          ) : t(row.label)}
-        </Button>
-      )))}
+      {rows.map((row, index) => {
+        if (row.head) {
+          return (
+            <Box
+              key={`head-${row.label}`} className="h5-add-menu-head" role="presentation"
+              sx={{ px: 2, pt: index ? 1.5 : 1, pb: 0.5, mt: index ? 1 : 0, typography: 'body2', fontWeight: 500, color: 'text.secondary', borderTop: index ? 1 : 0, borderColor: 'divider' }}
+            >{row.recent ? `${t(row.label)} \u00b7 ${t('recently used first')}` : t(row.label)}</Box>
+          );
+        }
+        if (row.divider) return <Divider key="divider" className="h5-add-menu-divider" role="presentation" variant="middle" sx={{ my: 0.5 }} />;
+        const item = (
+          <Button
+            key={`${row.keyRow ? 'key' : 'item'}-${row.label}`} id={row.id} role="menuitem" fullWidth color="inherit" onClick={row.run} startIcon={row.icon} title={row.note ? t(row.note) : undefined}
+            sx={{
+              justifyContent: 'flex-start', minHeight: 40, borderRadius: 0, px: 2, py: row.note ? 0.75 : 0, typography: 'body1', fontWeight: 400, [TOUCH]: { minHeight: 48 },
+              '& .MuiButton-startIcon': { mr: 2, color: 'text.secondary' }, ...(row.edit ? { flex: '1 1 auto', minWidth: 0, pr: 1 } : null),
+            }}
+          >
+            {row.note ? (
+              <Box component="span" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', flex: '1 1 auto', minWidth: 0, textAlign: 'left' }}>
+                <Box component="span" className={row.keyRow ? 'h5-add-menu-key' : 'h5-add-menu-command'} translate="no" sx={{ typography: 'body2', fontFamily: 'ui-monospace, Menlo, monospace', fontWeight: 500, overflowWrap: 'anywhere' }}>{row.label}</Box>
+                <Box component="span" className="h5-add-menu-note" sx={{ typography: 'caption', color: 'text.secondary', overflowWrap: 'anywhere', textWrap: 'pretty' }}>
+                  {t(row.note)}{row.used ? <> {'\u00b7'} <span className="h5-add-menu-used">{t(row.used)}</span></> : null}
+                </Box>
+              </Box>
+            ) : t(row.label)}
+          </Button>
+        );
+        if (!row.edit) return item;
+        return (
+          <Box key={`row-${row.label}`} className="h5-add-menu-row" role="none" sx={COMMAND_ROW}>
+            {item}
+            <IconButton className="h5-add-menu-edit" role="menuitem" aria-label={t('Edit before sending')} title={t('Edit before sending')} onClick={row.edit} sx={EDIT_BUTTON}>
+              <Icon name="edit" size={20} />
+            </IconButton>
+          </Box>
+        );
+      })}
     </Paper>
   );
 }

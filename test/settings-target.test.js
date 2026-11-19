@@ -9,7 +9,7 @@ const load = () => import(pathToFileURL(path.join(__dirname, '..', 'scripts', 'h
 
 test('the new group ids open their group at the top', async () => {
   const { settingsTarget, SETTINGS_GROUPS } = await load();
-  assert.deepEqual(SETTINGS_GROUPS, ['tasks-files', 'voice-translate', 'devices', 'attention', 'account']);
+  assert.deepEqual(SETTINGS_GROUPS, ['tasks-files', 'voice-translate', 'devices', 'attention', 'account', 'usage-data']);
   for (const group of SETTINGS_GROUPS) assert.deepEqual(settingsTarget(group), { group, section: '' });
 });
 
@@ -36,7 +36,7 @@ test('the parts of Devices that sit in Advanced are known, and unknown ids open 
 test('the group list of the Settings page has a title, a description and a phone summary for every group, translated', async () => {
   const { GROUPS, SETTINGS_GROUPS, groupInfo } = await load();
   assert.deepEqual(GROUPS.map(group => group.id), SETTINGS_GROUPS);
-  assert.deepEqual(GROUPS.map(group => group.title), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
+  assert.deepEqual(GROUPS.map(group => group.title), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data']);
   const fs = require('node:fs');
   const zh = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'i18n-zh-ui.js'), 'utf8');
   for (const group of GROUPS) {

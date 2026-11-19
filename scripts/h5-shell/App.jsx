@@ -3,7 +3,6 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
 import { CopyDialog, Notice, PasteDialog, RetainDialog, UploadDialog } from './Dialogs.jsx';
 import { Header } from './Header.jsx';
-import { TaskDialog } from './TaskDialogs.jsx';
 import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
 import { ColumnStrip, NavRail } from './Columns.jsx';
@@ -14,7 +13,7 @@ import { theme } from './theme.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 // Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
-import { AttentionPanel, DesignSheet, FileTreeSheet, SettingsDrawer, SwitcherScreen } from './lazy-screens.jsx';
+import { AttentionPanel, DesignSheet, FileTreeSheet, SettingsDrawer, SwitcherScreen, TaskDialogScreen } from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
 // shorter); from then on it stays mounted, so MUI runs its closing animation and gives the focus back as usual.
@@ -116,7 +115,7 @@ export function App({ ui }) {
       <Lazy open={open.upload}><Part ui={ui} keys={UPLOAD_KEYS} part={UploadDialog} /></Lazy>
       <Lazy open={open.retain}><Part ui={ui} keys={RETAIN_KEYS} part={RetainDialog} /></Lazy>
       <Lazy open={open.paste}><Part ui={ui} keys={PASTE_KEYS} part={PasteDialog} /></Lazy>
-      <Lazy open={open.taskDialog}><Part ui={ui} keys={TASK_DIALOG_KEYS} part={TaskDialog} /></Lazy>
+      <Lazy open={open.taskDialog}><Part ui={ui} keys={TASK_DIALOG_KEYS} part={TaskDialogScreen} /></Lazy>
       {/* The two create dialogs: they lie over the task sheet of a phone, outside it, so it closing after a create does not take them away mid-animation. */}
       <Lazy open={open.naming}><Part ui={ui} keys={NEW_SESSION_KEYS} part={NewSessionDialog} /></Lazy>
       <Lazy open={open.newTask}><Part ui={ui} keys={NEW_TASK_KEYS} part={NewTaskDialog} /></Lazy>

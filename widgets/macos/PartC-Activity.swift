@@ -4,9 +4,9 @@ import AppKit
 // MARK: - Part C: live activity
 
 // GET {TA_WIDGET_URL}/api/attention/widget/activity on the 5 s tick (one request at a time): the agent terminals of this
-// machine that run, wait for a permission answer, or have just finished. The pill shows a pulsing dot with the running
-// count (a still dot with Reduce motion) and an orange badge with the waiting count; the panel lists them under
-// "Working now", and a click on a row opens that terminal on the T-Agent page. A 404 (an older server) hides it and
+// machine that run, wait for a permission answer, or have just finished. The capsule's teal number is the running count
+// and its red number takes in the waiting ones (needsYouCount); the panel lists them under "Working now", and a click
+// on a row opens that terminal on the T-Agent page. A 404 (an older server) hides it and
 // asks again after 5 minutes. WidgetController.showActivity (show_activity of GET /prefs) turns all of it off.
 
 let activityRetryDelay: TimeInterval = 300  // after a 404 (an older server), the next try
@@ -143,7 +143,7 @@ func activityAgentLabel(_ terminal: ActivityTerminal) -> String {
     }
 }
 
-/// What the pill shows: the running terminals, and the waiting ones (they need the person, like Needs you).
+/// The running terminals (the capsule's teal number) and the waiting ones (they need the person, like Needs you).
 struct ActivityCounts: Equatable {
     var running = 0
     var waiting = 0
@@ -153,12 +153,6 @@ struct ActivityCounts: Equatable {
 func activityCounts(_ terminals: [ActivityTerminal]) -> ActivityCounts {
     ActivityCounts(running: terminals.filter { $0.state == .running }.count,
                    waiting: terminals.filter { $0.state == .waiting }.count)
-}
-
-/// The VoiceOver label of the pill's indicator: "2 running, 1 waiting for you".
-func activitySpeech(_ counts: ActivityCounts) -> String {
-    [counts.running > 0 ? L("{1} running", String(counts.running)) : nil,
-     counts.waiting > 0 ? L("{1} waiting for you", String(counts.waiting)) : nil].compactMap { $0 }.joined(separator: ", ")
 }
 
 /// The rows of the panel: the first activityRowsShown, and how many more there are.
@@ -197,106 +191,6 @@ struct ActivityPoll {
 
 extension WidgetAPI {
     var activityRequest: URLRequest { request("GET", "/api/attention/widget/activity") }
-}
-
-/// A round dot drawn in its colour; with `setPulsing(true)` its layer fades in and out.
-final class ActivityDotView: NSView {
-    var color: NSColor = ActivityState.running.color { didSet { needsDisplay = true } }
-    private(set) var pulsing = false
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) { fatalError("not used") }
-
-    override func draw(_ dirtyRect: NSRect) {
-        color.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-    }
-
-    func setPulsing(_ on: Bool) {
-        guard on != pulsing else { return }
-        pulsing = on
-        if on {
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 1
-            pulse.toValue = 0.3
-            pulse.duration = 0.9
-            pulse.autoreverses = true
-            pulse.repeatCount = .infinity
-            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            layer?.add(pulse, forKey: "pulse")
-        } else {
-            layer?.removeAnimation(forKey: "pulse")
-        }
-    }
-}
-
-/// The activity of the pill, right of the counts: a dot with the running count, and an orange badge with the
-/// waiting count. Hidden when there is nothing to show.
-final class ActivityIndicatorView: NSView {
-    let dot = ActivityDotView(frame: NSRect(x: 0, y: 0, width: 6, height: 6))
-    let runningLabel = NSTextField(labelWithString: "")
-    let waitingBadge = NSView()
-    let waitingLabel = NSTextField(labelWithString: "")
-    private(set) var counts = ActivityCounts()
-
-    init() {
-        super.init(frame: .zero)
-        isHidden = true
-        setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
-        runningLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        runningLabel.textColor = .secondaryLabelColor
-        runningLabel.setAccessibilityElement(false)
-        waitingBadge.wantsLayer = true
-        waitingBadge.layer?.backgroundColor = ActivityState.waiting.color.cgColor
-        waitingBadge.layer?.cornerRadius = 8
-        waitingLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .bold)
-        waitingLabel.textColor = .white
-        waitingLabel.alignment = .center
-        waitingLabel.setAccessibilityElement(false)
-        waitingBadge.addSubview(waitingLabel)
-        [dot, runningLabel, waitingBadge].forEach { addSubview($0) }
-    }
-
-    required init?(coder: NSCoder) { fatalError("not used") }
-
-    /// Shows these counts and lays them out for a pill `height` high; returns the width it needs (0: hidden).
-    func show(_ counts: ActivityCounts, reduceMotion: Bool, height: CGFloat = widgetHeight) -> CGFloat {
-        self.counts = counts
-        isHidden = counts.isEmpty
-        dot.setPulsing(counts.running > 0 && !reduceMotion)
-        guard !counts.isEmpty else { return 0 }
-        setAccessibilityLabel(activitySpeech(counts))
-        var x: CGFloat = 0
-        dot.isHidden = counts.running == 0
-        runningLabel.isHidden = counts.running == 0
-        if counts.running > 0 {
-            dot.frame = NSRect(x: 0, y: (height - 6) / 2, width: 6, height: 6)
-            runningLabel.stringValue = String(counts.running)
-            runningLabel.sizeToFit()
-            // The label's cell pads the text by 2 pt on each side; the glyphs start 3 pt after the dot.
-            let size = runningLabel.frame.size
-            let text = ceil(runningLabel.attributedStringValue.size().width)
-            runningLabel.frame = NSRect(x: 7, y: floor((height - size.height) / 2), width: text + 4, height: size.height)
-            x = 9 + text
-        }
-        waitingBadge.isHidden = counts.waiting == 0
-        if counts.waiting > 0 {
-            if x > 0 { x += 5 }
-            waitingLabel.stringValue = String(counts.waiting)
-            waitingLabel.sizeToFit()
-            let width = max(16, ceil(waitingLabel.frame.width) + 8)
-            waitingBadge.frame = NSRect(x: x, y: (height - 16) / 2, width: width, height: 16)
-            let labelHeight = waitingLabel.frame.height
-            waitingLabel.frame = NSRect(x: 0, y: floor((16 - labelHeight) / 2), width: width, height: labelHeight)
-            x += width
-        }
-        return x
-    }
 }
 
 /// A one-line field's text ends with an ellipsis when it does not fit (an attributed value carries its own style).
@@ -421,7 +315,6 @@ final class LiveActivity {
     var terminals: [ActivityTerminal] = []
     var rows: [ActivityRowView] = []  // the rows in the panel now
     var dirty = false  // changed while the panel could not be rebuilt (a press or drag); rebuilt on the next tick
-    let indicator = ActivityIndicatorView()
 }
 
 extension WidgetController {
@@ -440,15 +333,12 @@ extension WidgetController {
     }
 
     func setActivity(_ terminals: [ActivityTerminal]) {
-        guard terminals != live.terminals else {
-            updateCollapsed()  // Reduce motion may have changed
-            return
-        }
+        guard terminals != live.terminals else { return }
         live.terminals = terminals
         activityChanged()
     }
 
-    /// The pill at once; the panel unless a row is pressed or dragged (then on the next tick).
+    /// The capsule at once; the panel unless a row is pressed or dragged (then on the next tick).
     func activityChanged() {
         updateCollapsed()
         if refreshPaused || rowDragActive {
@@ -463,11 +353,6 @@ extension WidgetController {
         if !showActivity { live.terminals = [] }
         activityChanged()
         if showActivity { if tickMode { sendTick(wantList: false) } else { pollActivity() } }
-    }
-
-    /// Lays out the pill's indicator; the width it needs, 0 when it is hidden.
-    func layoutActivityIndicator() -> CGFloat {
-        live.indicator.show(showActivity ? activityCounts(live.terminals) : ActivityCounts(), reduceMotion: reduceMotion())
     }
 
     /// "Working now" at the top of the panel, with at most activityRowsShown rows and "+N more"; nothing when empty.
@@ -504,7 +389,6 @@ extension WidgetController {
     // For --self-test and --render-sample.
     func testSetActivity(_ terminals: [ActivityTerminal]) { setActivity(terminals) }
     var testActivityRows: [ActivityRowView] { live.rows }
-    var testIndicator: ActivityIndicatorView { live.indicator }
     var testActivityPoll: ActivityPoll { live.poll }
     /// A mouse down and up in the middle of a row, through the panel's hit test.
     func testPressActivityRow(_ index: Int) -> Bool {
@@ -535,7 +419,8 @@ func sampleActivity(now: Date) -> [ActivityTerminal] {
     ])
 }
 
-/// Renders the pill and the panel with live activity, light and dark, into DIR.
+/// Renders the capsule and the panel with live activity, light and dark, into DIR, and the capsule in the states of the
+/// mockup side by side (capsule-states-*.png: 12 / 6 / 1, 3 / 0 / 0, 128 / 14 / 3, and no list).
 func renderActivitySample(_ controller: WidgetController, dir: String, save: (String, Bool) -> Void) {
     let clock = Date(timeIntervalSince1970: 1_800_000_000)
     controller.now = { clock }
@@ -549,13 +434,13 @@ func renderActivitySample(_ controller: WidgetController, dir: String, save: (St
             let path = (dir as NSString).appendingPathComponent(name)
             save(name, name.hasPrefix("widget") ? controller.renderWidget(path, dark: dark) : controller.renderPanel(path, dark: dark))
         }
-        print("pill width with activity (\(suffix)): \(controller.testWidgetWidth) x \(controller.testWidgetHeight)")
+        print("capsule with activity (\(suffix)): \(controller.testWidgetWidth) x \(controller.testWidgetHeight), "
+              + controller.testTooltip)
+        let states = [CapsuleCounts(open: 12, needs: 6, running: 1), CapsuleCounts(open: 3, needs: 0, running: 0),
+                      CapsuleCounts(open: 128, needs: 14, running: 3), CapsuleCounts(open: nil, needs: nil, running: 0)]
+        let name = "capsule-states-\(suffix).png"
+        save(name, controller.renderCapsuleStates((dir as NSString).appendingPathComponent(name), states, dark: dark))
     }
-    // Only waiting terminals: the orange badge alone.
-    controller.setAppearance(dark: false)
-    controller.testSetActivity(sampleActivity(now: clock).filter { $0.state == .waiting })
-    let path = (dir as NSString).appendingPathComponent("widget-activity-waiting.png")
-    save("widget-activity-waiting.png", controller.renderWidget(path, dark: false))
     controller.testSetActivity([])
 }
 
@@ -609,20 +494,17 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     check("activity: elapsed time is short", [(-5, "0s"), (0, "0s"), (59, "59s"), (60, "1m"), (3599, "59m"), (3600, "1h 0m"),
                                                (3720, "1h 2m"), (90061, "25h 1m")].allSatisfy { elapsedText(TimeInterval($0.0)) == $0.1 }
           && elapsedText(.nan) == "0s" && elapsedText(.infinity) == "0s")
-    stringTable = ["{1}m": "{1} min", "{1}h {2}m": "{1} h {2} min", "Waiting for you": "W", "{1} running": "R{1}"]
+    stringTable = ["{1}m": "{1} min", "{1}h {2}m": "{1} h {2} min", "Waiting for you": "W"]
     check("strings: the elapsed time and the states come from the table", elapsedText(125) == "2 min" && elapsedText(3720) == "1 h 2 min"
-          && ActivityState.waiting.label == "W" && activitySpeech(ActivityCounts(running: 2, waiting: 0)) == "R2")
+          && ActivityState.waiting.label == "W")
     stringTable = [:]
     check("activity: the agent label is Claude, Codex, the title, else Terminal",
           activityAgentLabel(ActivityTerminal(title: "Claude 2", agent: "claude")) == "Claude"
           && activityAgentLabel(ActivityTerminal(agent: "codex")) == "Codex"
           && activityAgentLabel(ActivityTerminal(title: "npm run watch")) == "npm run watch"
           && activityAgentLabel(ActivityTerminal()) == "Terminal")
-    check("activity: the pill counts running and waiting, not done", activityCounts(decoded) == ActivityCounts(running: 2, waiting: 1)
+    check("activity: running and waiting are counted, not done", activityCounts(decoded) == ActivityCounts(running: 2, waiting: 1)
           && activityCounts([]).isEmpty)
-    check("activity: the pill's VoiceOver label", activitySpeech(ActivityCounts(running: 2, waiting: 1)) == "2 running, 1 waiting for you"
-          && activitySpeech(ActivityCounts(running: 0, waiting: 3)) == "3 waiting for you"
-          && activitySpeech(ActivityCounts(running: 1, waiting: 0)) == "1 running")
     let seven = (0..<7).map { ActivityTerminal(taskID: String($0)) }
     check("activity: at most five rows, then +N more", activityPanelRows(seven).shown.count == 5 && activityPanelRows(seven).more == 2
           && activityPanelRows(Array(seven.prefix(3))).more == 0)
@@ -649,7 +531,6 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     var answers: [(Data?, Int) -> Void] = []
     var opened: [String] = []
     var clock = Date(timeIntervalSince1970: 1_794_996_600)  // 10:10:00Z
-    var motionReduced = false
     controller.requestHook = { request, done in
         requests.append(request)
         answers.append(done)
@@ -657,7 +538,6 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     controller.openURL = { opened.append($0.absoluteString) }
     controller.announce = { _ in }
     controller.now = { clock }
-    controller.reduceMotion = { motionReduced }
     func reply(_ body: Data?, _ code: Int = 200) {
         guard !answers.isEmpty else { return }
         answers.removeFirst()(body, code)
@@ -668,8 +548,11 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
                    notes: "", sortOrder: Double(index), link: "", linkLabel: "")
     }, engines: [EngineInfo(key: "local", name: "MacBook", local: true, colorIndex: 0)], failed: [])
     controller.loadForTest(items)
-    let plainWidth = controller.testWidgetWidth
-    check("pill: no activity, no indicator", controller.testIndicator.isHidden && controller.testActivityRows.isEmpty
+    func capsule(_ open: String, _ needs: String, _ running: String) -> Bool {
+        controller.testCount == open && controller.testBadge == needs && controller.testRunning == running
+            && controller.testWidgetWidth == widgetWidth && controller.testWidgetHeight == widgetHeight
+    }
+    check("capsule: no activity, 0 running", capsule("12", "3", "0") && controller.testActivityRows.isEmpty
           && controller.testLines.first?.contains("Needs you") == true)
     controller.pollActivity()
     let request = requests.first
@@ -679,14 +562,9 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     controller.pollActivity()
     check("poll: the window sends one activity request at a time", requests.count == 1)
     reply(answer)
-    check("pill: the indicator shows the running count and the waiting badge", !controller.testIndicator.isHidden
-          && controller.testIndicator.runningLabel.stringValue == "2" && !controller.testIndicator.waitingBadge.isHidden
-          && controller.testIndicator.waitingLabel.stringValue == "1")
-    check("pill: the indicator's VoiceOver label", controller.testIndicator.accessibilityLabel() == "2 running, 1 waiting for you"
-          && controller.testIndicator.isAccessibilityElement())
-    check("pill: the dot pulses", controller.testIndicator.dot.pulsing)
-    check("pill: stays 26 pt high and grows only a little", controller.testWidgetHeight == widgetHeight
-          && controller.testWidgetWidth > plainWidth && controller.testWidgetWidth <= plainWidth + 56)
+    check("capsule: the running count, and the waiting terminal (no item of its own) joins Needs you, same size",
+          capsule("12", "4", "2"))
+    check("capsule: the tooltip and VoiceOver label read the three numbers", controller.testTooltip == "12 open \u{00B7} 4 need you \u{00B7} 2 running")
     let lines = controller.testLines
     check("panel: Working now comes first with its rows", lines.first?.contains("Working now") == true
           && lines.count > 5 && lines[1] == "Fix the login  Claude" && lines[2] == "Terminal" && lines[3] == "Codex"
@@ -718,16 +596,11 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     reply(try! JSONSerialization.data(withJSONObject: ["terminals": sevenTerminals.map { ["task_id": $0.taskID, "task_title": $0.taskTitle,
                                                                                           "state": "running", "open_path": $0.openPath] }]))
     check("panel: five rows and +2 more", controller.testActivityRows.count == 5 && controller.testLines.contains("+2 more")
-          && controller.testIndicator.runningLabel.stringValue == "7" && controller.testIndicator.waitingBadge.isHidden)
-    motionReduced = true
-    controller.pollActivity()
-    reply(try! JSONSerialization.data(withJSONObject: ["terminals": [["task_id": "1", "state": "running"]]]))
-    check("pill: with Reduce motion the dot stays still", !controller.testIndicator.dot.pulsing && !controller.testIndicator.isHidden)
-    motionReduced = false
+          && capsule("12", "3", "7"))
     controller.pollActivity()
     reply(Data("{\"error\":\"NOT_FOUND\"}".utf8), 404)
-    check("poll: a 404 hides the activity", controller.testIndicator.isHidden && controller.testActivityRows.isEmpty
-          && controller.testWidgetWidth == plainWidth && controller.testLines.first?.contains("Working now") == false)
+    check("poll: a 404 hides the activity", capsule("12", "3", "0") && controller.testActivityRows.isEmpty
+          && controller.testLines.first?.contains("Working now") == false)
     let at404 = requests.count
     clock = clock.addingTimeInterval(activityRetryDelay - 1)
     controller.pollActivity()
@@ -739,27 +612,27 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     check("poll: an answer after the pause shows it again", controller.testActivityRows.count == 4)
     controller.pollActivity()
     reply(Data(), 500)
-    check("poll: a failed answer hides it", controller.testIndicator.isHidden && controller.testActivityRows.isEmpty)
+    check("poll: a failed answer hides it", capsule("12", "3", "0") && controller.testActivityRows.isEmpty)
     controller.pollActivity()
     reply(answer)
     controller.showActivity = false
     let offCount = requests.count
-    check("prefs: showActivity off hides the indicator and the section", controller.testIndicator.isHidden
-          && controller.testActivityRows.isEmpty && controller.testWidgetWidth == plainWidth)
+    check("prefs: showActivity off shows 0 running, leaves the waiting terminal out of Needs you and hides the section",
+          capsule("12", "3", "0") && controller.testActivityRows.isEmpty)
     controller.pollActivity()
     check("prefs: and stops asking", requests.count == offCount)
     controller.showActivity = true
     check("prefs: turning it on asks at once", requests.count == offCount + 1)
     reply(answer)
-    check("prefs: and shows it again", controller.testActivityRows.count == 4 && !controller.testIndicator.isHidden)
+    check("prefs: and shows it again", controller.testActivityRows.count == 4 && capsule("12", "4", "2"))
     controller.pollActivity()
     controller.showActivity = false
     reply(answer)
-    check("prefs: an answer that arrives after turning it off is ignored", controller.testIndicator.isHidden
+    check("prefs: an answer that arrives after turning it off is ignored", capsule("12", "3", "0")
           && controller.testActivityRows.isEmpty && controller.testActivityPoll.due(clock))
     controller.showActivity = true
     reply(Data("{\"terminals\":[]}".utf8))
-    check("panel: no terminals, no section", controller.testActivityRows.isEmpty && controller.testIndicator.isHidden
+    check("panel: no terminals, no section", controller.testActivityRows.isEmpty && capsule("12", "3", "0")
           && controller.testLines.first?.contains("Working now") == false)
     check("activity: no window was put on screen", !controller.testOnScreen)
 }

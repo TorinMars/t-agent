@@ -36,10 +36,7 @@ extension WidgetController {
 
     /// Puts the loaded language on what is already built; forms and menus are built when they open.
     func stringsChanged() {
-        caption.stringValue = L("Tasks")
-        widgetRoot?.toolTip = caption.stringValue
-        widgetRoot?.setAccessibilityLabel(caption.stringValue)
-        updateCollapsed()  // the width of the pill may change with the font of the new language
+        updateCollapsed()  // the capsule's tooltip and VoiceOver label
         plusButton.toolTip = L("New task")
         plusButton.setAccessibilityLabel(L("New task"))
         widgetRoot?.menu = makeMenu([])
@@ -221,6 +218,5 @@ extension WidgetController {
         bubbleView = nil
         bubble.orderOut(nil)
         bubble.contentView = nil
-        if !detail.isVisible { updateCollapsed() }  // a width held while the bubble was shown may shrink now
     }
 }

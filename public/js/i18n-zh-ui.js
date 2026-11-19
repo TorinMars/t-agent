@@ -1888,6 +1888,7 @@ I18n.add({
   "Open T-Agent": "打开 T-Agent",
   "+{1} more": "还有 {1} 条",
   "Working now": "正在进行",
+  "{1} open · {2} need you · {3} running": "{1} 项未完成 · {2} 项需要你 · {3} 个运行中",
   "Waiting for you": "等你处理",
   "{1} running": "{1} 个运行中",
   "{1} waiting for you": "{1} 个等你处理",

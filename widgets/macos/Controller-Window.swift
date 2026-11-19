@@ -14,83 +14,34 @@ extension WidgetController {
         root.menu = makeMenu([])
         widgetRoot = root
 
-        let background = makeBackground(radius: widgetHeight / 2)
+        let background = makeBackground(radius: widgetWidth / 2)
         background.frame = root.bounds
         background.autoresizingMask = [.width, .height]
         root.addSubview(background)
-
-        countLabel.alignment = .center
-        countLabel.textColor = .labelColor
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
-        caption.stringValue = L("Tasks")  // no longer drawn: the window's tooltip and accessibility label
-        root.toolTip = caption.stringValue
-        root.setAccessibilityLabel(caption.stringValue)
-
-        badge.wantsLayer = true
-        badge.layer?.backgroundColor = NSColor.systemRed.cgColor
-        badge.layer?.cornerRadius = badgeHeight / 2
-        badge.isHidden = true
-        badgeLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .bold)
-        badgeLabel.textColor = .white
-        badgeLabel.alignment = .center
-        badge.addSubview(badgeLabel)
-
-        root.addSubview(countLabel)
-        root.addSubview(badge)
-        root.addSubview(live.indicator)
+        root.addSubview(capsule)
         widget.contentView = root
         updateCollapsed()
     }
 
+    /// The capsule's three numbers, and its tooltip and VoiceOver label, from the list and the live activity. The size
+    /// never changes, so nothing beside the capsule moves.
     func updateCollapsed() {
-        countLabel.stringValue = summary.map { String($0.unfinished) } ?? "\u{2013}"
-        let needs = summary?.needs.count ?? 0
-        badge.isHidden = needs == 0
-        badgeLabel.stringValue = String(needs)
-        layoutCollapsed()
+        let counts = capsuleCounts()
+        capsule.show(counts)
+        let text = summary == nil ? (problem ?? L("Tasks")) : capsuleSpeech(counts)
+        widgetRoot?.toolTip = text
+        widgetRoot?.setAccessibilityLabel(text)
     }
 
-    /// Lays the pill out from left to right (count, then the badge) and fits the window's width to it. The width
-    /// changes only between drags; the edge nearer the screen's side stays where it is.
-    /// Steady width: the count and the badge are laid out at least as wide as two digits (the fonts have monospaced
-    /// digits), so counts from 0 to 99 never change the width; and while the panel or a bubble is open the pill only
-    /// grows, never shrinks (the panel and the bubble sit beside the pill, so a narrower pill moved them sideways each
-    /// time a count went down). The smaller width is applied when they close (hideDetail, the bubble's hide).
-    private func layoutCollapsed() {
-        let side: CGFloat = 9
-        let gap: CGFloat = 5
-        countLabel.sizeToFit()
-        let countSize = NSSize(width: max(countLabel.frame.width, twoDigitWidth(of: countLabel)), height: countLabel.frame.height)
-        var badgeWidth: CGFloat = 0
-        if !badge.isHidden {
-            badgeLabel.sizeToFit()
-            badgeWidth = max(badgeHeight, ceil(max(badgeLabel.frame.width, twoDigitWidth(of: badgeLabel))) + 8)
-        }
-        let activityWidth = layoutActivityIndicator()  // 0 when there is no live activity to show
-        let content = ceil(countSize.width) + (badge.isHidden ? 0 : gap + badgeWidth) + (activityWidth > 0 ? gap + 1 + activityWidth : 0)
-        let width = steadyPillWidth(needed: max(widgetMinWidth, content + side * 2), current: widget.frame.width,
-                                    holding: detail.isVisible || bubble.isVisible)  // held while something sits beside the pill
-        var x = (width - content) / 2
-        countLabel.frame = NSRect(x: x, y: floor((widgetHeight - countSize.height) / 2), width: ceil(countSize.width),
-                                  height: countSize.height)
-        x += ceil(countSize.width) + gap
-        if !badge.isHidden {
-            badge.frame = NSRect(x: x, y: (widgetHeight - badgeHeight) / 2, width: badgeWidth, height: badgeHeight)
-            let labelHeight = badgeLabel.frame.height
-            badgeLabel.frame = NSRect(x: 0, y: floor((badgeHeight - labelHeight) / 2), width: badgeWidth, height: labelHeight)
-            x += badgeWidth + gap
-        }
-        if activityWidth > 0 {
-            live.indicator.frame = NSRect(x: x + 1, y: 0, width: activityWidth, height: widgetHeight)
-        }
-        guard !dragging, abs(widget.frame.width - width) > 0.5 else { return }
-        var frame = widget.frame
-        let visible = (widget.screen ?? NSScreen.main)?.visibleFrame
-        if let visible = visible, frame.midX > visible.midX { frame.origin.x = frame.maxX - width }  // keep the right edge
-        frame.size = NSSize(width: width, height: widgetHeight)
-        widget.setFrame(keptOnScreen(frame), display: !options.offscreen)
-        if detail.isVisible { positionDetail() }
-        positionBubble()
+    /// Open tasks, Needs you merged with the waiting terminals (needsYouCount), and the running terminals (0 while
+    /// "Show what agents are doing" is off). The first two are nil while there is no list.
+    func capsuleCounts() -> CapsuleCounts {
+        let terminals = showActivity ? live.terminals : []
+        let running = activityCounts(terminals).running
+        guard let summary = summary else { return CapsuleCounts(open: nil, needs: nil, running: running) }
+        let keys = Set(summary.needs.map { $0.key })
+        let needs = (list?.items ?? []).filter { keys.contains($0.key) }
+        return CapsuleCounts(open: summary.unfinished, needs: needsYouCount(needs, terminals: terminals), running: running)
     }
 
     func initialOrigin() -> NSPoint {
@@ -100,11 +51,12 @@ extension WidgetController {
         }
         if let placed = placedForDisplays() { return placed.origin }  // Part D: the spot saved for this display
         if defaults.object(forKey: "x") != nil, defaults.object(forKey: "y") != nil {
+            // A spot saved by the older, smaller pill is clamped with the capsule's size, so it stays on screen.
             let saved = NSRect(x: defaults.double(forKey: "x"), y: defaults.double(forKey: "y"),
-                               width: widget.frame.width, height: widgetHeight)
+                               width: widgetWidth, height: widgetHeight)
             return keptOnScreen(saved).origin
         }
-        return NSPoint(x: visible.maxX - widget.frame.width - 16, y: visible.maxY - widgetHeight - 16)
+        return NSPoint(x: visible.maxX - widgetWidth - 16, y: visible.maxY - widgetHeight - 16)
     }
 
     /// Moves rect fully inside the screen it overlaps most, or the main screen if it overlaps none.
@@ -129,7 +81,6 @@ extension WidgetController {
 
     private func dragEnded() {
         dragging = false
-        layoutCollapsed()  // a width change held back during the drag
         widget.setFrame(keptOnScreen(widget.frame), display: true)
         positionBubble()
         if options.persistPosition {
@@ -450,7 +401,6 @@ extension WidgetController {
 
     func hideDetail() {
         detail.orderOut(nil)
-        updateCollapsed()  // a width held while the panel was open (layoutCollapsed) may shrink now
         positionBubble()  // back beside the window
     }
 
@@ -500,19 +450,100 @@ extension WidgetController {
     }
 }
 
-/// The width this label takes for "00" (the pill's count and badge use monospaced digits): the least width they are laid out
-/// at. Measured on the label itself, its text put back afterwards, so its own font, padding and attributes count.
-func twoDigitWidth(of label: NSTextField) -> CGFloat {
-    let text = label.stringValue
-    label.stringValue = "00"
-    label.sizeToFit()
-    let width = ceil(label.frame.width)
-    label.stringValue = text
-    label.sizeToFit()
-    return width
+/// The three numbers of the capsule; nil (shown as a dash) while there is no list.
+struct CapsuleCounts: Equatable {
+    var open: Int?
+    var needs: Int?
+    var running: Int
 }
 
-/// The pill's width: what it needs, except that while the panel or a bubble sits beside it (`holding`) it never gets narrower.
-func steadyPillWidth(needed: CGFloat, current: CGFloat, holding: Bool) -> CGFloat {
-    holding ? max(needed, current) : needed
+/// The red number: the Needs you items (waiting_user and review), plus the waiting terminals of GET /activity that no
+/// Needs you item already stands for. A terminal and an item are the same thing when the item's session
+/// (context.tagent, ItemSession) names the same engine, task id and terminal id as the terminal. GET /activity lists
+/// only this machine's terminals (engine "local"), so an item of a connected service never takes one; an item without
+/// a session takes none; a waiting terminal whose task has no Needs you item (for example one still in Working) counts
+/// on its own. Each terminal counts once.
+func needsYouCount(_ needs: [WidgetItem], terminals: [ActivityTerminal]) -> Int {
+    func key(_ engine: String, _ task: String, _ terminal: String) -> String { engine + "\u{0}" + task + "\u{0}" + terminal }
+    let taken = Set(needs.compactMap { item in item.session.map { key($0.engine, $0.taskId, $0.terminalId) } })
+    var extra = Set<String>()
+    for terminal in terminals where terminal.state == .waiting {
+        let id = key(terminal.engine, terminal.taskID, terminal.terminalID)
+        if !taken.contains(id) { extra.insert(id) }
+    }
+    return needs.count + extra.count
+}
+
+/// How a number is written in the capsule: a dash for none, "99+" above 99.
+func capsuleText(_ value: Int?) -> String {
+    guard let value = value else { return "\u{2013}" }
+    return value > 99 ? "99+" : String(max(value, 0))
+}
+
+/// The tooltip and VoiceOver label of the capsule: "12 open · 6 need you · 1 running", with the exact numbers (also above 99).
+func capsuleSpeech(_ counts: CapsuleCounts) -> String {
+    func exact(_ value: Int?) -> String { value.map { String(max($0, 0)) } ?? "\u{2013}" }
+    return L("{1} open · {2} need you · {3} running", exact(counts.open), exact(counts.needs), exact(counts.running))
+}
+
+let capsuleRowHeight: CGFloat = 26
+let capsuleTextInset: CGFloat = 3  // the least room left and right of the text
+let capsuleZeroAlpha: CGFloat = 0.38
+
+/// The point size a row's text is drawn at: 13 pt, 12 pt when two digits do not fit; "99+" at 10 pt, else 9 pt.
+func capsuleFontSize(_ text: String) -> CGFloat {
+    let sizes: [CGFloat] = text == "99+" ? [10, 9] : [13, 12]
+    let room = widgetWidth - capsuleTextInset * 2
+    return sizes.first { capsuleTextWidth(text, size: $0) <= room } ?? sizes[sizes.count - 1]
+}
+
+func capsuleFont(_ size: CGFloat) -> NSFont { .monospacedDigitSystemFont(ofSize: size, weight: .semibold) }
+
+func capsuleTextWidth(_ text: String, size: CGFloat) -> CGFloat {
+    ceil(NSAttributedString(string: text, attributes: [.font: capsuleFont(size)]).size().width)
+}
+
+/// The teal of the running count: the activity teal in dark mode; in light mode a darker teal, since the system teal
+/// on the light material is about 2.2:1 (this one about 4:1).
+let capsuleTeal = NSColor(name: nil) { appearance in
+    appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? toneColor("teal") : NSColor(srgbRed: 0, green: 0.49, blue: 0.57, alpha: 1)
+}
+
+/// The capsule's three rows, top to bottom, centred: open tasks in the label colour, Needs you in the badge red, running
+/// agents in teal. Every row is always there; a zero (or a dash) is drawn dim (the row at capsuleZeroAlpha).
+final class CapsuleView: NSView {
+    let rows: [NSTextField] = (0..<3).map { _ in NSTextField(labelWithString: "\u{2013}") }
+    static let colors: [NSColor] = [.labelColor, .systemRed, capsuleTeal]
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        for row in rows {
+            row.alignment = .center
+            row.lineBreakMode = .byClipping
+            row.setAccessibilityElement(false)  // the window reads the three numbers as one label
+            addSubview(row)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    // The window takes the presses (drag, hover, menu).
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func show(_ counts: CapsuleCounts) {
+        let values: [Int?] = [counts.open, counts.needs, counts.running]
+        let top = (bounds.height - capsuleRowHeight * 3) / 2
+        for (index, row) in rows.enumerated() {
+            let text = capsuleText(values[index])
+            let dim = values[index] == nil || values[index] == 0
+            row.stringValue = text
+            row.font = capsuleFont(capsuleFontSize(text))
+            row.textColor = CapsuleView.colors[index]  // dynamic, so it follows light and dark
+            row.alphaValue = dim ? capsuleZeroAlpha : 1
+            row.sizeToFit()
+            let height = row.frame.height
+            let rowTop = bounds.height - top - capsuleRowHeight * CGFloat(index + 1)
+            row.frame = NSRect(x: 0, y: rowTop + floor((capsuleRowHeight - height) / 2), width: bounds.width, height: height)
+        }
+    }
 }

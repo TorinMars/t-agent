@@ -27,8 +27,8 @@
 // Data: GET {TA_WIDGET_URL}/api/attention/widget/items.
 // Notices: GET {TA_WIDGET_URL}/api/attention/widget/notices?after=<seq>; each new one slides out in a bubble beside the
 // window, and a click opens its target.
-// Activity: GET {TA_WIDGET_URL}/api/attention/widget/activity; the running and waiting agent terminals show in the pill
-// and under "Working now" in the panel (see "Part C: live activity").
+// Activity: GET {TA_WIDGET_URL}/api/attention/widget/activity; the running agent terminals are the capsule's teal number,
+// the waiting ones join its red Needs you number, and all are under "Working now" in the panel (see "Part C: live activity").
 // Preferences: GET {TA_WIDGET_URL}/api/attention/widget/prefs (global shortcuts, fading when idle, the working agents
 // section); see "Part D: shortcuts and preferences".
 //

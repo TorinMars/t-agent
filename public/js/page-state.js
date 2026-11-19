@@ -126,10 +126,9 @@
   if (typeof module !== 'undefined' && module.exports) { module.exports = pure; return; }
 
   // ---- Storage of this browser (guarded: private mode or blocked storage only loses the cache) ----
-  const local = {
-    get(key) { try { return root.localStorage.getItem(key); } catch { return null; } },
-    set(key, value) { try { if (value === null || value === undefined) root.localStorage.removeItem(key); else root.localStorage.setItem(key, String(value)); return true; } catch { return false; } },
-  };
+  // Through the registry of browser storage (public/js/local-keys.js), where the cache keys are declared as `cache-of-shared-state`.
+  const keysOf = root.TALocalKeys || { get: () => null, set: () => false };
+  const local = { get: key => keysOf.get(key), set: (key, value) => keysOf.set(key, value) };
   const readJson = key => { try { return JSON.parse(local.get(key) || 'null'); } catch { return null; } };
   const PANE = (() => { try { return new URLSearchParams(location.search).has('pane') && root.top !== root; } catch { return false; } })();
 
@@ -201,7 +200,7 @@
     const i18n = root.I18n;
     if (PANE || !i18n || typeof i18n.set !== 'function' || (wanted !== 'en' && wanted !== 'zh') || (typeof i18n.get === 'function' && i18n.get() === wanted)) return;
     if (local.get('ta-lang') !== wanted) return;
-    try { if (root.sessionStorage.getItem('ta-lang-applied') === wanted) return; root.sessionStorage.setItem('ta-lang-applied', wanted); } catch { return; }
+    if (keysOf.get('ta-lang-applied', 'session') === wanted || !keysOf.set('ta-lang-applied', wanted, 'session')) return;
     applyingLang = true;
     try { i18n.set(wanted); } finally { applyingLang = false; }
   }
@@ -297,7 +296,7 @@
     },
     setItem(name, text) {
       const str = text === null || text === undefined ? null : String(text);
-      local.set(name, str);
+      if (!name.startsWith(COLUMN_PREFIX)) local.set(name, str); // a column's session is kept on the server only
       if (!MOVED.includes(name) && !name.startsWith(COLUMN_PREFIX)) { emit([name]); return; } // any other key stays in this browser (a pane's own keys)
       if (CODECS[name]) {
         if (!canCode(sources)) { emit([name]); return; } // stays in this browser until the page knows its devices

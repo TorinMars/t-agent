@@ -5,7 +5,8 @@ const path = require('node:path');
 const http = require('node:http');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
-const script = fs.readFileSync(path.join(root, 'public/js/word-translate.js'), 'utf8');
+// The page's registry of browser storage (public/js/local-keys.js) runs before it, as on the page.
+const script = ['public/js/local-keys.js', 'public/js/word-translate.js'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 const css = fs.readFileSync(path.join(root, 'public/css/agent-chat.css'), 'utf8');
 
 const page = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}

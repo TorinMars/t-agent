@@ -435,7 +435,7 @@ test('the spawn runner kills a child that runs too long or prints too much', asy
 
 test('every error message of the API has a Chinese translation', () => {
   const JS = path.join(__dirname, '..', 'public', 'js');
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-ui.js', 'i18n-zh-server.js', 'i18n-zh-extra.js']) vm.runInContext(fs.readFileSync(path.join(JS, file), 'utf8'), sandbox);

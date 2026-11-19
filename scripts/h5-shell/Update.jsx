@@ -16,6 +16,7 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { api, t } from './common.jsx';
+import { localGet, localSet } from './local-keys.mjs';
 import { LinkedList, useLinkedUpdates } from './LinkedUpdates.jsx';
 import { RESTART_GRACE_MS, SLOW_RESTART_MS } from './restart-wait.mjs';
 
@@ -119,15 +120,13 @@ function pageBusy(ui) {
 }
 // Once per version (or per process started by an automatic restart, `boot:<id>`) for each tab, kept across the reload. Nothing can be remembered (private mode): no reload, because a loop is worse than an old page.
 function claimReload(version) {
-  try {
-    const done = JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]');
-    if (done.includes(version)) return false;
-    sessionStorage.setItem(AUTO_RELOADED_KEY, JSON.stringify([...done, version].slice(-20)));
-    return true;
-  } catch { return false; }
+  let done = [];
+  try { done = JSON.parse(localGet(AUTO_RELOADED_KEY, 'session') || '[]'); } catch { return false; }
+  if (!Array.isArray(done) || done.includes(version)) return false;
+  return localSet(AUTO_RELOADED_KEY, JSON.stringify([...done, version].slice(-20)), 'session');
 }
 const alreadyReloaded = version => {
-  try { return JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]').includes(version); } catch { return true; }
+  try { return JSON.parse(localGet(AUTO_RELOADED_KEY, 'session') || '[]').includes(version); } catch { return true; }
 };
 
 const MONO = { typography: 'caption', fontFamily: 'ui-monospace, Menlo, monospace', wordBreak: 'break-all' };

@@ -166,7 +166,7 @@ test('the Chinese dictionaries are in the page only for someone who reads it in 
   assert.doesNotMatch(english, /(?:src|href)="[^"]*i18n-zh-/, 'English readers do not download the dictionaries');
   // i18n.js itself stays: it is the first file of the page's first combined script.
   const first = url => /<script defer src="(\/js\/combined-[0-9a-f]{12}\.js\?v=[0-9a-f]{16})"><\/script>/.exec(url)[1];
-  assert.match((await get(first(english))).body.toString(), /^\(function \(parts\) \{[\s\S]*?\n\}\)\(\[\n"\/js\/i18n\.js",\n/m);
+  assert.match((await get(first(english))).body.toString(), /^\(function \(parts\) \{[\s\S]*?\n\}\)\(\[\n"\/js\/local-keys\.js",\n/m);
   const chinese = (await get('/h5', { Cookie: 'other=1; ta-lang=zh' })).body.toString();
   const dictionaries = [...chinese.matchAll(/src="\/js\/(i18n-zh-[\w-]+)\.js\?v=[0-9a-f]{16}"/g)].map(match => match[1]);
   assert.deepEqual(dictionaries, ['i18n-zh-ui', 'i18n-zh-server', 'i18n-zh-extra']);
@@ -192,12 +192,13 @@ test('every script of the phone page is deferred, in its old order, and the page
   before('/js/h5-shell.js', '/js/terminal-owner.js');
   before('/js/i18n.js', '/js/toast.js');
   before('/js/client-auth.js', '/js/h5-shell.js');
+  before('/js/local-keys.js', '/js/i18n.js'); // the registry of browser storage, before anything reads a key
   before('/js/page-state.js', '/js/h5-shell.js'); // the shell reads the shared page state's cache when it starts
   before('/js/mindmap.js', '/js/h5.js');
   assert.equal(order.at(-1), '/js/h5.js');
   // The scripts sent in one request (data-combine) are the small hand-written ones; the big and the vendored ones and the dictionaries stay on their own.
   const combine = scripts.filter(attrs => attrs.endsWith(' data-combine')).map(attrs => /src="([^"]+)"/.exec(attrs)[1]);
-  assert.equal(combine.length, 22);
+  assert.equal(combine.length, 23);
   for (const src of combine) {
     assert.match(src, /^\/js\/[\w.-]+\.js$/);
     assert.doesNotMatch(src, /h5-shell|\/h5\.js|i18n-zh-/, `${src} stays a request of its own`);

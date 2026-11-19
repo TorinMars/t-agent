@@ -14,6 +14,7 @@
 // the desktop window's Open session can switch in place. Its first event is `hello` { stream }; the page reports when it is seen (shown or focused) with
 // POST /api/attention/stream/seen { stream }, and `open-terminal` { engine, task_id, terminal_id } shows that terminal as the `?openTerminal=` link does
 // (h5.js ui.actions.openTerminalLink). The stream stays open while the page is hidden, so a background tab is switched too.
+import { localGet, localSet } from './local-keys.mjs';
 import { applyChange, attentionEngines, engineOf, itemKey, keyOf, needsCount, parseKey, reminderFor, showsNotice, tagItem } from './attention-model.mjs';
 
 export const BASE = '/api/attention';
@@ -26,8 +27,8 @@ const RETRY_MS = [1000, 2000, 5000, 10000, 30000, 60000];
 // state: Settings offers it as "Reminders on this device" (scope device), since a phone in a meeting and a computer at home want different sounds.
 const SOUND_KEY = 'h5-attention-sound';
 
-const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
-const write = (key, value) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* not remembered */ } };
+const read = key => localGet(key);
+const write = (key, value) => { localSet(key, value); }; // null removes; blocked storage: not remembered
 
 export function prefs() {
   return { sound: read(SOUND_KEY) !== '0' };

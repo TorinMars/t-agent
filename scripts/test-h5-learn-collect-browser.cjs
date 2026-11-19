@@ -127,7 +127,7 @@ async function collectOff(browser) {
 
 // Tap to translate (word-translate.js) in a chat-like page: a shown meaning posts a word card, in its dictionary form.
 async function tapFlow(browser) {
-  const scripts = ['public/js/learn-collect.js', 'public/js/word-translate.js'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
+  const scripts = ['public/js/local-keys.js', 'public/js/learn-collect.js', 'public/js/word-translate.js'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
   const css = fs.readFileSync(path.join(root, 'public/css/agent-chat.css'), 'utf8');
   const html = `<!doctype html><meta charset="utf-8"><style>${css} body { margin: 0; font: 16px/1.5 sans-serif; } p { margin: 8px; }</style>
 <div class="agent-chat" style="height:auto"><div class="ac-text"><p id="p1">The conflicts were resolved by a merge.</p></div></div><script>${scripts}</script>`;

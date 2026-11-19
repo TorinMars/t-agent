@@ -110,6 +110,7 @@ app.use(express.static(path.join(root, 'public')));
 app.get('/harness', (req, res) => res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/css/agent-chat.css"><link rel="stylesheet" href="/css/h5.css"><style>html,body,#host{height:100%;margin:0}</style><div id="host"></div>
 <script src="/js/agent-chat.js"></script>
+<script src="/js/local-keys.js"></script>
 <script src="/js/word-translate.js"></script>
 <script>
 const call = (method, url, body) => fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })

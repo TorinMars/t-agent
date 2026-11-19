@@ -24,6 +24,7 @@ The goal of the project: the person hardly notices which engine (T01, K01, ...) 
 - Phone and computer differ only where the screen size or the input really requires it (layout, touch targets, keyboards); the content, order and choices stay the same.
 - Allowed per browser or per device only: what is tied to that hardware or that browser (microphone and voice permission, measured terminal widths, the pane of a column, the auto-reload guard), and what the person explicitly sets for one device (scope "device" in Settings, e.g. the company computer flag). Name the reason in a comment where such a key is defined.
 - When a feature cannot behave the same everywhere (an offline engine, an older version), it says so on the page instead of silently showing different data.
+- Enforced by test/local-storage-keys.test.js: browser storage goes through public/js/local-keys.js (`window.TALocalKeys`; the shell's door is scripts/h5-shell/local-keys.mjs), and every key is declared there with its reason.
 
 ## UI design: Material Design 2, built with MUI 9
 

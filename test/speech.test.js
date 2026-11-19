@@ -723,7 +723,8 @@ function keepMicHarness({ stored = null, denyAfter = Infinity, voiceEnabled = nu
     addEventListener: (type, fn) => { documentHandlers[type] = fn; } };
   const sandbox = {
     document,
-    localStorage: { getItem: key => (store.has(key) ? store.get(key) : null), setItem: (key, value) => { store.set(key, String(value)); } },
+    // The registry of browser storage (public/js/local-keys.js) over a storage of this test.
+    TALocalKeys: require('../public/js/local-keys.js').build({ localStorage: { getItem: key => (store.has(key) ? store.get(key) : null), setItem: (key, value) => { store.set(key, String(value)); }, removeItem: key => { store.delete(key); } } }),
     navigator: { mediaDevices: { getUserMedia: async () => {
       if (streams.length >= denyAfter) throw Object.assign(new Error('denied'), { name: 'NotAllowedError' });
       const tracks = [{ readyState: 'live', onended: null, stop() { this.readyState = 'ended'; } }];

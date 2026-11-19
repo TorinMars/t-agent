@@ -23,7 +23,7 @@ async function openPage(browser, { viewport, touch, zh = false }) {
   await page.goto('http://app.test/');
   await page.addStyleTag({ content: read('public/css/h5.css') });
   if (zh) await page.evaluate(() => localStorage.setItem('ta-lang', 'zh'));
-  for (const file of ['public/js/i18n.js', ...(zh ? ['public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js'] : [])]) await page.addScriptTag({ content: read(file) });
+  for (const file of ['public/js/local-keys.js', 'public/js/i18n.js', ...(zh ? ['public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js'] : [])]) await page.addScriptTag({ content: read(file) });
   await page.evaluate(() => {
     const reply = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
     window.fetch = async url => {

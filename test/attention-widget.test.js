@@ -434,7 +434,7 @@ test('prefs: the window preferences, saved on the settings card and read by the 
   answer = await call('PUT', `${base}/settings`, { dim_when_idle: false, hotkeys: true });
   assert.deepEqual((await call('GET', `${base}/prefs`, undefined, AUTH)).body, { hotkeys: true, dim_when_idle: false, show_activity: false });
   // The Chinese of the message comes from the "{1} must be true or false" template.
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
   require('node:vm').createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-server.js']) require('node:vm').runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', 'js', file), 'utf8'), sandbox);

@@ -4,7 +4,7 @@
 
 What the page remembers about the person (the recent sessions, the chosen tabs, the columns, collapsed groups, small preferences) is kept on the server, per owner, and is the same on every device and on every engine joined by service links, company computers included (it is not personal progress data like Learn: it goes everywhere, like the settings). The rule behind it: "One experience on every device and engine" in `AGENTS.md`. Before this, each browser kept its own copy in localStorage, and the page of T01 and the page of K01 are different origins, so phone, computer, T01 and K01 each showed a different Recent list.
 
-Code: `services/page-state-merge.js` (the merge rules, pure), `services/page-state.js` (store, page reads and changes, the sync), `routes/page-state.js` (`/api/page-state`, `/v1/page-state`), `public/js/page-state.js` (the page's side, `window.TAPageState`), `scripts/h5-shell/shared-store.mjs` (the shell's door to it, and `useShared` in `common.jsx`), h5.js "Recent sessions".
+Code: `services/page-state-merge.js` (the merge rules, pure), `services/page-state.js` (store, page reads and changes, the sync), `routes/page-state.js` (`/api/page-state`, `/v1/page-state`), `public/js/page-state.js` (the page's side, `window.TAPageState`), `scripts/h5-shell/shared-store.mjs` (the shell's door to it, and `useShared` in `common.jsx`), h5.js "Recent sessions"; `public/js/local-keys.js` (the registry of every key a browser may keep, "Key audit" below).
 
 **Why a sync of its own, not a settings-sync group.** A settings group has one version for its whole value, so two devices that note different sessions at the same time would keep one of them. The page state merges per entry (each recent session) and per key (each remembered choice), like the Learn sync, but it is one small document (a few KB), so a round exchanges it whole instead of paging after a change number.
 
@@ -53,36 +53,36 @@ The layout (`h5-columns`: on, the column ids, the rail tab) is shared, and so is
 
 ## Key audit
 
-Every localStorage and sessionStorage key of the page and its chunks (`public/js/h5.js`, `public/js/*.js`, `scripts/h5-shell/*`, `scripts/agent-chat/*`, `scripts/mindmap/*`). Shared: in the shared page state (the browser key is its cache). Local: stays in this browser, with the reason (also a comment where the key is defined).
+Every localStorage and sessionStorage key of the page and its chunks (`public/js/*.js`, `scripts/h5-shell/*`, `scripts/agent-chat/*`, `scripts/mindmap/*`). The page reaches browser storage only through one registry, `public/js/local-keys.js` (`window.TALocalKeys`; the shell's door is `scripts/h5-shell/local-keys.mjs`), where each key below is declared with the same category and its reason; a key it does not declare can be neither read nor written (`TALocalKeys.refused()` lists what was tried). `test/local-storage-keys.test.js` fails when a page source touches localStorage, sessionStorage or indexedDB outside the registry, uses a key it does not declare, or when this table and the registry differ. Categories (the AGENTS.md rule): `cache-of-shared-state` (this browser's copy of a value of the shared page state, read at start), `hardware`, `browser` (this browser or tab), `device-setting` (set for this device only in Settings). A key marked "pane" has a copy per column of the multi-column view (`pane:<id>:<key>`).
 
-| Key | Decision | Reason |
-| --- | --- | --- |
-| `h5-recent-sessions` | shared (the Recent list) | imported once, then removed |
-| `h5-task-list-tab` | shared | a list choice |
-| `h5-columns`, `h5-column:<pane id>` (new) | shared | the columns and the session of each |
-| `h5-sidebar-collapsed` (top page) | shared | a layout choice; a pane's `pane:<id>:h5-sidebar-collapsed` stays with its pane |
-| `h5-attention-collapsed` | shared, by instance id | collapsed groups |
-| `h5-attention-add-on` | shared, by instance id | the engine a new T-Attention task goes to |
-| `h5-design-outline` | shared | a display preference of the file sheet |
-| `ta-saved-commands-used` | shared, merged per command | the recency of saved commands |
-| `h5-mindmap-list-folded` | shared | a display preference of the Mind maps tab |
-| `word-translate` | shared | tap to translate, a preference |
-| `ta-lang` (and its cookie) | shared | the language; the cookie stays for the server |
-| `h5-source`, `h5-task:<source>`, `h5-terminal:<source>:<task>` | local | which session this window opens at start: they decide the first requests (the early socket) before any answer, and opening the session last looked at on another device would open one the person did not choose here. The session last looked at anywhere is the first of the shared Recent list, one press of ⇋ away |
-| `h5-terminal-width`, `h5-terminal-wide-cols` | local | the screen's size (fit or a fixed width) |
-| `h5-terminal-width-noted` | local | a one-time hint about this device's gesture |
-| `voice-enabled`, `voice-keep-mic` | local | this device's microphone and its permission |
-| `h5-attention-sound` | local | Settings offers it as "Reminders on this device" (scope device): a phone in a meeting and a computer at home want different sounds |
-| `t-agent.settings-tab` (`t-agent.settings-device` before) | local | the device whose settings the open form edits, chosen where it is edited, so a save never goes to a machine another device picked |
-| `h5-mindmap-draft:<map>` | local | this browser's unsaved edits (a crash copy); the saved map is on its service |
-| `h5-mindmap` under a pane (v2.133 / v2.134) | local | read only to drop old mind map columns |
-| `pane:<id>:*` | local | a column's own memory in this browser (its session is shared as `h5-column:<id>`) |
-| `terminal-client-id` (sessionStorage) | local | names this tab as a terminal client |
-| `h5-auto-reloaded-versions` (sessionStorage) | local | the auto-reload guard |
-| `ta-page-state`, `ta-page-state-imported`, `ta-lang-applied` (sessionStorage) | local | the cache of the shared state, the import marker, the once-per-tab language guard |
-| `h5-agent:*`, `h5-attention-notify` | not read | left by older versions |
+| Key | Storage | Category | Reason |
+| --- | --- | --- | --- |
+| `h5-recent-sessions` | local | cache-of-shared-state | the Recent list kept before the shared page state: imported once, then removed |
+| `h5-task-list-tab` | local | cache-of-shared-state | the chosen tab of the task list |
+| `h5-columns` | local | cache-of-shared-state | the multi-column layout (the session of each column, `h5-column:<pane id>`, is kept on the server only) |
+| `h5-sidebar-collapsed` | local, pane | cache-of-shared-state | the folded task sidebar; a column's own copy stays in this browser |
+| `h5-attention-collapsed` | local | cache-of-shared-state | the collapsed T-Attention parents (by instance id on the server) |
+| `h5-attention-add-on` | local | cache-of-shared-state | the engine a new T-Attention task goes to (an instance id on the server) |
+| `h5-design-outline` | local | cache-of-shared-state | the outline column of the file sheet |
+| `ta-saved-commands-used` | local | cache-of-shared-state | the recency of saved commands (merged per command on the server) |
+| `h5-mindmap-list-folded` | local | cache-of-shared-state | the folded list of the Mind maps tab |
+| `word-translate` | local | cache-of-shared-state | tap to translate |
+| `ta-lang` | local | cache-of-shared-state | the language, read before the first paint; its cookie tells the server |
+| `ta-page-state` | local | cache-of-shared-state | the copy of the shared page state and the changes not sent yet |
+| `ta-page-state-imported` | local | cache-of-shared-state | which old values of this browser were already sent |
+| `h5-source`, `h5-task:<source>`, `h5-terminal:<source>:<task>` | local, pane | browser | which session this window opens at start: they decide the first requests (the early socket) before any answer, and opening the session last looked at on another device would open one the person did not choose here. The session last looked at anywhere is the first of the shared Recent list, one press of ⇋ away |
+| `h5-terminal-width`, `h5-terminal-wide-cols` | local, pane | hardware | the screen's size (fit or a fixed width) |
+| `h5-terminal-width-noted` | local | hardware | a one-time hint about this device's gesture |
+| `voice-enabled`, `voice-keep-mic` | local | hardware | this device's microphone and its permission |
+| `h5-attention-sound` | local | device-setting | Settings offers it as "Reminders on this device" (scope device): a phone in a meeting and a computer at home want different sounds |
+| `t-agent.settings-tab`, `t-agent.settings-device` | local | browser | the device whose settings the open form edits, chosen where it is edited, so a save never goes to a machine another device picked (the second is the old name, read once) |
+| `h5-mindmap-draft:<map>` | local | browser | this browser's unsaved edits of a map (a crash copy); the saved map is on its service |
+| `h5-mindmap` | local, pane | browser | kept by mind map columns of v2.133 and v2.134: read only to drop them |
+| `terminal-client-id` | session, pane | browser | names this tab as one terminal client |
+| `h5-auto-reloaded-versions` | session | browser | the auto-reload guard of this tab |
+| `ta-lang-applied` | session | browser | a language from another device is applied once per tab |
 
-The last opened mind map is not remembered at all (the Mind maps tab opens on its list), so there is nothing to share.
+Not stored any more: `h5-agent:*`, `h5-attention-notify` (left by older versions, never read). The last opened mind map is not remembered at all (the Mind maps tab opens on its list), so there is nothing to share.
 
 ## Known limits
 
@@ -91,4 +91,4 @@ The last opened mind map is not remembered at all (the Mind maps tab opens on it
 - A page reads changes of other devices when it is shown again, gets the focus, or once a minute, not at once. Two columns views open at the same time follow each other's column sessions.
 - The page does not yet say when an engine is offline or too old to share the state (`peers` in the answer has it, for a later note on the page).
 
-Tests: `test/page-state.test.js` (merge rules, the page's identity mapping and codecs, two, three and four engines over real HTTP: the same Recent list and keys, a rename and a delete, changes on both sides, the push after a change, no loop, a chain, an older peer, a hidden task, the engine routes), `scripts/test-h5-shared-state-browser.cjs` (two engines' pages, a computer and a phone, over one mocked state: the import, the same list under each page's own keys, the tab and tap to translate followed on focus, a delete), and the tests of each moved key (unchanged behaviour without the server: the cache).
+Tests: `test/local-storage-keys.test.js` (the registry is the only door, every key is declared, this table matches it), `test/page-state.test.js` (merge rules, the page's identity mapping and codecs, two, three and four engines over real HTTP: the same Recent list and keys, a rename and a delete, changes on both sides, the push after a change, no loop, a chain, an older peer, a hidden task, the engine routes), `scripts/test-h5-shared-state-browser.cjs` (two engines' pages, a computer and a phone, over one mocked state: the import, the same list under each page's own keys, the tab and tap to translate followed on focus, a delete), and the tests of each moved key (unchanged behaviour without the server: the cache).

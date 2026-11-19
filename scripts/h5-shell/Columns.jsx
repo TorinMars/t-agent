@@ -20,6 +20,7 @@ import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 import { forgetPaneKeys } from './pane.mjs';
 import { onShared, readShared, writeShared } from './shared-store.mjs';
+import { localGet } from './local-keys.mjs';
 import { measureTerminalBox } from './terminal-box.mjs';
 import {
   STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnMove, columnStep, columnsFor, forgetMessage, hiddenEdges, minColumnWidth, mountOrder,
@@ -81,7 +82,7 @@ export function startColumns(ui) {
   const wideQuery = ui.media.wideQuery;
   const stored = readLayout(readStored());
   // Mind map columns of v2.133 / v2.134 are dropped, with every key their panes kept (see LEGACY_MAP_KEY in columns.mjs).
-  const legacy = dropMapColumns(stored.ids, id => { try { return localStorage.getItem(legacyMapKeyOf(id)) !== null; } catch { return false; } });
+  const legacy = dropMapColumns(stored.ids, id => localGet(legacyMapKeyOf(id)) !== null);
   for (const id of legacy.dropped) forgetPaneKeys(id);
   stored.ids = legacy.ids;
   const get = () => ui.get().columns;

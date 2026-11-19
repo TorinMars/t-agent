@@ -54,7 +54,7 @@ test('strings.json lists exactly the interface strings of the widget', () => {
 });
 
 test('every widget string has a Chinese translation', () => {
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-ui.js', 'i18n-zh-server.js', 'i18n-zh-extra.js']) {

@@ -166,6 +166,10 @@ async function refocus(page) {
     assert.deepEqual(k01pc.errors, [], 'no page errors on the computer of K01');
     await k01pc.context.close();
 
+    // Every key the pages kept went through the registry and was declared there (public/js/local-keys.js).
+    for (const [name, page] of [['T01', t01.page], ['K01', k01.page]]) {
+      for (const frame of page.frames()) assert.deepEqual(await frame.evaluate(() => (window.TALocalKeys ? window.TALocalKeys.refused() : [])), [], `${name} ${frame.url()}: no undeclared key`);
+    }
     assert.deepEqual(t01.errors, [], 'no page errors on T01');
     assert.deepEqual(k01.errors, [], 'no page errors on K01');
     await t01.context.close();

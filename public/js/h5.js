@@ -44,11 +44,11 @@
   const PANE = window.H5Pane || null;
   const SHARED_KEYS = new Set(['terminal-width-noted']);
   const storeKey = key => (PANE && !SHARED_KEYS.has(key) ? PANE.key(`h5-${key}`) : `h5-${key}`);
+  // Through the registry of browser storage (public/js/local-keys.js), where each of these keys is declared with its reason.
+  const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false };
   const store = {
-    get(key) { try { return localStorage.getItem(storeKey(key)); } catch { return null; } },
-    set(key, value) {
-      try { if (value == null) localStorage.removeItem(storeKey(key)); else localStorage.setItem(storeKey(key), String(value)); } catch { /* ignore */ }
-    },
+    get(key) { return LocalKeys.get(storeKey(key)); },
+    set(key, value) { LocalKeys.set(storeKey(key), value == null ? null : value); },
   };
 
   // ── Early requests (start) ──

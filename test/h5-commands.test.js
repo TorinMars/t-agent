@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const JS = path.join(__dirname, '..', 'public', 'js');
 function chinese() {
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-ui.js']) vm.runInContext(fs.readFileSync(path.join(JS, file), 'utf8'), sandbox);

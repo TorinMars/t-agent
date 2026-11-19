@@ -1,6 +1,7 @@
 // The mind map view: the list of maps and the editor around one map. Plain DOM (the page's React bundle is not available here and would cost more than this file).
 import { PATHS } from '../h5-shell/Icons.jsx';
 import { readShared, writeShared } from '../h5-shell/shared-store.mjs';
+import { localGet, localSet } from '../h5-shell/local-keys.mjs';
 import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
 import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
@@ -575,16 +576,16 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   // The draft of a map on one service. It is used only when it says it is for that service (a draft of this machine written before sharing says nothing).
   function readDraft(src, id) {
     let draft = null;
-    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY(src.key, id))); } catch { return null; }
+    try { draft = JSON.parse(localGet(DRAFT_KEY(src.key, id))); } catch { return null; }
     if (!draft || typeof draft !== 'object') return null;
     const owner = draft.source === undefined ? LOCAL_KEY : draft.source;
     return owner === src.key && (draft.id === undefined || draft.id === id) ? draft : null;
   }
-  const clearDraft = (sourceKey, id) => { try { localStorage.removeItem(DRAFT_KEY(sourceKey, id)); } catch { /* blocked storage */ } };
+  const clearDraft = (sourceKey, id) => { localSet(DRAFT_KEY(sourceKey, id), null); };
   function writeDraft(sourceKey, id, revision, title, doc) {
     try {
       const text = JSON.stringify({ source: sourceKey, id, revision, title, data: doc, at: Date.now() });
-      if (text.length <= DRAFT_MAX) localStorage.setItem(DRAFT_KEY(sourceKey, id), text);
+      if (text.length <= DRAFT_MAX) localSet(DRAFT_KEY(sourceKey, id), text);
     } catch { /* storage full or blocked: the retry still has the edits in memory */ }
   }
 

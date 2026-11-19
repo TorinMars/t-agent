@@ -13,10 +13,11 @@ const TerminalOwner = (() => {
     if (id) return id;
     const pane = globalThis.H5Pane;
     const key = pane ? pane.key('terminal-client-id') : 'terminal-client-id';
-    try { id = sessionStorage.getItem(key); } catch { /* storage may be blocked */ }
+    const keys = globalThis.TALocalKeys || null; // the registry of browser storage (public/js/local-keys.js); without it the id lives in memory
+    if (keys) id = keys.get(key, 'session');
     if (!id) {
       id = (globalThis.crypto?.randomUUID?.() || `c${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).slice(0, 36);
-      try { sessionStorage.setItem(key, id); } catch { /* keep it in memory */ }
+      if (keys) keys.set(key, id, 'session'); // blocked: kept in memory
     }
     return id;
   }

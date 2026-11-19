@@ -104,7 +104,7 @@ async function openPage(browser, { width = 390, zh = false, stored = null, syncO
   await page.addStyleTag({ content: read('public/css/h5.css') });
   const scopes = Object.fromEntries([...SHARED.map(id => [id, 'shared']), ...DEVICE.map(id => [id, 'device']), ['telegram', 'telegram']]);
   await page.evaluate(mockServer, { scopes, devices: DEVICES, syncOff });
-  for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
+  for (const file of ['public/js/local-keys.js', 'public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
   await addShell(page);
   // This device's engine name comes with the sources (h5.js, not loaded here); the switches of "Show in task list" too.
   await page.evaluate(() => {

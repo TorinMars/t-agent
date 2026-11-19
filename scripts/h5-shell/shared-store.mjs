@@ -1,6 +1,9 @@
 // The shell's door to the shared page state (public/js/page-state.js; docs/design/shared-page-state.md): a localStorage-like store whose keys are
-// the same on every device and engine. Without TAPageState (a harness that loads the shell alone) it is this browser's own storage. Guarded.
-const door = () => { try { return globalThis.TAPageState ? globalThis.TAPageState.store : globalThis.localStorage || null; } catch { return null; } };
+// the same on every device and engine. Without TAPageState (a harness that loads the shell alone) it is this browser's own storage, through its
+// registry (local-keys.mjs). Guarded.
+import { localStorageOf } from './local-keys.mjs';
+
+const door = () => { try { return globalThis.TAPageState ? globalThis.TAPageState.store : localStorageOf('local'); } catch { return null; } };
 export const sharedStore = door;
 export function readShared(key) { try { const store = door(); return store ? store.getItem(key) : null; } catch { return null; } }
 export function writeShared(key, value) {

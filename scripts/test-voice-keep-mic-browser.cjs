@@ -7,6 +7,7 @@ const http = require('node:http');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'public/js/voice-input.js'), 'utf8');
+const registry = fs.readFileSync(path.join(root, 'public/js/local-keys.js'), 'utf8'); // the page's registry of browser storage, loaded before it
 
 const page = `<!doctype html><meta charset="utf-8"><textarea id="t"></textarea><button id="m">mic</button><button id="keep">keep</button>
 <script>
@@ -20,12 +21,13 @@ window.AudioWorkletNode = class extends RealNode { constructor(...args) { super(
 window.WebSocket = class { constructor(url) { this.url = url; this.sent = []; window.sockets.push(this); setTimeout(() => this.onopen && this.onopen(), 0); }
   send(data) { this.sent.push(typeof data === 'string' ? data : 'audio'); if (typeof data === 'string' && data.includes('run-task')) setTimeout(() => this.onmessage({ data: JSON.stringify({ header: { event: 'task-started' } }) }), 0); }
   close() {} };
-</script><script src="/voice-input.js"></script>
+</script><script src="/local-keys.js"></script><script src="/voice-input.js"></script>
 <script>window.recording = VoiceInput.attach({ textarea: document.getElementById('t'), button: document.getElementById('m') });
 document.getElementById('keep').addEventListener('click', () => VoiceInput.setKeepWarm(!VoiceInput.keepWarm));</script>`;
 
 const server = http.createServer((req, res) => {
   if (req.url === '/') return res.writeHead(200, { 'Content-Type': 'text/html' }).end(page);
+  if (req.url === '/local-keys.js') return res.writeHead(200, { 'Content-Type': 'text/javascript' }).end(registry);
   if (req.url === '/voice-input.js') return res.writeHead(200, { 'Content-Type': 'text/javascript' }).end(source);
   if (req.url === '/api/speech/token') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ url: 'wss://speech.example/ws', token: 't', model: 'm', language: 'zh' }));
   res.writeHead(404).end();

@@ -23,6 +23,7 @@
 //   once, before the parent's answer to `focus` comes back;
 // - the page takes no focus by itself until the person pressed a pointer or a key in this pane (`H5Pane.engaged()`): otherwise every column would pull the
 //   focus into its frame as it loads.
+import { localForget } from './local-keys.mjs';
 import { PEEK_LINES, columnMove, columnStep, deviceOfRow, maximizeKey, readAction, readDevice, sidewaysDelta } from './columns.mjs';
 
 export const PANE_ID = /^[a-z0-9]{1,16}$/;
@@ -39,10 +40,11 @@ export function detectPane(win = window) {
   return framed ? id : null;
 }
 
-// Removes every key of one pane from both storages (localStorage is shared by the frames of one origin, sessionStorage by the frames of one tab).
-// The top page can call it too, with the storages of its own window.
-export function forgetPaneKeys(id, stores = [globalThis.localStorage, globalThis.sessionStorage]) {
+// Removes every key of one pane from both storages (the local one is shared by the frames of one origin, the session one by the frames of one tab),
+// through the registry of browser storage (local-keys.mjs); `stores`: Storage-like objects instead (a test). The top page can call it too.
+export function forgetPaneKeys(id, stores = null) {
   const prefix = paneKeyPrefix(id);
+  if (!stores) return localForget(prefix);
   let removed = 0;
   for (const storage of stores) {
     try {
@@ -86,7 +88,7 @@ export function startPane(ui, id, { win = window, doc = document } = {}) {
   let engaged = false;
   const pane = Object.freeze({
     id, prefix, key: name => `${prefix}${name}`, post, engaged: () => engaged,
-    forget: () => forgetPaneKeys(id, [win.localStorage, win.sessionStorage]),
+    forget: () => forgetPaneKeys(id),
   });
   win.H5Pane = pane;
 

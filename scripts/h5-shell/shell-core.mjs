@@ -11,6 +11,7 @@ import './attention-feed.mjs';
 import './pane.mjs';
 import './common.jsx';
 import './shared-store.mjs';
+import './local-keys.mjs';
 import './file-kinds.mjs';
 import './task-order.mjs';
 import './recent-sessions.mjs';

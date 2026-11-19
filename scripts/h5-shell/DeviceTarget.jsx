@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import Box from '@mui/material/Box';
 import { api, t } from './common.jsx';
+import { localStorageOf } from './local-keys.mjs';
 import { Hint } from './Form.jsx';
 import { devicePath, normalizeDevices, ownPageText } from './device-target.mjs';
 import { deviceOfTab, partShown, readTab, resolveTab, tabScope, tabsShown, writeTab } from './settings-tabs.mjs';
@@ -19,7 +20,7 @@ import { deviceOfTab, partShown, readTab, resolveTab, tabScope, tabsShown, write
 // own (localStorage, guarded); it starts on the first tab (Shared, or this device without it) and goes back there when the remembered device is no
 // longer linked or cannot be chosen, or the remembered Shared tab is not there now (it stays remembered).
 const DEVICES_URL = '/api/device-settings/devices';
-const storage = () => { try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; } };
+const storage = () => localStorageOf('local'); // the registry of browser storage (local-keys.mjs)
 
 const cachedApis = new Map();
 function targetOf(device) {

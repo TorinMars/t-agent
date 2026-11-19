@@ -73,6 +73,7 @@ test('a pane tells its parent ready, title and focus, on its own origin only, an
   win.localStorage.setItem('pane:a:h5-task:local', '1');
   win.localStorage.setItem('pane:b:h5-task:local', '2');
   win.sessionStorage.setItem('pane:a:terminal-client-id', 'c');
+  globalThis.TALocalKeys = require('../public/js/local-keys.js').build(win); // the page's registry of browser storage, over this window's storages
   const pane = startPane(ui, 'a', { win, doc });
   assert.equal(win.H5Pane, pane);
   assert.equal(pane.key('h5-source'), 'pane:a:h5-source');
@@ -121,6 +122,7 @@ test('a pane tells its parent ready, title and focus, on its own origin only, an
   assert.equal(win.sessionStorage.getItem('pane:a:terminal-client-id'), null);
   assert.equal(win.localStorage.getItem('pane:b:h5-task:local'), '2', 'another pane keeps its keys');
   assert.equal(win.posted.at(-1).message.event, 'forgotten');
+  delete globalThis.TALocalKeys;
 });
 
 test('a pane tells its tab the device of its task, and posts the column keys instead of typing them', async () => {

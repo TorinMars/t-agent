@@ -269,8 +269,8 @@ test('the real page: its two combined scripts hold the marked files as they are,
     for (const part of ran) assert.equal(part.text, `${fs.readFileSync(path.join(PUBLIC, part.src), 'utf8')}\n//# sourceURL=${ORIGIN}${part.src}`, `${part.src} is in the combined script as it is in its file`);
     parts.push(combined.files);
   }
-  assert.deepEqual(parts, [marked.slice(0, 4), marked.slice(4)], 'the run in the head and the run in the body, in the order of the page');
-  assert.deepEqual(parts[0], ['/js/i18n.js', '/js/toast.js', '/js/client-auth.js', '/js/page-state.js']);
+  assert.deepEqual(parts, [marked.slice(0, 5), marked.slice(5)], 'the run in the head and the run in the body, in the order of the page');
+  assert.deepEqual(parts[0], ['/js/local-keys.js', '/js/i18n.js', '/js/toast.js', '/js/client-auth.js', '/js/page-state.js']);
 
   // Every script or style a lazy loader names is among the files the page knows the hash of (a loader that names a new file needs no list here,
   // but its file has to be under /js, /css or /vendor).

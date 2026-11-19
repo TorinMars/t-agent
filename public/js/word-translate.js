@@ -16,7 +16,8 @@ const WordTranslate = (() => {
 
   const listeners = new Set();
   let enabled = false;
-  try { enabled = localStorage.getItem(KEY) === '1'; } catch { /* storage blocked: off */ }
+  const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false }; // the registry of browser storage (public/js/local-keys.js)
+  enabled = LocalKeys.get(KEY) === '1'; // storage blocked: off
   const cache = new Map(); // `${word}|${sentence}` -> entry, or the request that is under way
   let popup = null;
   let current = null; // the word the popup points at
@@ -184,7 +185,7 @@ const WordTranslate = (() => {
 
   function setEnabled(on) {
     enabled = Boolean(on);
-    try { (window.TAPageState ? window.TAPageState.store : localStorage).setItem(KEY, enabled ? '1' : '0'); } catch { /* storage blocked: kept until the page closes */ }
+    if (window.TAPageState) window.TAPageState.store.setItem(KEY, enabled ? '1' : '0'); else LocalKeys.set(KEY, enabled ? '1' : '0'); // blocked: kept until the page closes
     hide();
     mark();
     for (const listener of listeners) listener(enabled);

@@ -89,7 +89,7 @@ test('the time words, in English and Chinese', async () => {
   const cases = [[now - 20000, 'used just now'], [now - 5 * MIN, 'used 5 min ago'], [now - 59 * MIN, 'used 59 min ago'], [now - 3 * 60 * MIN, 'used 3 h ago'],
     [now - DAY - MIN, 'used yesterday'], [now - 3 * DAY, 'used 3 days ago'], [now + MIN, 'used just now']];
   for (const [at, words] of cases) assert.equal(usedLabel(at, now), words);
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-ui.js', 'i18n-zh-extra.js']) vm.runInContext(fs.readFileSync(path.join(JS, file), 'utf8'), sandbox);

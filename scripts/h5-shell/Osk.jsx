@@ -4,10 +4,13 @@ import { alpha } from '@mui/material/styles';
 import { t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 
-// The terminal's own on-screen keyboard (touch mode). The "Terminal keyboard" button of row 2 shows and hides it (`state.osk`, set by h5.js); the system
-// keyboard is never opened for the terminal (its xterm textarea keeps inputmode="none"). It sits at the bottom of `#h5-bottom`, under row 2, where the
-// system keyboard would be, and takes real room in the layout, so the terminal box gets shorter and refits (fewer rows) while it is shown.
-// Every key goes through `ui.actions.key` (the same path as the function keys of row 1), so a latched Ctrl / Alt / Shift of row 1 applies to it (Ctrl+C, Ctrl+R).
+// The page's own on-screen keyboard (touch mode), shared by the terminal (`TerminalKeyboard`) and the Learn page (Learn.jsx `LearnKeys`): the layout,
+// the layers, Shift / caps lock, the repeat of Backspace and the look. `Keyboard` draws the rows a layout gives it (`rows(layer)`) and hands each key
+// to `onKey` (a character, already in upper case while Shift is on, or the `send` name of a key: 'Backspace', 'Space', 'Enter', 'Hide', ...).
+// The terminal's keyboard: the "Terminal keyboard" button of row 2 shows and hides it (`state.osk`, set by h5.js); the system keyboard is never opened
+// for the terminal (its xterm textarea keeps inputmode="none"). It sits at the bottom of `#h5-bottom`, under row 2, where the system keyboard would be,
+// and takes real room in the layout, so the terminal box gets shorter and refits (fewer rows) while it is shown. Every key goes through
+// `ui.actions.key` (the same path as the function keys of row 1), so a latched Ctrl / Alt / Shift of row 1 applies to it (Ctrl+C, Ctrl+R).
 // The keys are plain buttons that never take the focus: pointerdown is cancelled (no focus, no compatibility mouse events, no text selection), the box has
 // `touch-action: none` (no double-tap zoom, no scroll), and the key is sent on pointerdown. Backspace repeats while it is held.
 // Layout: a 20-column grid per row (one letter = 2 columns), so the second letter row is indented by half a key, like a phone keyboard.
@@ -30,15 +33,17 @@ const REPEAT_DELAY_MS = 400;
 const REPEAT_EVERY_MS = 60;
 
 // `start`: the grid column of the first key (2 indents the row by half a key); without it the keys follow the ones before them.
-const chars = (text, start) => Array.from(text).map((ch, index) => ({ ch, col: index === 0 ? start : undefined }));
-function rowsFor(layer) {
-  const backspace = { send: 'Backspace', icon: 'keyBackspace', aria: 'Backspace', span: 3, fn: true, repeat: true };
-  const bottom = [{ ...LAYER_KEY[layer], span: 5, fn: true }, { send: 'Space', label: t('Space'), span: 10 }, { send: 'Enter', icon: 'keyEnter', aria: 'Enter', span: 5, fn: true }];
+export const chars = (text, start) => Array.from(text).map((ch, index) => ({ ch, col: index === 0 ? start : undefined }));
+export const BACKSPACE = { send: 'Backspace', icon: 'keyBackspace', aria: 'Backspace', span: 3, fn: true, repeat: true };
+export const SHIFT = { shift: true, span: 3, fn: true };
+// The terminal's layout; `last` is the key at the right of the bottom row (Enter for the terminal; Learn puts its Hide there).
+export function rowsFor(layer, last = { send: 'Enter', icon: 'keyEnter', aria: 'Enter', span: 5, fn: true }) {
+  const bottom = [{ ...LAYER_KEY[layer], span: 5, fn: true }, { send: 'Space', label: t('Space'), span: 10 }, last];
   if (layer === 'abc') {
-    return [chars(LETTERS[0]), chars(LETTERS[1], 2), [{ shift: true, span: 3, fn: true }, ...chars(LETTERS[2]), backspace], bottom];
+    return [chars(LETTERS[0]), chars(LETTERS[1], 2), [SHIFT, ...chars(LETTERS[2]), BACKSPACE], bottom];
   }
   const [one, two, three] = SYMBOLS[layer];
-  return [chars(one), chars(two), [{ ...SHIFT_SLOT[layer], span: 3, fn: true }, ...chars(three), backspace], bottom];
+  return [chars(one), chars(two), [{ ...SHIFT_SLOT[layer], span: 3, fn: true }, ...chars(three), BACKSPACE], bottom];
 }
 
 // The keys' look comes from the theme: the overlays of the dark palette (`action.selected` for a letter, `action.hover` for a function key, a stronger
@@ -54,6 +59,14 @@ const KEY = {
 };
 
 export function TerminalKeyboard({ ui }) {
+  return <Keyboard className="h5-osk" id="h5-osk" aria-label={t('Terminal on-screen keyboard')} rows={rowsFor} onKey={key => ui.actions.key({ key })} />;
+}
+
+// `rows(layer)`: the rows of keys of a layer; `onKey(key)`: called with each key (the latest `onKey` is used, also by a held Backspace); the other
+// props (id, className, aria-label, sx) go to the box.
+export function Keyboard({ rows, onKey, sx, ...props }) {
+  const keyRef = useRef(onKey);
+  keyRef.current = onKey;
   const [layer, setLayer] = useState('abc');
   const [shift, setShiftState] = useState('off'); // 'off' | 'once' (the next letter only) | 'lock' (caps lock)
   const shiftRef = useRef('off');
@@ -74,9 +87,9 @@ export function TerminalKeyboard({ ui }) {
       return;
     }
     if (item.layer) { setLayer(item.layer); return; }
-    if (item.send) { ui.actions.key({ key: item.send }); return; }
+    if (item.send) { keyRef.current(item.send); return; }
     const upper = layer === 'abc' && shiftRef.current !== 'off';
-    ui.actions.key({ key: upper ? item.ch.toUpperCase() : item.ch });
+    keyRef.current(upper ? item.ch.toUpperCase() : item.ch);
     if (shiftRef.current === 'once') setShift('off');
   };
   const down = (event, item) => {
@@ -84,6 +97,7 @@ export function TerminalKeyboard({ ui }) {
     event.preventDefault(); // no focus moves, so neither keyboard opens or closes
     event.currentTarget.setAttribute('data-down', '');
     stopRepeat();
+    if (item.click) return; // pressed on click (Hide): a key that takes the keyboard away must not let the rest of the tap land on what lies under it
     press(item);
     if (!item.repeat) return;
     const again = () => { press(item); repeat.current = setTimeout(again, REPEAT_EVERY_MS); };
@@ -91,16 +105,16 @@ export function TerminalKeyboard({ ui }) {
   };
   const up = event => { event.currentTarget.removeAttribute('data-down'); stopRepeat(); };
   // A click without a pointer before it (a screen reader, a switch device; `detail` is 0) presses the key too.
-  const click = (event, item) => { if (event.detail === 0) press(item); };
+  const click = (event, item) => { if (event.detail === 0 || item.click) press(item); };
 
   const upper = layer === 'abc' && shift !== 'off';
   return (
     <Box
-      className="h5-osk" id="h5-osk" role="group" aria-label={t('Terminal on-screen keyboard')} data-layer={layer} data-shift={shift}
+      role="group" {...props} data-layer={layer} data-shift={shift}
       onMouseDown={event => event.preventDefault()} onContextMenu={event => event.preventDefault()}
-      sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, px: 0.5, pt: 1, pb: 0.5, maxWidth: 720, mx: 'auto', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
+      sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, px: 0.5, pt: 1, pb: 0.5, maxWidth: 720, mx: 'auto', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', ...sx }}
     >
-      {rowsFor(layer).map((row, rowIndex) => (
+      {rows(layer).map((row, rowIndex) => (
         <Box key={`${layer}-${rowIndex}`} className="h5-osk-row" sx={{ display: 'grid', gridTemplateColumns: 'repeat(20, minmax(0, 1fr))', columnGap: '4px' }}>
           {row.map((item, index) => {
             const shiftOn = item.shift && shift !== 'off';

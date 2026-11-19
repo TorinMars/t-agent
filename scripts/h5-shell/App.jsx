@@ -39,7 +39,7 @@ function Whole({ ui, part: Component }) {
 const TERM_MENU_KEYS = ['menu', 'wide', 'taskList', 'sidebarCollapsed', 'tasksOpen'];
 const COPY_KEYS = ['copyText', 'copyStale', 'terminalWidth'];
 const SHEET_KEYS = ['files', 'design', 'wide'];
-const ATTENTION_KEYS = ['attention', 'taskList', 'wide'];
+const ATTENTION_KEYS = ['attention', 'taskList', 'wide', 'shownTarget']; // shownTarget: the row of the shown session is marked (Attention.jsx)
 const UPLOAD_KEYS = ['upload'];
 const RETAIN_KEYS = ['retainUrl'];
 const PASTE_KEYS = ['pasteSheet'];

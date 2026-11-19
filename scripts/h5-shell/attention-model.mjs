@@ -551,23 +551,71 @@ export function onThisMachine(context, localHost) {
 // An item of another engine (`sourceKey` 'remote:7'): `tasks` is `state.taskList.tasks` (the rows of the one list, each with its `source` and `ref`), and
 // its terminal opens when that engine's task is listed there (`taskId` is then the row's ref, which `ui.actions.openRow` takes); `localHost` is then the
 // host of that engine's answer.
+// A session that is gone (its task is listed, the task's sessions are known and the terminal is not among them, `sessionGone`) does not open either:
+// the way back is then the resume command, as for a task that is not listed.
 export function jumpBack(context, { sourceKey, groups, tasks, localHost } = {}) {
-  const tagent = context && context.tagent;
-  if (tagent && tagent.task_id != null && tagent.terminal_id && onThisMachine(context, localHost)) {
-    const terminalId = String(tagent.terminal_id);
-    if (sourceKey === 'local') {
-      for (const group of groups || []) {
-        for (const task of group.tasks || []) {
-          if (String(task.id) === String(tagent.task_id)) return { kind: 'terminal', taskId: task.id, terminalId };
-        }
-      }
-    } else if (sourceKey) {
-      const task = (tasks || []).find(row => row && row.source === sourceKey && row.ref && String(row.id) === String(tagent.task_id));
-      if (task) return { kind: 'terminal', taskId: task.ref, terminalId };
-    }
-  }
+  const found = listedTask(context, { sourceKey, groups, tasks, localHost });
+  if (found && !sessionGone(found.row, found.terminalId)) return { kind: 'terminal', taskId: found.taskId, terminalId: found.terminalId };
   const resume = context && context.session && context.session.resume;
   return resume ? { kind: 'copy', command: String(resume) } : null;
+}
+
+// The row of the one task list that holds the T-Agent task of a context (`context.tagent`): this machine's (`groups`) or another engine's (`tasks`).
+// `{ row, taskId, terminalId }` (`taskId` as `ui.actions.openRow` takes it), or null when the session ran on another machine or the task is not listed.
+function listedTask(context, { sourceKey, groups, tasks, localHost } = {}) {
+  const tagent = context && context.tagent;
+  if (!tagent || tagent.task_id == null || !tagent.terminal_id || !onThisMachine(context, localHost)) return null;
+  const terminalId = String(tagent.terminal_id);
+  if (sourceKey === 'local') {
+    for (const group of groups || []) {
+      for (const task of group.tasks || []) {
+        if (String(task.id) === String(tagent.task_id)) return { row: task, taskId: task.id, terminalId };
+      }
+    }
+  } else if (sourceKey) {
+    const task = (tasks || []).find(row => row && row.source === sourceKey && row.ref && String(row.id) === String(tagent.task_id));
+    if (task) return { row: task, taskId: task.ref, terminalId };
+  }
+  return null;
+}
+
+// The session rows of a task row of the task list when they are known: its `sessions` were read (not loading, no error). A folded task has none
+// (h5.js lists the sessions only under an open task), so its sessions are not known. Each is `{ kind: 'terminal', id, title, agent, status }`.
+function knownSessions(row) {
+  const list = row && row.sessions;
+  return list && !list.note && Array.isArray(list.rows) ? list.rows.filter(entry => entry && entry.kind === 'terminal') : null;
+}
+
+// Whether the session (terminal) of a listed task is gone: the task's sessions are known and it is not among them. Sessions that are not known (a
+// folded task, a list still loading) count as there, so the chip and the jump stay until the list says otherwise.
+export function sessionGone(row, terminalId) {
+  const rows = knownSessions(row);
+  return Boolean(rows) && !rows.some(entry => String(entry.id) === String(terminalId));
+}
+
+// The session a T-Attention item came from, for the session chip of its row and the jump of a tap on it ("Rows of a session" in
+// docs/design/page-attention.md): null whenever `jumpBack` would not open a terminal (no `context.tagent`, another machine, the task not listed, the
+// session gone). Else `{ taskId, terminalId, title, agent, status, device }`: `title` is the session's name in the task list ('' while its sessions
+// are not known), `agent` its kind (else `context.session.agent`), `status` the state the task list shows ('running', 'waiting', 'idle': from the
+// session row, else from the task row's `sessionStates`, the activity feed's terminals that are not idle; null while no activity is known) and
+// `device` the device tag of the task row (null when the task list shows none).
+export function sessionOf(context, { sourceKey, groups, tasks, localHost } = {}) {
+  const found = listedTask(context, { sourceKey, groups, tasks, localHost });
+  if (!found || sessionGone(found.row, found.terminalId)) return null;
+  const entry = (knownSessions(found.row) || []).find(session => String(session.id) === found.terminalId) || null;
+  const listed = found.row.source === sourceKey ? found.row : (tasks || []).find(row => row && row.source === sourceKey && String(row.id) === String(found.row.id)) || null;
+  const states = found.row.sessionStates || (listed && listed.sessionStates) || null;
+  const status = entry && entry.status ? entry.status : states ? states[found.terminalId] || 'idle' : null;
+  const agent = (entry && entry.agent) || (context.session && context.session.agent) || null;
+  return { taskId: found.taskId, terminalId: found.terminalId, title: (entry && entry.title) || '', agent, status, device: (listed && listed.device) || null };
+}
+
+// Whether the shown session (`state.shownTarget` of h5.js: `{ sourceKey, taskId, terminalId }`, the task id as its engine knows it) is the one an
+// item of `engine` came from: its row is marked on the wide layout.
+export function isShownSession(context, engine, shown) {
+  const tagent = context && context.tagent;
+  if (!tagent || !shown || tagent.task_id == null || !tagent.terminal_id) return false;
+  return shown.sourceKey === engine && String(shown.taskId) === String(tagent.task_id) && String(shown.terminalId) === String(tagent.terminal_id);
 }
 
 // The absolute path of a file of the context (`files[].path` is relative to `context.cwd`, or already absolute); null when it cannot be told.

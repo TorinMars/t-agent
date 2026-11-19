@@ -27,9 +27,10 @@ import { AttentionGuide } from './AttentionGuide.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import {
   MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
-  groupOf, hasTree, homeDetail, homeGroups, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, readCollapsed, rollbackItems,
-  linkParts, safeLink, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
+  groupOf, hasTree, homeDetail, homeGroups, isShownSession, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, readCollapsed, rollbackItems,
+  linkParts, safeLink, sessionOf, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
 } from './attention-model.mjs';
+import { TOUCH } from './theme.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
 // ("Attention" in row 2). One design on both layouts ("One design on both layouts" in docs/design/page-attention.md): the same header, the same Home
@@ -93,11 +94,60 @@ function RowLink({ item }) {
   );
 }
 
+// The session chip of a row from a T-Agent session (`sessionOf`): the terminal glyph, the device tag of the task list (when it shows one), the
+// session's name and its live state dot (the task list's colours). Drawn inside the row's button, so the row's own accessible name tells what a tap does.
+const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
+const STATE_LABEL = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
+const AGENT_NAME = { claude: 'Claude', codex: 'Codex' };
+const sessionName = session => session.title || AGENT_NAME[session.agent] || t('Session');
+function SessionChip({ session, shown }) {
+  return (
+    <Box
+      component="span" className="h5-attention-session" data-terminal={session.terminalId} data-state={session.status || undefined} translate="no"
+      sx={theme => ({
+        flex: '0 1 auto', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', gap: 0.75, height: 24, pl: 0.75, pr: 1,
+        borderRadius: '12px', bgcolor: alpha(theme.palette.primary.main, shown ? 0.24 : 0.12), color: shown ? 'primary.light' : 'primary.main', typography: 'caption', fontWeight: 500,
+      })}
+    >
+      <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flex: '0 0 auto' }}><Icon name="terminalKeyboard" size={14} /></Box>
+      {session.device ? <DeviceTag device={session.device} /> : null}
+      <Box component="span" className="h5-attention-session-name" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionName(session)}</Box>
+      {session.status ? <Box component="span" className="h5-attention-session-dot" data-state={session.status} title={t(STATE_LABEL[session.status])} sx={{ flex: '0 0 auto', width: 6, height: 6, borderRadius: '50%', bgcolor: STATE_DOT[session.status] }} /> : null}
+    </Box>
+  );
+}
+
+// The Details button at the end of a row from a session (a tap on that row opens the session): it opens the edit view, as a tap on any other row
+// does. With a mouse it shows while the pointer is over the row or the keyboard focus is in it (its place is kept, so nothing moves); on a touch
+// screen it is always there, 44px (the theme's MuiIconButton rule). Its own Tab stop.
+function DetailsButton({ onClick }) {
+  return (
+    <IconButton className="h5-attention-details" {...named(t('Details'))} onClick={event => { event.stopPropagation(); onClick(); }} sx={{ flex: '0 0 auto', mt: 0.25, color: 'text.secondary' }}>
+      <Icon name="infoCircle" size={20} />
+    </IconButton>
+  );
+}
+// The whole row is what a pointer acts on (its button opens the session, the Details button sits at its end), so the hover tint covers the row, laid
+// over the mark of the shown row, instead of only the row's button.
+const DETAILS_SX = theme => ({
+  '& .h5-attention-details': { opacity: 0, transition: 'opacity 120ms ease-out', '@media (prefers-reduced-motion: reduce)': { transition: 'none' } },
+  '&:hover .h5-attention-details, &:focus-within .h5-attention-details': { opacity: 1 },
+  [`${TOUCH} .h5-attention-details`]: { opacity: 1 },
+  '@media (hover: hover)': {
+    '&:hover': { backgroundImage: `linear-gradient(${theme.palette.action.hover}, ${theme.palette.action.hover})` },
+    '& .h5-attention-open:hover': { bgcolor: 'transparent' },
+  },
+});
+// The row of the session the page shows (wide layout): MD2's selected look, the primary colour at 8% and a 3px indicator at the left edge.
+const SHOWN_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.08), boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` });
+
 // One row. `node` (the tree, buildTree) gives its indent and, for a sub-task of a task in another group, that parent (`node.parent`, the "↳" hint);
 // `fold` is the collapse button of a parent; `act` runs a row button (Confirm, Reject, Handled); `hold` are the drag props (useListDrag) or null.
 // `section`: the key of the Home view section it is drawn in ('closed' in the unfolded Done list); the row has its status pill, the section's detail
 // line and its time. An MD2 list item: the circle, the title in body1, the detail and result lines in body2, the meta line in caption, the row buttons.
-function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section }) {
+// `session` (`sessionOf`): the row came from a T-Agent session that is still there; it has the session chip, a tap opens that session (`onJump`) and
+// the Details button opens the edit view. `shown`: that session is the one the page shows (wide layout), and the row is marked.
+function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section, session, shown, onJump }) {
   const done = item.status === 'done';
   const detail = homeDetail(item, section);
   const second = fields && ['review', 'done'].includes(item.status) && item.result ? { kind: 'result', text: String(item.result) } : null;
@@ -114,13 +164,18 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
   return (
     <Box
       className="h5-attention-row" data-id={item.id} data-key={keyOf(item)} data-engine={engineOf(item)} data-status={item.status} data-depth={node ? node.depth : 0} {...(hold || {})}
-      sx={{ display: 'flex', alignItems: 'flex-start', borderBottom: 1, borderColor: 'divider', pl: `${indent * INDENT_PX}px`, ...(hold ? ROW_SX : {}) }}
+      data-shown={shown ? 'true' : undefined}
+      sx={theme => ({ display: 'flex', alignItems: 'flex-start', borderBottom: 1, borderColor: 'divider', pl: `${indent * INDENT_PX}px`, ...(hold ? ROW_SX : {}), ...(session ? DETAILS_SX(theme) : {}), ...(shown ? SHOWN_SX(theme) : {}) })}
     >
       <IconButton className="h5-attention-check" {...named(t(mark))} aria-pressed={done} onClick={() => void toggle()} sx={{ flex: '0 0 auto', mt: 0.25, ml: 0.5, color: done ? 'success.light' : 'text.secondary' }}>
         <Icon name={done ? 'attentionDone' : 'attentionOpen'} size={22} />
       </IconButton>
       <Box sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <ListItemButton className="h5-attention-open" onClick={() => onOpen(keyOf(item))} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold || linked ? 0.5 : 2 }}>
+        <ListItemButton
+          className="h5-attention-open" data-session={session ? 'true' : undefined} aria-current={shown ? 'true' : undefined}
+          aria-label={session ? `${item.title}, ${t(`open session ${sessionName(session)}`)}` : undefined}
+          onClick={() => (session ? onJump(item, session) : onOpen(keyOf(item)))} sx={{ flex: '0 0 auto', minWidth: 0, display: 'block', py: 1, pl: 0.5, pr: fold || linked || session ? 0.5 : 2 }}
+        >
           {node && node.parent ? (
             <Box className="h5-attention-parent-hint" sx={{ typography: 'caption', color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {'↳ '}{node.parent.title}
@@ -139,6 +194,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
           {/* The meta line: the status pill, the time of the last change, the source, the priority and the due date. */}
           <Box className="h5-attention-meta" sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 0.75, rowGap: 0.5, typography: 'caption', color: 'text.secondary' }}>
               <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} />
+              {session ? <SessionChip session={session} shown={shown} /> : null}
               {updated ? <Box component="span" className="h5-attention-updated" title={when(item.updated_at)} sx={{ fontVariantNumeric: 'tabular-nums' }}>{updated}</Box> : null}
               {item.source && item.source !== 'user' ? <Pill className="h5-attention-source" label={item.source} translate="no" sx={{ height: 20, typography: 'caption', px: 1 }} /> : null}
               {item.priority && item.priority !== 'none' ? <Box component="span" className="h5-attention-priority" sx={{ color: PRIORITY_COLOR[item.priority] }}>{t(PRIORITY_LABELS[item.priority])}</Box> : null}
@@ -157,6 +213,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
         ) : null}
       </Box>
       {linked ? <RowLink item={item} /> : null}
+      {session ? <DetailsButton onClick={() => onOpen(keyOf(item))} /> : null}
       {fold}
     </Box>
   );
@@ -182,9 +239,13 @@ function Node({ node, group, ctx }) {
   const count = children.length;
   const fold = count ? <Fold id={collapseId(item)} open={open} count={count} onToggle={ctx.toggleCollapsed} /> : null;
   const movable = ctx.hold && ctx.movable(engine);
+  const session = ctx.sessionOf(item);
   return (
     <Box className="h5-attention-node" data-id={item.id} data-key={keyOf(item)} data-engine={engine} data-group={group} data-status={item.status} data-sgroup={groupOf(item)} data-movable={movable ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
-      <Row item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null} tag={ctx.tagOf(engine)} section={group} />
+      <Row
+        item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null}
+        tag={ctx.tagOf(engine)} section={group} session={session} shown={Boolean(session) && ctx.shownOf(item)} onJump={ctx.jump}
+      />
       {count && open ? (
         <Box
           className="h5-attention-level" data-level={`${group}:${collapseId(item)}`} role="list" aria-label={item.title}
@@ -580,7 +641,7 @@ function attentionDrag(moveRef) {
     floatClass: 'h5-task-float h5-attention-float',
     clamp: false,
     hold: true,
-    ignore: '.h5-attention-check, .h5-attention-fold, .h5-attention-action, .h5-attention-row-link',
+    ignore: '.h5-attention-check, .h5-attention-fold, .h5-attention-action, .h5-attention-row-link, .h5-attention-details',
     focus: () => null,
     dragging: null,
     tap: null, // a tap is the row's own click: it opens the edit view
@@ -666,7 +727,7 @@ function ListState({ id, icon, title, hint, children }) {
 }
 
 // The scrolling list of the sections. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there.
-function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open }) {
+function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open, sessionOf: sessionFor, shownOf, jump, hint }) {
   const listRef = useRef(null);
   const hostRef = useRef(null);
   const liveRef = useRef(null);
@@ -674,7 +735,7 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
   moveRef.current = move;
   const spec = useMemo(() => attentionDrag(moveRef), []);
   const drag = useListDrag(listRef, hostRef, liveRef, ui, spec);
-  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null };
+  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, sessionOf: sessionFor, shownOf, jump };
   const failed = attention.status === 'ready' && Array.isArray(attention.failed) ? attention.failed : [];
   return (
     <Box sx={theme => ({ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', ...DRAG_SX(theme), ...DROP_SX(theme) })}>
@@ -697,6 +758,13 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
         ) : null}
         {items.length ? (
           <HomeSections home={home} closed={groups.find(group => group.key === 'closed')} items={items} movable={movable} showClosed={showClosed} setShowClosed={setShowClosed} ctx={ctx} />
+        ) : null}
+        {/* The side panel (mouse): how a row of a session works, since its Details button shows only on hover and focus. */}
+        {hint ? (
+          <Box id="h5-attention-hint" sx={{ mx: 2, my: 1.5, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, typography: 'caption', color: 'text.secondary' }}>
+            {t('Click a row with a session chip to open it')}{' \u00b7 '}
+            <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex' }}><Icon name="infoCircle" size={14} /></Box>{t('for details')}
+          </Box>
         ) : null}
       </Box>
       {/* The floating copy of a dragged row goes in here (useListDrag); a move is announced in the live region. */}
@@ -738,6 +806,25 @@ export function AttentionPanel({ state, ui }) {
   const needCount = items.filter(entry => entry.status === 'waiting_user' || entry.status === 'review').length;
   const openCount = items.filter(entry => !['done', 'failed', 'cancelled'].includes(entry.status)).length;
   const close = () => { setEditing(null); ui.actions.closeAttention(); };
+  // The session of a row (`sessionOf`): the T-Agent task and terminal its context names, when they are in the one task list and the session is
+  // still there; on the host of the item's own engine ("Rows of a session" in docs/design/page-attention.md).
+  const hostOf = engine => {
+    const owner = (Array.isArray(attention.engines) ? attention.engines : []).find(entry => entry.key === engine);
+    return owner ? owner.host : engine === 'local' ? attention.host : null;
+  };
+  const taskList = state.taskList || {};
+  const sessionFor = entry => sessionOf(contextOf(entry), { sourceKey: engineOf(entry), groups: taskList.groups, tasks: taskList.tasks, localHost: hostOf(engineOf(entry)) });
+  // The row of the session the page shows is marked on the wide layout only (on a phone the list is a page of its own).
+  const shownOf = entry => side && isShownSession(contextOf(entry), engineOf(entry), state.shownTarget);
+  // A tap on a row of a session opens it: the same as "Open terminal" of the edit view. The task's status stays as it is. On a phone the T-Attention
+  // page closes (the bottom navigation shows Sessions again) and a notice names the task with a Details action that opens its edit view here again;
+  // on a computer the panel stays open beside the session, whose row is then marked.
+  const jump = (entry, session) => {
+    if (!side) { setEditing(null); ui.actions.closeAttention(); }
+    ui.actions.openRow(session.taskId, { kind: 'terminal', id: session.terminalId });
+    const key = keyOf(entry);
+    if (!side) ui.notify(t(`Opened from T-Attention: ${entry.title}`), 'info', { action: { label: 'Details', run: () => ui.actions.openAttention({ item: key }) } });
+  };
   // The item a key names, or a bare id (an older caller: a task of this machine).
   const find = ref => {
     if (ref == null) return null;
@@ -833,6 +920,7 @@ export function AttentionPanel({ state, ui }) {
       <GroupList
         ui={ui} attention={attention} groups={groups} home={home} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
+        sessionOf={sessionFor} shownOf={shownOf} jump={jump} hint={side && items.some(entry => !['done', 'failed', 'cancelled'].includes(entry.status) && sessionFor(entry))}
       />
       {rejectItem ? <RejectDialog key={keyOf(rejectItem)} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}
       {/* onLeave: the user goes to a terminal or a file from the context card; the edit view closes, and on a phone the sheet too. */}

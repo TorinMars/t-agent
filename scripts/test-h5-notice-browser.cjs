@@ -1,6 +1,7 @@
 // The floating notice in real Chromium at 390 and 320px (touch) and 1440px (pointer): a blue (info) notice starts as a small one-line chip,
 // a tap, Enter or Space opens it in place to the whole text, an open one outlives the info duration and a click away, a collapsed one goes by itself,
-// a newer notice replaces it and starts collapsed, and success and error notices render as before.
+// a newer notice replaces it and starts collapsed, success and error notices render as before, and a notice with one action is an MD2
+// snackbar at the top whose text button runs the action once and closes it (it stays longer than a plain info notice and still goes by itself).
 // H5_SHOT_DIR=<dir> saves 3x screenshots of the chip and the open notice there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -203,6 +204,30 @@ async function run(browser, setup) {
     await closeButton(page).waitFor({ state: 'visible' });
     assert.ok(await noSideScroll(page));
   }
+
+  // A notice with one action (ui.notify(message, type, { action })): an MD2 snackbar at the top with a text button; the action runs once and closes it.
+  await page.evaluate(() => { window.actionRuns = 0; window.H5UI.notify('Opened from T-Attention: Allow Bash in the repo', 'info', { action: { label: 'Details', run: () => { window.actionRuns += 1; } } }); });
+  const snack = page.locator('.MuiSnackbar-root .h5-notice-action');
+  await snack.waitFor({ state: 'visible' });
+  await settled(page);
+  assert.equal(await toggle(page).count(), 0, 'no chip button for a notice with an action');
+  const action = snack.locator('.h5-notice-action-button');
+  assert.equal(await action.textContent(), 'Details');
+  const snackBox = await snack.boundingBox();
+  const actionBox = await action.boundingBox();
+  assert.ok(snackBox.y < 80 && snackBox.x >= 0 && snackBox.x + snackBox.width <= setup.viewport.width + 0.5, `at the top, inside the screen: ${JSON.stringify(snackBox)}`);
+  assert.ok(actionBox.x + actionBox.width <= snackBox.x + snackBox.width + 0.5 && (!setup.touch || actionBox.height >= 43.99), `the action fits (44px on touch): ${JSON.stringify(actionBox)}`);
+  assert.ok(await noSideScroll(page));
+  await page.clock.fastForward(INFO_DURATION + 500);
+  await page.waitForTimeout(100);
+  assert.ok(await snack.isVisible(), 'it stays longer than a plain info notice');
+  await action[setup.touch ? 'tap' : 'click']();
+  await snack.waitFor({ state: 'detached', timeout: 3000 });
+  assert.equal(await page.evaluate(() => window.actionRuns), 1, 'the action ran once');
+  await page.evaluate(() => window.H5UI.notify('Goes by itself too', 'info', { action: { label: 'Details', run: () => {} } }));
+  await snack.waitFor({ state: 'visible' });
+  await page.clock.fastForward(8500);
+  await snack.waitFor({ state: 'detached', timeout: 3000 });
   await context.close();
 }
 

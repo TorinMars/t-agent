@@ -342,8 +342,15 @@ async function testPhone(browser) {
   assert.equal(await row(page, 'remote:7:11').count(), 0);
   assert.equal(await row(page, 'local:11').count(), 1, 'this machine\'s 11 stays');
 
+  // K01's task came from a session of a task in the one list: the session chip (K01's device tag; its sessions are not read, so the name is
+  // "Session"), the row's name says a tap opens it, and Details opens the edit view. No other row has a chip.
+  const chip = row(page, 'remote:7:1').locator('.h5-attention-session');
+  assert.equal(await chip.locator('.h5-device-tag').textContent(), 'K01');
+  assert.equal(await chip.locator('.h5-attention-session-name').textContent(), 'Session');
+  assert.equal(await row(page, 'remote:7:1').locator('.h5-attention-open').getAttribute('aria-label'), 'Deploy site, open session Session');
+  assert.equal(await page.locator(`${SHEET} .h5-attention-session`).count(), 1, 'only the row of a session has a chip');
   // The context card of K01's task: the summary is asked for on K01, and Open terminal opens its task's terminal on K01.
-  await row(page, 'remote:7:1').locator('.h5-attention-open').tap();
+  await row(page, 'remote:7:1').locator('.h5-attention-details').tap();
   await edit.waitFor({ state: 'visible' });
   await page.locator('#h5-attention-summary-refresh').tap();
   await notice(page).filter({ hasText: 'A new summary was asked for' }).waitFor();
@@ -404,6 +411,15 @@ async function testComputer(browser) {
   const world = makeWorld();
   const { context, page } = await openPage(browser, world, { viewport: { width: 1440, height: 900 }, touch: false });
   await openSheet(page, 'click');
+  // A click on K01's row of a session opens that session on K01 (the panel stays, the row is marked); no status is sent.
+  const patches = world.calls.filter(call => call.method === 'PATCH').length;
+  await row(page, 'remote:7:1').locator('.h5-attention-open').click();
+  await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Deploy site task');
+  await page.waitForFunction(() => window.socketUrls.some(url => url.includes('/api/remote-servers/7/terminal/ws')));
+  assert.ok(await page.locator(`${SHEET} .h5-attention-panel`).isVisible(), 'the panel stays open');
+  await page.waitForFunction(() => document.querySelector('#h5-attention-body .h5-attention-row[data-key="remote:7:1"][data-shown="true"]'));
+  assert.equal(await row(page, 'local:1').getAttribute('data-shown'), null, 'the same id of this machine is not marked');
+  assert.equal(world.calls.filter(call => call.method === 'PATCH').length, patches);
   // A mouse drag of a K01 row over this machine's rows: it stays in K01's block.
   await page.locator('#h5-attention-body').evaluate(list => { const group = list.querySelector('.h5-attention-group[data-group="todo"]'); list.scrollTop = group.offsetTop - 20; });
   const from = at(await box(row(page, 'remote:7:14')));

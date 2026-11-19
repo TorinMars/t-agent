@@ -441,6 +441,18 @@
     if (((snap.activity[taskId] || {})[id]) === 'running' || Number((snap.subagents[taskId] || {})[id]) > 0) return 'running';
     return ((snap.activity[taskId] || {})[id]) === 'done' ? 'waiting' : 'idle';
   }
+  // The states of a task's terminals that are not idle, `{ <terminal id>: 'running' | 'waiting' }`, from the activity feed (null while none is known):
+  // T-Attention's session chip reads them for a task whose sessions are not listed (a folded task; `sessionOf` in attention-model.mjs).
+  function sessionStates(from, taskId) {
+    const snap = snapshotOf(from);
+    if (!snap) return null;
+    const states = {};
+    for (const id of new Set([...Object.keys(snap.activity[taskId] || {}), ...Object.keys(snap.subagents[taskId] || {})])) {
+      const state = sessionState(from, taskId, id);
+      if (state !== 'idle') states[id] = state;
+    }
+    return states;
+  }
   // The sessions of the selected task: its terminals, each with "⋯" actions. Agent chats are not listed in the task sheet.
   function ownSessions() {
     return {
@@ -483,7 +495,7 @@
     const ownList = hasSessions ? ownSessions() : terminalsState === 'error' ? { label: item.title, note: 'Could not load the sessions', rows: [] } : null;
     const peek = peeks.get(ref);
     return {
-      id: item.id, ref, title: item.title, selected, expanded: open, add: true, ...activeIn(from, item.id),
+      id: item.id, ref, title: item.title, selected, expanded: open, add: true, ...activeIn(from, item.id), sessionStates: sessionStates(from, item.id),
       count: open ? (selected ? (hasSessions ? terminals.length : null) : (peek && peek.status === 'ready' ? peek.terminals.length : null)) : null,
       sessions: open ? (selected ? ownList : peekSessions(from, item)) : null,
     };

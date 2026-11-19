@@ -11,6 +11,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import Snackbar from '@mui/material/Snackbar';
+import SnackbarContent from '@mui/material/SnackbarContent';
 import TextField from './TextField.jsx';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
@@ -147,6 +148,7 @@ export function RetainDialog({ state, ui }) {
 }
 
 const DURATIONS = { info: 3500, success: 2500, error: 6000 };
+const ACTION_MS = 8000; // a notice with an action stays longer (MD2: 4 to 10 seconds), so the action can be reached
 
 // A blue notice: a one-line chip that covers little of the terminal; the button opens it in place to the whole text.
 // The button is outside the role="status" box, so a screen reader reads the message without the button's name, and the text is cut by CSS only.
@@ -176,6 +178,18 @@ function InfoNotice({ message, expanded, onToggle, onClose, ref, ...transition }
   );
 }
 
+// A notice with one action (`ui.notify(message, type, { action: { label, run } })`): an MD2 snackbar, the message in body2 and the action as a text
+// button in the primary colour at its end. The action closes the notice and runs; the notice goes by itself after ACTION_MS like the others.
+function ActionNotice({ message, action, onClose, ref, ...transition }) {
+  return (
+    <SnackbarContent
+      ref={ref} {...transition} className="h5-notice-action" role="status" message={message}
+      action={<Button className="h5-notice-action-button" color="primary" size="small" onClick={() => { onClose(); action.run(); }}>{t(action.label)}</Button>}
+      sx={{ pointerEvents: 'auto', width: '100%', maxWidth: 672, minHeight: 48, flexWrap: 'nowrap', bgcolor: 'grey.800', color: 'text.primary', typography: 'body2', overflowWrap: 'anywhere', '& .MuiSnackbarContent-message': { flex: '1 1 auto', minWidth: 0 }, '& .MuiSnackbarContent-action': { flex: '0 0 auto', mr: -1 } }}
+    />
+  );
+}
+
 // The floating notice (what Toast did): the last message, which goes by itself. Only a blue notice that is opened stays until it is closed or replaced.
 // It stays at the top centre, not at the bottom where MD2 puts a snackbar: the bottom of the terminal is its prompt and cursor, the place most tapped,
 // and a notice there would take those taps ("Floating notices" in docs/design/toast.md).
@@ -187,12 +201,14 @@ export function Notice({ state }) {
   const close = (event, reason) => { if (reason !== 'clickaway') setShown(null); };
   const type = shown && DURATIONS[shown.type] ? shown.type : 'info';
   const expanded = Boolean(shown) && expandedId === shown.id;
+  const action = shown && shown.action ? shown.action : null;
   return (
     <Snackbar
-      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : DURATIONS[type]}
-      anchorOrigin={{ vertical: 'top', horizontal: 'center' }} sx={{ top: 'max(12px, env(safe-area-inset-top))', ...(type === 'info' ? { pointerEvents: 'none' } : null) }}
+      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : action ? ACTION_MS : DURATIONS[type]}
+      anchorOrigin={{ vertical: 'top', horizontal: 'center' }} sx={{ top: 'max(12px, env(safe-area-inset-top))', ...(type === 'info' && !action ? { pointerEvents: 'none' } : null) }}
     >
-      {type === 'info'
+      {action ? <ActionNotice message={shown.message} action={action} onClose={() => setShown(null)} />
+        : type === 'info'
         ? <InfoNotice message={shown ? shown.message : ''} expanded={expanded} onToggle={() => setExpandedId(expanded ? null : shown.id)} onClose={() => setShown(null)} />
         : <Alert severity={type} variant="filled" onClose={() => setShown(null)} role="status" sx={{ width: '100%', maxWidth: 672, alignItems: 'center', overflowWrap: 'anywhere' }}>{shown ? shown.message : ''}</Alert>}
     </Snackbar>

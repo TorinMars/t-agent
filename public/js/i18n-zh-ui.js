@@ -1237,6 +1237,12 @@ I18n.add({
   "Status changed": "状态已改变",
   "Open terminal": "打开终端",
   "Copy resume command": "复制恢复命令",
+  // T-Attention rows from a T-Agent session (a tap opens the session; Details opens the task)
+  "Details": "详情",
+  "open session {1}": "打开会话 {1}",
+  "Opened from T-Attention: {1}": "已从 T-Attention 打开：{1}",
+  "Click a row with a session chip to open it": "点击带会话标签的行即可打开该会话",
+  "for details": "查看详情",
   "Resume command copied": "已复制恢复命令",
   "Plugins": "插件",
   "Listeners": "监听插件",

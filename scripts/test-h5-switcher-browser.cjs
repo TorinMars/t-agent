@@ -7,7 +7,7 @@
 // the session and the state; a wider window shows more cards; the arrow keys move the selection along the row and scroll it into view; an upright
 // wheel and a mouse drag scroll the row; Enter, a second press of the button and a click switch; Escape and the empty space close. No count on the
 // button; on a computer it is a button of the row (not in "More tools") that stays in the narrow row. A pane has no switcher. A session of another
-// engine (K01) is a card too, and the list is remembered on the device.
+// engine (K01) is a card too, and the list is remembered (the shared page state; here, without a server for it, in this browser).
 // H5_SHOT_DIR=<dir> saves screenshots there (phone: first press, after a swipe; computer: open at 1440x900, open at 1920x1080 with the sidebar folded).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -247,9 +247,11 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       assert.deepEqual(await shown(page), { terminal: 'd1', task: 'Write docs' }, 'a downward swipe closes without switching');
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-cycle');
 
-      // Remembered on this device: a new page opens with the same list (the shown one first).
-      const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('h5-recent-sessions')).map(entry => `${entry.sourceKey}|${entry.taskId}|${entry.terminalId}`));
-      assert.deepEqual(stored, ['local|2|d1', 'local|1|c1', 'remote:7|5|k1', 'local|1|default']);
+      // Kept in the shared page state (this mocked server has none, so it stays in this browser, public/js/page-state.js): a new page opens with the
+      // same list (the shown one first). The devices have no instance id here, so they are named by their source keys.
+      const stored = await page.evaluate(() => window.TAPageState.recent().map(entry => `${entry.instance}|${entry.task}|${entry.terminal}`));
+      assert.deepEqual(stored, ['~local|2|d1', '~local|1|c1', '~remote:7|5|k1', '~local|1|default']);
+      assert.equal(await page.evaluate(() => localStorage.getItem('h5-recent-sessions')), null, 'the old per-browser key is not written');
       await page.reload();
       await page.waitForFunction(() => window.H5UI.get().recent.length === 4, null, { timeout: 15000 });
       assert.deepEqual(errors, [], 'no page errors on the phone');

@@ -16,7 +16,8 @@ import OutlinedInput from '@mui/material/OutlinedInput';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { alpha } from '@mui/material/styles';
-import { DialogError, Pill, deviceParts, deviceText, errorText, named, t } from './common.jsx';
+import { DialogError, Pill, deviceParts, deviceText, errorText, named, t, useShared } from './common.jsx';
+import { readShared, writeShared } from './shared-store.mjs';
 import { DeviceTag } from './TaskDrawer.jsx';
 import { shortName } from './task-order.mjs';
 import { Field } from './Form.jsx';
@@ -280,17 +281,18 @@ function RejectDialog({ item, onCancel, onReject }) {
   );
 }
 
-// The engine a new task goes to when more than one is listed (`h5-attention-add-on`, an engine key); this machine unless another was chosen.
+// The engine a new task goes to when more than one is listed (`h5-attention-add-on`, an engine key); this machine unless another was chosen. The
+// person's choice on every device and engine (the shared page state keeps it by instance id, shared-store.mjs).
 const ADD_ON_KEY = 'h5-attention-add-on';
 
 function QuickAdd({ ui, engines }) {
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
-  const [on, setOn] = useState(() => readKey(ADD_ON_KEY) || 'local');
+  const on = useShared(ADD_ON_KEY) || 'local';
   // A choice that left the list (unlinked, hidden, offline) falls back to this machine, or the first engine that is left.
   const picked = engines.find(engine => engine.key === on) || engines.find(engine => engine.key === 'local') || engines[0];
   const engine = picked ? picked.key : 'local';
-  const choose = key => { setOn(key); if (key === 'local') removeKey(ADD_ON_KEY); else writeKey(ADD_ON_KEY, key); };
+  const choose = key => writeShared(ADD_ON_KEY, key === 'local' ? null : key);
   const submit = async event => {
     event.preventDefault();
     const text = title.trim();
@@ -621,10 +623,9 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
   );
 }
 
-const COLLAPSED_KEY = 'h5-attention-collapsed'; // the ids of the parents whose sub-tasks are hidden (JSON list); default: shown
-const readKey = key => { try { return localStorage.getItem(key); } catch { return null; } };
-const writeKey = (key, value) => { try { localStorage.setItem(key, value); } catch { /* not remembered */ } };
-const removeKey = key => { try { localStorage.removeItem(key); } catch { /* not remembered */ } };
+// The ids of the parents whose sub-tasks are hidden (JSON list); default: shown. The same on every device and engine (the shared page state keeps
+// them by instance id, shared-store.mjs).
+const COLLAPSED_KEY = 'h5-attention-collapsed';
 
 // The drag of a T-Attention row (useListDrag, list-drag.jsx): a row is held (a finger 400 ms; a mouse held, or moved 4px) and moves among the rows drawn
 // at its own level of its group (its siblings) of its own engine and status group (the server keeps one order per status; on the phone a level can
@@ -823,7 +824,8 @@ export function AttentionPanel({ state, ui }) {
   const [rejecting, setRejecting] = useState(null); // the task whose Reject asks for a reason
   const [busy, setBusy] = useState(() => new Set()); // the ids with a row button on its way (one at a time per task)
   const busyRef = useRef(new Set());
-  const [collapsed, setCollapsed] = useState(() => readCollapsed(readKey(COLLAPSED_KEY)));
+  const collapsedText = useShared(COLLAPSED_KEY);
+  const collapsed = useMemo(() => readCollapsed(collapsedText), [collapsedText]);
   const items = attention.items || [];
   // The engines of the list, this machine first (attention-feed.mjs); with more than one every row has its engine tag.
   const engines = useMemo(() => (Array.isArray(attention.engines) && attention.engines.length ? attention.engines : [{ key: 'local', local: true, label: 'This machine', name: '' }]), [attention.engines]);
@@ -886,12 +888,11 @@ export function AttentionPanel({ state, ui }) {
     if (!parsed || tags.has(parsed.engine)) ui.notify(t('This task was deleted'));
   }, [editing, item]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toggleCollapsed = id => setCollapsed(current => {
-    const next = new Set(current);
+  const toggleCollapsed = id => {
+    const next = readCollapsed(readShared(COLLAPSED_KEY)); // the stored list, also when two toggles come before a drawing
     if (next.has(id)) next.delete(id); else next.add(id);
-    writeKey(COLLAPSED_KEY, JSON.stringify([...next]));
-    return next;
-  });
+    writeShared(COLLAPSED_KEY, JSON.stringify([...next]));
+  };
   const now = () => (ui.get().attention && ui.get().attention.items) || [];
   // A change drawn at once: `make` turns the list into the one shown until the answer; a failure puts the touched tasks back and says why.
   const optimistic = async (make, run, failure) => {

@@ -16,7 +16,9 @@
   const LANGS = ['en', 'zh'];
   const HAS_DOM = typeof document !== 'undefined';
   const LETTER = /[A-Za-z]/;
-  const readStored = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
+  // Browser storage only through its registry (public/js/local-keys.js, loaded first); without it (a page that does not load it) English.
+  const keys = () => (typeof TALocalKeys !== 'undefined' ? TALocalKeys : null);
+  const readStored = () => { const store = keys(); return store ? store.get(KEY) : null; };
   let lang = LANGS.includes(readStored()) ? readStored() : 'en';
 
   const exact = new Map();
@@ -90,7 +92,9 @@
 
   function set(next) {
     if (!LANGS.includes(next) || next === lang) return;
-    try { localStorage.setItem(KEY, next); } catch { /* private mode: not remembered, the next load falls back to English */ }
+    if (keys()) keys().set(KEY, next); // private mode: not remembered, the next load falls back to English
+    // The language is the person's on every device and engine (docs/design/shared-page-state.md): the shared page state takes it too.
+    if (HAS_DOM && window.TAPageState) window.TAPageState.store.setItem(KEY, next);
     writeCookie(next);
     if (HAS_DOM) location.reload();
     lang = next;

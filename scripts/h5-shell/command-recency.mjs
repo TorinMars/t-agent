@@ -1,14 +1,16 @@
 // Recently used saved commands ("Saved commands" in docs/design/page-terminal-and-bottom-bar.md): the commands sent from the list (a tap, or the pencil
 // "Edit before sending") come first, the most recent at the top, and the second line of such a row says when ("used 5 min ago"). Each kind of list
-// (Claude Code, Codex, the plain shell) keeps its own order. It is remembered on this device only (localStorage, every access guarded) as
+// (Claude Code, Codex, the plain shell) keeps its own order. It is the person's, the same on every device and engine (the shared page state,
+// shared-store.mjs; the server merges two versions by the later time of each command), as
 // { claude: { '/compact': <ms> }, codex: {...}, shell: {...} }, keyed by the command text. A command that is no longer in commands.mjs is ignored and
 // dropped at the next use, so a kind never holds more than the commands of its list.
 import { AGENT_COMMANDS, commandsFor } from './commands.mjs';
+import { sharedStore } from './shared-store.mjs';
 
 export const RECENCY_KEY = 'ta-saved-commands-used';
 
 const kindOf = agent => (Object.hasOwn(AGENT_COMMANDS, agent) ? agent : 'shell');
-const local = () => { try { return globalThis.localStorage || null; } catch { return null; } };
+const local = sharedStore;
 
 function readAll(storage) {
   try {

@@ -16,6 +16,7 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { api, t } from './common.jsx';
+import { localGet, localSet } from './local-keys.mjs';
 import { LinkedList, useLinkedUpdates } from './LinkedUpdates.jsx';
 import { RESTART_GRACE_MS, SLOW_RESTART_MS } from './restart-wait.mjs';
 
@@ -62,7 +63,7 @@ const POLL_MS = 60_000; // how often the red dot reads the update state
 const DOWN_POLL_MS = 3000; // a read failed (the service may be restarting): read this often until it answers again
 const DOWN_POLL_FOR_MS = 5 * 60_000; // ... but not for longer than this; a service that stays away is back to the minute poll
 const RELOAD_CHECK_MS = 1000; // an automatic update is waiting to be loaded: how often to see whether the person has finished
-const AUTO_RELOADED_KEY = 'h5-auto-reloaded-versions';
+const AUTO_RELOADED_KEY = 'h5-auto-reloaded-versions'; // sessionStorage, this tab only: the guard against reloading twice for one version
 
 // The reasons the switch cannot be used, and what the service is waiting for (the codes of auto_update).
 const AUTO_UNSUPPORTED = { NO_PROCESS_MANAGER: 'Needs a process manager such as PM2 to restart the service', CHECKS_DISABLED: 'Version checks are turned off on this service' };
@@ -119,15 +120,13 @@ function pageBusy(ui) {
 }
 // Once per version (or per process started by an automatic restart, `boot:<id>`) for each tab, kept across the reload. Nothing can be remembered (private mode): no reload, because a loop is worse than an old page.
 function claimReload(version) {
-  try {
-    const done = JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]');
-    if (done.includes(version)) return false;
-    sessionStorage.setItem(AUTO_RELOADED_KEY, JSON.stringify([...done, version].slice(-20)));
-    return true;
-  } catch { return false; }
+  let done = [];
+  try { done = JSON.parse(localGet(AUTO_RELOADED_KEY, 'session') || '[]'); } catch { return false; }
+  if (!Array.isArray(done) || done.includes(version)) return false;
+  return localSet(AUTO_RELOADED_KEY, JSON.stringify([...done, version].slice(-20)), 'session');
 }
 const alreadyReloaded = version => {
-  try { return JSON.parse(sessionStorage.getItem(AUTO_RELOADED_KEY) || '[]').includes(version); } catch { return true; }
+  try { return JSON.parse(localGet(AUTO_RELOADED_KEY, 'session') || '[]').includes(version); } catch { return true; }
 };
 
 const MONO = { typography: 'caption', fontFamily: 'ui-monospace, Menlo, monospace', wordBreak: 'break-all' };

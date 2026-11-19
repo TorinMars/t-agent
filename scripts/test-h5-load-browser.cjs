@@ -182,9 +182,9 @@ const asked = (log, what) => at(log, `ask ${what}`);
     const english = await openPage(browser, { viewport: { width: 1440, height: 900 } });
     await english.page.locator('#h5-terminal').waitFor({ state: 'attached' });
     assert.ok(!english.requests.some(url => url.includes('i18n-zh')), `no dictionary for English: ${english.requests.filter(url => url.includes('i18n')).join(', ')}`);
-    // i18n.js itself is loaded: it is the first file of the page's first combined script.
+    // i18n.js itself is loaded: it is in the page's first combined script, after the registry of browser storage (public/js/local-keys.js).
     const firstCombined = english.requests.find(url => /^\/js\/combined-[0-9a-f]{12}\.js\?v=[0-9a-f]{16}$/.test(url));
-    assert.ok(firstCombined && assets.combinedScript(firstCombined.split('?')[0]).files[0] === '/js/i18n.js', `i18n.js is loaded, in a combined script: ${english.requests.join(', ')}`);
+    assert.ok(firstCombined && assets.combinedScript(firstCombined.split('?')[0]).files.slice(0, 2).join() === '/js/local-keys.js,/js/i18n.js', `i18n.js is loaded, in a combined script: ${english.requests.join(', ')}`);
     assert.ok(!english.requests.some(url => /^\/js\/(i18n|toast|terminal-owner|agent-chat|mindmap)\.js/.test(url)), 'the small scripts are not asked for one by one');
     await Promise.all([english.page.waitForEvent('load'), english.page.evaluate(() => I18n.toggle())]);
     await english.page.locator('#h5-terminal').waitFor({ state: 'attached' });

@@ -36,16 +36,19 @@
     return data;
   }
   // Remembered choices are a convenience only; private mode or blocked storage just starts fresh.
+  // Kept in this browser (docs/design/shared-page-state.md, "Key audit"): `source`, `task:<source>` and `terminal:<source>:<task>` say which session this
+  // window opens at start (they decide the first requests before any answer, and the session last looked at anywhere is the top of the shared Recent
+  // list), the terminal width (the screen's size) and its one-time hint (this device's gesture). The person's own choices are the shared page state's.
   // In a pane of the multi-column view (scripts/h5-shell/pane.mjs) what this view shows is kept per pane (`pane:<id>:h5-...`); the keys in SHARED_KEYS stay
   // one for the device. See "Pane mode" in docs/design/page-shell-and-columns.md for the list.
   const PANE = window.H5Pane || null;
   const SHARED_KEYS = new Set(['terminal-width-noted']);
   const storeKey = key => (PANE && !SHARED_KEYS.has(key) ? PANE.key(`h5-${key}`) : `h5-${key}`);
+  // Through the registry of browser storage (public/js/local-keys.js), where each of these keys is declared with its reason.
+  const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false };
   const store = {
-    get(key) { try { return localStorage.getItem(storeKey(key)); } catch { return null; } },
-    set(key, value) {
-      try { if (value == null) localStorage.removeItem(storeKey(key)); else localStorage.setItem(storeKey(key), String(value)); } catch { /* ignore */ }
-    },
+    get(key) { return LocalKeys.get(storeKey(key)); },
+    set(key, value) { LocalKeys.set(storeKey(key), value == null ? null : value); },
   };
 
   // ── Early requests (start) ──
@@ -107,6 +110,10 @@
     mindmapBase: `/api/remote-servers/${id}/mindmaps`, // the mind map view lists and edits its maps there
   });
   let sources = [LOCAL];
+  // The shared page state (public/js/page-state.js, docs/design/shared-page-state.md), and the devices of this page as it names them: { key,
+  // instanceId } (it maps instance ids to source keys and back).
+  const PageState = window.TAPageState || null;
+  const pageSources = () => sources.filter(item => item === LOCAL || item.label).map(from => ({ key: from.key, instanceId: from.instanceId || null }));
   // The devices left out of the task list ("Show in task list" in Settings, `/api/task-list/hidden-devices`). Display only: a hidden device stays connected.
   const HIDDEN_URL = '/api/task-list/hidden-devices';
   let hiddenDevices = new Set();
@@ -172,8 +179,10 @@
   const expanded = new Set(); // the refs (`taskRef`) of the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
   const peeks = new Map(); // ref -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
   // The recent sessions of the switcher and the last lines of terminals closed in this page (see "Recent sessions" below; here, before anything is shown).
+  // The list is the shared page state's (public/js/page-state.js, docs/design/shared-page-state.md): the same on every device and engine.
+  // `h5-recent-sessions` is the list this browser kept before that: sent once as an import, then removed (`importOldRecent`).
   const RECENT_STORE = 'recent-sessions';
-  let recentList = PANE ? [] : ui.recent.parse(store.get(RECENT_STORE));
+  let recentList = [];
   const previews = new Map();
   let peekSeq = 0;
   const PEEK_WAIT_MS = 10000; // a list still on "Loading…" after this long says it could not be read (a late answer still replaces that)
@@ -336,6 +345,7 @@
       sourceKey: source.key,
       sourceLabel: task && source !== LOCAL ? source.label : '', // the header says which service the shown task is on when it is not this machine
     });
+    if (PageState) PageState.setSources(pageSources()); // the shared page state names devices by instance id (public/js/page-state.js)
     syncMindmapSources();
   }
 
@@ -994,7 +1004,7 @@
   };
   // ── Recent sessions: the session switcher (`#h5-cycle`, Switcher.jsx; "Session switcher" in docs/design/session-switcher.md) ──
   // The terminal sessions this page showed, most recently shown first (scripts/h5-shell/recent-sessions.mjs, through `ui.recent`), noted whenever the
-  // shown terminal changes by any path (`noteShown`, from `renderSessionName`) and remembered on this device. `state.recent` is the list without the
+  // shown terminal changes by any path (`noteShown`, from `renderSessionName`) and kept in the shared page state, the same on every device and engine. `state.recent` is the list without the
   // sessions that are gone (their task left the list, or the terminal is not among the task's known terminals). A pane keeps none: the switcher is
   // the single view's. The cards' preview lines cost no request: a warm terminal gives its buffer's last lines, one closed earlier in this page what
   // it showed then (`previews`, kept in memory only), any other none (the card shows its state instead).
@@ -1006,40 +1016,100 @@
     for (const [ref, peek] of peeks) if (peek.status === 'ready') out[ref] = peek.terminals.map(row => String(row.terminal_id));
     return out;
   }
-  function publishRecent() {
+  const sharedEntry = entry => (PageState ? PageState.toShared(entry, pageSources()) : null);
+  // `listChanged`: called because the task list was drawn again, so it matches what the devices answered (only then is anything forgotten).
+  function publishRecent(listChanged = false) {
     if (PANE) return;
+    if (PageState) recentList = PageState.recentForPage(PageState.recent(), pageSources());
     const list = ui.get().taskList;
     const shown = listReady && list && Array.isArray(list.tasks) ? ui.recent.prune(recentList, list.tasks, knownTerminals()) : [];
-    // What is gone for sure is forgotten too: only once every listed device answered and none is offline (an offline device keeps its sessions).
-    if (shown !== recentList && listReady && !listedSources().some(from => from.status !== 'ready')) {
-      recentList = shown;
-      store.set(RECENT_STORE, ui.recent.serialize(recentList));
+    // A session that is gone for sure leaves the shared list (a tombstone, so every device forgets it): its task is listed here with its sessions
+    // known and it is not among them, or it is a task of this machine that left the list (once that list answered, while it is listed). A task of
+    // another engine that is not in the list is only left out here: this page may not see all its tasks (per-task visibility).
+    if (PageState && listChanged && shown !== recentList && listReady && list && Array.isArray(list.tasks)) {
+      const kept = new Set(shown.map(ui.recent.key));
+      const known = knownTerminals();
+      const listed = new Set(list.tasks.map(row => `${row.source}|${row.id}`));
+      const ownGone = LOCAL.status === 'ready' && listedSources().includes(LOCAL);
+      const gone = recentList.filter(entry => {
+        const ref = `${entry.sourceKey}|${entry.taskId}`;
+        if (kept.has(ui.recent.key(entry))) return false;
+        return (listed.has(ref) && Array.isArray(known[ref])) || (entry.sourceKey === LOCAL.key && ownGone);
+      }).map(sharedEntry).filter(Boolean);
+      if (gone.length) PageState.noteRecent(gone.map(entry => ({ ...entry, gone: true }))); // it publishes again (the list without them)
     }
     ui.set({ recent: ui.share(ui.get().recent, shown) });
   }
+  // The entries that differ between two lists of this page go to the shared page state (the new top, the one left with its time, a new name).
+  function sendRecent(before, next) {
+    if (!PageState) return;
+    const old = new Map(before.map(entry => [ui.recent.key(entry), entry]));
+    const changed = next.filter(entry => { const was = old.get(ui.recent.key(entry)); return !was || was.title !== entry.title || was.agent !== entry.agent || was.lastUsed !== entry.lastUsed; });
+    PageState.noteRecent(changed.map(sharedEntry).filter(Boolean));
+  }
+  // The list this browser kept before the shared page state, sent once (its order kept: an entry without a time gets a small one), then removed.
+  function importOldRecent() {
+    if (PANE || !PageState) return;
+    const old = ui.recent.parse(store.get(RECENT_STORE));
+    if (old.length) PageState.importRecent(old.map((entry, index) => sharedEntry({ ...entry, lastUsed: entry.lastUsed || old.length - index })).filter(Boolean));
+    store.set(RECENT_STORE, null);
+  }
+  if (PageState && !PANE) PageState.subscribe(what => { if (!what || what.includes('recent') || what.includes('sources')) publishRecent(); });
   let recentTaskList = null;
-  ui.subscribe(() => { const list = ui.get().taskList; if (list !== recentTaskList) { recentTaskList = list; publishRecent(); } });
-  let recentShownHere = false; // this page has shown the first entry itself, so leaving it stamps the time it was last used (`leave`)
+  ui.subscribe(() => { const list = ui.get().taskList; if (list !== recentTaskList) { recentTaskList = list; publishRecent(true); } });
+  let recentShownKey = null; // the entry this page showed last: when it is still the first, leaving it stamps the time it was last used (`leave`)
   function noteShown(target, row) {
-    if (PANE || !target) return;
+    // Only a terminal of the task's list: while another task's list loads, the terminal id is still the one left (not a session of this task).
+    if (!target || !row) return;
+    if (PANE) { noteColumn(target); return; }
     const before = recentList[0];
     const same = before && ui.recent.key(before) === ui.recent.key(target);
-    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null }, undefined, { now: Date.now(), leave: recentShownHere });
-    recentShownHere = true;
+    const leave = Boolean(before) && ui.recent.key(before) === recentShownKey; // first because another device showed it: not stamped from here
+    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null }, undefined, { now: Date.now(), leave });
+    recentShownKey = ui.recent.key(target);
     if (!same && ui.get().switcher) ui.actions.closeSwitcher(); // shown another way (the task list, T-Attention): the switcher is out of date
     if (next === recentList) return;
+    const was = recentList;
     recentList = next;
-    store.set(RECENT_STORE, ui.recent.serialize(recentList));
+    sendRecent(was, next);
     publishRecent();
   }
+  // A column of the multi-column view shows the same session on every device: the pane keeps it in the shared page state as `h5-column:<pane id>`
+  // ({ instance, task, terminal } as JSON), and opens what another device chose there, at start and when it changes ("Columns" in
+  // docs/design/shared-page-state.md). Its own pane keys stay the cache of this browser.
+  const COLUMN_KEY = PANE && PageState ? `h5-column:${PANE.id}` : null;
+  let columnShown = null; // the value this pane showed last (its own or one it followed)
+  function noteColumn(target) {
+    const from = COLUMN_KEY && target && sources.find(item => item.key === target.sourceKey);
+    if (!from || !from.instanceId) return;
+    const first = columnShown === null; // what the pane brought back by itself at start: kept only when no device chose one (the import rule)
+    columnShown = JSON.stringify({ instance: from.instanceId, task: String(target.taskId), terminal: String(target.terminalId) });
+    if (PageState.get(COLUMN_KEY) === columnShown) return;
+    if (first) PageState.importKey(COLUMN_KEY, columnShown); else PageState.set(COLUMN_KEY, columnShown);
+  }
+  function followColumn() {
+    if (!COLUMN_KEY || !listReady) return null;
+    const text = PageState.get(COLUMN_KEY);
+    if (typeof text !== 'string' || text === columnShown) return null;
+    let wanted = null;
+    try { wanted = JSON.parse(text); } catch { return null; }
+    const from = wanted && listedSources().find(item => item.instanceId && item.instanceId === wanted.instance);
+    if (!from) return null;
+    columnShown = text;
+    if (task && source === from && String(task.id) === String(wanted.task) && String(terminalId) === String(wanted.terminal)) return null;
+    return ui.actions.paneOpen({ sourceKey: from.key, taskId: Number(wanted.task), terminalId: String(wanted.terminal) });
+  }
+  if (COLUMN_KEY) PageState.subscribe(what => { if (!what || what.includes(COLUMN_KEY)) void followColumn(); });
   // A session renamed (`title`) or deleted (null) from a menu: its entry follows at once, also when its task's terminals are not known to the page.
   function changeRecent(target, terminal, title) {
     if (PANE) return;
-    const next = ui.recent.edit(recentList, ui.recent.key({ sourceKey: target.from.key, taskId: String(target.taskId), terminalId: String(terminal) }), title);
+    const key = ui.recent.key({ sourceKey: target.from.key, taskId: String(target.taskId), terminalId: String(terminal) });
+    const next = ui.recent.edit(recentList, key, title);
     if (next === recentList) return;
-    if (title === null && next[0] !== recentList[0]) recentShownHere = false; // the shown one went: the next first entry was not in use until now
+    if (title === null && key === recentShownKey) recentShownKey = null; // the shown one went: the next first entry was not in use until now
+    const entry = sharedEntry(recentList.find(item => ui.recent.key(item) === key));
     recentList = next;
-    store.set(RECENT_STORE, ui.recent.serialize(recentList));
+    if (entry && PageState) PageState.noteRecent([title === null ? { ...entry, gone: true } : { ...entry, title: String(title).slice(0, 120) }]);
     publishRecent();
   }
   // The "⋯" of a row of the Recent tab (RecentList.jsx): the menu of a session row of the task list. The task's terminals are known when it is shown
@@ -4329,6 +4399,7 @@
     listReady = true;
     publishSources(); // what is listed is known now (T-Attention follows it)
     markListsKnown();
+    importOldRecent(); // the devices' instance ids are known now
     syncMindmapSources();
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
     renderTasks();
@@ -4345,6 +4416,8 @@
         reads.get(sources.find(item => item.key === sourceKey)) || null).catch(() => false);
       if (!linked) tell('That terminal is not available any more');
     }
+    // A pane opens the session its column shows on the other devices (the shared page state), before its own remembered one.
+    if (!linked && !link && PANE) linked = Boolean(await followColumn());
     // Sent to a column, the hidden normal view still brings back its remembered task, as for a chat link.
     const shownByLink = linked && !columnsShown();
     // The remembered service and task when it is listed and answers in time; else the remembered task of another listed service; else no task and the list.

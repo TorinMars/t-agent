@@ -19,6 +19,8 @@ import { useFlipX, useTabDrag } from './tab-drag.jsx';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 import { forgetPaneKeys } from './pane.mjs';
+import { onShared, readShared, writeShared } from './shared-store.mjs';
+import { localGet } from './local-keys.mjs';
 import { measureTerminalBox } from './terminal-box.mjs';
 import {
   STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnMove, columnStep, columnsFor, forgetMessage, hiddenEdges, minColumnWidth, mountOrder,
@@ -47,8 +49,10 @@ const CLOSE_DELAY_MS = 250; // a closed column stays mounted (hidden) this long,
 const FOCUS_CHECK_MS = 300;
 const MAX_ORDER = 999; // a column being closed (hidden) comes after every shown one
 
-const readStored = () => { try { return localStorage.getItem(STORAGE_KEY); } catch { return null; } };
-const writeStored = value => { try { localStorage.setItem(STORAGE_KEY, value); } catch { /* not remembered */ } };
+// The layout is the person's, the same on every device and engine (the shared page state, shared-store.mjs), and so is the session each column shows
+// (`h5-column:<id>`, kept by the pane, h5.js).
+const readStored = () => readShared(STORAGE_KEY);
+const writeStored = value => writeShared(STORAGE_KEY, value);
 const frames = () => [...document.querySelectorAll('#h5-columns iframe[data-pane-id]')];
 const frameOf = id => frames().find(el => el.dataset.paneId === id);
 const stripEl = () => document.getElementById('h5-columns-strip');
@@ -78,7 +82,7 @@ export function startColumns(ui) {
   const wideQuery = ui.media.wideQuery;
   const stored = readLayout(readStored());
   // Mind map columns of v2.133 / v2.134 are dropped, with every key their panes kept (see LEGACY_MAP_KEY in columns.mjs).
-  const legacy = dropMapColumns(stored.ids, id => { try { return localStorage.getItem(legacyMapKeyOf(id)) !== null; } catch { return false; } });
+  const legacy = dropMapColumns(stored.ids, id => localGet(legacyMapKeyOf(id)) !== null);
   for (const id of legacy.dropped) forgetPaneKeys(id);
   stored.ids = legacy.ids;
   const get = () => ui.get().columns;
@@ -88,7 +92,9 @@ export function startColumns(ui) {
     next.shown = next.enabled && wideQuery.matches;
     next.maximized = keptMaximized(next); // a maximized column that was closed, or a strip that went away: restored
     ui.set({ columns: next });
-    writeStored(writeLayout({ on: next.enabled, ids: next.ids.filter(id => !next.closing.includes(id)), tab: next.tab }));
+    // Written only when it differs from what is stored, so a device that starts with nothing stored never overwrites the layout of another one.
+    const layout = writeLayout({ on: next.enabled, ids: next.ids.filter(id => !next.closing.includes(id)), tab: next.tab });
+    if (layout !== writeLayout(readLayout(readStored()))) writeStored(layout);
     if (before && before.maximized !== next.maximized) {
       if (before.maximized) postTo(before.maximized, { event: 'maximized', on: false });
       if (next.maximized) postTo(next.maximized, { event: 'maximized', on: true });
@@ -103,6 +109,15 @@ export function startColumns(ui) {
   ui.set({ columns: { enabled: false, shown: false, ids: [], focus: null, tab: stored.tab, titles: {}, ready: {}, closing: [], maximized: null, tails: {} } });
   put({ enabled: stored.on, ids: stored.on ? columnsFor(stored.ids, stripWidthOf(window.innerWidth)) : stored.ids });
   wideQuery.addEventListener('change', () => put({}));
+  // A layout changed on another device: this page takes it (a column that stays keeps its frame; mountOrder).
+  onShared(() => {
+    const now = get();
+    const raw = readStored();
+    if (!raw || raw === writeLayout({ on: now.enabled, ids: openOf(now), tab: now.tab })) return;
+    const layout = readLayout(raw);
+    const ids = layout.on ? columnsFor(layout.ids, stripWidthOf(window.innerWidth)) : layout.ids;
+    put({ enabled: layout.on, ids, tab: layout.tab, focus: ids.includes(now.focus) ? now.focus : null });
+  });
 
   ui.actions.toggleColumns = () => {
     const now = get();
@@ -178,6 +193,7 @@ export function startColumns(ui) {
     if (!open.includes(id) || !canClose(open)) return;
     const frame = frameOf(id);
     try { frame?.contentWindow?.postMessage(forgetMessage(), location.origin); } catch { /* already gone */ }
+    writeShared(`h5-column:${id}`, null); // the session it showed, on every device
     put({ closing: [...now.closing, id], focus: now.focus === id ? null : now.focus });
     setTimeout(() => {
       const later = get();

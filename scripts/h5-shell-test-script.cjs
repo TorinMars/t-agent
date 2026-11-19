@@ -19,8 +19,10 @@ async function serveBundles(page) {
   await page.route(`${origin}/js/chunks/**`, serve);
 }
 
+// The page's registry of browser storage (public/js/local-keys.js) runs before the shell, as on the page; a test that added it already keeps that one.
 async function addShell(page) {
   await serveBundles(page);
+  if (!(await page.evaluate(() => Boolean(window.TALocalKeys)))) await page.addScriptTag({ content: fs.readFileSync(path.join(PUBLIC_JS, 'local-keys.js'), 'utf8') });
   await page.addScriptTag({ url: '/js/h5-shell.js', type: 'module' });
 }
 

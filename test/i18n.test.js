@@ -12,7 +12,7 @@ const DICTIONARIES = ['i18n-zh-ui.js', 'i18n-zh-server.js', 'i18n-zh-extra.js'];
 
 // Load the engine and the Chinese dictionaries in a sandbox without a DOM; stored is the language saved in localStorage.
 function load(stored = null) {
-  const sandbox = { localStorage: { getItem: () => stored, setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => stored, set() {} } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', ...DICTIONARIES]) vm.runInContext(fs.readFileSync(path.join(JS, file), 'utf8'), sandbox);

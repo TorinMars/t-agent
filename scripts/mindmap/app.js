@@ -1,5 +1,7 @@
 // The mind map view: the list of maps and the editor around one map. Plain DOM (the page's React bundle is not available here and would cost more than this file).
 import { PATHS } from '../h5-shell/Icons.jsx';
+import { readShared, writeShared } from '../h5-shell/shared-store.mjs';
+import { localGet, localSet } from '../h5-shell/local-keys.mjs';
 import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
 import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
@@ -12,14 +14,16 @@ const LOCAL_KEY = 'local';
 const LOCAL_SOURCE = { key: LOCAL_KEY, label: 'This machine', local: true, base: '/api/mindmaps', online: true };
 // A draft is kept per service and map. This machine keeps the key it always had, so a draft written before maps were shared still comes back; a connected
 // service's key has its source key in it, and the draft itself says which service it is for (checked again when it is read).
+// Kept in this browser: a draft is the copy of this browser's unsaved edits (up to DRAFT_MAX); the saved map is on its service for every device.
 const DRAFT_KEY = (sourceKey, id) => (sourceKey === LOCAL_KEY ? `h5-mindmap-draft:${id}` : `h5-mindmap-draft:${sourceKey}|${id}`);
 const OFFLINE_CODES = new Set(['REMOTE_OFFLINE', 'REMOTE_CONNECTION_FAILED']);
 const DRAFT_MAX = 1500000; // characters; a larger map is not kept in the browser (a retry still has it in memory)
 const KEEPALIVE_MAX = 60000; // bytes the browser allows in a request that outlives the page
 const FLUSH_WAIT_MS = 3000;
-const FOLD_KEY = 'h5-mindmap-list-folded'; // '1': the list of the Mind maps tab is folded away (per device)
-const readFolded = () => { try { return localStorage.getItem(FOLD_KEY) === '1'; } catch { return false; } };
-const writeFolded = on => { try { if (on) localStorage.setItem(FOLD_KEY, '1'); else localStorage.removeItem(FOLD_KEY); } catch { /* not remembered */ } };
+// '1': the list of the Mind maps tab is folded away. The person's choice, the same on every device and engine (the shared page state, shared-store.mjs).
+const FOLD_KEY = 'h5-mindmap-list-folded';
+const readFolded = () => readShared(FOLD_KEY) === '1';
+const writeFolded = on => writeShared(FOLD_KEY, on ? '1' : null);
 const CODE_MESSAGES = {
   MINDMAP_NOT_FOUND: 'This map no longer exists',
   INVALID_MINDMAP: 'The service refused this map because its content is not valid',
@@ -572,16 +576,16 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   // The draft of a map on one service. It is used only when it says it is for that service (a draft of this machine written before sharing says nothing).
   function readDraft(src, id) {
     let draft = null;
-    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY(src.key, id))); } catch { return null; }
+    try { draft = JSON.parse(localGet(DRAFT_KEY(src.key, id))); } catch { return null; }
     if (!draft || typeof draft !== 'object') return null;
     const owner = draft.source === undefined ? LOCAL_KEY : draft.source;
     return owner === src.key && (draft.id === undefined || draft.id === id) ? draft : null;
   }
-  const clearDraft = (sourceKey, id) => { try { localStorage.removeItem(DRAFT_KEY(sourceKey, id)); } catch { /* blocked storage */ } };
+  const clearDraft = (sourceKey, id) => { localSet(DRAFT_KEY(sourceKey, id), null); };
   function writeDraft(sourceKey, id, revision, title, doc) {
     try {
       const text = JSON.stringify({ source: sourceKey, id, revision, title, data: doc, at: Date.now() });
-      if (text.length <= DRAFT_MAX) localStorage.setItem(DRAFT_KEY(sourceKey, id), text);
+      if (text.length <= DRAFT_MAX) localSet(DRAFT_KEY(sourceKey, id), text);
     } catch { /* storage full or blocked: the retry still has the edits in memory */ }
   }
 

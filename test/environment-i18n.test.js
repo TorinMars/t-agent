@@ -10,7 +10,7 @@ const JS = path.join(ROOT, 'public', 'js');
 const SAME = new Set(['git', 'Shell', 'HTTPS', 'frpc', 'pm2', 'frpc X']);
 
 function loadChinese() {
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} } };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   for (const file of ['i18n.js', 'i18n-zh-ui.js', 'i18n-zh-server.js', 'i18n-zh-extra.js']) vm.runInContext(fs.readFileSync(path.join(JS, file), 'utf8'), sandbox);

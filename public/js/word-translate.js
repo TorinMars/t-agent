@@ -1,4 +1,4 @@
-// Tap to translate (an option of the chat, kept on this device): with it on, a tap on an English word in a chat message shows what the word means, right
+// Tap to translate (an option of the chat, the person's on every device and engine: the shared page state, public/js/page-state.js): with it on, a tap on an English word in a chat message shows what the word means, right
 // beside the word. The meaning comes from the translation service of the Client (POST /api/translate/word, the service set up in the translation settings),
 // told the sentence the word stands in so it can pick the meaning that fits. Only text of the chat is looked at: code, buttons, links, the input box and
 // the tool cards are left alone. Everything the server sends is put in with textContent.
@@ -16,7 +16,8 @@ const WordTranslate = (() => {
 
   const listeners = new Set();
   let enabled = false;
-  try { enabled = localStorage.getItem(KEY) === '1'; } catch { /* storage blocked: off */ }
+  const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false }; // the registry of browser storage (public/js/local-keys.js)
+  enabled = LocalKeys.get(KEY) === '1'; // storage blocked: off
   const cache = new Map(); // `${word}|${sentence}` -> entry, or the request that is under way
   let popup = null;
   let current = null; // the word the popup points at
@@ -184,11 +185,14 @@ const WordTranslate = (() => {
 
   function setEnabled(on) {
     enabled = Boolean(on);
-    try { localStorage.setItem(KEY, enabled ? '1' : '0'); } catch { /* storage blocked: kept until the page closes */ }
+    if (window.TAPageState) window.TAPageState.store.setItem(KEY, enabled ? '1' : '0'); else LocalKeys.set(KEY, enabled ? '1' : '0'); // blocked: kept until the page closes
     hide();
     mark();
     for (const listener of listeners) listener(enabled);
   }
+
+  // Turned on or off on another device: this page follows.
+  if (window.TAPageState) window.TAPageState.subscribe(() => { const on = window.TAPageState.store.getItem(KEY) === '1'; if (on !== enabled) setEnabled(on); });
 
   return { get enabled() { return enabled; }, setEnabled, onChange(listener) { listeners.add(listener); return () => listeners.delete(listener); }, hide, wordAt };
 })();

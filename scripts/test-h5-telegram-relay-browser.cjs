@@ -31,7 +31,7 @@ async function openPage(browser, { wide = false, zh = false, state }) {
   await page.addStyleTag({ content: read('public/css/h5.css') });
   if (zh) {
     await page.evaluate(() => localStorage.setItem('ta-lang', 'zh'));
-    for (const file of ['public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
+    for (const file of ['public/js/local-keys.js', 'public/js/i18n.js', 'public/js/i18n-zh-ui.js', 'public/js/i18n-zh-server.js', 'public/js/i18n-zh-extra.js']) await page.addScriptTag({ content: read(file) });
   }
   await page.evaluate(initial => {
     window.calls = [];

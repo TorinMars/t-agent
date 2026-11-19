@@ -19,7 +19,7 @@ async function openPage(browser, { supported = true, enabled = false, zh = false
   await page.addStyleTag({ content: fs.readFileSync(path.join(root, 'public/css/h5.css'), 'utf8') });
   if (zh) {
     await page.evaluate(() => localStorage.setItem('ta-lang', 'zh')); // read by i18n.js when it loads
-    for (const file of ['i18n.js', 'i18n-zh-ui.js']) await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js', file), 'utf8') });
+    for (const file of ['local-keys.js', 'i18n.js', 'i18n-zh-ui.js']) await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'public/js', file), 'utf8') });
     assert.equal(await page.evaluate(() => I18n.get()), 'zh');
   }
   await page.evaluate(({ supported, enabled }) => {

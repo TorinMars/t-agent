@@ -13,6 +13,7 @@ const VoiceInput = (() => {
   // The worklet posts the microphone blocks only while it is on (a message `false` turns it off): a microphone that is only kept ready costs nothing.
   const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = event => { this.on = event.data !== false; }; } process(inputs) { if (!this.on) return true; const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
   const MIC_CONSTRAINTS = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
+  // Kept in this browser, not in the shared page state: they are about this device's microphone and its permission (docs/design/shared-page-state.md).
   const KEEP_KEY = 'voice-keep-mic';
   const ENABLED_KEY = 'voice-enabled';
 
@@ -228,7 +229,8 @@ const VoiceInput = (() => {
   // is attached only once, here. Nothing can start a recording (`start` and the press handler ask first), a running recording ends and keeps its text, and
   // a kept microphone is let go. The keep-ready choice itself is kept, so it comes back with voice input.
   const voice = { enabled: true, listeners: new Set(), recordings: new Set() };
-  try { voice.enabled = localStorage.getItem(ENABLED_KEY) !== '0'; } catch { /* storage blocked: on */ }
+  const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false }; // the registry of browser storage (public/js/local-keys.js)
+  voice.enabled = LocalKeys.get(ENABLED_KEY) !== '0'; // storage blocked: on
   function markPage() {
     const page = document.documentElement;
     if (page && page.toggleAttribute) page.toggleAttribute('data-voice-off', !voice.enabled);
@@ -240,7 +242,7 @@ const VoiceInput = (() => {
   // The price: the browser shows its microphone indicator all the time and other audio on the device may be affected, so it is off by default, and the
   // microphone is let go when the page is hidden and taken again when it is shown.
   const warm = { wanted: false, graph: null, building: null, listeners: new Set() };
-  try { warm.wanted = localStorage.getItem(KEEP_KEY) === '1'; } catch { /* storage blocked: off */ }
+  warm.wanted = LocalKeys.get(KEEP_KEY) === '1'; // storage blocked: off
   const warmAvailable = () => Boolean(typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && (window.AudioContext || window.webkitAudioContext));
   const tracksEnded = graph => graph.stream.getTracks().some(track => track.readyState !== 'live') || graph.context.state === 'closed';
   function dropWarm() {
@@ -295,7 +297,7 @@ const VoiceInput = (() => {
   function setKeepWarm(on) {
     const value = Boolean(on) && warmAvailable();
     warm.wanted = value;
-    try { localStorage.setItem(KEEP_KEY, value ? '1' : '0'); } catch { /* storage blocked: kept until the page closes */ }
+    LocalKeys.set(KEEP_KEY, value ? '1' : '0'); // storage blocked: kept until the page closes
     if (value) void buildWarm(true);
     else if (warm.graph && !warm.graph.inUse) dropWarm();
     for (const listener of warm.listeners) listener(value);
@@ -313,7 +315,7 @@ const VoiceInput = (() => {
   }
   function setEnabled(on) {
     const value = Boolean(on);
-    try { localStorage.setItem(ENABLED_KEY, value ? '1' : '0'); } catch { /* storage blocked: kept until the page closes */ }
+    LocalKeys.set(ENABLED_KEY, value ? '1' : '0'); // storage blocked: kept until the page closes
     applyEnabled(value);
   }
   if (typeof document !== 'undefined' && document.addEventListener && typeof window !== 'undefined' && window.addEventListener) {

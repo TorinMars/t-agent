@@ -90,7 +90,7 @@ test('the Chinese texts exist for every template the model builds', () => {
   const vm = require('node:vm');
   const fs = require('node:fs');
   const root = path.join(__dirname, '..', 'public', 'js');
-  const sandbox = { localStorage: { getItem: () => 'zh', setItem() {} }, document: undefined };
+  const sandbox = { TALocalKeys: { get: () => 'zh', set() {} }, document: undefined };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'i18n.js'), 'utf8'), sandbox);

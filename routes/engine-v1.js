@@ -42,6 +42,8 @@ router.use('/task-order', require('./task-order').createEngineTaskOrderRouter())
 router.use('/settings-sync', require('./settings-sync').createEngineSettingsSyncRouter());
 // The English learning sync between linked services (routes/learn-sync.js), link tokens only; the rows travel sealed for the link.
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
+// The shared page state between linked services (routes/page-state.js), link tokens only; the state travels sealed for the link.
+router.use('/page-state', require('./page-state').createEnginePageStateRouter());
 // The per-device settings of this service, for a linked device's page (routes/device-settings.js): link tokens only, and only the allowlisted
 // page routes (the working directory, peer file access, agent skills, rules and skills sync, the desktop window switch). No task in them.
 router.use('/device-settings', require('./device-settings').createEngineDeviceSettingsRouter());
@@ -187,6 +189,9 @@ function infoHandler(req, res) {
       // learn:sync: GET|PUT /v1/learn-sync, POST /v1/learn-sync/pull and the home routes of a company computer (routes/learn-sync.js), the English
       // learning data linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or LEARN_SYNC_ENABLED=false.
       ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').CAPABILITY] : []),
+      // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
+      // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
+      ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),
       // device:tier: `company_computer` above, and /v1/device-settings/device-tier.
       require('../services/device-tier').CAPABILITY,
       // settings:device: /v1/device-settings/<path>, the allowlisted per-device settings routes of the page, for a linked device's page (link tokens only).

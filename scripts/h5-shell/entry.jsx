@@ -8,9 +8,11 @@ import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
 import { detectPane, paneKeyPrefix, startPane } from './pane.mjs';
 import { api, t } from './common.jsx';
+import { onShared, readShared, writeShared } from './shared-store.mjs';
+import { localGet } from './local-keys.mjs';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 import { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget } from './task-order.mjs';
-import { RECENT_MAX, editRecent, noteRecent, parseRecent, pruneRecent, recentKey, serializeRecent } from './recent-sessions.mjs';
+import { RECENT_MAX, editRecent, noteRecent, parseRecent, pruneRecent, recentKey } from './recent-sessions.mjs';
 import { startColumns } from './Columns.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported by the Settings
 // chunk (screen-settings.jsx), which is loaded when Settings first opens (lazy-screens.jsx).
@@ -26,8 +28,10 @@ const coarseQuery = window.matchMedia('(any-pointer: coarse)');
 const inputMode = () => (fineQuery.matches && !coarseQuery.matches ? 'pointer' : 'touch');
 // Pane mode (pane.mjs): this page is one column of the multi-column view. Decided once, before anything is read from storage.
 const paneId = detectPane(window);
-const SIDEBAR_KEY = `${paneId ? paneKeyPrefix(paneId) : ''}h5-sidebar-collapsed`; // the layout of this view: per pane
-const readCollapsed = () => { try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; } };
+// The layout of this view: per pane (a pane key stays in this browser); the top page's is the person's, the same on every device and engine (the
+// shared page state, shared-store.mjs).
+const SIDEBAR_KEY = `${paneId ? paneKeyPrefix(paneId) : ''}h5-sidebar-collapsed`;
+const readCollapsed = () => readShared(SIDEBAR_KEY) === '1';
 
 const ui = createStore({ ...initialState(), wide: wideQuery.matches, input: inputMode(), sidebarCollapsed: readCollapsed(), pane: paneId });
 if (paneId) startPane(ui, paneId);
@@ -37,7 +41,7 @@ ui.fileKinds = { kindOf, isRaw: kind => RAW_KINDS.has(kind) };
 // The rules of the shared task order (task-order.mjs), for h5.js: where each task goes, and the whole order to save after a move.
 ui.taskOrder = { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget };
 // The recent sessions of the session switcher (recent-sessions.mjs), for h5.js, which notes every session it shows.
-ui.recent = { max: RECENT_MAX, key: recentKey, note: noteRecent, prune: pruneRecent, parse: parseRecent, serialize: serializeRecent, edit: editRecent };
+ui.recent = { max: RECENT_MAX, key: recentKey, note: noteRecent, prune: pruneRecent, parse: parseRecent, edit: editRecent }; // parse: the old per-browser list, imported once (h5.js)
 let notices = 0;
 // `action`: one action of the notice, `{ label, run }` (an English label, a function), shown as a text button ("Floating notices" in docs/design/toast.md).
 ui.notify = (message, type = 'info', { action = null } = {}) => {
@@ -47,7 +51,7 @@ ui.notify = (message, type = 'info', { action = null } = {}) => {
 };
 window.H5UI = ui;
 // Voice input turned off (voice-input.js owns the setting, but runs after the first paint can happen): the microphone button must not show and then vanish.
-try { if (localStorage.getItem('voice-enabled') === '0') document.documentElement.setAttribute('data-voice-off', ''); } catch { /* storage blocked: on */ }
+if (localGet('voice-enabled') === '0') document.documentElement.setAttribute('data-voice-off', ''); // storage blocked: on
 // The floating notices of every script of the page (voice input, chat, uploads) go through the shell.
 window.notify = (message, type) => ui.notify(message, type);
 window.Toast = { show: (message, options = {}) => ui.notify(message, options.type), error: message => ui.notify(message, 'error'), success: message => ui.notify(message, 'success') };
@@ -85,12 +89,15 @@ document.addEventListener('keydown', event => {
 // Wide layout: fold the permanent sidebar away and back. The terminal refits to the new width by itself (a real layout change, so a PTY resize is right).
 ui.actions.toggleSidebar = () => {
   const collapsed = !ui.get().sidebarCollapsed;
-  try { if (collapsed) localStorage.setItem(SIDEBAR_KEY, '1'); else localStorage.removeItem(SIDEBAR_KEY); } catch { /* not remembered */ }
+  writeShared(SIDEBAR_KEY, collapsed ? '1' : null);
   // The rename field and the popup of a row are drawn inside the sidebar or point into it: they go with it (as with the sheet of a phone, h5.js `closeTasks`).
   const menu = ui.get().menu;
   if (collapsed && menu && (menu.rename || menu.anchor)) ui.actions.menuCancel();
   ui.set({ sidebarCollapsed: collapsed });
 };
+
+// Folded or unfolded on another device: this page follows.
+onShared(() => { const collapsed = readCollapsed(); if (collapsed !== ui.get().sidebarCollapsed) ui.set({ sidebarCollapsed: collapsed }); });
 
 // The multi-column view (Columns.jsx): its remembered state is read before the first render, so a restored strip is drawn at once and h5.js finds
 // `columns.shown` when it starts (it then opens no terminal socket of its own).

@@ -44,6 +44,8 @@ router.use('/settings-sync', require('./settings-sync').createEngineSettingsSync
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
 // The shared page state between linked services (routes/page-state.js), link tokens only; the state travels sealed for the link.
 router.use('/page-state', require('./page-state').createEnginePageStateRouter());
+// "Updated to v…" (routes/updated-notice.js): this engine's notice about its own update, read and acknowledged by a linked service's page.
+router.use('/updated-notice', require('./updated-notice').createEngineUpdatedNoticeRouter());
 // The per-device settings of this service, for a linked device's page (routes/device-settings.js): link tokens only, and only the allowlisted
 // page routes (the working directory, peer file access, agent skills, rules and skills sync, the desktop window switch). No task in them.
 router.use('/device-settings', require('./device-settings').createEngineDeviceSettingsRouter());
@@ -192,6 +194,9 @@ function infoHandler(req, res) {
       // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
       // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
       ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),
+      // updated-notice: GET /v1/updated-notice and POST /v1/updated-notice/ack (routes/updated-notice.js), this engine's "Updated to v…" notice, which a
+      // linked service's page shows as one line and acknowledges (link tokens only).
+      require('../services/updated-notice').CAPABILITY,
       // device:tier: `company_computer` above, and /v1/device-settings/device-tier.
       require('../services/device-tier').CAPABILITY,
       // settings:device: /v1/device-settings/<path>, the allowlisted per-device settings routes of the page, for a linked device's page (link tokens only).

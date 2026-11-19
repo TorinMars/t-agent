@@ -65,6 +65,10 @@ export const RecentScreen = screen(() => import('./screen-recent.jsx'), 'RecentL
 export const LearnScreen = screen(() => import('./screen-learn.jsx'), 'LearnPage', state => Boolean(state.learnOpen), ui => ui.actions.closeLearn && ui.actions.closeLearn());
 export const TaskDialogScreen = screen(() => import('./screen-task-dialog.jsx'), 'TaskDialog', state => Boolean(state.taskDialog), ui => ui.set && ui.set({ taskDialog: null }));
 
+// "Updated to v…" (UpdatedNotice.jsx): no button opens it. The updater calls this when the update status says the person has a notice to see; the
+// chunk asks for the notice, waits until the page is free and draws the dialog in a root of its own. A chunk that cannot be loaded shows nothing.
+export const showUpdatedNotice = ui => import('./screen-updated.jsx').then(module => module.showUpdatedNotice(ui), () => {});
+
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
 // `pointerdown` a finger (about 100 ms before the click), `focusin` the keyboard.
 const OPENERS = [

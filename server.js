@@ -717,6 +717,8 @@ server.listen(config.port, config.host, () => {
     chat: require('./services/agent-chat').getAgentChat().activity(),
     inputs: require('./lib/terminal-recent-input').recentInputTimes(),
   }));
+  // "Updated to v…": a version that went up since the last start leaves a notice for the person's next visit (services/updated-notice.js).
+  try { require('./services/updated-notice').getUpdatedNotice().record(); } catch (error) { console.error('[updated-notice]', error.message); }
   updates.start();
   // Browser recordings older than 14 days, or over 2 GiB in all, are removed now and every 6 hours (services/browser-recordings.js).
   browserRecordings.startCleanup();

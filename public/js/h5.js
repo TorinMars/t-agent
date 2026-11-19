@@ -2442,6 +2442,8 @@
       s.term.focus();
     }, 0);
   }
+  // A layer that opened by itself before the terminal took the focus (the "Updated to v…" dialog, UpdatedNotice.jsx) hands it back here once it is gone.
+  ui.actions.focusTerminal = () => { if (session && !session.disposed) focusTerminalSoon(session); };
   // The wheel strip: a scrollbar on the right edge of the terminal (drawn by the shell, scripts/h5-shell/Terminal.jsx; touch mode only).
   // Its mode (`data-mode`) follows the shown terminal's buffer:
   // - 'bar' (normal buffer with history): a thumb whose size is rows / (rows + scrollback in use) and whose position is viewportY / baseY.

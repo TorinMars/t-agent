@@ -571,4 +571,4 @@ const requestRestart = () => serverRestart.request();
 // True from an accepted restart until the exit, and while an automatic restart is being prepared: POST /api/system/apply-update answers 409 RESTART_PENDING.
 const restartPending = () => serverRestart.pending() || Boolean(restartPromise);
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending };
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, runningVersion, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending };

@@ -1,6 +1,6 @@
 // The MUI page (/h5) on a computer, in real Chromium with mocked servers: input mode 'pointer' (no touch, a mouse) at 1440x900 and 1280x800, and the
 // touch mode at phone size for comparison. Checks: no key row, no wheel strip, no keyboard buttons, the draft box always shown, 13px terminal font,
-// native titles on icon buttons, Escape closing the saved commands menu from the terminal; Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line, and a send gives the focus back to the terminal;
+// native titles on icon buttons, Escape closing the saved commands menu from the terminal; Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line, and after a send the focus stays in the draft box;
 // typing with nothing focused reaches the terminal, Escape in the draft box goes back to it, Cmd/Ctrl+K focuses the session search; a shorter window does
 // NOT pin the terminal (it was taken for the on-screen keyboard); the terminal "done" acknowledgement (local and remote Engine) and the next-session
 // button seeing it idle; folding the sidebar (remembered) (refitting the terminal) and the design document as the sheet that slides down from the top (no refit).
@@ -186,7 +186,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await page.locator('.h5-xterm:not([hidden])').click({ position: { x: 200, y: 100 } });
       assert.equal(await activeIsTerminal(page), true, `${label}: a click focuses the terminal`);
 
-      // Draft box shortcuts: Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line; a send returns the focus to the terminal.
+      // Draft box shortcuts: Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line; after a send the focus stays in the draft box.
       const input = page.locator('#h5-translate-input');
       {
         const asked = translations.length;
@@ -198,7 +198,8 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
         assert.equal(translations.length, asked + 1, `${label}: Enter asks for one translation`);
         assert.deepEqual((await lastSocket(page)).slice(before), ['Translated text', '\r'], `${label}: Enter sends the translation, then Enter`);
         assert.equal(await input.inputValue(), '');
-        assert.equal(await activeIsTerminal(page), true, `${label}: after Enter the terminal has the focus again`);
+        assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', `${label}: after Enter the focus stays in the draft box`);
+        assert.equal(await activeIsTerminal(page), false, `${label}: and the terminal does not take it`);
         assert.ok(await page.locator('#h5-translate').evaluate(el => el.getBoundingClientRect().height > 30), 'the draft box stays shown');
       }
       await input.click();
@@ -207,7 +208,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await page.keyboard.press('Alt+Enter');
       await page.waitForFunction(count => window.sockets.at(-1).sent.length >= count + 2, before);
       assert.deepEqual((await lastSocket(page)).slice(before), ['echo  as typed', '\r'], `${label}: Alt+Enter sends as typed`);
-      assert.equal(await activeIsTerminal(page), true);
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', `${label}: Alt+Enter keeps the focus in the box`);
       await input.click();
       await page.keyboard.type('one');
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');

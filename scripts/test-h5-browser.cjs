@@ -790,12 +790,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     {
       const afterSend = await page.locator('#h5-translate-input').evaluate(el => ({ height: el.getBoundingClientRect().height, inline: el.style.height }));
       assert.ok(afterSend.height < 50 && afterSend.inline === '', `one line again after a send (${afterSend.height}px)`);
-      // After a send the keyboard is dismissed: the box is blurred (and hidden at once), the terminal is not focused, no keyboard key stays pressed, nothing is resized.
-      assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', 'the box is blurred after a send');
+      // After a send the focus stays in the box (the keyboard stays open for the next message): the box stays shown, the terminal is not focused, the
+      // Draft keyboard key stays pressed and the terminal one is not, nothing is resized.
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', 'the focus stays in the box after a send');
       assert.equal(await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').contains(document.activeElement)), false, 'the terminal is not focused after a send');
-      assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'the box is hidden right after a send');
+      assert.ok(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height) > 0, 'the box stays shown after a send');
+      assert.equal(await page.locator('#h5-actions [data-action="keyboard"]').getAttribute('aria-pressed'), 'false', 'the terminal keyboard key is not pressed after a send');
+      assert.equal(await page.locator('#h5-actions [data-action="draft"]').getAttribute('aria-pressed'), 'true', 'the draft keyboard key stays pressed: the box has the focus');
+      await page.locator('#h5-translate-input').blur(); // the person closes the keyboard: the box hides and nothing is covered any more
+      await page.waitForFunction(() => document.getElementById('h5-translate').getBoundingClientRect().height === 0);
       assert.equal(await page.evaluate(() => document.getElementById('h5-bottom').style.getPropertyValue('--h5-bar-extra') || '0px'), '0px', 'nothing is covered any more');
-      for (const action of ['keyboard', 'draft']) assert.equal(await page.locator(`#h5-actions [data-action="${action}"]`).getAttribute('aria-pressed'), 'false', `${action} key is reset after a send`);
       assert.equal(await page.evaluate(() => window.sockets[0].sent.filter(item => { try { return JSON.parse(item).type === 'resize'; } catch { return false; } }).length), restResizes, 'a send resizes nothing');
     }
 
@@ -970,7 +974,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         assert.equal(translateRequests.at(-1), 'shortcut please', `${combo} translates the text without a new line`);
         assert.deepEqual((await sent()).slice(-2), ['Run the tests [2J', '\r'], `${combo} sends the translation, then Enter`);
         assert.equal(await input.inputValue(), '', `${combo} clears the box`);
-        assert.notEqual(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', `${combo} dismisses the keyboard like the button`);
+        assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'h5-translate-input', `${combo} keeps the focus in the box like the button`);
       }
       {
         const requests = translateRequests.length;

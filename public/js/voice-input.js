@@ -13,6 +13,7 @@ const VoiceInput = (() => {
   // The worklet posts the microphone blocks only while it is on (a message `false` turns it off): a microphone that is only kept ready costs nothing.
   const WORKLET = 'registerProcessor("pcm-capture", class extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = event => { this.on = event.data !== false; }; } process(inputs) { if (!this.on) return true; const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice()); return true; } });';
   const MIC_CONSTRAINTS = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
+  // Kept in this browser, not in the shared page state: they are about this device's microphone and its permission (docs/design/shared-page-state.md).
   const KEEP_KEY = 'voice-keep-mic';
   const ENABLED_KEY = 'voice-enabled';
 

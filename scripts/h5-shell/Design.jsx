@@ -10,7 +10,8 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { named, t } from './common.jsx';
+import { named, t, useShared } from './common.jsx';
+import { writeShared } from './shared-store.mjs';
 import { Icon } from './Icons.jsx';
 import { imagePath, renderText, splitHighlighted } from './file-view.mjs';
 import { RAW_KINDS, kindOf, languageOf } from './file-kinds.mjs';
@@ -223,10 +224,9 @@ export function useSwipeUp(onClose) {
 // scrolls the document to that heading. Heading texts are the document's own, so the translation layer leaves them alone (translate="no").
 const SECTION_LINE = 40; // px from the top of the document view: a heading above this line has started the section being read
 const JUMP_GAP = 8; // px left above a heading the outline scrolled to
-const OUTLINE_KEY = 'h5-design-outline'; // wide screens: the outline column shown ('1') or folded away ('0'); unset: shown
-const readColumnOpen = () => {
-  try { return localStorage.getItem(OUTLINE_KEY) !== '0'; } catch { return true; } // the sheet is at least 900px wide, so the column always fits
-};
+// Wide screens: the outline column shown ('1') or folded away ('0'); unset: shown (the sheet is at least 900px wide, so the column always fits). The
+// person's choice, the same on every device and engine (the shared page state, shared-store.mjs).
+const OUTLINE_KEY = 'h5-design-outline';
 function OutlineList({ outline, current, onPick, sx }) {
   const nav = useRef(null);
   const top = Math.min(...outline.map(item => item.level));
@@ -271,7 +271,7 @@ export function DesignSheet({ state, ui }) {
   const [outline, setOutline] = useState([]); // the h1-h3 headings of the rendered Markdown: [{ id, level, text }]
   const [current, setCurrent] = useState(null); // the id of the heading whose section is being read
   const [listOpen, setListOpen] = useState(false); // a narrow screen: the outline drawer is open
-  const [columnOpen, setColumnOpen] = useState(readColumnOpen); // a wide screen: the outline column is shown
+  const columnOpen = useShared(OUTLINE_KEY) !== '0'; // a wide screen: the outline column is shown
   const pinned = useRef(null); // the heading the outline scrolled to: it stays marked until the reader scrolls by hand
   const [viewer, setViewer] = useState(null); // the picture or diagram shown full screen (ImageViewer.jsx)
   const content = design && design.status === 'ready' && typeof design.content === 'string' ? design.content : null; // none for an image, PDF, audio or video file
@@ -427,10 +427,7 @@ export function DesignSheet({ state, ui }) {
     const top = head.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop - JUMP_GAP;
     node.scrollTo({ top: Math.max(0, top), behavior: reduced ? 'auto' : 'smooth' });
   };
-  const toggleColumn = () => setColumnOpen(value => {
-    try { localStorage.setItem(OUTLINE_KEY, value ? '0' : '1'); } catch { /* no storage */ }
-    return !value;
-  });
+  const toggleColumn = () => writeShared(OUTLINE_KEY, columnOpen ? '0' : '1');
   // Opened from the file tree (FileTree.jsx), the file lies over the tree: the back arrow, Escape, the back button and a swipe up go back to the tree
   // (one layer); Close and a tap beside the sheet close both. Otherwise the header has a Files button that shows the tree instead.
   const fromTree = Boolean(state.files && state.files.open);

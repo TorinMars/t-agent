@@ -18,10 +18,11 @@ running or pending session" in [page-terminal-and-bottom-bar.md](page-terminal-a
   time and stay readable. A rename or a delete from a session menu updates the entry (`editRecent`, h5.js `changeRecent`). The task list's Recent tab
   draws the same list as rows ("Recent tab" in [page-task-list.md](page-task-list.md)). `noteShown` notes it whenever the shown terminal changes by any path (it runs in `renderSessionName`, where `state.shownTarget` is set: the
   task list, the header, T-Attention, the switcher, a deep link, the page load). Other engines' sessions (K01) are entries of their own, keyed by
-  device, task and terminal. Remembered on this device (`h5-recent-sessions` through h5.js `store`, guarded like every key). `state.recent` is the list
-  without the sessions that are gone: the task is not in `state.taskList`, or the terminals of its task are known (the selected task, an expanded
-  one) and it is not among them. The stored list forgets them only once every listed device answered and none is offline (an offline device keeps its
-  sessions). A pane keeps none and never opens the switcher.
+  device, task and terminal. The list is the same on every device and engine: it is kept in the shared page state, by engine instance id, task and
+  terminal, and each page maps it to its own source keys ("Recent sessions" in [shared-page-state.md](shared-page-state.md); the old per-browser
+  `h5-recent-sessions` is imported once and removed). `state.recent` is the list without the sessions that are gone: the task is not in
+  `state.taskList`, or the terminals of its task are known (the selected task, an expanded one) and it is not among them. Only sessions gone for sure
+  become tombstones (see there); an offline device keeps its sessions. A pane keeps none and never opens the switcher.
 - **Opening** (`ui.actions.pressSwitcher`): the first press opens it (`openSwitcher`: the focused input is blurred and the terminal's own keyboard
   closed first); a press while it is open counts in `state.switcher.press` and switches to the centred (selected) card, so two quick presses go to the previous
   session and two more come back. No keyboard shortcut opens it. The button has no count and no badge; it is `aria-haspopup="dialog"` with

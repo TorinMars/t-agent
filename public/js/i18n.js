@@ -91,6 +91,8 @@
   function set(next) {
     if (!LANGS.includes(next) || next === lang) return;
     try { localStorage.setItem(KEY, next); } catch { /* private mode: not remembered, the next load falls back to English */ }
+    // The language is the person's on every device and engine (docs/design/shared-page-state.md): the shared page state takes it too.
+    if (HAS_DOM && window.TAPageState) window.TAPageState.store.setItem(KEY, next);
     writeCookie(next);
     if (HAS_DOM) location.reload();
     lang = next;

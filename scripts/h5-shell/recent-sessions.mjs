@@ -1,6 +1,7 @@
 // The recent sessions of the session switcher ("Session switcher" in docs/design/session-switcher.md): the terminal sessions this page has shown,
-// most recently shown first, remembered on this device. Pure functions: h5.js keeps the list (it sees every change of the shown terminal, by any path)
-// and stores it with its `store` helper; Switcher.jsx draws it as a stack of cards. An entry is
+// most recently shown first, the same on every device and engine (kept in the shared page state, public/js/page-state.js; docs/design/shared-page-state.md).
+// Pure functions: h5.js keeps the list (it sees every change of the shown terminal, by any path) and sends what changed to the shared page state;
+// Switcher.jsx draws it as a stack of cards. An entry is
 // { sourceKey, taskId, terminalId, title, agent, lastUsed? }: the device (source key), the task and the terminal, plus the session's name and agent kind
 // as they were when it was last shown (a task that is not selected has no terminal list in the page, so its card shows what was seen then), and when it
 // was last used (ms; lists stored before 2026-11-19 have no time, and an entry gets one the next time it is shown or left). The "Recent" tab of the task
@@ -28,7 +29,7 @@ export function cleanEntry(entry) {
 
 // The list after `entry` was shown: it goes first, an older copy of it goes away, at most `max` entries. The same list comes back when nothing changed.
 // With `now` the entry is stamped as used then (`lastUsed`), and with `leave` the entry that was first until now too: it was in use until this moment
-// (h5.js passes `leave` only once this page has shown that entry itself, so a list from an earlier visit keeps its times).
+// (1 ms before; h5.js passes `leave` only once this page has shown that entry itself, so a list from an earlier visit keeps its times).
 export function noteRecent(list, entry, max = RECENT_MAX, { now = null, leave = false } = {}) {
   const clean = cleanEntry(entry);
   const before = Array.isArray(list) ? list : [];
@@ -37,9 +38,10 @@ export function noteRecent(list, entry, max = RECENT_MAX, { now = null, leave = 
   const first = before[0];
   const same = first && recentKey(first) === key;
   if (same && first.title === clean.title && first.agent === clean.agent && before.length <= max) return before;
-  const stamp = item => (now ? { ...item, lastUsed: now } : item);
-  const top = same ? (first.lastUsed ? { ...clean, lastUsed: first.lastUsed } : clean) : stamp(clean);
-  const rest = before.filter(item => recentKey(item) !== key).map((item, index) => (leave && !same && index === 0 && item === first ? stamp(item) : item));
+  const stamp = (item, at) => (now ? { ...item, lastUsed: at } : item);
+  const top = same ? (first.lastUsed ? { ...clean, lastUsed: first.lastUsed } : clean) : stamp(clean, now);
+  // The one left was in use until just before (1 ms), so the order by time (the shared list's, docs/design/shared-page-state.md) is this order.
+  const rest = before.filter(item => recentKey(item) !== key).map((item, index) => (leave && !same && index === 0 && item === first ? stamp(item, now - 1) : item));
   return [top, ...rest].slice(0, max);
 }
 

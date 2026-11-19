@@ -22,7 +22,8 @@ import ButtonBase from '@mui/material/ButtonBase';
 import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { DialogError, DomIcon, api, deviceParts, deviceText, t, terminalMark } from './common.jsx';
+import { DialogError, DomIcon, api, deviceParts, deviceText, t, terminalMark, useShared } from './common.jsx';
+import { writeShared } from './shared-store.mjs';
 import { shortName, tagColor } from './task-order.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
@@ -626,9 +627,7 @@ const CHIP_SX = on => theme => ({
 });
 // The two views of the list ("Recent tab" in docs/design/page-task-list.md): By task (the tasks with their sessions) and Recent (the sessions used on
 // this device, most recent first; RecentList.jsx). The choice is remembered on this device.
-const TAB_KEY = 'h5-task-list-tab';
-const readTab = () => { try { return localStorage.getItem(TAB_KEY) === 'recent' ? 'recent' : 'tasks'; } catch { return 'tasks'; } };
-const writeTab = value => { try { if (value === 'recent') localStorage.setItem(TAB_KEY, value); else localStorage.removeItem(TAB_KEY); } catch { /* not remembered */ } };
+const TAB_KEY = 'h5-task-list-tab'; // the person's choice, the same on every device and engine (the shared page state, shared-store.mjs)
 // MD2 fixed tabs: two equal tabs over the full width, the chosen one in primary with a 2px indicator, the other in medium emphasis. Drawn on MUI's
 // ButtonBase (its ripple and focus ring) in a tablist of our own: MUI `Tabs` with `Tab` would add about 20 KB to the first screen (its scrolling code),
 // over the budget of test/page-bundles.test.js. The arrow keys, Home and End move to the other tab and choose it; only the chosen tab is a Tab stop.
@@ -663,11 +662,11 @@ function Panel({ ui, wide }) {
   countRender('TaskPanel');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
-  const [tab, setTab] = useState(readTab);
+  const tab = useShared(TAB_KEY) === 'recent' ? 'recent' : 'tasks';
   const pane = useStore(ui, DRAWER_NAV); // a pane of the multi-column view keeps no recent sessions (h5.js): no tabs there
   const recent = tab === 'recent' && !pane;
   const [recentCount, setRecentCount] = useState(null); // { running, pending } of the Recent tab's sessions, from RecentList
-  const chooseTab = value => { setTab(value); writeTab(value); };
+  const chooseTab = value => writeShared(TAB_KEY, value === 'recent' ? value : null);
   const [options, setOptions] = useState(null); // the "List options" button while its menu is open
   const listRef = useRef(null);
   const floatRef = useRef(null);

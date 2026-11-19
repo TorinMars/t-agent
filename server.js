@@ -253,6 +253,8 @@ app.use('/api/ui-events', require('./routes/ui-events').createUiEventsRouter({ s
 // English learning (services/learn.js, docs/design/learn-english.md): cards, spaced review and meanings of the person's own material, per owner.
 app.use('/api/learn', require('./routes/learn').createLearnRouter());
 app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
+// The shared page state (services/page-state.js, docs/design/shared-page-state.md): the recent sessions and the page's remembered choices, per owner.
+app.use('/api/page-state', require('./routes/page-state').createPageStateRouter());
 app.use('/api/settings-sync', require('./routes/settings-sync').createSettingsSyncRouter());
 // The per-device settings of a linked device, read and written from this page (routes/device-settings.js).
 app.use('/api/device-settings', require('./routes/device-settings').createDeviceSettingsRouter());
@@ -671,6 +673,8 @@ server.listen(config.port, config.host, () => {
   if (config.settingsSyncEnabled) require('./services/settings-sync').getSettingsSync().start();
   // The English learning data follows the links from here on (services/learn-sync.js).
   if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().start();
+  // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
+  if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
   require('./services/rule-sync').getRuleSync().start();
   // The Telegram sender choice follows the links from here on (services/attention-relay.js).

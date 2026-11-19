@@ -133,10 +133,10 @@ test('lastUsed: a shown entry is stamped, the one left is stamped with `leave`, 
   list = noteRecent(list, entry('local', 1, 'b'), undefined, { now: 2000 });
   assert.deepEqual(list.map(item => [item.terminalId, item.lastUsed]), [['b', 2000], ['a', 1000]], 'without `leave` the one left keeps its time');
   list = noteRecent(list, entry('local', 1, 'a'), undefined, { now: 5000, leave: true });
-  assert.deepEqual(list.map(item => [item.terminalId, item.lastUsed]), [['a', 5000], ['b', 5000]], 'with `leave` the one left was used until now');
+  assert.deepEqual(list.map(item => [item.terminalId, item.lastUsed]), [['a', 5000], ['b', 4999]], 'with `leave` the one left was used until now (1 ms before, so the times keep the order)');
   assert.equal(noteRecent(list, entry('local', 1, 'a'), undefined, { now: 9000, leave: true }), list, 'shown again while first: the same list');
   const renamed = noteRecent(list, entry('local', 1, 'a', { title: 'New' }), undefined, { now: 9000, leave: true });
-  assert.deepEqual([renamed[0].title, renamed[0].lastUsed, renamed[1].lastUsed], ['New', 5000, 5000], 'a new name of the first one keeps the times');
+  assert.deepEqual([renamed[0].title, renamed[0].lastUsed, renamed[1].lastUsed], ['New', 5000, 4999], 'a new name of the first one keeps the times');
   // A list stored before lastUsed existed: read as it is, with no time, and stamped from then on.
   const old = parseRecent(JSON.stringify([{ sourceKey: 'local', taskId: '1', terminalId: 'x', title: 'Old', agent: 'claude' }]));
   assert.deepEqual(old, [{ sourceKey: 'local', taskId: '1', terminalId: 'x', title: 'Old', agent: 'claude' }]);

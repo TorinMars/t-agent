@@ -1,9 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
+import { onShared, readShared } from './shared-store.mjs';
 
 export const t = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
+// A key of the shared page state (shared-store.mjs), drawn again when another device or frame changes it.
+export const useShared = key => useSyncExternalStore(onShared, () => readShared(key));
 
 // The requests of the phone page: same-origin, with the header the Client wants, and the server's own error code as the message.
 export async function api(method, url, body) {

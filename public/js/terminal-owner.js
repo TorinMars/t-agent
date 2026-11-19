@@ -7,7 +7,7 @@ const TerminalOwner = (() => {
 
   function t(text) { return typeof I18n !== 'undefined' ? I18n.t(text) : text; }
 
-  // One id per browser tab: a refresh keeps it, so it never fights with its own old socket. The frames of a tab share its sessionStorage, so each pane of the
+  // One id per browser tab (sessionStorage, never shared: it names this tab as a terminal client): a refresh keeps it, so it never fights with its own old socket. The frames of a tab share its sessionStorage, so each pane of the
   // multi-column view (scripts/h5-shell/pane.mjs) keeps its own id: two columns are two clients, and the second one is asked before it takes a terminal over.
   function clientId() {
     if (id) return id;

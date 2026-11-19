@@ -10,6 +10,8 @@ import { selectable } from './device-target.mjs';
 const plain = text => text;
 export const SHARED_TAB = 'shared';
 export const LOCAL_TAB = 'local';
+// Kept in this browser, not in the shared page state: the tab is the device whose settings the open form edits, chosen where it is edited, so a save
+// here never goes to a machine another device picked (docs/design/shared-page-state.md, "Key audit").
 export const TAB_KEY = 't-agent.settings-tab';
 const OLD_KEY = 't-agent.settings-device'; // the device chosen in "Settings for" before the tabs (a row id)
 

@@ -62,7 +62,7 @@ const POLL_MS = 60_000; // how often the red dot reads the update state
 const DOWN_POLL_MS = 3000; // a read failed (the service may be restarting): read this often until it answers again
 const DOWN_POLL_FOR_MS = 5 * 60_000; // ... but not for longer than this; a service that stays away is back to the minute poll
 const RELOAD_CHECK_MS = 1000; // an automatic update is waiting to be loaded: how often to see whether the person has finished
-const AUTO_RELOADED_KEY = 'h5-auto-reloaded-versions';
+const AUTO_RELOADED_KEY = 'h5-auto-reloaded-versions'; // sessionStorage, this tab only: the guard against reloading twice for one version
 
 // The reasons the switch cannot be used, and what the service is waiting for (the codes of auto_update).
 const AUTO_UNSUPPORTED = { NO_PROCESS_MANAGER: 'Needs a process manager such as PM2 to restart the service', CHECKS_DISABLED: 'Version checks are turned off on this service' };

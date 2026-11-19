@@ -22,7 +22,9 @@ export const baseOf = engine => (!engine || engine === 'local' ? BASE : `/api/re
 const LIST_QUERY = '?include_done=1&limit=200';
 const OWN_MS = 8000; // a change event for a task this page changed within this time, made by 'user', is this page's own
 const RETRY_MS = [1000, 2000, 5000, 10000, 30000, 60000];
-const SOUND_KEY = 'h5-attention-sound'; // '0' = off (default on). An old 'h5-attention-notify' value (system notifications, removed) is ignored.
+// '0' = off (default on). An old 'h5-attention-notify' value (system notifications, removed) is ignored. Kept in this browser, not in the shared page
+// state: Settings offers it as "Reminders on this device" (scope device), since a phone in a meeting and a computer at home want different sounds.
+const SOUND_KEY = 'h5-attention-sound';
 
 const read = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const write = (key, value) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* not remembered */ } };

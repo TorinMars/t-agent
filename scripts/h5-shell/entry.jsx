@@ -8,6 +8,7 @@ import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
 import { detectPane, paneKeyPrefix, startPane } from './pane.mjs';
 import { api, t } from './common.jsx';
+import { onShared, readShared, writeShared } from './shared-store.mjs';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 import { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget } from './task-order.mjs';
 import { RECENT_MAX, editRecent, noteRecent, parseRecent, pruneRecent, recentKey, serializeRecent } from './recent-sessions.mjs';
@@ -26,8 +27,10 @@ const coarseQuery = window.matchMedia('(any-pointer: coarse)');
 const inputMode = () => (fineQuery.matches && !coarseQuery.matches ? 'pointer' : 'touch');
 // Pane mode (pane.mjs): this page is one column of the multi-column view. Decided once, before anything is read from storage.
 const paneId = detectPane(window);
-const SIDEBAR_KEY = `${paneId ? paneKeyPrefix(paneId) : ''}h5-sidebar-collapsed`; // the layout of this view: per pane
-const readCollapsed = () => { try { return localStorage.getItem(SIDEBAR_KEY) === '1'; } catch { return false; } };
+// The layout of this view: per pane (a pane key stays in this browser); the top page's is the person's, the same on every device and engine (the
+// shared page state, shared-store.mjs).
+const SIDEBAR_KEY = `${paneId ? paneKeyPrefix(paneId) : ''}h5-sidebar-collapsed`;
+const readCollapsed = () => readShared(SIDEBAR_KEY) === '1';
 
 const ui = createStore({ ...initialState(), wide: wideQuery.matches, input: inputMode(), sidebarCollapsed: readCollapsed(), pane: paneId });
 if (paneId) startPane(ui, paneId);
@@ -85,12 +88,15 @@ document.addEventListener('keydown', event => {
 // Wide layout: fold the permanent sidebar away and back. The terminal refits to the new width by itself (a real layout change, so a PTY resize is right).
 ui.actions.toggleSidebar = () => {
   const collapsed = !ui.get().sidebarCollapsed;
-  try { if (collapsed) localStorage.setItem(SIDEBAR_KEY, '1'); else localStorage.removeItem(SIDEBAR_KEY); } catch { /* not remembered */ }
+  writeShared(SIDEBAR_KEY, collapsed ? '1' : null);
   // The rename field and the popup of a row are drawn inside the sidebar or point into it: they go with it (as with the sheet of a phone, h5.js `closeTasks`).
   const menu = ui.get().menu;
   if (collapsed && menu && (menu.rename || menu.anchor)) ui.actions.menuCancel();
   ui.set({ sidebarCollapsed: collapsed });
 };
+
+// Folded or unfolded on another device: this page follows.
+onShared(() => { const collapsed = readCollapsed(); if (collapsed !== ui.get().sidebarCollapsed) ui.set({ sidebarCollapsed: collapsed }); });
 
 // The multi-column view (Columns.jsx): its remembered state is read before the first render, so a restored strip is drawn at once and h5.js finds
 // `columns.shown` when it starts (it then opens no terminal socket of its own).

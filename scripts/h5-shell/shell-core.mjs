@@ -10,6 +10,7 @@ import './back.mjs';
 import './attention-feed.mjs';
 import './pane.mjs';
 import './common.jsx';
+import './shared-store.mjs';
 import './file-kinds.mjs';
 import './task-order.mjs';
 import './recent-sessions.mjs';

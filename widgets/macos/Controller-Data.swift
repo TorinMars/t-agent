@@ -221,5 +221,6 @@ extension WidgetController {
         bubbleView = nil
         bubble.orderOut(nil)
         bubble.contentView = nil
+        if !detail.isVisible { updateCollapsed() }  // a width held while the bubble was shown may shrink now
     }
 }

@@ -346,6 +346,14 @@ func runSelfTest() -> Never {
     check("panel: count and badge", mouse.testCount == "13" && mouse.testBadge == "4")
     check("pill: one short line that fits the count and the badge", mouse.testWidgetHeight == widgetHeight
           && mouse.testWidgetWidth > widgetMinWidth && mouse.testWidgetWidth <= 80)
+    // A count going down (13 -> 9, badge 4 -> 1) must not change the width: the panel sits beside the pill and moved with it.
+    let wideBoard = mouse.testWidgetWidth
+    mouse.loadForTest(listOf([it("local:1", "waiting_user", order: 50), it("local:4", order: 50), it("local:8", "todo", order: 50)]))
+    check("pill: one-digit counts keep the two-digit width", mouse.testCount == "3" && mouse.testBadge == "1" && mouse.testWidgetWidth == wideBoard)
+    mouse.loadForTest(board)
+    check("pill: and back, the same width", mouse.testWidgetWidth == wideBoard)
+    check("pill: while the panel or a bubble is open the width only grows", steadyPillWidth(needed: 50, current: 64, holding: true) == 64
+          && steadyPillWidth(needed: 70, current: 64, holding: true) == 70 && steadyPillWidth(needed: 50, current: 64, holding: false) == 50)
     check("panel: section titles, the Finished header and the failed engine", mouse.testLines.contains("Needs you")
           && mouse.testLines.contains("Working") && mouse.testLines.contains("To do")
           && mouse.testLines.contains("Finished") && mouse.testLines.contains("Could not load K02"))

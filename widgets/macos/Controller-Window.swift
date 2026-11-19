@@ -52,19 +52,24 @@ extension WidgetController {
 
     /// Lays the pill out from left to right (count, then the badge) and fits the window's width to it. The width
     /// changes only between drags; the edge nearer the screen's side stays where it is.
+    /// Steady width: the count and the badge are laid out at least as wide as two digits (the fonts have monospaced
+    /// digits), so counts from 0 to 99 never change the width; and while the panel or a bubble is open the pill only
+    /// grows, never shrinks (the panel and the bubble sit beside the pill, so a narrower pill moved them sideways each
+    /// time a count went down). The smaller width is applied when they close (hideDetail, the bubble's hide).
     private func layoutCollapsed() {
         let side: CGFloat = 9
         let gap: CGFloat = 5
         countLabel.sizeToFit()
-        let countSize = countLabel.frame.size
+        let countSize = NSSize(width: max(countLabel.frame.width, twoDigitWidth(of: countLabel)), height: countLabel.frame.height)
         var badgeWidth: CGFloat = 0
         if !badge.isHidden {
             badgeLabel.sizeToFit()
-            badgeWidth = max(badgeHeight, ceil(badgeLabel.frame.width) + 8)
+            badgeWidth = max(badgeHeight, ceil(max(badgeLabel.frame.width, twoDigitWidth(of: badgeLabel))) + 8)
         }
         let activityWidth = layoutActivityIndicator()  // 0 when there is no live activity to show
         let content = ceil(countSize.width) + (badge.isHidden ? 0 : gap + badgeWidth) + (activityWidth > 0 ? gap + 1 + activityWidth : 0)
-        let width = max(widgetMinWidth, content + side * 2)
+        let width = steadyPillWidth(needed: max(widgetMinWidth, content + side * 2), current: widget.frame.width,
+                                    holding: detail.isVisible || bubble.isVisible)  // held while something sits beside the pill
         var x = (width - content) / 2
         countLabel.frame = NSRect(x: x, y: floor((widgetHeight - countSize.height) / 2), width: ceil(countSize.width),
                                   height: countSize.height)
@@ -445,6 +450,7 @@ extension WidgetController {
 
     func hideDetail() {
         detail.orderOut(nil)
+        updateCollapsed()  // a width held while the panel was open (layoutCollapsed) may shrink now
         positionBubble()  // back beside the window
     }
 
@@ -492,4 +498,21 @@ extension WidgetController {
         let mouse = NSEvent.mouseLocation
         if !widget.frame.contains(mouse) && !detail.frame.contains(mouse) { pointerExited() }
     }
+}
+
+/// The width this label takes for "00" (the pill's count and badge use monospaced digits): the least width they are laid out
+/// at. Measured on the label itself, its text put back afterwards, so its own font, padding and attributes count.
+func twoDigitWidth(of label: NSTextField) -> CGFloat {
+    let text = label.stringValue
+    label.stringValue = "00"
+    label.sizeToFit()
+    let width = ceil(label.frame.width)
+    label.stringValue = text
+    label.sizeToFit()
+    return width
+}
+
+/// The pill's width: what it needs, except that while the panel or a bubble sits beside it (`holding`) it never gets narrower.
+func steadyPillWidth(needed: CGFloat, current: CGFloat, holding: Bool) -> CGFloat {
+    holding ? max(needed, current) : needed
 }

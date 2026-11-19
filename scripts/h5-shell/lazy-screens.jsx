@@ -1,5 +1,5 @@
 // The screens that open on demand: Settings (with the plugin market, engines, pairing, remote access, rule sync and the notifiers inside it), the
-// T-Attention panel, and the design document and file tree sheets. They are not in public/js/h5-shell.js: each is a chunk of its own
+// T-Attention panel, the design document and file tree sheets, and the session switcher. They are not in public/js/h5-shell.js: each is a chunk of its own
 // (scripts/build-page-bundles.js) that is imported the first time it opens, so the first screen downloads and parses only what it draws.
 //
 // Each export has the name and the props of the component it stands for, so App.jsx draws it as before. While its chunk loads, nothing is drawn (the
@@ -58,6 +58,7 @@ export const SettingsDrawer = screen(() => import('./screen-settings.jsx'), 'Set
 export const AttentionPanel = screen(() => import('./screen-attention.jsx'), 'AttentionPanel', state => Boolean(state.attention && state.attention.open), ui => ui.actions.closeAttention && ui.actions.closeAttention());
 export const DesignSheet = screen(() => import('./screen-design.jsx'), 'DesignSheet', state => Boolean(state.design && state.design.open), ui => ui.actions.closeDesign && ui.actions.closeDesign());
 export const FileTreeSheet = screen(() => import('./screen-files.jsx'), 'FileTreeSheet', state => Boolean(state.files && state.files.open), ui => ui.actions.closeFiles && ui.actions.closeFiles());
+export const SwitcherScreen = screen(() => import('./screen-switcher.jsx'), 'Switcher', state => Boolean(state.switcher), ui => ui.actions.closeSwitcher && ui.actions.closeSwitcher());
 
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
 // `pointerdown` a finger (about 100 ms before the click), `focusin` the keyboard.
@@ -66,6 +67,7 @@ const OPENERS = [
   ['#h5-attention, #h5-nav-attention, #h5-bnav-attention', AttentionPanel],
   ['#h5-design, #h5-commands-docs, #h5-files-design', DesignSheet],
   ['#h5-design-files', FileTreeSheet],
+  ['#h5-cycle', SwitcherScreen],
 ];
 export function preloadOnIntent(root = document) {
   const handle = event => {

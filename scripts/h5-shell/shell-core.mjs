@@ -12,5 +12,6 @@ import './pane.mjs';
 import './common.jsx';
 import './file-kinds.mjs';
 import './task-order.mjs';
+import './recent-sessions.mjs';
 import './Columns.jsx';
 import './lazy-screens.jsx';

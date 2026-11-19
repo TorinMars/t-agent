@@ -72,7 +72,7 @@ function instrument() {
     await page.waitForFunction(() => document.querySelectorAll('#h5-tasks .h5-task[data-movable="true"]').length === 20);
     await page.waitForFunction(url => window.activityStream.open(url), STREAM);
     const push = snapshot => page.waitForFunction(([url, snap]) => window.activityStream.push(url, snap), [STREAM, snapshot]);
-    const cycleLabel = text => page.waitForFunction(want => document.getElementById('h5-cycle').getAttribute('aria-label') === want, text);
+    const activeIs = count => page.waitForFunction(want => window.H5UI.get().activeCount === want, count); // the push has been taken in
     // Two frames and a pause: whatever the change drew has been committed.
     const settle = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 150)))));
     const reset = () => page.evaluate(() => { for (const key of Object.keys(window.__h5RenderCounts)) delete window.__h5RenderCounts[key]; window.__h5Commits = 0; });
@@ -91,7 +91,7 @@ function instrument() {
     // (a) One pushed change: a terminal of Task 05 runs.
     await reset();
     await push({ activity: { 5: { default: 'running' } }, subagents: {} });
-    await cycleLabel('Next running or pending session (1)');
+    await activeIs(1);
     await settle();
     const activity = await read();
 

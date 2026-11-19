@@ -269,11 +269,10 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
             selected={row.current} onClick={() => ui.actions.openRow(taskId, row)}
             sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.25, pl: 1, pr: 0.5, borderRadius: 2, gap: 1.25, textAlign: 'left', '&:hover, &.Mui-selected, &.Mui-selected:hover': { bgcolor: 'transparent' } }}
           >
-            <Box component="span" className={`h5-terminal-icon ${row.agent || 'shell'}`} aria-hidden="true" title={t(kindOf(row))} sx={{ position: 'relative', flex: '0 0 28px', width: 28, height: 28, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 'caption', fontFamily: 'monospace', color: row.agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: 18, height: 18 } }}>
-              {row.kind === 'terminal' && row.agent ? <DomIcon make={terminalMark(row.agent)} /> : GLYPHS.shell}
+            <SessionKindIcon agent={row.kind === 'terminal' ? row.agent : null} title={t(kindOf(row))}>
               {/* The live state as a dot on the tile's corner, ringed in the list's colour so it stands apart from the tile. */}
               {row.status ? <Box component="span" className="h5-terminal-dot" sx={{ ...DOT_SX, position: 'absolute', right: -3, bottom: -3, width: 10, height: 10, bgcolor: STATE_DOT[row.status], boxShadow: theme => `0 0 0 2px ${theme.palette.background.paper}` }} /> : null}
-            </Box>
+            </SessionKindIcon>
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Box component="span" className="h5-terminal-name" sx={{ typography: 'body2', fontWeight: row.current ? 500 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</Box>
               {subtitle(row) ? (
@@ -294,6 +293,16 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
         </React.Fragment>
       ))}
     </List>
+  );
+}
+
+// The tile that says what a session is: the Claude or Codex mark, or `>_` for a plain shell. Also the cards of the session switcher (Switcher.jsx).
+export function SessionKindIcon({ agent, title, size = 28, children }) {
+  return (
+    <Box component="span" className={`h5-terminal-icon ${agent || 'shell'}`} aria-hidden="true" title={title} sx={{ position: 'relative', flex: `0 0 ${size}px`, width: size, height: size, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 'caption', fontFamily: 'monospace', color: agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: Math.round(size * 0.64), height: Math.round(size * 0.64) } }}>
+      {agent ? <DomIcon make={terminalMark(agent)} /> : GLYPHS.shell}
+      {children}
+    </Box>
   );
 }
 

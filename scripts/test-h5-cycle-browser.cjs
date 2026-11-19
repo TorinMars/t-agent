@@ -1,8 +1,10 @@
-// Phone page (/h5), row 2 "Next running or pending session" (#h5-cycle) in real Chromium with mocked sessions:
+// Phone page (/h5), "Next running or pending session" (`ui.actions.nextActiveSession`, the item of a column's "More tools"; the single view's switch
+// button #h5-cycle opens the session switcher instead, scripts/test-h5-switcher-browser.cjs) in real Chromium with mocked sessions:
 // it cycles through the running and pending-acceptance terminal sessions in task sheet order and wraps, skips idle terminals and chats,
-// counts an idle Claude terminal with a running sub-agent as running, shows a toast when there is nothing to go to, and fits row 2 at 320 and 360px.
-// The count badge on the button: from the pushed activity stream (mocked, scripts/h5-activity-stream-mock.cjs) with no polling while it is live,
+// counts an idle Claude terminal with a running sub-agent as running, shows a toast when there is nothing to go to, and row 2 fits at 320 and 360px.
+// The count (`state.activeCount`): from the pushed activity stream (mocked, scripts/h5-activity-stream-mock.cjs) with no polling while it is live,
 // and from a slow fallback poll when the stream answers 404 (an older Engine). The shown terminal is acked when the stream says it is done.
+// The back button closes the open layers, and a terminal can be renamed from its menu.
 // H5_SHOT_DIR=<dir> saves 3x screenshots of row 2 there.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -163,14 +165,13 @@ async function toast(page, text) {
     await page.evaluate(() => window.H5UI.actions.closeTasks()); // not Escape: a key press would turn on the hardware keyboard mode
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
 
-    const cycle = page.locator('#h5-cycle');
-    // No stream here (the mock answers 404, as an older Engine would): the page reads the states once and then polls slowly. The badge counts
+    const cycle = { tap: () => page.evaluate(() => window.H5UI.actions.nextActiveSession()) };
+    // No stream here (the mock answers 404, as an older Engine would): the page reads the states once and then polls slowly. The count is
     // Alpha default (running), Alpha c1 (sub-agent), Beta b1 and Gamma g1 (pending); task 99 is not in the list.
-    await page.waitForFunction(() => document.getElementById('h5-cycle').getAttribute('aria-label') === 'Next running or pending session (4)');
-    assert.equal(await cycle.getAttribute('title'), 'Next running or pending session (4)');
-    assert.equal((await cycle.locator('.MuiBadge-badge').textContent()).trim(), '4');
+    await page.waitForFunction(() => window.H5UI.get().activeCount === 4);
     assert.ok(hits['/api/tasks/terminal-activity/stream'] >= 1, 'the stream was tried first');
-    assert.equal(await cycle.locator('svg').count(), 1, 'an icon button');
+    assert.equal(await page.locator('#h5-cycle').getAttribute('aria-label'), 'Recent sessions', 'the switch button carries no count');
+    assert.equal(await page.locator('#h5-cycle .MuiBadge-badge').count(), 0);
 
     // The terminal keyboard is open (the terminal input has the focus): a tap closes it first.
     await page.evaluate(() => document.querySelector('#h5-terminal .h5-xterm:not([hidden]) .xterm-helper-textarea').focus());
@@ -211,7 +212,7 @@ async function toast(page, text) {
     // While the draft box is shown the button stays (the tool row never changes with the state; the send actions are in the draft box).
     await page.locator('#h5-translate-input').focus();
     await page.locator('#h5-translate-send').waitFor({ state: 'visible' });
-    assert.ok(await page.evaluate(() => document.getElementById('h5-cycle').getBoundingClientRect().width >= 44), 'next session stays in the tool row');
+    assert.ok(await page.evaluate(() => document.getElementById('h5-cycle').getBoundingClientRect().width >= 44), 'the switch button stays in the tool row');
     await page.evaluate(() => document.activeElement.blur());
     await context.close();
 
@@ -229,19 +230,19 @@ async function toast(page, text) {
         return { boxes, overflow: document.documentElement.scrollWidth > innerWidth };
       });
       assert.equal(row.boxes.length, 7, `seven buttons (Docs among them; T-Attention is in the bottom navigation) at ${viewport.width}px`);
-      assert.equal(row.boxes.at(-1).id, 'h5-cycle', 'the new button is the last one of row 2');
+      assert.equal(row.boxes.at(-1).id, 'h5-cycle', 'the switch button is the last one of row 2');
       assert.ok(row.boxes.every((box, i) => box.left >= 0 && box.right <= viewport.width && box.width >= 40 && box.height >= 40 && Math.abs(box.width - row.boxes[0].width) <= 1 && (i === 0 || row.boxes[i - 1].right <= box.left + 0.5)), `row 2 fits at ${viewport.width}px: ${JSON.stringify(row.boxes.map(box => Math.round(box.width)))}`);
       assert.equal(row.overflow, false);
       if (process.env.H5_SHOT_DIR) {
         await small.page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, `h5-cycle-row2-${viewport.width}.png`) });
         await small.page.locator('#h5-actions').screenshot({ path: path.join(process.env.H5_SHOT_DIR, `h5-cycle-row2-${viewport.width}-bar.png`) });
       }
-      // One tap from the narrow page goes on, as on the wide one.
-      await small.page.locator('#h5-cycle').tap();
+      // The next session from the narrow page goes on, as on the wide one.
+      await small.page.evaluate(() => window.H5UI.actions.nextActiveSession());
       await waitFor(small.page, 'Alpha', 'c1');
       await small.context.close();
     }
-    // A live stream: the badge and the button follow the pushed snapshots, nothing is polled, and a pushed 'done' of the shown terminal is acked.
+    // A live stream: the count and the next session follow the pushed snapshots, nothing is polled, and a pushed 'done' of the shown terminal is acked.
     {
       activity = {};
       subagents = {};
@@ -249,23 +250,22 @@ async function toast(page, text) {
       const live = await openPage(browser, { width: 390, height: 844 }, { stream: true, clock: true });
       const STREAM = '/api/tasks/terminal-activity/stream';
       const push = snapshot => live.page.waitForFunction(([url, snap]) => window.activityStream.push(url, snap), [STREAM, snapshot]);
-      const label = () => live.page.locator('#h5-cycle').getAttribute('aria-label');
-      const labelIs = text => live.page.waitForFunction(want => document.getElementById('h5-cycle').getAttribute('aria-label') === want, text);
+      const label = () => live.page.evaluate(() => window.H5UI.get().activeCount);
+      const labelIs = count => live.page.waitForFunction(want => window.H5UI.get().activeCount === want, count);
       await push({ activity: BUSY, subagents: { 1: { c1: 2 } } });
-      await labelIs('Next running or pending session (4)');
+      await labelIs(4);
       await live.page.locator('.h5-task-item', { hasText: 'Alpha' }).tap();
       await live.page.locator('#h5-tasks .h5-terminal-list[aria-label="Alpha"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
       await waitFor(live.page, 'Alpha', 'default');
       await live.page.locator('#h5-tasks').waitFor({ state: 'hidden' });
       // The tap uses the pushed states: no read of the polling endpoints.
-      await live.page.locator('#h5-cycle').tap();
+      await live.page.evaluate(() => window.H5UI.actions.nextActiveSession());
       await waitFor(live.page, 'Alpha', 'c1');
-      // Changes arrive without a request: two left, then none (the badge is hidden).
+      // Changes arrive without a request: two left, then none.
       await push({ activity: { 2: { b1: 'done' } }, subagents: { 1: { c1: 1 } } });
-      await labelIs('Next running or pending session (2)');
+      await labelIs(2);
       await push({ activity: {}, subagents: {} });
-      await labelIs('Next running or pending session');
-      assert.equal(await live.page.locator('#h5-cycle .MuiBadge-badge.MuiBadge-invisible').count(), 1, 'the badge is hidden at 0');
+      await labelIs(0);
       // The shown terminal (Alpha c1) finishes while it is on screen: acked.
       const from = acks.length;
       await push({ activity: { 1: { c1: 'done' } }, subagents: {} });
@@ -274,7 +274,7 @@ async function toast(page, text) {
         assert.ok(Date.now() - started < 8000, `no ack: ${JSON.stringify(acks)}`);
         await live.page.waitForTimeout(50);
       }
-      assert.equal(await label(), 'Next running or pending session (1)', 'the badge counts it until the server pushes the cleared state');
+      assert.equal(await label(), 1, 'it is counted until the server pushes the cleared state');
       // No polling while the stream is live: wait longer than the old 3 s poll, twice over.
       const polled = () => (hits['/api/tasks/terminal-activity'] || 0) + (hits['/api/tasks/terminal-subagents'] || 0);
       const before = polled();
@@ -290,11 +290,11 @@ async function toast(page, text) {
       await live.page.evaluate(url => window.activityStream.drop(url), STREAM);
       await live.page.waitForFunction(() => window.activityStream.opens.length === 2, null, { timeout: 10000 });
       await push({ activity: { 3: { g1: 'running' } }, subagents: {} });
-      await labelIs('Next running or pending session (1)');
+      await labelIs(1);
       await live.context.close();
     }
 
     assert.deepEqual(pageErrors, [], 'no browser runtime errors');
-    console.log('Phone next running or pending session: order, wrap, skips, sub-agents, toasts, row fit, pushed badge, ack and fallback polling passed.');
+    console.log('Phone next running or pending session: order, wrap, skips, sub-agents, toasts, row fit, pushed count, ack and fallback polling passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

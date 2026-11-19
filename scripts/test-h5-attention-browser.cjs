@@ -1070,7 +1070,7 @@ const editLayout = page => page.evaluate(() => {
       const resizes = () => page.evaluate(() => window.sockets.reduce((sum, socket) => sum + socket.sent.filter(data => data.includes('"resize"')).length, 0));
       const buttons = await row2(page);
       // The computer row ("Bottom bar"): T-Attention is an item of More tools, under its old id.
-      assert.deepEqual(buttons.map(b => b.id), ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-more', 'h5-translate-button']);
+      assert.deepEqual(buttons.map(b => b.id), ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-cycle', 'h5-more', 'h5-translate-button']);
       assert.equal(await page.locator('#h5-more-menu #h5-attention[role="menuitem"]').count(), 1, 'T-Attention is in More tools');
       const attention = async () => { await page.locator('#h5-more').click(); await page.locator('#h5-attention').click(); };
       await attention();

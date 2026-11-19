@@ -296,7 +296,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Row 2 (reference design): terminal keyboard, draft keyboard, upload image, saved commands, voice; equal buttons filling the width, below the function key row. Send and translate-and-send are not shown while the box is hidden.
     {
       const row2 = await page.evaluate(() => [...document.querySelectorAll('#h5-actions button, #h5-actions [role="button"]')].map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute('aria-label'), left: r.left, right: r.right, top: r.top, width: r.width, height: r.height }; }).filter(b => b.width > 0));
-      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Docs', 'Next running or pending session'], 'row 2: the two keyboards, image, saved commands, voice, Docs, next running or pending session (T-Attention is in the bottom navigation)');
+      assert.deepEqual(row2.map(b => b.label), ['Terminal keyboard', 'Draft keyboard', 'Upload image or file', 'Saved commands', 'Voice input', 'Docs', 'Recent sessions'], 'row 2: the two keyboards, image, saved commands, voice, Docs, recent sessions (T-Attention is in the bottom navigation)');
       assert.ok(row2.every(b => Math.abs(b.top - row2[0].top) <= 1 && Math.abs(b.width - row2[0].width) <= 1 && b.height >= 40), 'row 2: one row of equal, finger-sized buttons');
       assert.ok(row2[0].left >= 0 && row2.at(-1).right <= 390, 'row 2 fits the screen');
       assert.equal(await page.evaluate(() => document.querySelector('#h5-actions').getBoundingClientRect().top >= document.getElementById('h5-keys').getBoundingClientRect().bottom - 1), true, 'row 2 is below the function keys');
@@ -310,7 +310,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
           keyHeight: key.getBoundingClientRect().height, faceHeight: key.getBoundingClientRect().height - parseFloat(face.top) - parseFloat(face.bottom), faceRadius: face.borderTopLeftRadius, keyBorder: getComputedStyle(key).borderTopWidth,
           badges: [...document.querySelectorAll('#h5-actions .MuiBadge-root')].length };
       });
-      assert.deepEqual(look, { toolHeight: 44, toolBg: 'rgba(0, 0, 0, 0)', toolBorder: '0px', keyHeight: 44, faceHeight: 36, faceRadius: '8px', keyBorder: '0px', badges: 1 }, 'flat MD2 tools and keys, one MUI badge (next session)');
+      assert.deepEqual(look, { toolHeight: 44, toolBg: 'rgba(0, 0, 0, 0)', toolBorder: '0px', keyHeight: 44, faceHeight: 36, faceRadius: '8px', keyBorder: '0px', badges: 0 }, 'flat MD2 tools and keys, no badge (the switch button shows no count)');
       assert.equal(await page.evaluate(() => Boolean(document.getElementById('h5-translate').compareDocumentPosition(document.getElementById('h5-keys')) & Node.DOCUMENT_POSITION_FOLLOWING && document.getElementById('h5-keys').compareDocumentPosition(document.getElementById('h5-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)), true, 'order: draft box, function keys, action row');
     }
     assert.ok(rows.flat().every(cell => cell.height >= 32), 'the keys are finger-sized');

@@ -45,7 +45,7 @@
 | Fit map (mind map bar) | fullscreen | 4767015 | `fitWindow` |
 | Import .xmind (mind map list) | Import | 4765960 | `Import` |
 | Export .xmind (mind map editor) | export | 4765958 | `export` |
-| Next running or pending session (row 2) | swap | 4767044 | `cycleSessions` in `Icons.jsx`; two opposite arrows for "switch between" |
+| Recent sessions (the switch button `#h5-cycle`, the session switcher; also a column's "Next running or pending session") | swap | 4767044 | `cycleSessions` in `Icons.jsx`; two opposite arrows for "switch between"; also inline (16px, primary) in the switcher's hint |
 | Close (design document sheet) | close | 4767096 | |
 | Close (full-screen picture viewer) | close | 4767096 | the same icon as the sheet's Close |
 | Zoom in (full-screen picture viewer toolbar) | zoom in | 5756284 | `zoomIn` |

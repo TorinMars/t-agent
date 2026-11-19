@@ -193,3 +193,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.140.1 Floating window: a fixed 32 x 90 pt vertical capsule with three numbers always shown (open, needs you, running; a dim 0, 99+ above 99), so the panel beside it never moves; the red number counts Needs-you items plus waiting terminals without an item, once each
 > v2.141.0 Learn English: a Learn destination with study cards from the person's own translated sentences and looked-up words plus a Programmer English starter list; spaced review, Spell the word, Build the sentence, Dictation, Say it, Fill the gap and Mistakes; progress stored on the server (schema 13)
 > v2.141.1 Renaming a Claude or Codex session row also renames the agent session (/rename typed into its terminal at once; it waits only while a permission question is shown or the agent is not in the foreground)
+> v2.141.2 Keep the focus in the draft box after a send; Mac app title bar in the page's colour

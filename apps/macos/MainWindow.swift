@@ -4,6 +4,25 @@
 import AppKit
 import WebKit
 
+// MARK: - Title bar
+
+/// The colour of the page's top bars (the rail and the session header: the dark theme's 1dp surface, `theme-color` in
+/// public/h5.html), used until the page reports its own `theme-color`.
+let pageTitleBarFallback = NSColor(srgbRed: 0x1e / 255.0, green: 0x1e / 255.0, blue: 0x1e / 255.0, alpha: 1)
+
+/// Paints the title bar in the page's colour ("Title bar" in docs/design/mac-app.md): the title bar is transparent over the
+/// window background, which takes `color` (the page's theme colour, or the fallback), and the window's appearance is dark
+/// or light by that colour, so the title and the window buttons stay readable. The title stays shown.
+func applyPageTitleBar(_ window: NSWindow, color: NSColor?) {
+    let fill = (color ?? pageTitleBarFallback).usingColorSpace(.sRGB) ?? pageTitleBarFallback
+    // Relative luminance (sRGB weights on the gamma-encoded values are close enough to pick dark or light).
+    let luminance = 0.2126 * fill.redComponent + 0.7152 * fill.greenComponent + 0.0722 * fill.blueComponent
+    window.titlebarAppearsTransparent = true
+    window.titleVisibility = .visible
+    window.backgroundColor = fill
+    window.appearance = NSAppearance(named: luminance < 0.5 ? .darkAqua : .aqua)
+}
+
 // MARK: - Main window
 
 /// The configuration of the web view: the website data store and the user agent, which is WebKit's default with
@@ -47,6 +66,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     var lastPath: String?
     private(set) var showingPage = false
     private var titleObservation: NSKeyValueObservation?
+    private var themeColorObservation: NSKeyValueObservation?
     /// Where each running download goes.
     private var downloadPaths: [ObjectIdentifier: String] = [:]
     private(set) var openLinkMessages: OpenLinkMessages?
@@ -63,6 +83,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
                             configuration: makeWebViewConfiguration(version: version, dataStore: dataStore))
         super.init()
         window.title = "T-Agent"
+        applyPageTitleBar(window, color: nil)
         window.minSize = NSSize(width: 480, height: 360)
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
@@ -97,6 +118,13 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
             let title = (view.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             self.window.title = title.isEmpty ? "T-Agent" : title
         }
+        // The page's theme-color (macOS 12 and newer) paints the title bar; without one it keeps the fallback.
+        if #available(macOS 12.0, *) {
+            themeColorObservation = webView.observe(\.themeColor, options: [.new]) { [weak self] view, _ in
+                guard let self = self else { return }
+                applyPageTitleBar(self.window, color: self.showingPage ? view.themeColor : nil)
+            }
+        }
     }
 
     // MARK: Showing
@@ -112,6 +140,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
         let base = server()
         let target = path.flatMap { serverPageURL(base: base, path: $0) } ?? base
         showingPage = true
+        if #available(macOS 12.0, *) { applyPageTitleBar(window, color: webView.themeColor) }
         placeholder.removeFromSuperview()
         webView.isHidden = false
         webView.load(URLRequest(url: target))
@@ -128,6 +157,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     func showPlaceholder(_ content: PlaceholderContent) {
         if showingPage, let path = pagePath(of: webView.url, server: server()) { lastPath = path }
         showingPage = false
+        applyPageTitleBar(window, color: nil) // the placeholder has no theme colour: back to the page's usual one
         placeholder.show(content)
         if placeholder.superview == nil, let container = window.contentView {
             placeholder.frame = container.bounds

@@ -84,7 +84,7 @@ router.post('/auto-update', (req, res) => {
 
 // For the "Mac app" card of Settings: this server's web addresses (the ones app.json lists, services/app-info.js) and the T-Agent
 // app installed on this Mac. Read only. `app` is null when this server does not run on macOS. `server` names the version and the
-// folder the build command runs in.
+// folder the build command runs in, `autobuild` the state of the automatic rebuild after an update.
 // The version compared with the app's is the one this process runs (app.json), else the one on disk.
 let macApp = null;
 const runningVersion = () => {
@@ -94,7 +94,14 @@ const runningVersion = () => {
 };
 router.get('/app-info', async (req, res) => {
   const appInfo = require('../services/app-info');
-  if (!macApp) macApp = appInfo.createMacAppProbe({ serverVersion: runningVersion });
+  const rebuild = require('../services/mac-app-autobuild').sharedAutobuild();
+  if (!macApp) {
+    macApp = appInfo.createMacAppProbe({
+      serverVersion: runningVersion,
+      sourceHash: () => (rebuild ? rebuild.currentHash() : null),
+      refreshKey: () => { const state = rebuild && rebuild.state(); return state ? `${state.state}:${state.at}` : null; },
+    });
+  }
   const publisher = appInfo.sharedPublisher();
   const info = publisher ? publisher.refresh() : null;
   let app = null;
@@ -104,6 +111,8 @@ router.get('/app-info', async (req, res) => {
     addresses: info && Array.isArray(info.addresses) ? info.addresses : [],
     app,
     server: { version: runningVersion(), install_dir: info ? info.install_dir : require('../lib/data-home').INSTALL_DIR },
+    // The automatic rebuild of the installed app after an update (services/mac-app-autobuild.js); null off macOS or before the server listens.
+    autobuild: app && rebuild ? rebuild.state() : null,
   });
 });
 

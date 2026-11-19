@@ -92,6 +92,11 @@ I18n.add({
   'Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on {1}, for both agents.': '技能让 Claude Code 和 Codex 学会使用 T-Agent 的命令。它们会安装在 {1} 上，两个智能体都可使用。',
   'A small window that stays above other windows on {1} and shows the tasks that need you, from that machine and its connected devices.': '一个停留在 {1} 其他窗口上方的小窗口，显示那台机器及其连接设备上需要你处理的任务。',
 
+  // ---- Mac app card: the automatic rebuild after an update (MacApp.jsx) ----
+  'Updated to {1}. Quit and reopen the app to use it.': '已更新到 {1}。退出应用再重新打开后生效。',
+  'Updated to {1}.': '已更新到 {1}。',
+  'Could not rebuild the app: {1}': '无法重新构建应用：{1}',
+
   // ---- Durations ----
   '{1} min {2}s': '{1} 分 {2} 秒',
 

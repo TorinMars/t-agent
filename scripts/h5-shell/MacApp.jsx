@@ -13,7 +13,8 @@ import { copyText } from './copy-text.mjs';
 // "Mac app", a part of Settings → Devices under the list of devices (`#h5-sec-mac-app`; "Server and floating window integration" in
 // docs/design/mac-app.md): read only. GET /api/system/app-info, read each time the group opens: whether T-Agent.app is installed on
 // this Mac (~/Applications, then /Applications) and its version against the server's, the command that builds and installs it in the
-// install folder, and the web addresses of this service (the same list the app's menu bar item shows), each with a Copy button.
+// install folder, and the web addresses of this service (the same list the app's menu bar item shows), each with a Copy button. One status
+// line tells what the automatic rebuild after an update did (`autobuild`; "Automatic rebuild after an update" in docs/design/mac-app.md).
 // Drawn only when the server runs on macOS (`app` is not null), in this device's tab, and not on an older server (404).
 // Material Design 2 with the project theme (theme.mjs): MUI lists of one- and two-line items, Typography variants and palette paths, the theme's
 // flat outlined buttons (44px targets on touch); no colours, radii or font sizes of its own.
@@ -68,13 +69,29 @@ function CopyItem({ id, label, value }) {
   );
 }
 
+// Whether the installed app needs no rebuild: the server's version, or built from the same shell code (`shell_current`: the web page inside it
+// is always the server's, so an app whose Swift code did not change since is current).
+const appCurrent = (app, serverVersion) => Boolean(app.installed && (app.matches_server || app.shell_current === true || compareVersions(app.version, serverVersion) === 0));
+
 // The state of the installed app as [palette path, text].
 function appState(app, serverVersion) {
   if (!app.installed) return ['text.secondary', t('Not installed')];
   const order = compareVersions(app.version, serverVersion);
-  if (app.matches_server || order === 0) return ['success.main', t('Up to date')];
+  if (appCurrent(app, serverVersion)) return ['success.main', t('Up to date')];
   if (order === -1) return ['warning.main', t('Older than the server: rebuild it')];
   return ['warning.main', app.version ? t('Not the server’s version: rebuild it') : t('Version unknown: rebuild it')];
+}
+
+// The line of the automatic rebuild as [palette path, text], or null (idle, skipped, nothing known).
+export function autobuildLine(autobuild) {
+  if (!autobuild || typeof autobuild !== 'object') return null;
+  const version = typeof autobuild.version === 'string' && autobuild.version ? autobuild.version : '';
+  if (autobuild.state === 'waiting' || autobuild.state === 'building') return ['text.secondary', t('Rebuilding the app for this version…')];
+  if (autobuild.state === 'updated') {
+    return ['success.main', autobuild.restart_needed ? t(`Updated to ${version}. Quit and reopen the app to use it.`) : t(`Updated to ${version}.`)];
+  }
+  if (autobuild.state === 'failed') return ['error.main', t(`Could not rebuild the app: ${autobuild.reason || t('Unknown')}`)];
+  return null;
 }
 
 export function MacAppSection({ opened }) {
@@ -90,6 +107,7 @@ export function MacAppSection({ opened }) {
   const { app } = info;
   const server = info.server || {};
   const [stateColor, state] = appState(app, server.version);
+  const rebuildLine = app.installed ? autobuildLine(info.autobuild) : null;
   const addresses = Array.isArray(info.addresses) ? info.addresses.filter(entry => entry && typeof entry.url === 'string') : [];
   return (
     <Section id="mac-app" title="Mac app">
@@ -105,12 +123,17 @@ export function MacAppSection({ opened }) {
             }}
           />
         </ListItem>
+        {rebuildLine ? (
+          <ListItem disableGutters id="h5-mac-app-autobuild" data-state={info.autobuild.state}>
+            <ListItemText primary={rebuildLine[1]} slotProps={{ primary: { id: 'h5-mac-app-autobuild-text', variant: 'body2', color: rebuildLine[0], sx: { overflowWrap: 'anywhere' } } }} />
+          </ListItem>
+        ) : null}
         {app.installed && app.path ? (
           <ListItem disableGutters>
             <ListItemText primary={t('Installed at')} secondary={app.path} slotProps={{ primary: { variant: 'body2', color: 'text.secondary' }, secondary: { id: 'h5-mac-app-path', variant: 'body2', color: 'text.primary', sx: { overflowWrap: 'anywhere' } } }} />
           </ListItem>
         ) : null}
-        <CopyItem id="h5-mac-app-command" label={app.installed && !app.matches_server ? t('Rebuild and install it in a terminal on this Mac:') : t('Build and install it in a terminal on this Mac:')} value={buildCommand(server.install_dir)} />
+        <CopyItem id="h5-mac-app-command" label={app.installed && !appCurrent(app, server.version) ? t('Rebuild and install it in a terminal on this Mac:') : t('Build and install it in a terminal on this Mac:')} value={buildCommand(server.install_dir)} />
       </List>
       {addresses.length ? (
         <Box id="h5-mac-app-addresses" sx={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>

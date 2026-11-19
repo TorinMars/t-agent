@@ -117,9 +117,10 @@ export function deviceOfTab(tab, devices) {
 // The words of this device's tab: with a Shared tab it holds what only this device uses; without one it holds every part, all saved on this device.
 const localText = shared => (shared ? 'Only this device uses these settings' : 'Changes here are saved on this device');
 
-// The entries of the tab row: { value, label, note, disabled, title, local }. `localName` is this device's engine name ('' on an older server: the
-// tab then says just "This device"). A linked device that cannot be chosen is shown disabled with the reason under its name. No Shared entry without
-// the sync (`shared` false).
+// The entries of the tab row: { value, label, note, disabled, title, local, company }. `localName` is this device's engine name ('' on an older
+// server: the tab then says just "This device"). A linked device that cannot be chosen is shown disabled with the reason under its name. A linked
+// device marked as a company computer says "Company computer" under its name when nothing else is said there (`company` true: the page draws that
+// note in the warning colour, as the pill of the device list). No Shared entry without the sync (`shared` false).
 export function tabEntries(devices, { localName = '', t = plain, shared = true } = {}) {
   const entries = [
     ...(shared ? [{ value: SHARED_TAB, label: t('Shared'), note: '', disabled: false, title: t('Changes here are copied to every linked device'), local: false }] : []),
@@ -127,11 +128,12 @@ export function tabEntries(devices, { localName = '', t = plain, shared = true }
   ];
   for (const device of devices || []) {
     const offline = device.supported === null || !device.online;
-    const note = device.supported === false ? t(`Update ${device.name} first`) : offline ? t('Offline') : '';
+    const company = device.supported !== false && !offline && device.company_computer === true;
+    const note = device.supported === false ? t(`Update ${device.name} first`) : offline ? t('Offline') : company ? t('Company computer') : '';
     const title = device.supported === false ? t(`${device.name} is too old to be changed from here. Update ${device.name} first.`)
       : offline ? t(`${device.name} is offline. Its settings can be read and saved again once it is back online.`)
         : t(`These settings are read and saved on ${device.name}`);
-    entries.push({ value: String(device.id), label: device.name, note, disabled: !selectable(device), title, local: false });
+    entries.push({ value: String(device.id), label: device.name, note, disabled: !selectable(device), title, local: false, company });
   }
   return entries;
 }

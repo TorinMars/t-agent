@@ -1090,6 +1090,9 @@ I18n.add({
   "The task record and its to-dos will be deleted.": "任务记录及其待办会被删除。",
   "Task actions": "任务操作",
   "Show in task list": "在任务列表中显示",
+  "Company computer": "公司电脑",
+  "Keeps your personal data, such as learning progress.": "保存你的个人数据，例如学习进度。",
+  "Personal data stays on your other machines. Kept here only while none of them can be reached.": "个人数据保存在你的其他机器上。只有在都连不上时，才会暂时留在这里。",
   "At least one device must stay visible": "至少要有一个设备保持显示",
   // Engine names (Settings → Engines, Rename)
   "Rename engine": "重命名引擎",
@@ -1529,6 +1532,7 @@ I18n.add({
   "How learning works": "学习方式说明",
   "Your material": "你的素材",
   "Learn settings": "学习设置",
+  "Your other computer can't be reached. Your answers are kept on this computer for now and moved there when it is back.": "连不上你的另一台电脑。你的答题记录先保存在这台电脑上，等它恢复后会自动转过去。",
   "Mistakes": "错题",
   "No study cards yet": "还没有学习卡片",
   "Sentences you send with \"Chinese → English\" and words you look up by tapping in the chat will appear here.": "用“中文 → 英文”发送的句子，以及在对话中点按查过的单词，都会出现在这里。",

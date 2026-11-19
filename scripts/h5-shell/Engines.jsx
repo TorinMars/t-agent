@@ -27,7 +27,8 @@ import { RemoteAccessSection } from './RemoteAccess.jsx';
 import { MacAppSection } from './MacApp.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
 import { ScopeLabel, SettingsSyncStatus, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
-import { InTab, LocalOnly, refreshDeviceTargets, useSettingsTab } from './DeviceTarget.jsx';
+import { InTab, LocalOnly, refreshDeviceTargets, useDeviceTargets, useSettingsTab } from './DeviceTarget.jsx';
+import { tierBlock, tierCaption, tierHome } from './device-target.mjs';
 import { errorLabel } from './engine-errors.mjs';
 
 // Settings "Devices" (until the sheet was tidied up the groups "Engines", "Linked services", "Rules and skills sync" and "Remote service"), top to
@@ -46,6 +47,9 @@ import { errorLabel } from './engine-errors.mjs';
 // "Restart T-Agent" is on the row of this machine (Restart.jsx), from the `restart` field of `/api/system/version`; not in a pane of the multi-column view.
 // With the tabs of the sheet (SettingsTabs.jsx), Shared holds the "Settings sync" status line and "Show in task list" (one switch per device, in a
 // list of its own); a device tab holds the device list (without the switches), Link a device, the file access switch, Rules and skills sync and Advanced.
+// "Company computer" ("Device tier" in docs/design/linked-device-settings.md) is a switch in the row of this machine and of each linked device, in
+// every tab (it belongs to that machine, never to the settings sync): this machine through /api/device-tier, a linked one through
+// /api/device-settings/<id>/device-tier, its value from the device list of DeviceTarget.jsx. A marked machine has a "Company computer" pill.
 
 // The error texts live in engine-errors.mjs (the Update dialog needs them without this file).
 export { errorLabel };
@@ -364,6 +368,24 @@ function ShowInList({ device, hidden, last, onChange }) {
   );
 }
 
+// "Company computer" of one device, on its row under "Show in task list": the label and the switch (the whole label toggles it), and the line under
+// them that says what the choice means, or why it cannot be changed now. `tier`: { device, checked, disabled, caption, onChange }.
+function CompanySwitch({ device, checked, disabled, caption, onChange }) {
+  const label = t('Company computer');
+  const noteId = `h5-engine-company-note-${device.replace(':', '-')}`;
+  return (
+    <>
+      <FormControlLabel
+        className="h5-engine-company" data-device={device} labelPlacement="start" disabled={disabled} sx={{ m: 0, gap: 0.5 }}
+        label={<Typography variant="body2" component="span" color={disabled ? 'text.disabled' : 'text.secondary'}>{label}</Typography>}
+        control={<Switch checked={checked} disabled={disabled} onChange={event => onChange(event.target.checked)} slotProps={{ input: { className: 'h5-engine-company-input', 'aria-label': label, 'aria-describedby': noteId, style: INPUT_INSIDE } }} />}
+      />
+      <Typography id={noteId} className="h5-engine-company-note" variant="caption" component="p" color="text.secondary" sx={{ m: 0, maxWidth: '18rem', textAlign: 'right', textWrap: 'pretty', overflowWrap: 'anywhere' }}>{caption}</Typography>
+    </>
+  );
+}
+const CompanyPill = () => <Pill className="h5-engine-company-pill" tone="warning" label={t('Company computer')} sx={{ flexShrink: 0 }} />;
+
 // "Show in task list" in the Shared tab: the name of each device and its switch, one switch row each (the device list itself is in the device tabs).
 function ShownDevices({ servers, localName, showProps, children }) {
   const rows = [{ key: 'local', source: { key: 'local', name: localName ? localName.name : '' } }, ...servers.map(server => ({ key: `remote:${server.id}`, source: { key: `remote:${server.id}`, label: server.name } }))];
@@ -413,8 +435,9 @@ function RowMenu({ engine, name, actions }) {
 }
 
 // One row of the device list (MD2 two-line list item): the name with its status, the address and version under it, then at the right "Show in task
-// list" (when it is shown) and the "more" button. `children`: drawn under the text (Restart on this machine's row).
-function DeviceRow({ engine, title, meta, show, menu, children }) {
+// list" (when it is shown), "Company computer" with its line under it (when the device has it) and the "more" button. `children`: drawn under the
+// text (Restart on this machine's row).
+function DeviceRow({ engine, title, meta, show, tier, menu, children }) {
   return (
     <Box component="li" className="h5-engine-row" data-engine={engine} sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 2, rowGap: 0.5, py: 1.5, minWidth: 0, listStyle: 'none' }}>
       <Box sx={{ flex: '1 1 12rem', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
@@ -422,8 +445,13 @@ function DeviceRow({ engine, title, meta, show, menu, children }) {
         {meta}
         {children}
       </Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', flexShrink: 0 }}>
-        {show ? <ShowInList {...show} /> : null}
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, ml: 'auto', flexShrink: 0, maxWidth: '100%' }}>
+        {show || tier ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5, minWidth: 0 }}>
+            {show ? <ShowInList {...show} /> : null}
+            {tier ? <CompanySwitch {...tier} /> : null}
+          </Box>
+        ) : null}
         {menu}
       </Box>
     </Box>
@@ -433,7 +461,8 @@ function DeviceRow({ engine, title, meta, show, menu, children }) {
 // `link`: this Engine is a linked service (ServiceLinks.jsx). Its address and token belong to the link, so they cannot be edited, and removing it ends the link.
 // `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
 // `onRename`: null when this row cannot be renamed (an older server).
-function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
+// `tier`: the props of its "Company computer" switch, or null when it has none (a remote Engine that is not linked).
+function EngineRow({ server, link, busy, show, tier, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
   const actions = [
     ...(onRename ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: onRename }] : []),
     { key: 'check', className: 'h5-engine-check', label: t('Check'), onClick: onCheck, disabled: busy },
@@ -443,11 +472,12 @@ function EngineRow({ server, link, busy, show, onCheck, onUpdate, onEdit, onRena
   ];
   return (
     <DeviceRow
-      engine={server.id} show={show} menu={<RowMenu engine={server.id} name={server.name} actions={actions} />}
+      engine={server.id} show={show} tier={tier} menu={<RowMenu engine={server.id} name={server.name} actions={actions} />}
       title={<>
         <Box component="strong" sx={NAME}><DeviceName source={{ key: `remote:${server.id}`, label: server.name }} className="h5-engine-name" /></Box>
         {link ? <Typography className="h5-engine-linked" variant="caption" color="text.secondary" sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{t('Linked')}</Typography> : null}
         <Pill className="h5-engine-status" tone={statusColor(server.status)} label={t(statusLabel(server.status))} />
+        {tier && tier.checked ? <CompanyPill /> : null}
       </>}
       meta={<Typography className="h5-engine-meta" variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
         {[link ? link.peer_url : server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
@@ -507,14 +537,20 @@ export function DevicesGroup({ state, ui, request = null }) {
   const [feedback, say] = useFeedback();
   const [shownSynced, trackShown] = useSyncAfterSave('task-list-devices');
   const [opened, setOpened] = useState(0); // goes up each time the group opens: the parts below read their data again
+  const { devices: linkedDevices } = useDeviceTargets(); // the linked devices with their "Company computer" flag (GET /api/device-settings/devices)
+  const [localTier, setLocalTier] = useState(null); // this machine's flag (GET /api/device-tier), or null on an older server (no switch)
+  const [tierShown, setTierShown] = useState({}); // device key -> the value shown while a change is saved, and after it until the group opens again
+  const [tierBusy, setTierBusy] = useState({}); // device key -> true while its change is saved
   const load = async ({ keep = false } = {}) => {
     try {
-      const [list, version, linked, own] = await Promise.all([
+      const [list, version, linked, own, tier] = await Promise.all([
         api('GET', '/api/remote-servers'),
         api('GET', '/api/system/version').catch(() => null),
         readLinks().catch(() => null),
         api('GET', '/api/system/engine-name').catch(() => null),
+        api('GET', '/api/device-tier').catch(() => null),
       ]);
+      setLocalTier(tier && typeof tier.company_computer === 'boolean' ? tier.company_computer : null);
       setServers(Array.isArray(list) ? list : []);
       setLocalVersion(version && version.app_version ? version.app_version : null);
       const restart = restartInfo(version);
@@ -556,6 +592,41 @@ export function DevicesGroup({ state, ui, request = null }) {
     try { await ui.actions.setDeviceVisible(device, visible); void trackShown(); }
     catch (error) { say(`${t(errorLabel(codeOf(error)))}`, true); }
   };
+  // "Company computer": the switch shows the new value at once and goes back when the save fails, with the reason on the row. A linked device's
+  // value is read again from the device list after the change (the server drops its cached answer for that row).
+  const without = key => all => { const next = { ...all }; delete next[key]; return next; };
+  const setTier = async (key, server, value) => {
+    setTierBusy(all => ({ ...all, [key]: true }));
+    setTierShown(all => ({ ...all, [key]: value }));
+    note(server ? server.id : 'local', '');
+    try {
+      const saved = await api('PUT', server ? `/api/device-settings/${server.id}/device-tier` : '/api/device-tier', { company_computer: value });
+      const now = saved && typeof saved.company_computer === 'boolean' ? saved.company_computer : value;
+      if (server) { setTierShown(all => ({ ...all, [key]: now })); void refreshDeviceTargets(); }
+      else { setLocalTier(now); setTierShown(without(key)); }
+    } catch (error) {
+      setTierShown(without(key));
+      note(server ? server.id : 'local', renameError(error), true);
+    } finally { setTierBusy(without(key)); }
+  };
+  const localTierName = localName ? localName.name : '';
+  const tierContext = { local: { name: localTierName, company: localTier }, devices: linkedDevices };
+  const shownTier = (key, stored) => (Object.hasOwn(tierShown, key) ? tierShown[key] : stored === true);
+  const localTierProps = () => {
+    if (localTier === null) return null;
+    const checked = shownTier('local', localTier);
+    return { device: 'local', checked, disabled: Boolean(tierBusy.local), caption: t(tierCaption({ on: checked, home: tierHome('local', tierContext) })), onChange: on => void setTier('local', null, on) };
+  };
+  const tierProps = server => {
+    const device = linkedDevices.find(item => item.id === server.id);
+    if (!device) return null; // not a linked device (or the list is not read yet): nothing to change
+    const key = `remote:${server.id}`;
+    const block = tierBlock(device);
+    const checked = shownTier(key, device.company_computer);
+    const caption = tierCaption({ on: checked, block, name: server.name || device.name, home: tierHome(server.id, tierContext) });
+    return { device: key, checked, disabled: Boolean(block) || Boolean(tierBusy[key]), caption: t(caption), onChange: on => void setTier(key, server, on) };
+  };
+  const localTierRow = localTierProps();
   const showProps = device => (switches ? { device, hidden: hidden.keys.includes(device), last: visibleDevices.length === 1 && visibleDevices[0] === device, onChange: (key, visible) => void setVisible(key, visible) } : null);
   // After a rename: this list, the task list and every other place that names a device (the same refresh as any change here); the links list too.
   const renamed = async target => {
@@ -580,7 +651,7 @@ export function DevicesGroup({ state, ui, request = null }) {
   const status = <><Feedback id="h5-engines-feedback" feedback={feedback} /><SyncNote id="h5-engines-sync" note={shownSynced} /></>;
   const shownList = tabScope === 'shared' && switches;
   return (
-    <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setOpened(count => count + 1); }}>
+    <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setTierShown({}); setOpened(count => count + 1); }}>
       <InTab part="settings-sync"><SettingsSyncStatus opened={opened} /></InTab>
       {shownList ? <ShownDevices servers={servers} localName={localName} showProps={showProps}>{status}</ShownDevices> : null}
       {listShown ? (
@@ -595,20 +666,22 @@ export function DevicesGroup({ state, ui, request = null }) {
             </Box>
             <Box component="ul" id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', m: 0, p: 0, '& > li + li': { borderTop: 1, borderColor: 'divider' } }}>
               <DeviceRow
-                engine="local" show={rowSwitches ? showProps('local') : null}
+                engine="local" show={rowSwitches ? showProps('local') : null} tier={localTierRow}
                 menu={<RowMenu engine="local" name={localName ? localName.name : t('This machine')} actions={localName ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: () => setRenaming({ kind: 'local', current: localName }) }] : []} />}
                 title={<>
                   <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
                   <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
+                  {localTierRow && localTierRow.checked ? <CompanyPill /> : null}
                 </>}
                 meta={<Typography className="h5-engine-meta" variant="body2" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>}
               >
                 {/* Restart keeps its own button and confirmation dialog (Restart.jsx), under the version line of this machine. */}
                 {restartHere ? <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.5 }}><RestartButton restart={localRestart} bootId={localRestart.bootId} /></Box> : null}
+                <Feedback feedback={rowFeedback.local || { message: '', error: false }} />
               </DeviceRow>
               {servers.map(server => (
                 <EngineRow
-                  key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={rowSwitches ? showProps(`remote:${server.id}`) : null} feedback={rowFeedback[server.id] || { message: '', error: false }}
+                  key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
                   onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
                   onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
                 />

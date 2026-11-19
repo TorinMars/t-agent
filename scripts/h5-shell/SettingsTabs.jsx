@@ -20,7 +20,7 @@ function TabLabel({ entry }) {
   return (
     <Box component="span" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.2, maxWidth: '11rem' }}>
       <Box component="span" className="h5-settings-tab-name" translate={entry.value === 'shared' ? undefined : 'no'} sx={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.label}</Box>
-      {entry.note ? <Typography component="span" variant="caption" className="h5-settings-tab-note" sx={{ lineHeight: 1.2, color: 'inherit', opacity: 0.85, whiteSpace: 'nowrap' }}>{entry.note}</Typography> : null}
+      {entry.note ? <Typography component="span" variant="caption" className="h5-settings-tab-note" data-company={entry.company ? 'true' : undefined} sx={{ lineHeight: 1.2, color: entry.company ? 'warning.main' : 'inherit', opacity: entry.company ? 1 : 0.85, whiteSpace: 'nowrap' }}>{entry.note}</Typography> : null}
     </Box>
   );
 }

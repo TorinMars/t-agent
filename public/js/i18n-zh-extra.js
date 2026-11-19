@@ -89,6 +89,10 @@ I18n.add({
   '{1} is offline. Its settings can be read and saved again once it is back online.': '{1} 已离线。等它重新上线后才能再读取和保存它的设置。',
   '{1} is too old to be changed from here. Update {2} first.': '{1} 的版本过旧，不能在这里修改。请先升级 {2}。',
   'Show {1} in task list': '在任务列表中显示 {1}',
+  'Personal data stays on {1}. Kept here only while no other machine can be reached.': '个人数据保存在 {1} 上。只有在连不上其他机器时，才会暂时留在这里。',
+  '{1} is offline. This can be changed once it is back online.': '{1} 已离线。等它重新上线后才能修改。',
+  "{1} can't be reached. Your answers are kept on this computer for now and moved to {1} when it is back.": '连不上 {1}。你的答题记录先保存在这台电脑上，等 {1} 恢复后会自动转过去。',
+  'The counts are those of the last copy from {1} plus what you answered here.': '这些数字来自 {1} 最近一次的副本，再加上你在这里的答题。',
   'Skills teach Claude Code and Codex to use T-Agent’s commands. They are installed on {1}, for both agents.': '技能让 Claude Code 和 Codex 学会使用 T-Agent 的命令。它们会安装在 {1} 上，两个智能体都可使用。',
   'A small window that stays above other windows on {1} and shows the tasks that need you, from that machine and its connected devices.': '一个停留在 {1} 其他窗口上方的小窗口，显示那台机器及其连接设备上需要你处理的任务。',
 

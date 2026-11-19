@@ -11,6 +11,8 @@
 //   (inputmode="none"; letters for Spell, the full layout for Dictation and Build; keys type at the caret, Shift, Backspace and its repeat, Hide and a tap
 //   that opens it again, the bottom navigation away while it is open, Check right above it, the focus kept by Hear it and Show first letter); the
 //   system keyboard not covering Say it's box or Check; the grades in the pinned actions; the back button closing the mode, then the page.
+// - A company computer (390, touch): the banner while its home cannot be reached (`device.cache_only` and not `home_online`), none while the home
+//   is online, and a 503 of the Learn settings shown in the panel with the switch put back.
 // H5_SHOT_DIR=<dir> saves the screenshots (computer: home, Build after Check, Spell; phone: Spell with the letters, Build, Dictation with the full keyboard).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -51,6 +53,7 @@ function learnMock() {
     mock.requests.push({ method, path: p, search: url.search, body });
     if (p === '/api/learn/summary') return mock.summary;
     if (p === '/api/learn/settings' && method === 'GET') return mock.settings;
+    if (p === '/api/learn/settings' && method === 'PUT' && mock.settingsFail) return [503, { error: 'LEARN_HOME_OFFLINE', message: 'Learning settings are kept on a normal computer, which cannot be reached right now' }];
     if (p === '/api/learn/settings' && method === 'PUT') { mock.settings = { ...mock.settings, ...body }; return mock.settings; }
     if (p === '/api/learn/starter') return { added: 120 };
     if (p === '/api/learn/meaning') return mock.translator ? { zh: 'zh' } : [503, { error: 'No translator is configured' }];
@@ -185,6 +188,18 @@ async function placeTiles(page, words) {
   }
 }
 
+// On a phone: picks the terminal in the task drawer (open at first), so the bottom navigation is there.
+async function toTerminal(page) {
+  await page.locator('.h5-header').waitFor({ state: 'visible' });
+  if (!(await page.locator('#h5-tasks').isVisible())) await page.locator('#h5-open-tasks').tap();
+  await page.locator('#h5-tasks').waitFor({ state: 'visible' });
+  const row = page.locator('#h5-tasks .h5-terminal-main', { hasText: 'Claude: login fix' });
+  if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
+  await row.tap();
+  await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+}
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -210,6 +225,7 @@ async function placeTiles(page, words) {
       assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '26 sentences', '26 sentences', '26 sentences', '26 sentences', '3 cards']);
       assert.deepEqual(await page.locator('.h5-learn-mode .MuiTypography-subtitle1').allTextContents(), ['Spell the word', 'Build the sentence', 'Dictation', 'Say it', 'Fill the gap', 'Mistakes']);
       assert.match(await text(page, '#h5-learn-material'), /From your translations · 26 sentences, 42 words/);
+      assert.equal(await page.locator('#h5-learn-home-away').count(), 0, 'a normal machine has no banner');
       await page.locator('#h5-learn-how-card').waitFor({ state: 'visible' });
       await shot(page, 'learn-desktop-home.png');
 
@@ -472,6 +488,44 @@ async function placeTiles(page, words) {
       await page.locator('#h5-learn-chinese').waitFor();
       assert.equal(await page.locator('#h5-learn-hear').count(), 0, 'no Hear it');
       await context.close();
+    }
+
+    // ── A company computer (390, touch): the banner while its home cannot be reached; a 503 of the settings in view ──
+    {
+      const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+      const device = { company_computer: true, cache_only: true, home_name: 'T01', home_online: false, waiting: 3, offline_copy_at: AT };
+      mock.summary = { ...SUMMARY, device };
+      await toTerminal(page);
+      await page.locator('#h5-bnav-learn').tap();
+      await page.locator('#h5-learn-home-away').waitFor();
+      assert.equal(await text(page, '#h5-learn-home-away'), "T01 can't be reached. Your answers are kept on this computer for now and moved to T01 when it is back.");
+      assert.equal(await page.locator('#h5-learn-home-away').evaluate(el => el.classList.contains('MuiAlert-colorInfo')), true, 'an info alert');
+      const banner = await rect(page, '#h5-learn-home-away');
+      assert.ok(banner.y < (await rect(page, '#h5-learn-today')).y, 'above the numbers');
+      assert.ok(banner.x >= 16 && banner.x + banner.w <= 390 - 16, 'inside the page');
+      assert.equal(await text(page, '#h5-learn-offline-counts'), 'The counts are those of the last copy from T01 plus what you answered here.');
+      await shot(page, 'learn-phone-home-away.png');
+      // Learn settings: the server's 503 stays in view and the switch shows the stored value again.
+      mock.settingsFail = true;
+      await page.locator('#h5-learn-settings').tap();
+      await page.locator('#h5-learn-collect').waitFor();
+      await page.locator('#h5-learn-collect').tap();
+      await page.locator('#h5-learn-settings-error').waitFor();
+      assert.equal(await text(page, '#h5-learn-settings-error'), 'Learning settings are kept on a normal computer, which cannot be reached right now');
+      assert.equal(await page.locator('#h5-learn-collect').isChecked(), true, 'the switch goes back');
+      mock.settingsFail = false;
+      await page.locator('#h5-learn-collect').tap();
+      await waitFor(async () => (await page.locator('#h5-learn-settings-error').count()) === 0, 'a change that works clears it');
+      await context.close();
+      // The home online again (answers still waiting are handed over by the server): no banner.
+      const online = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+      online.mock.summary = { ...SUMMARY, device: { ...device, home_online: true, offline_copy_at: null } };
+      await toTerminal(online.page);
+      await online.page.locator('#h5-bnav-learn').tap();
+      await online.page.locator('#h5-learn-due').waitFor();
+      assert.equal(await online.page.locator('#h5-learn-home-away').count(), 0);
+      assert.equal(await online.page.locator('#h5-learn-offline-counts').count(), 0);
+      await online.context.close();
     }
 
     // ── 390x844 (touch) ──

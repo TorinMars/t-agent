@@ -323,9 +323,10 @@ function OpenSwitcher({ ui, switcher }) {
                     <Typography variant="caption" color="text.secondary">{t('No preview yet')}</Typography>
                   </Box>
                 )}
+                {/* The card on top covers the right edge of this one (cardW - offset px): the state word stays clear of it. The current card has none on top. */}
                 <Box
                   className="h5-switcher-foot"
-                  sx={theme => ({ position: 'absolute', left: 0, right: 0, bottom: 0, height: 40, display: 'flex', alignItems: 'center', gap: 1, px: 1.5, background: `linear-gradient(transparent, ${alpha(theme.palette.common.black, 0.85)})` })}
+                  sx={theme => ({ position: 'absolute', left: 0, right: 0, bottom: 0, height: 40, display: 'flex', alignItems: 'center', gap: 1, pl: 1.5, pr: card.current ? 1.5 : `${g.cardW - g.offset + 12}px`, background: `linear-gradient(transparent, ${alpha(theme.palette.common.black, 0.85)})` })}
                 >
                   <Typography component="span" variant="caption" className="h5-switcher-task" sx={{ flex: '1 1 auto', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'text.secondary' }}>{taskTitle}</Typography>
                   <Typography component="span" variant="caption" className="h5-switcher-state" sx={{ flex: '0 0 auto', color: STATE_TEXT[status] }}>{t(STATE_WORDS[status])}</Typography>

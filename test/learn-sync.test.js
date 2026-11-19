@@ -8,6 +8,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+
+// db/index.js (required by the services below) refuses to run a test on the real ~/.tagent: a temporary data folder first.
+process.env.T_AGENT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-learn-sync-data-'));
+delete process.env.TAGENT_HOME;
 const express = require('express');
 const Database = require('better-sqlite3');
 

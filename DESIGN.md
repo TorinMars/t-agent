@@ -47,7 +47,7 @@
 | File | What is in it | Size |
 | --- | --- | --- |
 | [page-shell-and-columns.md](docs/design/page-shell-and-columns.md) | The page: the shell, store and loading; routes, login and manifests; wide layout and keyboard; the multi-column view (its Columns and Mind maps tabs) and pane mode. | 59 KB |
-| [page-navigation.md](docs/design/page-navigation.md) | The page: the navigation rail of both views on a wide screen (Sessions, Columns, Attention, Mind maps, Update, Settings) and its phone counterpart, the bottom navigation (Sessions, Attention, Mind maps, Settings); the page layout; the session header on a computer and a phone; the phone's modal task drawer. | 11 KB |
+| [page-navigation.md](docs/design/page-navigation.md) | The page: the navigation rail of both views on a wide screen (Sessions, Columns, Attention, Mind maps, Learn, Update, Settings) and its phone counterpart, the bottom navigation (Sessions, Attention, Mind maps, Learn, Settings); the page layout; the session header on a computer and a phone; the phone's modal task drawer. | 11 KB |
 | [page-task-list.md](docs/design/page-task-list.md) | The task list and its sessions: rows, the By task and Recent tabs, create dialogs, task and session order, the task menu, archived tasks, shared task order. | 57 KB |
 | [page-terminal-and-bottom-bar.md](docs/design/page-terminal-and-bottom-bar.md) | The terminal on the page (warm terminals, width, touch scrolling, wheel strip, copy), the bottom bar and its keys, the compact one-row bottom area of a column, the next-session action of a column. | 66 KB |
 | [session-switcher.md](docs/design/session-switcher.md) | The page: the session switcher of the single view (the switch button `#h5-cycle`): recent sessions remembered on the device, the stack of cards, previews, gestures, keys, closing. | 8 KB |
@@ -62,6 +62,7 @@
 | [usage-data.md](docs/design/usage-data.md) | Usage data: local, private tracking of button presses on the page (what is and is not recorded, keys, surfaces, batches, storage and retention, the switch, the `/api/ui-events` API, the Settings group). | 11 KB |
 | [mind-maps.md](docs/design/mind-maps.md) | The mind map editor: why this shape, maps of every service, the editor library, the page, the Mind maps tab of the multi-column view, editing, saving, .xmind. | 19 KB |
 | [learn-english.md](docs/design/learn-english.md) | Learn English: study cards from the person's translated sentences, looked-up words and a starter list; the tables, the spaced review rules, the `/api/learn` API, meanings through the translator, the collection hooks of the page. | 9 KB |
+| [learn-english-page.md](docs/design/learn-english-page.md) | The Learn page: the Learn destination, the home, the practice modes (Review, Spell the word, Build the sentence, Dictation, Say it, Fill the gap), Mistakes, Your material, Learn settings; grading in the browser, speech, tests. | 10 KB |
 
 ### T-Attention
 

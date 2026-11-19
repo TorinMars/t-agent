@@ -102,8 +102,8 @@ async function openTerminal(page, task, terminal, how = 'click') {
       assert.deepEqual(await rect(page, '#h5-columns-nav'), { x: 0, y: 0, w: 72, h: 900, right: 72 }, 'the rail: 72px at the left edge, the whole height');
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-nav-rail')), true);
       assert.deepEqual(await nav.evaluate(el => [...el.querySelectorAll('.h5-nav-item, #h5-update')].map(node => node.id)),
-        ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps', 'h5-update', 'h5-nav-settings'], 'the destinations, then Update and Settings');
-      for (const [id, label] of [['h5-nav-sessions', 'Sessions'], ['h5-nav-columns', 'Columns'], ['h5-nav-maps', 'Mind maps']]) {
+        ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps', 'h5-nav-learn', 'h5-update', 'h5-nav-settings'], 'the destinations, then Update and Settings');
+      for (const [id, label] of [['h5-nav-sessions', 'Sessions'], ['h5-nav-columns', 'Columns'], ['h5-nav-maps', 'Mind maps'], ['h5-nav-learn', 'Learn']]) {
         assert.equal(await page.locator(`#${id}`).getAttribute('aria-label'), label);
         assert.equal(await page.locator(`#${id} .h5-nav-label`).textContent(), label, `${label}: a caption label under the icon`);
         assert.equal((await rect(page, `#${id}`)).h, 56, `${label}: 56px tall`);

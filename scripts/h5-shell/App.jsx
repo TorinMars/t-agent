@@ -13,7 +13,7 @@ import { theme } from './theme.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 // Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
-import { AttentionPanel, DesignSheet, FileTreeSheet, SettingsDrawer, SwitcherScreen, TaskDialogScreen } from './lazy-screens.jsx';
+import { AttentionPanel, DesignSheet, FileTreeSheet, LearnScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen } from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
 // shorter); from then on it stays mounted, so MUI runs its closing animation and gives the focus back as usual.
@@ -46,12 +46,14 @@ const TASK_DIALOG_KEYS = ['taskDialog'];
 const NEW_SESSION_KEYS = ['menu'];
 const NEW_TASK_KEYS = ['newTaskOpen', 'sources', 'creatingTask'];
 const NOTICE_KEYS = ['notice'];
+const LEARN_KEYS = ['learnOpen', 'wide', 'pane', 'input', 'hasKeyboard'];
 const SWITCHER_KEYS = ['switcher']; // the open switcher reads the rest itself (Switcher.jsx), so closed it draws nothing on an activity push
 // What the page itself needs: the layout flags and which sheets and dialogs are open.
 const OPEN = state => ({
   tasksModal: state.tasksOpen && !state.wide,
   folded: state.wide && state.sidebarCollapsed,
   settings: state.settingsOpen,
+  learn: state.learnOpen,
   menu: Boolean(state.menu),
   copy: state.copyText !== null,
   files: Boolean(state.files && state.files.open),
@@ -105,6 +107,8 @@ export function App({ ui }) {
       {/* Its phone counterpart: the bottom navigation of the narrow layout (BottomNav.jsx). */}
       <BottomNav ui={ui} />
       <Lazy open={open.settings}><Whole ui={ui} part={SettingsDrawer} /></Lazy>
+      {/* The Learn page (Learn.jsx): beside the rail on a computer, above the bottom navigation on a phone. */}
+      <Lazy open={open.learn}><Part ui={ui} keys={LEARN_KEYS} part={LearnScreen} /></Lazy>
       <Lazy open={open.menu}><Part ui={ui} keys={TERM_MENU_KEYS} part={TermMenu} /></Lazy>
       <Lazy open={open.copy}><Part ui={ui} keys={COPY_KEYS} part={CopyDialog} /></Lazy>
       {/* The file tree comes first: a file opened from it lies over it (a modal sheet opened after it). */}

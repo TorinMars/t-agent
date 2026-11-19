@@ -33,7 +33,7 @@ test('the first screen loads the shell and a few chunks, much less than the old 
   // The single bundle was 1,067 KB (2026-11-18); the split moved Settings, T-Attention, the design and file sheets into chunks of their own.
   assert.ok(bytes < 760 * 1024, `the first screen is ${bytes} bytes`);
   const text = eager.map(read).join('\n');
-  for (const [marker, screen] of [['h5-usage-layout', 'the Usage data group'], ['.MuiSwitch-switchBase,.MuiCheckbox-root', 'the usage data recorder'], ['h5-settings-tabs', 'Settings'], ['h5-attention-reject', 'the T-Attention panel'], ['h5-design-outline', 'the design sheet'], ['h5-files-tree', 'the file tree'], ['registerAttentionSettings needs', 'the T-Attention settings slots']]) {
+  for (const [marker, screen] of [['h5-usage-layout', 'the Usage data group'], ['.MuiSwitch-switchBase,.MuiCheckbox-root', 'the usage data recorder'], ['h5-settings-tabs', 'Settings'], ['h5-attention-reject', 'the T-Attention panel'], ['h5-design-outline', 'the design sheet'], ['h5-files-tree', 'the file tree'], ['registerAttentionSettings needs', 'the T-Attention settings slots'], ['h5-learn-pool', 'the Learn page']]) {
     assert.ok(!text.includes(marker), `${screen} is not in the first download`);
   }
   // React (react-dom) is there once, in a chunk; the chat imports the same chunk.
@@ -66,7 +66,7 @@ test('React and highlight.js exist once among the bundles, and every chunk on di
   for (const url of files.slice(2)) assert.match(url, /^\/js\/chunks\/[\w.-]+-[A-Z0-9]{8}\.js$/, `${url} is named by its hash`);
   // The screens (and the Recent tab of the task list) are chunks the shell imports when they open; usage-recorder is the recorder of usage data (usage-track.mjs), loaded when recording is on.
   const dynamic = new Set(files.flatMap(url => importsOf(read(url)).dynamics).map(url => url.replace(/-[A-Z0-9]{8}\.js$/, '').replace('/js/chunks/', '')));
-  assert.deepEqual([...dynamic].sort(), ['markdown-view-entry', 'screen-attention', 'screen-design', 'screen-files', 'screen-recent', 'screen-settings', 'screen-switcher', 'screen-task-dialog', 'usage-recorder']);
+  assert.deepEqual([...dynamic].sort(), ['markdown-view-entry', 'screen-attention', 'screen-design', 'screen-files', 'screen-learn', 'screen-recent', 'screen-settings', 'screen-switcher', 'screen-task-dialog', 'usage-recorder']);
 });
 
 test('shell-core.mjs names every module entry.jsx imports, so the first screen stays in one shared chunk', () => {

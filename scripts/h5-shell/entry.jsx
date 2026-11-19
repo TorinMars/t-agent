@@ -111,6 +111,8 @@ const back = paneId ? null : createBackLayers({
     for (const close of s.mindmapLayers || []) layers.push({ close });
     // Settings on a computer is a page beside the rail, not a modal (Settings.jsx); on a phone it is a modal and found by itself.
     if (s.wide && s.settingsOpen) layers.push({ close: () => ui.actions.closeSettings() });
+    // So is the Learn page on a computer (Learn.jsx); on a phone it is a modal too.
+    if (s.wide && s.learnOpen) layers.push({ close: () => ui.actions.closeLearn() });
     // The session switcher (Switcher.jsx) is not a modal either; it lies over the terminal.
     if (s.switcher) layers.push({ close: () => ui.actions.closeSwitcher() });
     return layers;

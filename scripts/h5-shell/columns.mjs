@@ -378,18 +378,20 @@ export function railKey(key, index, count) {
 }
 // The destinations of the rail, top to bottom (Update and Settings sit at its bottom). Columns and Mind maps are tabs of the columns view; a page that
 // cannot show that view (a framed page: `state.columns` is null) has no Columns destination and opens the mind maps over the whole window.
-// Attention is not a page: it shows or hides the T-Attention panel on the right.
+// Attention is not a page: it shows or hides the T-Attention panel on the right. Learn is a page of its own over the rest (the Learn page, `learnOpen`).
 export const RAIL_DESTINATIONS = [
   { view: 'sessions', id: 'h5-nav-sessions', icon: 'terminalKeyboard', label: 'Sessions' },
   { view: 'columns', id: 'h5-nav-columns', icon: 'columns', label: 'Columns', needsColumns: true },
   { view: 'attention', id: 'h5-nav-attention', icon: 'attention', label: 'Attention', toggle: true },
   { view: 'maps', id: 'h5-nav-maps', icon: 'mindmap', label: 'Mind maps' },
+  { view: 'learn', id: 'h5-nav-learn', icon: 'learn', label: 'Learn' },
 ];
 export const railDestinations = canShowColumns => RAIL_DESTINATIONS.filter(item => canShowColumns || !item.needsColumns);
-// The destination that is the current page (`aria-current="page"`): Settings while it is open, else the tab of the columns view while it is shown,
-// else Sessions (the single view).
-export function railView({ settingsOpen = false, columns = null } = {}) {
+// The destination that is the current page (`aria-current="page"`): Settings while it is open, else Learn while it is open, else the tab of the
+// columns view while it is shown, else Sessions (the single view).
+export function railView({ settingsOpen = false, learnOpen = false, columns = null } = {}) {
   if (settingsOpen) return 'settings';
+  if (learnOpen) return 'learn';
   if (columns && columns.shown) return readTab(columns.tab) === 'maps' ? 'maps' : 'columns';
   return 'sessions';
 }
@@ -397,12 +399,13 @@ export function railView({ settingsOpen = false, columns = null } = {}) {
 // Attention, Mind maps and Settings are pages of their own over the terminal page: one at a time, and Sessions is the terminal page itself.
 export const SETTINGS_DESTINATION = { view: 'settings', id: 'h5-bnav-settings', icon: 'setting', label: 'Settings' };
 // The ids of the bar's items; Attention keeps the page's T-Attention id (`#h5-attention`), which a phone has nowhere else.
-const PHONE_IDS = { sessions: 'h5-bnav-sessions', attention: 'h5-attention', maps: 'h5-bnav-maps', settings: 'h5-bnav-settings' };
+const PHONE_IDS = { sessions: 'h5-bnav-sessions', attention: 'h5-attention', maps: 'h5-bnav-maps', learn: 'h5-bnav-learn', settings: 'h5-bnav-settings' };
 export const phoneDestinations = () => [...railDestinations(false), SETTINGS_DESTINATION].map(item => ({ ...item, id: PHONE_IDS[item.view], toggle: false }));
-// The destination that is shown on a phone: Settings, T-Attention or the mind maps while open (in that order, the one on top first), else Sessions.
-export function phoneView({ settingsOpen = false, attentionOpen = false, mindmapOpen = false } = {}) {
+// The destination that is shown on a phone: Settings, T-Attention, Learn or the mind maps while open (in that order, the one on top first), else Sessions.
+export function phoneView({ settingsOpen = false, attentionOpen = false, learnOpen = false, mindmapOpen = false } = {}) {
   if (settingsOpen) return 'settings';
   if (attentionOpen) return 'attention';
+  if (learnOpen) return 'learn';
   if (mindmapOpen) return 'maps';
   return 'sessions';
 }

@@ -143,7 +143,7 @@ async function run() {
     assert.deepEqual(await rect(page, '#h5-columns-nav'), { x: 0, y: 0, w: 72, h: 900 }, '72px, the whole height');
     // The page's one rail (also in the single view, scripts/test-h5-nav-rail-browser.cjs): the destinations, then Update and Settings at the bottom.
     const order = await nav.evaluate(el => [...el.querySelectorAll('.h5-nav-item, #h5-update')].map(node => node.id));
-    assert.deepEqual(order, ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps', 'h5-update', 'h5-nav-settings'], 'the destinations, then Update and Settings');
+    assert.deepEqual(order, ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps', 'h5-nav-learn', 'h5-update', 'h5-nav-settings'], 'the destinations, then Update and Settings');
     assert.ok((await rect(page, '#h5-nav-settings')).y > 800, 'Settings is at the bottom');
     for (const id of ['h5-update', 'h5-nav-settings']) {
       const button = page.locator(`#${id}`);

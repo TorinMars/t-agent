@@ -212,6 +212,8 @@ app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
 // The switch of peer file access (GET / PUT /api/peer-fs/settings), behind the login like every setting.
 app.use('/api/peer-fs', peerFsRoutes.createPeerFsSettingsRouter());
+// The "Company computer" flag of this machine (GET / PUT /api/device-tier, routes/device-tier.js), behind the login like every setting.
+app.use('/api/device-tier', require('./routes/device-tier').createDeviceTierRouter());
 // Settings → Tasks and files → Browser extension: paired browsers, pairing codes, rename and remove.
 app.use('/api/browser-ext', browserExtRoutes.createBrowserPageRouter({ bridge: () => browserBridge, localUrl: () => attentionLocalUrl }));
 app.use('/api/task-groups', require('./routes/task-groups'));
@@ -667,6 +669,8 @@ server.listen(config.port, config.host, () => {
   require('./services/task-order').getTaskOrder().start();
   // The settings linked devices keep as one set follow the links from here on (services/settings-sync.js).
   if (config.settingsSyncEnabled) require('./services/settings-sync').getSettingsSync().start();
+  // The English learning data follows the links from here on (services/learn-sync.js).
+  if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().start();
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
   require('./services/rule-sync').getRuleSync().start();
   // The Telegram sender choice follows the links from here on (services/attention-relay.js).
@@ -714,5 +718,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

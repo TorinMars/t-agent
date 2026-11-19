@@ -235,9 +235,9 @@ test('/api/device-settings/devices: linked devices of this owner only, with supp
   const first = await call(url, 'GET', '/api/device-settings/devices');
   assert.equal(first.status, 200);
   assert.deepEqual(first.body, { devices: [
-    { id: 7, name: 'K01', online: true, supported: true },
-    { id: 9, name: 'Old Mac', online: true, supported: false },
-    { id: 10, name: 'Away', online: false, supported: null },
+    { id: 7, name: 'K01', online: true, supported: true, company_computer: null },
+    { id: 9, name: 'Old Mac', online: true, supported: false, company_computer: null },
+    { id: 10, name: 'Away', online: false, supported: null, company_computer: null },
   ] }, 'no plain Engine, no revoked link, no other owner; an offline device is not read');
   assert.equal(first.text.includes('tunnel://') || first.text.includes('cipher') || first.text.includes('token'), false, 'no address or token');
   assert.deepEqual(infos.sort(), [7, 9]);

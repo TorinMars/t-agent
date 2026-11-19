@@ -11,6 +11,10 @@ const express = require('express');
 //   POST  /api/learn/meaning { word }                   -> { zh }   (the configured translator; 503 when there is none)
 //   POST  /api/learn/starter { list: 'dev' }            -> { added }
 //   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter? } -> settings
+//   GET   /api/learn/status                           -> { company_computer, cache_only, home_name, home_online, waiting }
+// The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
+// "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
+// cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
 
 // The meaning of one word through the translator the person set up, by the same path as POST /api/translate/word: this Client's own translator, or the
 // linked service that shares one (services/linked-capabilities.js).
@@ -26,10 +30,20 @@ function translatorLookup() {
   });
 }
 
-function createLearnRouter({ service = null, lookupWord = null, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+// `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
+function createLearnRouter({ service = null, lookupWord = null, sync, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
-  const learn = () => service || (service = require('../services/learn').createLearn({ lookupWord: lookupWord || translatorLookup() }));
+  let syncService = sync === undefined ? (service ? null : undefined) : sync;
+  const learnSync = () => {
+    if (syncService === undefined) syncService = require('../services/learn-sync').getLearnSync();
+    return syncService;
+  };
+  const cacheOnly = () => { const current = learnSync(); return Boolean(current && current.cacheOnly()); };
+  const learn = () => service || (service = require('../services/learn').createLearn({ lookupWord: lookupWord || translatorLookup(), cacheOnly }));
+  // A company computer reads through its home: the cards here are brought up to date first (a few seconds at most; offline, the cache as it is).
+  const fresh = async () => { if (cacheOnly()) await learnSync().refresh(); };
+  const status = () => { const current = learnSync(); return current ? current.status() : { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0 }; };
   const owner = req => req.session.user.login;
   const fail = (res, error) => {
     const status = error && error.statusCode;
@@ -44,16 +58,20 @@ function createLearnRouter({ service = null, lookupWord = null, requireAuth = re
     try { res.json(await run(req)); } catch (error) { fail(res, error); }
   };
 
-  router.get('/summary', handle(req => learn().summary(owner(req))));
-  router.get('/queue', handle(req => learn().queue(owner(req), req.query.mode, req.query.limit)));
-  router.get('/cards', handle(req => learn().list(owner(req), req.query)));
+  router.get('/summary', handle(async req => {
+    if (cacheOnly()) return learnSync().companySummary(owner(req));
+    return { ...learn().summary(owner(req)), device: { ...status(), offline_copy_at: null } };
+  }));
+  router.get('/status', handle(() => status()));
+  router.get('/queue', handle(async req => { await fresh(); return learn().queue(owner(req), req.query.mode, req.query.limit); }));
+  router.get('/cards', handle(async req => { await fresh(); return learn().list(owner(req), req.query); }));
   router.post('/cards', handle(req => learn().addCard(owner(req), req.body)));
   router.post('/cards/:id/answer', handle(req => learn().answer(owner(req), req.params.id, req.body)));
   router.patch('/cards/:id', handle(req => learn().updateCard(owner(req), req.params.id, req.body)));
   router.post('/meaning', handle(req => learn().meaning(owner(req), req.body && req.body.word)));
-  router.post('/starter', handle(req => learn().starter(owner(req), req.body)));
+  router.post('/starter', handle(req => (cacheOnly() ? learnSync().viaHome('starter', req.body) : learn().starter(owner(req), req.body))));
   router.get('/settings', handle(req => learn().settings(owner(req))));
-  router.put('/settings', handle(req => learn().saveSettings(owner(req), req.body)));
+  router.put('/settings', handle(req => (cacheOnly() ? learnSync().viaHome('settings', req.body) : learn().saveSettings(owner(req), req.body))));
   return router;
 }
 

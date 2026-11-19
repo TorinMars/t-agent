@@ -44,6 +44,9 @@ module.exports = {
   updateCheckEnabled: process.env.UPDATE_CHECK_ENABLED !== 'false',
   // Settings sync across linked devices (services/settings-sync.js). 'false' turns it off on this service: it is not offered to peers and never runs.
   settingsSyncEnabled: process.env.SETTINGS_SYNC_ENABLED !== 'false',
+  // The English learning sync across linked devices (services/learn-sync.js). 'false' turns it off on this service; it is off too when the settings
+  // sync is (it uses the settings sync's link keys).
+  learnSyncEnabled: process.env.LEARN_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,
   updateAutoQuietMs: positiveInteger(process.env.UPDATE_AUTO_QUIET_SECONDS, 600) * 1000,

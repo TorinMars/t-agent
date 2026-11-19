@@ -40,6 +40,8 @@ router.use('/linked-services', require('./linked-services').createLinkedServices
 router.use('/task-order', require('./task-order').createEngineTaskOrderRouter());
 // Settings sync between linked services (routes/settings-sync.js), link tokens only; the values travel sealed for the link.
 router.use('/settings-sync', require('./settings-sync').createEngineSettingsSyncRouter());
+// The English learning sync between linked services (routes/learn-sync.js), link tokens only; the rows travel sealed for the link.
+router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
 // The per-device settings of this service, for a linked device's page (routes/device-settings.js): link tokens only, and only the allowlisted
 // page routes (the working directory, peer file access, agent skills, rules and skills sync, the desktop window switch). No task in them.
 router.use('/device-settings', require('./device-settings').createEngineDeviceSettingsRouter());
@@ -138,6 +140,8 @@ function infoHandler(req, res) {
     engine_version: version.app_version || require('../package.json').version,
     api_version: 1,
     role: req.engineAuth.role,
+    // The "Company computer" flag of this machine (services/device-tier.js): its peers keep their English learning data on a normal machine.
+    company_computer: require('../services/device-tier').getDeviceTier().isCompany(),
     capabilities: [
       'tasks:read', 'tasks:write',
       'task-groups:read', 'task-groups:write',
@@ -180,6 +184,11 @@ function infoHandler(req, res) {
       'task-order',
       // settings:sync: GET|PUT /v1/settings-sync and POST /v1/settings-sync/pull, the settings linked services keep as one set (link tokens only).
       ...(require('../services/settings-sync').syncEnabled() ? [require('../services/settings-sync').CAPABILITY] : []),
+      // learn:sync: GET|PUT /v1/learn-sync, POST /v1/learn-sync/pull and the home routes of a company computer (routes/learn-sync.js), the English
+      // learning data linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or LEARN_SYNC_ENABLED=false.
+      ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').CAPABILITY] : []),
+      // device:tier: `company_computer` above, and /v1/device-settings/device-tier.
+      require('../services/device-tier').CAPABILITY,
       // settings:device: /v1/device-settings/<path>, the allowlisted per-device settings routes of the page, for a linked device's page (link tokens only).
       require('./device-settings').CAPABILITY,
       // rule-sync:receive: GET /v1/rule-sync/status and PUT /v1/rule-sync/bundle (routes/rule-sync.js); the bundle is applied only when this Engine's role is receive.

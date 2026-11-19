@@ -53,6 +53,7 @@ For implementation details see [Component architecture](docs/ARCHITECTURE.md), a
 - Read-only share links `/share/:token` keep working (they are no longer created from the page).
 - PWA: the page can be installed (`manifest.json`, start `/`); an iPhone Home Screen app added from `/h5` keeps `manifest-h5.json` (start `/h5`).
 - Automatically checks for updates; the header "Update" button shows a red dot when a new version exists and opens the update details (install type, release link, force update, restart help).
+- **Usage data** (Settings → Usage data, on by default): the page records which buttons are pressed, where and when (never what you type, task or session names, paths or terminal text), stored only in this server's database for 90 days and never sent anywhere. The group shows the most used and the never used controls, and can clear or export the data as JSON; turn "Record button use" off to stop it. See `docs/design/usage-data.md`.
 
 ### Tunnel (frp)
 

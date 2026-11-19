@@ -154,6 +154,7 @@ const groupsReady = {
   devices: () => document.getElementById('h5-engine-list') ? document.getElementById('h5-rule-sync-role') && document.getElementById('h5-peer-fs-enabled') : document.querySelectorAll('.h5-shown-device').length === 5,
   attention: () => document.querySelector('#h5-plugins-listeners, #h5-plugins-notifiers') && document.querySelector('#h5-attention-widget-enabled, #h5-attention-widget-language'),
   account: () => document.getElementById('h5-access-title') || document.getElementById('h5-access-remote'),
+  'usage-data': () => document.getElementById('h5-usage-enabled') || document.getElementById('h5-usage-remote'),
 };
 async function partsOfTab(page) {
   const result = {};
@@ -177,12 +178,14 @@ const EXPECTED = {
     devices: { headings: ['Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
     attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
     account: { headings: ['Access mode', 'Authenticator'], marks: [] },
+    'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
   },
 };
 // K01: the same parts, read on K01 or replaced by the note; the marketplace and the token form are this device's and are left out.
 EXPECTED['2'] = {
   ...EXPECTED.local,
   attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-attention-widget-enabled', '#h5-skill-pointer', '#h5-attention-sound'] },
+  'usage-data': { headings: [], marks: [] }, // usage data lives on each server: K01's own page shows it
 };
 
 // Nothing in the sheet is wider than the screen (a tab scrolled out of the tab row is clipped by its scroller), and every visible button, tab and
@@ -306,6 +309,7 @@ const ALL_LOCAL = {
   // The desktop window is one card again, with its switch and its language (as without tabs).
   attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
   account: { headings: ['Access mode', 'Authenticator'], marks: [] },
+  'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
 };
 async function testSyncOff(browser) {
   let { context, page, errors } = await openPage(browser, { syncOff: true });
@@ -318,7 +322,7 @@ async function testSyncOff(browser) {
   assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'Changes here are saved on this device');
   assert.equal(await page.getAttribute('#h5-settings-tab-local', 'title'), 'Changes here are saved on this device');
   // This device's tab draws every part (the shared ones are this device's own now); no status line of the sync and no pill.
-  assert.deepEqual(await shownGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account']);
+  assert.deepEqual(await shownGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account', 'usage-data']);
   assert.deepEqual(await partsOfTab(page), ALL_LOCAL);
   assert.equal(await page.locator('#h5-sec-settings-sync').count(), 0, 'no "Settings sync" status line');
   assert.equal(await page.locator('.h5-scope').count(), 0, 'no pill says a change is copied');

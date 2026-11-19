@@ -29,6 +29,7 @@ import { ArchivedTasks } from './ArchivedTasks.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
+import { menuDetail } from './usage-track.mjs';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
 
@@ -192,7 +193,7 @@ export function NewSessionDialog({ state, ui }) {
                   <ListItemButton
                     key={`${index}:${item.label}`} component="button" type="button" selected={on} disabled={busy}
                     className={[item.kind === 'danger' ? 'danger' : '', on ? 'h5-choice-on' : ''].filter(Boolean).join(' ') || undefined}
-                    onClick={() => ui.actions.menuRun(index)}
+                    onClick={() => ui.actions.menuRun(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
                     {...(option ? {
                       id: optionId(index), role: 'option', 'aria-selected': on ? 'true' : 'false', tabIndex: on ? 0 : -1,
                       onKeyDown: event => optionKey(event, index), onFocus: () => { if (!on) setAt(picks.indexOf(index)); },

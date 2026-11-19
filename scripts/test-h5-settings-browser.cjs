@@ -63,10 +63,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && call.url !== '/api/device-settings/devices' && call.url !== '/api/settings-sync' && !/^\/api\/attention(\?|$)/.test(call.url)));
     assert.equal(await page.locator('#h5-settings-tabs').count(), 0, 'no tabs without a linked device');
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
-    assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
+    assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data']);
     // The first page: the groups as two-line rows (a 44px touch target at least), then Language and Log out, Log out last.
     const rows = await page.evaluate(() => [...document.querySelectorAll('#h5-settings .h5-settings-group-item, #h5-settings .h5-setting-row')].map(el => ({ id: el.id, height: Math.round(el.getBoundingClientRect().height), text: el.querySelector('.MuiListItemText-primary').textContent })));
-    assert.deepEqual(rows.map(row => row.text), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Language', 'Log out']);
+    assert.deepEqual(rows.map(row => row.text), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data', 'Language', 'Log out']);
     assert.equal(rows.at(-1).id, 'h5-logout', 'the Log out row itself is the button');
     assert.ok(rows.every(row => row.height >= 44), `every row is a 44px touch target: ${JSON.stringify(rows)}`);
     assert.equal(await page.locator('#h5-settings').getByText('Log out', { exact: true }).count(), 1, 'the Log out text is not repeated');

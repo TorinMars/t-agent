@@ -15,6 +15,7 @@ import { startColumns } from './Columns.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported by the Settings
 // chunk (screen-settings.jsx), which is loaded when Settings first opens (lazy-screens.jsx).
 import { preloadOnIntent } from './lazy-screens.jsx';
+import { startUsageTracking } from './usage-track.mjs';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');
@@ -123,3 +124,7 @@ startAttentionFeed(ui, { t, api, passive: Boolean(paneId) });
 
 // The chunk of an on-demand screen is asked for as soon as the pointer, a finger or the focus reaches the button that opens it.
 preloadOnIntent(document);
+
+// Usage data (usage-track.mjs, "Usage data" in docs/design/usage-data.md): which buttons are pressed, sent in batches to this server while the
+// switch in Settings > Usage data is on. A pane records its own presses (its document is its own).
+startUsageTracking(ui);

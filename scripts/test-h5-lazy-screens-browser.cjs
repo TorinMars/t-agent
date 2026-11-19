@@ -50,7 +50,7 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       await page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
       assert.ok(chunks.includes('screen-settings'), 'the Settings chunk is fetched when Settings opens');
-      assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access']);
+      assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data']);
       await openSettingsGroup(page, 'attention');
       // The parts registered by their own modules (attention-slots.mjs), imported by the Settings chunk.
       await page.locator('#h5-set-attention .h5-attention-slot[data-slot="plugins"]').waitFor({ state: 'attached' });
@@ -105,8 +105,8 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       const again = await openPage(browser, { viewport: { width: 390, height: 800 }, touch: true, zh: true }); // the reload
       await again.page.evaluate(() => window.H5UI.set({ settingsOpen: true }));
       await again.page.locator('#h5-settings').waitFor({ state: 'visible' });
-      assert.equal(await again.page.locator('.h5-setting-group').count(), 5);
-      assert.equal(await again.page.locator('#h5-settings-groups .h5-settings-group-item').count(), 5);
+      assert.equal(await again.page.locator('.h5-setting-group').count(), 6);
+      assert.equal(await again.page.locator('#h5-settings-groups .h5-settings-group-item').count(), 6);
       await again.context.close();
     }
     console.log('Lazy screens: chunks on first open or hover, every Settings group and slot, a failed chunk retried: passed.');

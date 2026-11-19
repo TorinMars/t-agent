@@ -241,6 +241,10 @@ app.use('/api/rule-sync', require('./routes/rule-sync').createBrowserRouter());
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
+// Usage data of the page (services/ui-events.js, docs/design/usage-data.md): button presses stored on this server only, old rows deleted at start and daily.
+const uiEvents = require('./services/ui-events').createUiEvents({ db });
+require('./services/ui-events').startRetention(uiEvents);
+app.use('/api/ui-events', require('./routes/ui-events').createUiEventsRouter({ service: uiEvents }));
 app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
 app.use('/api/settings-sync', require('./routes/settings-sync').createSettingsSyncRouter());
 // The per-device settings of a linked device, read and written from this page (routes/device-settings.js).

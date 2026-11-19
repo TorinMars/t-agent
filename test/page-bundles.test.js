@@ -66,7 +66,7 @@ test('React and highlight.js exist once among the bundles, and every chunk on di
   for (const url of files.slice(2)) assert.match(url, /^\/js\/chunks\/[\w.-]+-[A-Z0-9]{8}\.js$/, `${url} is named by its hash`);
   // The screens are chunks the shell imports when they open.
   const dynamic = new Set(files.flatMap(url => importsOf(read(url)).dynamics).map(url => url.replace(/-[A-Z0-9]{8}\.js$/, '').replace('/js/chunks/', '')));
-  assert.deepEqual([...dynamic].sort(), ['markdown-view-entry', 'screen-attention', 'screen-design', 'screen-files', 'screen-settings']);
+  assert.deepEqual([...dynamic].sort(), ['markdown-view-entry', 'screen-attention', 'screen-design', 'screen-files', 'screen-settings', 'screen-switcher']);
 });
 
 test('shell-core.mjs names every module entry.jsx imports, so the first screen stays in one shared chunk', () => {

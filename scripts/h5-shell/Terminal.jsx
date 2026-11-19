@@ -107,7 +107,7 @@ const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { b
 
 // The bottom area ("Bottom bar" in docs/design/page-terminal-and-bottom-bar.md). Three layouts, one component tree:
 // - a column of the multi-column view (pane mode): CompactBottom, one row (decided once, before the first render);
-// - the single view on a computer (input mode 'pointer'): ONE 56px row, the draft box, Upload, Voice, Saved commands, Docs, "More tools" and Send
+// - the single view on a computer (input mode 'pointer'): ONE 56px row, the draft box, Upload, Voice, Saved commands, Docs, Recent sessions, "More tools" and Send
 //   (`#h5-bottom[data-single]`; CompactTools in its 'single' mode);
 // - the single view on a touch screen: the draft box (hidden by default), row 1 the function keys, row 2 the eight tools (CompactTools in its
 //   'phone' mode), and under them, while `state.osk` is on, the terminal's own on-screen keyboard (Osk.jsx), which takes room in the layout.
@@ -118,9 +118,9 @@ const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { b
 // What the bottom area draws (its rows read it from here): T-Attention and the file sheet only as the counts and flags the buttons show.
 const BOTTOM = state => ({
   input: state.input, terminalAgent: state.terminalAgent, translating: state.translating, osk: state.osk, mods: state.mods, keyboard: state.keyboard,
-  activeCount: state.activeCount, pane: state.pane, wide: state.wide, paneFocused: Boolean(state.paneFocused),
+  activeCount: state.pane ? state.activeCount : 0, pane: state.pane, wide: state.wide, paneFocused: Boolean(state.paneFocused), // the count: a column's only
   attentionNeeds: Number(state.attention && state.attention.needs) || 0, attentionOpen: Boolean(state.attention && state.attention.open),
-  designOpen: Boolean(state.design && state.design.open),
+  designOpen: Boolean(state.design && state.design.open), switcherOpen: Boolean(state.switcher),
 });
 // The surface of the single view's bottom area: an MD2 bar (Paper at elevation 1, without its shadow) with a divider above it.
 const BAR_SURFACE = { flex: '0 0 auto', position: 'relative', zIndex: 3, borderTop: 1, borderColor: 'divider', boxShadow: 'none' };
@@ -257,14 +257,17 @@ function CompactBottom({ state, ui, list, onMenu, pointer }) {
 // - 'column' (a column's row): Upload, Voice, "More tools", Send. More holds Saved commands (the same list), Docs, Next running or pending session (with
 //   its count, which the "More tools" button also shows as a badge), Send as typed without translating (the form's submit, as Option+Enter), and in
 //   touch input mode Terminal keyboard.
-// - 'single' (the single view on a computer, which is wider than a column, so more tools have a button): Upload, Voice, Saved commands, Docs, "More
-//   tools" and Send. More holds T-Attention (`#h5-attention`, with its "Needs you" count), Next running or pending session (`#h5-cycle`) and Send as
+// - 'single' (the single view on a computer, which is wider than a column, so more tools have a button): Upload, Voice, Saved commands, Docs, Recent
+//   sessions (`#h5-cycle`, the session switcher), "More tools" and Send. More holds T-Attention (`#h5-attention`, with its "Needs you" count) and Send as
 //   typed (`#h5-translate-send`): the ids of the buttons they replace. The menu stays mounted (hidden while closed), so those ids are always in the
-//   page. When the area is narrower than SINGLE_NARROW px, Saved commands and Docs go into More too (`#h5-more-commands`, `#h5-more-docs`), as in a column.
+//   page. When the area is narrower than SINGLE_NARROW px, Saved commands and Docs go into More too (`#h5-more-commands`, `#h5-more-docs`), as in a
+//   column; Recent sessions stays a button. "More tools" carries no badge here: the rail and the bottom navigation show the T-Attention count.
 // - 'phone' (touch input): seven tools as flat 44px icon buttons that share the width of a 48px row: terminal keyboard, draft keyboard, upload, saved
-//   commands, voice, Docs and next session (seven fit from 320px). The set never changes with the state (the send buttons are in the draft box). The
+//   commands, voice, Docs and Recent sessions (seven fit from 320px). The set never changes with the state (the send buttons are in the draft box). The
 //   active tool is drawn in the primary colour. T-Attention is not among them: on a phone it is a destination of the bottom navigation (BottomNav.jsx,
 //   which carries `#h5-attention`); a touch screen on the wide layout has it in the navigation rail.
+// Recent sessions (`ui.actions.pressSwitcher`, h5.js) opens the session switcher (Switcher.jsx; "Session switcher" in docs/design/session-switcher.md),
+// and a press while it is open switches to its centred card. It shows no count, and the selected look (`aria-expanded`) while the switcher is open.
 // The elements h5.js and voice-input.js hold (the file input, the voice button) keep their place among the children in every mode (the `null`
 // slots), so a change of the input mode never remounts them.
 // A chosen menu item runs after the menu closed, so the focus the menu gives back to its button does not take it from where the action put it
@@ -302,14 +305,14 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
   useEffect(() => { if (phone) setAnchor(null); }, [phone]);
   const close = () => setAnchor(null);
   const choose = action => () => { close(); setTimeout(action, 0); };
-  const active = Number(state.activeCount) || 0;
+  const active = column ? Number(state.activeCount) || 0 : 0;
   const needs = single ? state.attentionNeeds : 0;
-  // The "More tools" button counts what waits inside it: running or pending sessions, and on the computer row the T-Attention items that need the person
-  // too (the badge is orange while some do, like the T-Attention badge).
-  const waiting = active + (single ? needs : 0);
-  const more = t('More tools') + (waiting ? ` (${waiting})` : '');
+  // A column's "More tools" button counts the running or pending sessions its "Next running or pending session" goes through.
+  const more = t('More tools') + (active ? ` (${active})` : '');
   const cycle = t('Next running or pending session') + (active ? ` (${active})` : '');
   const attention = t('Attention') + (needs ? ` (${needs})` : '');
+  const recent = t('Recent sessions');
+  const switcherOpen = Boolean(state.switcherOpen);
   const image = t('Upload image or file');
   const commands = t('Saved commands');
   const docs = t('Docs');
@@ -355,11 +358,15 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
       </MenuItem>,
     );
   }
+  if (column) {
+    menuItems.push(
+      <MenuItem key="cycle" {...item} id="h5-more-cycle" data-action="cycle" aria-label={cycle} onClick={choose(() => ui.actions.nextActiveSession())}>
+        <ListItemIcon><Icon name="cycleSessions" size={20} /></ListItemIcon><ListItemText>{t('Next running or pending session')}</ListItemText>
+        {active ? <Pill className="h5-more-count" label={active > 99 ? '99+' : String(active)} tone="primary" filled aria-hidden="true" sx={COUNT_PILL} /> : null}
+      </MenuItem>,
+    );
+  }
   menuItems.push(
-    <MenuItem key="cycle" {...item} id={single ? 'h5-cycle' : 'h5-more-cycle'} data-action="cycle" aria-label={cycle} onClick={choose(() => ui.actions.nextActiveSession())}>
-      <ListItemIcon><Icon name="cycleSessions" size={20} /></ListItemIcon><ListItemText>{t('Next running or pending session')}</ListItemText>
-      {active ? <Pill className="h5-more-count" label={active > 99 ? '99+' : String(active)} tone="primary" filled aria-hidden="true" sx={COUNT_PILL} /> : null}
-    </MenuItem>,
     <Divider key="divider" />,
     <MenuItem
       key="send" {...item} id={single ? 'h5-translate-send' : 'h5-more-send'} disabled={state.translating} title={single ? t('Send as typed, without translating') + SEND_KEYS : undefined}
@@ -401,18 +408,19 @@ function CompactTools({ state, ui, onMenu, menu = false, pointer, mode = 'column
       <IconButton id="h5-voice" className="h5-voice" sx={look} title={t(pointer ? 'Voice input: click to start speaking' : 'Voice input: hold to speak, release to stop')} aria-label={t('Voice input')} aria-pressed="false"><Icon name="voice" size={size} /></IconButton>
       {single && !narrow ? commandsButton : null}
       {phone || (single && !narrow) ? docsButton : null}
-      {/* Next running or pending terminal session, in task sheet order (`ui.actions.nextActiveSession` in h5.js). */}
-      {phone ? (
-        <IconButton id="h5-cycle" data-action="cycle" sx={look} {...named(cycle)} onClick={() => ui.actions.nextActiveSession()}>
-          <Badge className="h5-cycle-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="circular" sx={BADGE}><Icon name="cycleSessions" size={size} /></Badge>
-        </IconButton>
-      ) : null}
+      {/* Recent sessions: the session switcher (Switcher.jsx); a press while it is open switches to its centred card. */}
+      {column ? null : (
+        <IconButton
+          id="h5-cycle" data-action="cycle" sx={look} {...named(recent)} aria-haspopup="dialog" aria-expanded={switcherOpen ? 'true' : 'false'}
+          aria-controls={switcherOpen ? 'h5-switcher' : undefined} onClick={() => ui.actions.pressSwitcher()}
+        ><Icon name="cycleSessions" size={size} /></IconButton>
+      )}
       {phone ? null : (
         <IconButton
           id="h5-more" data-action="more" sx={look} {...named(more)} aria-haspopup="menu" aria-expanded={anchor ? 'true' : 'false'} aria-controls={anchor ? 'h5-more-menu' : undefined}
           onClick={event => setAnchor(anchor ? null : event.currentTarget)}
         >
-          <Badge className="h5-more-badge" badgeContent={waiting} max={99} color={needs ? 'warning' : 'primary'} invisible={!waiting} overlap="rectangular" sx={BADGE}><Icon name="taskMore" size={20} /></Badge>
+          {column ? <Badge className="h5-more-badge" badgeContent={active} max={99} color="primary" invisible={!active} overlap="rectangular" sx={BADGE}><Icon name="taskMore" size={20} /></Badge> : <Icon name="taskMore" size={20} />}
         </IconButton>
       )}
       {phone ? null : (

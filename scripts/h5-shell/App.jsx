@@ -14,7 +14,7 @@ import { theme } from './theme.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 // Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
-import { AttentionPanel, DesignSheet, FileTreeSheet, SettingsDrawer } from './lazy-screens.jsx';
+import { AttentionPanel, DesignSheet, FileTreeSheet, SettingsDrawer, SwitcherScreen } from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
 // shorter); from then on it stays mounted, so MUI runs its closing animation and gives the focus back as usual.
@@ -47,6 +47,7 @@ const TASK_DIALOG_KEYS = ['taskDialog'];
 const NEW_SESSION_KEYS = ['menu'];
 const NEW_TASK_KEYS = ['newTaskOpen', 'sources', 'creatingTask'];
 const NOTICE_KEYS = ['notice'];
+const SWITCHER_KEYS = ['switcher']; // the open switcher reads the rest itself (Switcher.jsx), so closed it draws nothing on an activity push
 // What the page itself needs: the layout flags and which sheets and dialogs are open.
 const OPEN = state => ({
   tasksModal: state.tasksOpen && !state.wide,
@@ -64,6 +65,7 @@ const OPEN = state => ({
   taskDialog: Boolean(state.taskDialog),
   naming: Boolean(state.menu && state.menu.naming),
   newTask: state.newTaskOpen,
+  switcher: Boolean(state.switcher),
 });
 
 // The whole phone page. Every part subscribes to the slice of the store it draws (the header, the terminal area, the bottom rows, the task list and its
@@ -118,6 +120,8 @@ export function App({ ui }) {
       {/* The two create dialogs: they lie over the task sheet of a phone, outside it, so it closing after a create does not take them away mid-animation. */}
       <Lazy open={open.naming}><Part ui={ui} keys={NEW_SESSION_KEYS} part={NewSessionDialog} /></Lazy>
       <Lazy open={open.newTask}><Part ui={ui} keys={NEW_TASK_KEYS} part={NewTaskDialog} /></Lazy>
+      {/* The session switcher of the single view, over the terminal (Switcher.jsx; opened by the switch button, `#h5-cycle`). */}
+      <Lazy open={open.switcher}><Part ui={ui} keys={SWITCHER_KEYS} part={SwitcherScreen} /></Lazy>
       <ColumnStrip ui={ui} />
       <Part ui={ui} keys={NOTICE_KEYS} part={Notice} />
     </ThemeProvider>

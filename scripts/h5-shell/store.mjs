@@ -120,5 +120,10 @@ export const initialState = () => ({
   attention: { open: false, status: 'idle', items: null, needs: 0, live: false, focus: null },
   updateDot: false, // the header updater (Update.jsx `UpdateButton`) sees an update or a needed restart: the red dot of the multi-column bar's Update button
   columns: null, // the multi-column view of a wide screen (Columns.jsx `startColumns`): null on a page that never offers it (a pane, a framed page)
-  activeCount: 0, // running or pending terminal sessions of the listed services (the badge on #h5-cycle; h5.js `showActiveCount`)
+  activeCount: 0, // running or pending terminal sessions of the listed services (the count of a column's "Next running or pending session"; h5.js `showActiveCount`)
+  // The session switcher (Switcher.jsx, docs/design/session-switcher.md): `recent` the sessions shown on this device, most recent first, without the ones
+  // that are gone ({ sourceKey, taskId, terminalId, title, agent }; h5.js "Recent sessions"); `switcher` null while closed, else { seq, press (counts the
+  // presses of the switch button while open), previews: { '<sourceKey>|<taskId>|<terminalId>': { lines, live } } }.
+  recent: [],
+  switcher: null,
 });

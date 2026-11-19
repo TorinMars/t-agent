@@ -171,6 +171,10 @@
   let terminalId = null;
   const expanded = new Set(); // the refs (`taskRef`) of the tasks whose sessions are listed in the task sheet (a tap on a task opens and closes its list; it does not open the task); any number can be open
   const peeks = new Map(); // ref -> the sessions of an expanded task that is not the selected one: { source, taskId, status, terminals }
+  // The recent sessions of the switcher and the last lines of terminals closed in this page (see "Recent sessions" below; here, before anything is shown).
+  const RECENT_STORE = 'recent-sessions';
+  let recentList = PANE ? [] : ui.recent.parse(store.get(RECENT_STORE));
+  const previews = new Map();
   let peekSeq = 0;
   const PEEK_WAIT_MS = 10000; // a list still on "Loading…" after this long says it could not be read (a late answer still replaces that)
   // The Restart and Delete requests on their way, by Engine and task (a promise that ends when all of them have). A list of that task read meanwhile would
@@ -972,6 +976,80 @@
     } catch (error) {
       tell(`Could not read the session states: ${error.message}`, 'error');
     } finally { cycling = false; }
+  };
+  // ── Recent sessions: the session switcher (`#h5-cycle`, Switcher.jsx; "Session switcher" in docs/design/session-switcher.md) ──
+  // The terminal sessions this page showed, most recently shown first (scripts/h5-shell/recent-sessions.mjs, through `ui.recent`), noted whenever the
+  // shown terminal changes by any path (`noteShown`, from `renderSessionName`) and remembered on this device. `state.recent` is the list without the
+  // sessions that are gone (their task left the list, or the terminal is not among the task's known terminals). A pane keeps none: the switcher is
+  // the single view's. The cards' preview lines cost no request: a warm terminal gives its buffer's last lines, one closed earlier in this page what
+  // it showed then (`previews`, kept in memory only), any other none (the card shows its state instead).
+  const PREVIEW_LINES = 40;
+  let switcherSeq = 0;
+  function knownTerminals() {
+    const out = {};
+    if (task && terminalsState === 'ready') out[taskRef(source, task.id)] = terminals.map(row => String(row.terminal_id));
+    for (const [ref, peek] of peeks) if (peek.status === 'ready') out[ref] = peek.terminals.map(row => String(row.terminal_id));
+    return out;
+  }
+  function publishRecent() {
+    if (PANE) return;
+    const list = ui.get().taskList;
+    const shown = listReady && list && Array.isArray(list.tasks) ? ui.recent.prune(recentList, list.tasks, knownTerminals()) : [];
+    // What is gone for sure is forgotten too: only once every listed device answered and none is offline (an offline device keeps its sessions).
+    if (shown !== recentList && listReady && !listedSources().some(from => from.status !== 'ready')) {
+      recentList = shown;
+      store.set(RECENT_STORE, ui.recent.serialize(recentList));
+    }
+    ui.set({ recent: ui.share(ui.get().recent, shown) });
+  }
+  let recentTaskList = null;
+  ui.subscribe(() => { const list = ui.get().taskList; if (list !== recentTaskList) { recentTaskList = list; publishRecent(); } });
+  function noteShown(target, row) {
+    if (PANE || !target) return;
+    const before = recentList[0];
+    const same = before && ui.recent.key(before) === ui.recent.key(target);
+    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null });
+    if (!same && ui.get().switcher) ui.actions.closeSwitcher(); // shown another way (the task list, T-Attention): the switcher is out of date
+    if (next === recentList) return;
+    recentList = next;
+    store.set(RECENT_STORE, ui.recent.serialize(recentList));
+    publishRecent();
+  }
+  // The last lines of a terminal's buffer (trailing empty rows left out), plain text.
+  function linesOf(term) {
+    try {
+      const buffer = term.buffer.active;
+      const text = index => { const line = buffer.getLine(index); return line ? line.translateToString(true).slice(0, 300) : ''; };
+      let last = buffer.length - 1;
+      while (last >= 0 && !text(last).trim()) last -= 1;
+      const out = [];
+      for (let index = Math.max(0, last - PREVIEW_LINES + 1); index <= last; index += 1) out.push(text(index));
+      return out;
+    } catch { return []; }
+  }
+  function keepPreview(s) {
+    if (PANE || !s || !s.term) return;
+    previews.delete(s.key);
+    previews.set(s.key, linesOf(s.term));
+    while (previews.size > ui.recent.max) previews.delete(previews.keys().next().value);
+  }
+  ui.actions.openSwitcher = () => {
+    if (PANE || columnsShown() || ui.get().switcher) return;
+    // The keyboards close first (as the next-session button did): the switcher covers the key row and the draft box.
+    if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+    setOsk(false);
+    publishRecent();
+    const lines = {};
+    for (const s of warm) if (!s.disposed) lines[s.key] = { lines: linesOf(s.term), live: true };
+    for (const entry of ui.get().recent) { const key = ui.recent.key(entry); if (!lines[key] && previews.has(key)) lines[key] = { lines: previews.get(key), live: false }; }
+    ui.set({ switcher: { seq: ++switcherSeq, press: 0, previews: lines } });
+  };
+  ui.actions.closeSwitcher = () => { if (ui.get().switcher) ui.set({ switcher: null }); };
+  // The switch button: the first press opens the switcher; a press while it is open switches to its centred card (Switcher.jsx watches `press`).
+  ui.actions.pressSwitcher = () => {
+    const open = ui.get().switcher;
+    if (open) ui.set({ switcher: { ...open, press: open.press + 1 } });
+    else ui.actions.openSwitcher();
   };
   // The "⋯" of a session row, of the task the row is under (`ref`), which may not be the selected one.
   ui.actions.rowMore = (ref, row, anchor) => {
@@ -1785,6 +1863,7 @@
     const target = task && terminalId && !agentChat ? { sourceKey: source.key, taskId: task.id, terminalId: String(terminalId) } : null;
     const shownBefore = ui.get().shownTarget || null;
     if (JSON.stringify(shownBefore) !== JSON.stringify(target)) ui.set({ shownTarget: target });
+    noteShown(target, current); // the recent sessions of the switcher
     if (agentChat && agentFor) {
       name = agentFor.title || '';
     } else if (terminalId) {
@@ -2698,11 +2777,12 @@
     const shown = columnsShown();
     if (shown === columnsParked) return;
     columnsParked = shown;
-    if (shown) { dropEarlySocket(); closeWarm(); return; }
+    if (shown) { ui.actions.closeSwitcher(); dropEarlySocket(); closeWarm(); return; }
     setTimeout(() => { if (!columnsShown()) connect(); }, 0); // after the shell has drawn the page again, so the terminal box has its size
   });
   function disposeSession(s) {
     if (s.disposed) return;
+    keepPreview(s); // what it showed last, for its card in the switcher
     if (session === s) session = null;
     warm = warm.filter(item => item !== s);
     s.disposed = true;
@@ -2984,7 +3064,7 @@
 
   // ── A hardware keyboard: type to the terminal, Escape back to it, Cmd/Ctrl+K for the search (deskKeys: a computer, or a tablet with a keyboard) ──
   // A dialog, a temporary drawer (task sheet, settings, menus) or the copy view is open: keys belong to it.
-  const modalOpen = () => Boolean(document.querySelector('.MuiModal-root:not(.MuiModal-hidden), dialog[open]')) || ui.get().copyText !== null;
+  const modalOpen = () => Boolean(document.querySelector('.MuiModal-root:not(.MuiModal-hidden), dialog[open]')) || ui.get().copyText !== null || Boolean(ui.get().switcher);
   const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock', 'Fn', 'FnLock', 'Hyper', 'Super', 'OS', 'AltGraph', 'Dead', 'Unidentified', 'Process', 'Compose']);
   // Cmd+K (Apple) or Ctrl+K (others) focuses the session search; on a wide screen a folded sidebar comes back first. Inside the terminal, Ctrl+K stays the
   // shell's own key (kill to the end of the line), so on other systems it works only outside the terminal.

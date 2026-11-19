@@ -1,0 +1,107 @@
+// The recent sessions of the session switcher (scripts/h5-shell/recent-sessions.mjs): order, duplicates, the limit, sessions that are gone, other
+// engines, the stored form, the cards and their places in the stack.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const load = () => import('../scripts/h5-shell/recent-sessions.mjs');
+const entry = (sourceKey, taskId, terminalId, extra = {}) => ({ sourceKey, taskId, terminalId, title: '', agent: null, ...extra });
+
+test('a shown session goes first, an older copy of it goes away, and nothing changes when it is already first', async () => {
+  const { noteRecent } = await load();
+  let list = [];
+  list = noteRecent(list, entry('local', 1, 'default', { title: 'Terminal 1' }));
+  list = noteRecent(list, entry('local', 1, 'c1', { title: 'Claude work', agent: 'claude' }));
+  list = noteRecent(list, entry('local', 2, 'b1'));
+  assert.deepEqual(list.map(item => item.terminalId), ['b1', 'c1', 'default']);
+  list = noteRecent(list, entry('local', 1, 'default', { title: 'Terminal 1' }));
+  assert.deepEqual(list.map(item => item.terminalId), ['default', 'b1', 'c1'], 'shown again: first, once');
+  assert.equal(noteRecent(list, entry('local', '1', 'default', { title: 'Terminal 1' })), list, 'the same list when it is first already (ids as strings or numbers)');
+  const renamed = noteRecent(list, entry('local', 1, 'default', { title: 'Build' }));
+  assert.notEqual(renamed, list);
+  assert.equal(renamed[0].title, 'Build', 'a new name of the first one is kept');
+  assert.equal(renamed.length, 3);
+  assert.equal(noteRecent(list, { sourceKey: 'local', taskId: 1 }), list, 'an entry without a terminal is ignored');
+});
+
+test('at most RECENT_MAX entries are kept, the oldest go', async () => {
+  const { noteRecent, RECENT_MAX } = await load();
+  assert.equal(RECENT_MAX, 12);
+  let list = [];
+  for (let index = 0; index < 20; index += 1) list = noteRecent(list, entry('local', 1, `t${index}`));
+  assert.equal(list.length, RECENT_MAX);
+  assert.equal(list[0].terminalId, 't19');
+  assert.equal(list.at(-1).terminalId, 't8');
+  assert.equal(noteRecent([], entry('local', 1, 'x'), 3).length, 1);
+});
+
+test('sessions of other engines are entries of their own, keyed by device, task and terminal', async () => {
+  const { noteRecent, recentKey, recentTaskRef } = await load();
+  let list = noteRecent([], entry('local', 5, 'default'));
+  list = noteRecent(list, entry('remote:7', 5, 'default', { agent: 'codex' }));
+  assert.equal(list.length, 2, 'the same task id and terminal id on another engine is another session');
+  assert.equal(recentKey(list[0]), 'remote:7|5|default');
+  assert.equal(recentTaskRef(list[0]), 'remote:7|5', 'the ref openRow takes');
+  assert.equal(list[0].agent, 'codex');
+});
+
+test('sessions that are gone are dropped: a task not in the list, a terminal not among the known terminals of its task', async () => {
+  const { pruneRecent } = await load();
+  const list = [entry('local', 1, 'default'), entry('local', 1, 'gone'), entry('remote:7', 3, 'x'), entry('local', 9, 'y'), entry('remote:8', 1, 'z')];
+  const tasks = [{ source: 'local', id: 1 }, { source: 'remote:7', id: 3 }, { source: 'remote:8', id: 1 }];
+  const kept = pruneRecent(list, tasks, { 'local|1': ['default', 'c1'] });
+  assert.deepEqual(kept.map(item => `${item.sourceKey}|${item.taskId}|${item.terminalId}`), ['local|1|default', 'remote:7|3|x', 'remote:8|1|z']);
+  assert.equal(pruneRecent(kept, tasks, {}), kept, 'nothing gone: the same list');
+  assert.deepEqual(pruneRecent(list, [], {}), [], 'an empty task list keeps nothing');
+});
+
+test('the stored form survives a round trip; bad data reads as an empty list, duplicates and extra entries are dropped', async () => {
+  const { noteRecent, parseRecent, serializeRecent, RECENT_MAX } = await load();
+  let list = noteRecent([], entry('local', 1, 'default', { title: 'Terminal 1' }));
+  list = noteRecent(list, entry('remote:7', 2, 'c1', { title: 'Review', agent: 'claude' }));
+  assert.deepEqual(parseRecent(serializeRecent(list)), list);
+  for (const bad of [null, '', 'nope', '{"a":1}', '42', '[1,2]']) assert.deepEqual(parseRecent(bad), [], String(bad));
+  const messy = JSON.stringify([
+    { sourceKey: 'local', taskId: 1, terminalId: 'a', agent: 'vim', title: 7 },
+    { sourceKey: 'local', taskId: '1', terminalId: 'a' },
+    { sourceKey: '', taskId: 1, terminalId: 'b' },
+    ...Array.from({ length: 20 }, (_, index) => ({ sourceKey: 'local', taskId: 2, terminalId: `t${index}` })),
+  ]);
+  const read = parseRecent(messy);
+  assert.equal(read.length, RECENT_MAX);
+  assert.deepEqual(read[0], { sourceKey: 'local', taskId: '1', terminalId: 'a', title: '', agent: null }, 'cleaned: an unknown agent and a non-text title are dropped');
+  assert.equal(read.filter(item => item.terminalId === 'a').length, 1, 'no duplicate');
+});
+
+test('the cards: the shown session on top and current, then the others; the switcher opens on the previous one', async () => {
+  const { switcherCards, startIndex } = await load();
+  const list = [entry('local', 1, 'default'), entry('local', 2, 'b1'), entry('remote:7', 3, 'x')];
+  const cards = switcherCards(list, { sourceKey: 'local', taskId: 1, terminalId: 'default' });
+  assert.deepEqual(cards.map(card => [card.terminalId, card.current]), [['default', true], ['b1', false], ['x', false]]);
+  assert.equal(startIndex(cards), 1);
+  const underChat = switcherCards(list, null);
+  assert.equal(underChat.some(card => card.current), false, 'a chat is shown: no current card');
+  assert.equal(startIndex(underChat), 0);
+  const alone = switcherCards([entry('local', 1, 'default')], { sourceKey: 'local', taskId: '1', terminalId: 'default' });
+  assert.equal(alone.length, 1);
+  assert.equal(startIndex(alone), 0, 'only the current one: it is centred');
+  assert.deepEqual(switcherCards([], null), []);
+});
+
+test('the place of a card: centred, behind on the left (smaller, darker), on top to the right, further right off the stack', async () => {
+  const { cardPlace, settleIndex } = await load();
+  const size = { step: 56, offset: 232, far: 390 };
+  assert.deepEqual(cardPlace(0, size), { x: -0, scale: 1, dim: 0 });
+  const behind = cardPlace(2, size);
+  assert.equal(behind.x, -112);
+  assert.ok(Math.abs(behind.scale - 0.92) < 1e-9);
+  assert.ok(Math.abs(behind.dim - 0.36) < 1e-9);
+  assert.deepEqual(cardPlace(-1, size), { x: 232, scale: 1, dim: 0 });
+  assert.deepEqual(cardPlace(-0.5, size), { x: 116, scale: 1, dim: 0 }, 'between two places it is interpolated');
+  assert.deepEqual(cardPlace(-2, size), { x: 622, scale: 1, dim: 0 });
+  assert.equal(cardPlace(30, size).dim, 0.72, 'the darkening has a limit');
+  assert.equal(settleIndex(1.4, 5), 1);
+  assert.equal(settleIndex(1.6, 5), 2);
+  assert.equal(settleIndex(-0.8, 5), 0);
+  assert.equal(settleIndex(9, 5), 4);
+  assert.equal(settleIndex(3, 0), 0);
+});

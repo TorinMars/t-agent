@@ -134,15 +134,16 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       assert.equal(row.single, true, `${label}: the single view's computer row`);
       assert.ok(Math.abs(row.height - 57) <= 1, `${label}: the row is 56px plus the divider (${row.height})`);
       assert.equal(row.lines, 1, `${label}: the draft box and every tool share one line`);
-      assert.deepEqual(row.ids, ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-more', 'h5-translate-button'], `${label}: Upload, Voice, Saved commands, Docs, More tools, Send`);
+      assert.deepEqual(row.ids, ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-cycle', 'h5-more', 'h5-translate-button'], `${label}: Upload, Voice, Saved commands, Docs, Recent sessions, More tools, Send`);
       assert.deepEqual(row.contained, ['h5-translate-button:Send'], `${label}: one primary "Send"`);
       assert.equal(await page.locator('#h5-translate-button').getAttribute('aria-label'), 'Translate and send');
       // The menu stays mounted, so the moved ids are always in the page (contract 3 of the redesign: #h5-attention).
-      for (const id of ['h5-attention', 'h5-cycle', 'h5-translate-send']) assert.equal(await page.locator(`#h5-more-menu #${id}[role="menuitem"]`).count(), 1, `${label}: #${id} is an item of More tools`);
+      for (const id of ['h5-attention', 'h5-translate-send']) assert.equal(await page.locator(`#h5-more-menu #${id}[role="menuitem"]`).count(), 1, `${label}: #${id} is an item of More tools`);
+      assert.equal(await page.locator('#h5-more-menu #h5-cycle').count(), 0, `${label}: Recent sessions is a button of the row, not in More tools`);
       assert.equal(await page.locator('#h5-attention').isVisible(), false, `${label}: More tools is closed`);
       await page.locator('#h5-more').click();
       await page.locator('#h5-more-menu [role="menu"]').waitFor();
-      for (const id of ['h5-attention', 'h5-cycle', 'h5-translate-send']) assert.equal(await page.locator(`#${id}`).isVisible(), true, `${label}: #${id} is shown in More tools`);
+      for (const id of ['h5-attention', 'h5-translate-send']) assert.equal(await page.locator(`#${id}`).isVisible(), true, `${label}: #${id} is shown in More tools`);
       assert.equal(await page.locator('#h5-more-commands, #h5-more-docs').count(), 0, `${label}: Saved commands and Docs have their own buttons here`);
       await page.keyboard.press('Escape');
       await page.locator('#h5-more-menu [role="menu"]').waitFor({ state: 'hidden' });
@@ -284,7 +285,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await page.locator('.h5-design-panel').waitFor({ state: 'hidden' });
       assert.deepEqual(await page.locator('#h5-app').boundingBox(), app, `${label}: closed, the page is as it was`);
 
-      // Acknowledgement (once): showing a Pending terminal acks it; the next-session button then finds nothing pending.
+      // Acknowledgement (once): showing a Pending terminal acks it; the next-session action (a column's) then finds nothing pending.
       if (viewport.width === 1440) {
         activity = { 1: { p1: 'done' } };
         const from = acks.length;
@@ -293,8 +294,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
         assert.deepEqual(activity, { 1: {} }, 'the server cleared the pending state');
         const push = snapshot => page.waitForFunction(snap => window.activityStream.push('/api/tasks/terminal-activity/stream', snap), snapshot);
         await push({ activity, subagents: {} }); // the server pushes the cleared state
-        await page.locator('#h5-more').click();
-        await page.locator('#h5-cycle').click();
+        await page.evaluate(() => window.H5UI.actions.nextActiveSession()); // a column's "Next running or pending session" (the single view has the switcher)
         await toast(page, 'No running or pending sessions');
         // The shown terminal finishes while it is on screen: the pushed 'done' makes the page ack it again by itself.
         const again = acks.length;

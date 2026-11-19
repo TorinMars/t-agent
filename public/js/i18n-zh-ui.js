@@ -983,6 +983,17 @@ I18n.add({
   "No running or pending sessions": "没有运行中或待验收的会话",
   "This is the only running or pending session": "这是唯一一个运行中或待验收的会话",
   "Could not read the session states: {1}": "读取会话状态失败：{1}",
+  // Session switcher (the switch button, docs/design/session-switcher.md)
+  "Recent sessions": "最近的会话",
+  "Current": "当前",
+  "No preview yet": "暂无预览",
+  "No other recent sessions": "没有其他最近的会话",
+  "Press \u21cb again to switch to it": "再按 \u21cb 切换到它",
+  "Swipe to move \u00b7 tap a card or press \u21cb to switch": "滑动移动 · 点卡片或按 \u21cb 切换",
+  "Press \u21cb again or click a card to switch": "再按 \u21cb 或点击卡片切换",
+  "move (or scroll sideways)": "移动（或横向滚动）",
+  "switch": "切换",
+  "close": "关闭",
   // Single page, phase 2: Engines settings, Update details, task actions
   "Devices": "设备",
   "The machines whose tasks and terminals this page shows, this one first. To add one, link it below.": "本页面显示其任务和终端的机器，本机排在第一位。要添加设备，请在下面关联。",

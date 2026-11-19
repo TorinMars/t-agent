@@ -192,6 +192,20 @@ func runSelfTest() -> Never {
           && nav("t-agent://show") == .cancel && nav("vnc://host") == .cancel)
     check("nav: no URL is cancelled", navigationDecision(url: nil, server: base3000, mainFrame: true, newWindow: false) == .cancel)
 
+    // Links the page hands over (tagentOpen).
+    func link(_ body: Any?, scheme: String = "http", host: String = "127.0.0.1", port: Int = 3000) -> URL? {
+        linkToOpen(body: body, frameScheme: scheme, frameHost: host, framePort: port, server: base3000)
+    }
+    check("page link: http(s) from the server's page opens", link("https://github.com/x?y=1#z")?.absoluteString == "https://github.com/x?y=1#z"
+          && link("http://example.com/")?.absoluteString == "http://example.com/")
+    check("page link: only from the server's own origin", link("https://github.com/", port: 3001) == nil
+          && link("https://github.com/", host: "evil.example") == nil && link("https://github.com/", scheme: "https") == nil)
+    check("page link: other schemes are refused", link("file:///etc/passwd") == nil && link("javascript:alert(1)") == nil
+          && link("t-agent://show") == nil && link("mailto:a@example.com") == nil)
+    check("page link: not a string, empty, too long or with spaces is refused", link(42) == nil && link(nil) == nil && link("") == nil
+          && link("https://example.com/" + String(repeating: "a", count: 4100)) == nil && link("https://exa mple.com/") == nil
+          && link("https:///nohost") == nil)
+
     // Microphone.
     check("mic: granted for the server's origin", grantsMediaCapture(scheme: "http", host: "127.0.0.1", port: 3000, server: base3000))
     check("mic: denied for another port or host", !grantsMediaCapture(scheme: "http", host: "127.0.0.1", port: 3001, server: base3000)
@@ -581,6 +595,12 @@ func runSelfTest() -> Never {
     check("placeholder view: starting shows the spinner, no buttons", !view.spinner.isHidden && view.startButton.isHidden && view.retryButton.isHidden
           && view.titleLabel.stringValue == "Starting T-Agent…")
     check("window: Open in Browser uses the server without a page", window.currentPageURL == base3000 && externals.isEmpty)
+    check("window: the tagentOpen handler is installed and holds the window weakly", window.openLinkMessages?.target === window)
+    window.openLink(body: "https://example.com/pr/42", scheme: "http", host: "127.0.0.1", port: 3000)
+    window.openLink(body: "https://example.com/other", scheme: "http", host: "evil.example", port: 3000)
+    window.openLink(body: "file:///etc/passwd", scheme: "http", host: "127.0.0.1", port: 3000)
+    check("window: a link from the page opens in the default browser, others do not",
+          externals.map { $0.absoluteString } == ["https://example.com/pr/42"])
 
     print("\(passes) passed, \(failures) failed")
     exit(failures == 0 ? 0 : 1)

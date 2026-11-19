@@ -1,0 +1,24 @@
+#!/bin/sh
+# TA-CLIPBOARD-SHIM
+# The $BROWSER of T-Agent terminals (lib/clipboard-shims.js sets BROWSER to this file). Claude Code, Python's webbrowser and
+# Codex on Linux run `$BROWSER <url>`: one http(s) URL is shown on the page that shows this terminal. Anything else, and a link
+# no page took, goes to the browser the terminal had before (TA_BROWSER_REAL, the inherited $BROWSER), else to the real open
+# (macOS) or xdg-open found later in PATH. See open-link-lib.sh.
+_ta_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+. "$_ta_dir/osc52-lib.sh" || exit 1
+. "$_ta_dir/open-link-lib.sh" || exit 1
+if [ "$#" = 1 ] && ta_link_candidate "$1" && ta_link_deliver "$1"; then
+  exit 0
+fi
+if [ -n "$TA_BROWSER_REAL" ]; then
+  _ta_real=$(command -v "${TA_BROWSER_REAL%% *}" 2>/dev/null)
+  if [ -n "$_ta_real" ] && ! ta_is_shim "$_ta_real"; then
+    set -f
+    # shellcheck disable=SC2086 # a $BROWSER value may carry its own arguments
+    exec $TA_BROWSER_REAL "$@"
+  fi
+fi
+case $(uname -s 2>/dev/null) in
+  Darwin) ta_exec_real open "$@" ;;
+  *) ta_exec_real xdg-open "$@" ;;
+esac

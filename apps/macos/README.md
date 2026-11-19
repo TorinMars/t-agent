@@ -6,14 +6,14 @@ A native window for the T-Agent web service: the page in a WKWebView, a menu bar
 |------|---------------|
 | `main.swift` | The entry point (top-level code only here), the overview comment, `--self-test` and `--version` |
 | `Config.swift` | The app version, the data home, reading `app.json` (missing or broken file, every field checked), the web addresses |
-| `URLPolicy.swift` | Same origin, what stays in the window and what opens in the browser, the microphone rule, page URLs, download names |
+| `URLPolicy.swift` | Same origin, what stays in the window and what opens in the browser, the links the page hands over (`linkToOpen`), the microphone rule, page URLs, download names |
 | `DeepLink.swift` | Parsing `t-agent://show` and `t-agent://open?path=...` |
 | `ServiceControl.swift` | The exact pm2 / launchd commands, shell quoting, the process runner, the health check, the timer type |
 | `ServiceMonitor.swift` | The state machine (checking, running, not running, starting, restarting, stopping), the one automatic start, the check timing, the injected `AppServices` |
 | `Placeholder.swift` | The not-running view and its text per state |
 | `StatusMenu.swift` | The menu bar item: entries per state, the web addresses, the icon drawn in code |
 | `MainMenu.swift` | The main menu; the Edit menu makes Cmd+C / V / X / A / Z work in the page |
-| `MainWindow.swift` | The window, the web view and its navigation, UI and download delegates |
+| `MainWindow.swift` | The window, the web view and its navigation, UI and download delegates, the `tagentOpen` message handler |
 | `AppDelegate.swift` | The wiring, the Apple Event for links, the alerts, the preferences, the real services |
 | `SelfTest.swift` | `--self-test` and its fakes |
 

@@ -1,0 +1,9 @@
+#!/bin/sh
+# TA-CLIPBOARD-SHIM
+# open shim of T-Agent terminals (macOS): `open <one http(s) URL>` shows the link on the page that shows this terminal, so it opens
+# on the device the person uses. Files, apps, other schemes, flags (-a, -b, -e, -t, -f, -R, -g, -n, -W ...) and a link no page
+# took run the real open found later in PATH. See open-link-lib.sh.
+_ta_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+. "$_ta_dir/osc52-lib.sh" || exit 1
+. "$_ta_dir/open-link-lib.sh" || exit 1
+ta_open_link open "$@"

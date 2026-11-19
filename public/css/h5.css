@@ -184,6 +184,9 @@ html[data-bnav] #h5-attention-sheet > .MuiDrawer-paper { max-height: 100%; paddi
 .h5-clipboard-preview { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 13px/1.45 ui-monospace, Menlo, monospace; }
 .h5-clipboard-actions { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .h5-clipboard-bar .MuiButton-root { flex: none; white-space: nowrap; }
+/* The link bar (Terminal.jsx OpenLinkBar, docs/design/open-links.md) uses the copy bar's rules; it sits below the copy bar when both show. */
+.h5-clipboard-bar ~ .h5-open-link-bar { top: 104px; }
+.h5-open-link-more { font-weight: 400; opacity: .86; }
 @keyframes h5-clipboard-in { from { opacity: 0; transform: translateY(-16px); } to { opacity: 1; transform: none; } }
 @keyframes h5-clipboard-pulse { from { box-shadow: 0 0 0 0 var(--h5-clipboard-ring, #90caf9); } to { box-shadow: 0 0 0 12px transparent; } }
 /* The countdown: a 3px line along the bottom edge (clipped to the bar's rounded corners) that shrinks to nothing over the bar's ttl (the

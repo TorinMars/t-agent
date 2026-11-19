@@ -71,6 +71,19 @@ func navigationDecision(url: URL?, server: URL, mainFrame: Bool, newWindow: Bool
     }
 }
 
+/// A link the page asks the app to open (`window.webkit.messageHandlers.tagentOpen.postMessage(url)`: a web link a program in a
+/// terminal opened, see docs/design/open-links.md). The web view blocks window.open without a click, so the page hands it over here.
+/// Only from a frame of the server's own origin (the page or one of its column frames), only a string of at most 4096 characters
+/// that is an http(s) URL with a host; anything else is nil and nothing opens.
+func linkToOpen(body: Any?, frameScheme: String, frameHost: String, framePort: Int, server: URL) -> URL? {
+    guard sameOrigin(scheme: frameScheme, host: frameHost, port: framePort, server: server),
+          let text = body as? String, !text.isEmpty, text.utf16.count <= 4096,
+          !text.unicodeScalars.contains(where: { $0.value <= 0x20 || $0.value == 0x7F }),
+          let url = URL(string: text), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+          let host = url.host, !host.isEmpty else { return nil }
+    return url
+}
+
 /// The microphone (and camera) prompt of a page: granted only for the server's own origin.
 func grantsMediaCapture(scheme: String, host: String, port: Int, server: URL) -> Bool {
     sameOrigin(scheme: scheme, host: host, port: port, server: server)

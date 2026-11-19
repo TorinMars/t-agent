@@ -196,7 +196,7 @@ test('every script of the phone page is deferred, in its old order, and the page
   assert.equal(order.at(-1), '/js/h5.js');
   // The scripts sent in one request (data-combine) are the small hand-written ones; the big and the vendored ones and the dictionaries stay on their own.
   const combine = scripts.filter(attrs => attrs.endsWith(' data-combine')).map(attrs => /src="([^"]+)"/.exec(attrs)[1]);
-  assert.equal(combine.length, 19);
+  assert.equal(combine.length, 20);
   for (const src of combine) {
     assert.match(src, /^\/js\/[\w.-]+\.js$/);
     assert.doesNotMatch(src, /h5-shell|\/h5\.js|i18n-zh-/, `${src} stays a request of its own`);

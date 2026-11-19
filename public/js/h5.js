@@ -2162,6 +2162,13 @@
   const WARM_IDLE_MS = 60000;
   let warm = []; // the connected sessions, most recently shown first (the shown one, `session`, is first)
   const warmKey = (from, taskId, id) => `${from.key}|${taskId}|${id}`;
+  // The link bar's queue ("Links opened by programs" below): declared here, because hideShown can run before that part of the script.
+  const LINK_TTL_MS = 30000;
+  const LINK_QUEUE_MAX = 5;
+  let links = [];
+  let linkIds = 0;
+  let linkTimer = 0;
+  let linkHold = { on: false, round: 0 };
   function hideShown() {
     const s = session;
     session = null;
@@ -2169,6 +2176,7 @@
     s.el.hidden = true;
     s.term.blur();
     s.clipboard?.dismiss(); // a copy request of a terminal that is no longer shown goes away
+    dropLinks(s); // and so do its links waiting on the link bar
     scheduleWheelSync();
     syncPresence();
   }
@@ -2273,7 +2281,8 @@
         allowNonHttpProtocols: false,
         activate(event, uri) {
           if (!/^https?:\/\//i.test(uri)) return;
-          if (window.confirm(`${tr('Open this link?')}\n\n${uri}`)) window.open(uri, '_blank', 'noopener,noreferrer');
+          // Where the person is: the Mac app's default browser, Safari / the default browser from a Home Screen app (open-link.js).
+          if (window.confirm(`${tr('Open this link?')}\n\n${uri}`)) OpenLink.open(uri);
         },
       },
     });
@@ -2719,6 +2728,7 @@
       const message = TerminalProtocol.parse(ws, event.data); // null: terminal output, never a control message
       if (message) {
         if (message.type === 'history') { replay(s, ws, message); sendPresence(s, true); } // once after every (re)connect
+        else if (message.type === 'open-link') offerLink(s, ws, message);
         return; // history-page, pong
       }
       s.term.write(typeof event.data === 'string' ? event.data : new Uint8Array(event.data));
@@ -3474,6 +3484,59 @@
     const cell = cellAt(s, event.clientX, event.clientY);
     if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
+  // ── Links opened by programs (docs/design/open-links.md; routes/open-link.js and offerLink in routes/terminal.js) ──
+  // A program in a terminal opened a web link; the server offers it to this page as { type: 'open-link', id, url, agent }. The page takes it
+  // only when that terminal is in the foreground (the one shown, the page visible and used lately: the presence rule) and answers
+  // { type: 'open-link-result', id, shown } at once; when it says no, the engine opens the link as before. The Mac app opens a taken link at
+  // once (OpenLink); elsewhere the link bar (`state.openLink`) waits for Open, which opens inside its click. Links in a row queue (at most
+  // LINK_QUEUE_MAX, the bar shows the first and "+N"); the bar of a link goes away after LINK_TTL_MS like Dismiss (held while a mouse is
+  // over it or the focus is in it), and the links of a terminal that is hidden go away with it.
+  // (The queue's state is declared next to the warm terminals: hideShown runs before this part of the script.)
+  function showLinks() {
+    clearTimeout(linkTimer);
+    const first = links[0];
+    if (first && !linkHold.on) linkTimer = setTimeout(() => dropLink(first), LINK_TTL_MS);
+    ui.set({ openLink: first ? { id: first.id, url: first.url, program: first.program, more: links.length - 1, ttl: LINK_TTL_MS, holding: linkHold.on, round: linkHold.round } : null });
+  }
+  function dropLink(item) {
+    if (!item || !links.includes(item)) return;
+    links = links.filter(other => other !== item);
+    if (!links.length) linkHold = { on: false, round: 0 };
+    showLinks();
+  }
+  function dropLinks(s) {
+    if (!links.some(item => item.s === s)) return;
+    links = links.filter(item => item.s !== s);
+    showLinks();
+  }
+  function offerLink(s, ws, message) {
+    const shown = typeof OpenLink !== 'undefined' && OpenLink.valid(message.url) && foregroundOf(s);
+    try { TerminalProtocol.send(ws, { type: 'open-link-result', id: message.id, shown }); } catch { /* closing */ }
+    if (!shown) return;
+    const env = OpenLink.environment();
+    if (env.app) { OpenLink.open(message.url, env); return; }
+    links = [...links, { id: ++linkIds, s, url: message.url, program: OpenLink.programName(message.agent) }].slice(-LINK_QUEUE_MAX);
+    showLinks();
+  }
+  // Open on the bar: inside this click's user activation.
+  ui.actions.openLinkOpen = () => {
+    const item = links[0];
+    dropLink(item);
+    if (item && item.s === session && !item.s.disposed) OpenLink.open(item.url);
+  };
+  ui.actions.openLinkCopy = () => {
+    const item = links[0];
+    if (!item) return;
+    dropLink(item);
+    void TerminalClipboard.writeText(item.url).then(ok => tell(ok ? 'Link copied' : 'Could not copy the link', ok ? 'success' : 'error'));
+  };
+  ui.actions.openLinkDismiss = () => dropLink(links[0]);
+  ui.actions.openLinkHold = on => {
+    if (!links.length || linkHold.on === Boolean(on)) return;
+    linkHold = { on: Boolean(on), round: linkHold.round + (on ? 0 : 1) };
+    showLinks();
+  };
+
   // The copy bar (terminal-clipboard.js, `state.clipboard`): a program's copy waiting for Copy, or a copy the browser refused (kind tap).
   // The button writes inside its own tap, Cancel drops it; it hides by itself after TerminalClipboard.BAR_TTL_MS.
   if (typeof TerminalClipboard !== 'undefined') TerminalClipboard.setHost({ show: request => ui.set({ clipboard: request }) });

@@ -18,8 +18,20 @@ func makeWebViewConfiguration(version: String, dataStore: WKWebsiteDataStore) ->
     return configuration
 }
 
+/// The `tagentOpen` script message handler. WKUserContentController keeps its handlers strongly, so the window is held weakly here.
+final class OpenLinkMessages: NSObject, WKScriptMessageHandler {
+    weak var target: MainWindowController?
+    init(_ target: MainWindowController) { self.target = target }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        let origin = message.frameInfo.securityOrigin
+        target?.openLink(body: message.body, scheme: origin.protocol, host: origin.host, port: origin.port)
+    }
+}
+
 final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     static let autosaveName = "T-Agent Main Window"
+    /// The script message the page sends a link to open in the default browser (linkToOpen, docs/design/open-links.md).
+    static let openLinkMessage = "tagentOpen"
 
     let window: NSWindow
     let webView: WKWebView
@@ -37,6 +49,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     private var titleObservation: NSKeyValueObservation?
     /// Where each running download goes.
     private var downloadPaths: [ObjectIdentifier: String] = [:]
+    private(set) var openLinkMessages: OpenLinkMessages?
 
     /// `autosave` false (the self-test) neither restores nor saves the frame. `inspectable` lets Safari's Web Inspector
     /// attach (macOS 13.3 and newer).
@@ -62,6 +75,9 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
         webView.allowsMagnification = true
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        let messages = OpenLinkMessages(self)
+        webView.configuration.userContentController.add(messages, name: MainWindowController.openLinkMessage)
+        openLinkMessages = messages
         if #available(macOS 13.3, *) { webView.isInspectable = inspectable }
         webView.autoresizingMask = [.width, .height]
         placeholder.autoresizingMask = [.width, .height]
@@ -220,6 +236,13 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         downloadPaths.removeValue(forKey: ObjectIdentifier(download))
         NSLog("T-Agent: a download failed: %@", error.localizedDescription)
+    }
+
+    // MARK: Links from the page
+
+    /// A link the page hands over (a program in a terminal opened it): http(s) from the server's own origin opens in the default browser.
+    func openLink(body: Any?, scheme: String, host: String, port: Int) {
+        if let url = linkToOpen(body: body, frameScheme: scheme, frameHost: host, framePort: port, server: server()) { openExternal(url) }
     }
 
     // MARK: UI delegate

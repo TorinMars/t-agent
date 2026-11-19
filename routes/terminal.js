@@ -613,8 +613,9 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         ...baseEnv,
         TERM: 'xterm-256color',
         // The clipboard shims come first, so a copy by a program in the terminal (`| pbcopy`, Neovim, Claude Code)
-        // also reaches the browser clipboard as OSC 52 (lib/clipboard-shims.js).
-        ...clipboardShimEnv(fullPath, runAs),
+        // also reaches the browser clipboard as OSC 52, and a web link it opens (`open`, `xdg-open`, $BROWSER) goes to the
+        // page that shows this terminal (lib/clipboard-shims.js, routes/open-link.js).
+        ...clipboardShimEnv(fullPath, runAs, { env: baseEnv }),
         // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
         // otherwise zsh shows Chinese directory names as \M-^ garbage.
         ...utf8LocaleEnv(process.env),
@@ -847,12 +848,15 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
   }
   s.ws = ws;
   s.wsClientId = clientId;
+  s.linkControl = null; // set below once this socket can take control messages (offerLink)
   sharedClock.wake(); // someone is watching: the terminals are polled at full speed again
 
   s.ready = false;
   // proto=2: control messages are binary frames; every text frame is terminal input (see public/js/terminal-protocol.js).
   const binaryControl = query.get('proto') === '2';
   const sendControl = message => ws.send(binaryControl ? Buffer.from(JSON.stringify(message)) : JSON.stringify(message));
+  // Links from programs (offerLink) go only to a page that speaks the binary protocol: an old page would print the JSON.
+  if (binaryControl) s.linkControl = { ws, send: sendControl };
   // Drop connections that vanished without a close (a phone that went to sleep), so they do not keep the terminal owned.
   let alive = true;
   ws.on('pong', () => { alive = true; });
@@ -897,6 +901,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     }
     if (data.type === 'ping' && binaryControl) { sendControl({ type: 'pong' }); return true; }
     if (data.type === 'presence') { presence.report(key, ws, data.foreground); return true; }
+    if (data.type === 'open-link-result') { settleLinkOffer(data.id, ws, data.shown === true); return true; }
     if (data.type === 'resize') {
       if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return true;
       s.activity?.noteInput();
@@ -935,13 +940,59 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
 
   ws.on('close', () => {
     presence.drop(key, ws);
+    dropLinkOffers(ws);
     if (s.ws === ws) {
       s.ws = null;
+      s.linkControl = null;
     }
   });
 
   ws.on('error', (err) => {
     console.error('[terminal] ws error:', err.message);
+  });
+}
+
+// Links opened by programs ("Links opened by programs" in docs/design/terminals.md, docs/design/open-links.md): the link shims of the
+// terminal call routes/open-link.js, which calls offerLink. The link goes, as the control message { type: 'open-link', id, url, agent },
+// to the page attached to this terminal (one socket at a time; a page on another device attached through a service link has its socket
+// end here too). The page answers { type: 'open-link-result', id, shown }: shown is true when this terminal is the one it shows and the
+// person is using the page, and then the page opens the link or shows its bar. No page, an old page, a page that says no or no answer
+// within LINK_OFFER_MS: { delivered: false }, and the shim opens the link on this machine as before.
+const LINK_OFFER_MS = 2000;
+const linkOffers = new Map(); // id -> { ws, done(shown), timer }
+let linkOfferIds = 0;
+function settleLinkOffer(id, ws, shown) {
+  const offer = linkOffers.get(id);
+  if (!offer || offer.ws !== ws) return;
+  offer.done(shown);
+}
+function dropLinkOffers(ws) {
+  for (const offer of [...linkOffers.values()]) if (offer.ws === ws) offer.done(false, 'no-viewer');
+}
+function offerLink(taskId, requestedTerminalId, url, { timeoutMs = LINK_OFFER_MS } = {}) {
+  let id;
+  try { id = terminalId(requestedTerminalId); } catch { return Promise.resolve({ delivered: false, reason: 'no-viewer' }); }
+  const s = sessions.get(sessionKey(taskId, id));
+  const control = s && s.linkControl;
+  if (!control || s.ws !== control.ws || control.ws.readyState !== 1 || !s.ready || !s.authorized || !s.authorized()) {
+    return Promise.resolve({ delivered: false, reason: 'no-viewer' });
+  }
+  const row = id === 'default' ? null : prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), id);
+  const offerId = `l${++linkOfferIds}`;
+  return new Promise(resolve => {
+    const offer = {
+      ws: control.ws,
+      timer: setTimeout(() => offer.done(false, 'no-answer'), timeoutMs),
+      done(shown, reason = shown ? undefined : 'not-shown') {
+        if (linkOffers.get(offerId) !== offer) return;
+        linkOffers.delete(offerId);
+        clearTimeout(offer.timer);
+        resolve(shown ? { delivered: true } : { delivered: false, reason });
+      },
+    };
+    offer.timer.unref?.();
+    linkOffers.set(offerId, offer);
+    try { control.send({ type: 'open-link', id: offerId, url, agent: (row && row.agent) || null }); } catch { offer.done(false, 'no-viewer'); }
   });
 }
 
@@ -1200,4 +1251,4 @@ function shutdownTerminals() {
   } catch {}
 }
 
-module.exports = { terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity };
+module.exports = { offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity };

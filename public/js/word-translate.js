@@ -136,14 +136,21 @@ const WordTranslate = (() => {
     place(hit.range);
   }
 
+  // A meaning that was shown becomes a word card of English learning (learn-collect.js), in its dictionary form when the service gave one.
+  function collect(hit, entry) {
+    if (typeof LearnCollect === 'undefined' || !entry || !entry.meaning) return;
+    const base = entry.base && /^[A-Za-z][A-Za-z'\u2019-]{0,39}$/.test(entry.base) ? entry.base : hit.word;
+    LearnCollect.word(base, entry.meaning);
+  }
+
   function show(hit) {
     const mine = ++shown;
     if (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') CSS.highlights.set('wt-word', new Highlight(hit.range));
     const key = `${hit.word.toLowerCase()}|${hit.sentence}`;
-    if (cache.has(key)) { render(hit, { entry: cache.get(key) }); return; } // nothing to wait for
+    if (cache.has(key)) { render(hit, { entry: cache.get(key) }); collect(hit, cache.get(key)); return; } // nothing to wait for
     render(hit, {});
     lookup(hit.word, hit.sentence).then(
-      entry => { if (mine === shown) render(hit, { entry }); },
+      entry => { if (mine === shown) { render(hit, { entry }); collect(hit, entry); } },
       error => { if (mine === shown) render(hit, { error: error.message || 'Could not translate the word' }); },
     );
   }

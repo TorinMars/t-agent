@@ -290,3 +290,42 @@ CREATE TABLE IF NOT EXISTS ui_controls (
   last_seen  INTEGER NOT NULL,
   PRIMARY KEY (key, surface, layout)
 );
+
+-- English learning (schema 13; "Learn English" in docs/design/learn-english.md, services/learn.js). One card per English word or sentence of an owner:
+-- the person's own translated sentences, the words they looked up, and the starter list. Times are milliseconds since 1970 on the server's clock.
+CREATE TABLE IF NOT EXISTS learn_cards (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner         TEXT    NOT NULL,                -- the login of the page (req.session.user.login), like other per-owner data
+  kind          TEXT    NOT NULL,                -- word | sentence
+  en            TEXT    NOT NULL,                -- the English text as it is shown
+  norm          TEXT    NOT NULL,                -- en trimmed, inner spaces collapsed, lower-cased: the duplicate check
+  zh            TEXT    NOT NULL DEFAULT '',     -- the Chinese meaning, '' until a meaning is fetched
+  source        TEXT    NOT NULL,                -- translation | lookup | starter | manual
+  context       TEXT    NOT NULL DEFAULT '',     -- where it came from (the task title), may be empty
+  created_at    INTEGER NOT NULL,
+  due_at        INTEGER NOT NULL,
+  interval_days REAL    NOT NULL DEFAULT 0,
+  ease          REAL    NOT NULL DEFAULT 2.5,
+  reps          INTEGER NOT NULL DEFAULT 0,      -- answers given
+  lapses        INTEGER NOT NULL DEFAULT 0,      -- answers graded "again"
+  last_result   TEXT,                            -- again | hard | good, NULL before the first answer
+  last_at       INTEGER,
+  last_correct  INTEGER,                         -- 1 / 0: whether the last answer was right, NULL before the first answer
+  suspended     INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (owner, kind, norm)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);
+
+-- Every answer, for the streak, "done today" and the mistakes list. A card's answers go with it.
+CREATE TABLE IF NOT EXISTS learn_reviews (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  card_id INTEGER NOT NULL REFERENCES learn_cards(id) ON DELETE CASCADE,
+  owner   TEXT    NOT NULL,
+  at      INTEGER NOT NULL,
+  mode    TEXT    NOT NULL,                      -- review | spell | build | dictation | say | fill | mistakes
+  grade   TEXT    NOT NULL,                      -- again | hard | good
+  correct INTEGER NOT NULL,                      -- 1 / 0
+  answer  TEXT                                   -- what the person answered, at most 500 characters
+);
+CREATE INDEX IF NOT EXISTS idx_learn_reviews_owner_at ON learn_reviews (owner, at);
+CREATE INDEX IF NOT EXISTS idx_learn_reviews_card ON learn_reviews (card_id, at);

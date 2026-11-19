@@ -61,6 +61,7 @@
 | [static-asset-caching.md](docs/design/static-asset-caching.md) | Content-hash URLs, long cache, pre-compressed and combined files. | 8 KB |
 | [usage-data.md](docs/design/usage-data.md) | Usage data: local, private tracking of button presses on the page (what is and is not recorded, keys, surfaces, batches, storage and retention, the switch, the `/api/ui-events` API, the Settings group). | 11 KB |
 | [mind-maps.md](docs/design/mind-maps.md) | The mind map editor: why this shape, maps of every service, the editor library, the page, the Mind maps tab of the multi-column view, editing, saving, .xmind. | 19 KB |
+| [learn-english.md](docs/design/learn-english.md) | Learn English: study cards from the person's translated sentences, looked-up words and a starter list; the tables, the spaced review rules, the `/api/learn` API, meanings through the translator, the collection hooks of the page. | 9 KB |
 
 ### T-Attention
 

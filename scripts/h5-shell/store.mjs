@@ -113,7 +113,7 @@ export const initialState = () => ({
   design: null, // { open, status: loading | ready | missing | folder | no-dir | no-task | error, dir, path, link, line, content, message } of the file sheet (DESIGN.md, or a terminal file link)
   files: null, // { open, key, base, dir } of the read-only file tree (FileTree.jsx): base = `<tasksBase>/<task>/files` (null without a task); a new key (task, working directory or Engine) draws a new tree
   taskDialog: null, // { kind: 'delete' | 'workdir' | 'archive' | 'visibility', id, title, workDir, error, busy, status, devices } a confirmation or form of a task; `status` (loading | ready | error) and `devices` belong to 'visibility'
-  notice: null, // { id, message, type } the last floating notice
+  notice: null, // { id, message, type, action } the last floating notice (action: { label, run } or null)
   // T-Attention (attention-feed.mjs, Attention.jsx): { open, status: idle | loading | ready | error, items, needs (the waiting_user count, the badge
   // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }; with several engines also engines, failed, noMove
   // (see "Every engine in one list" in docs/design/page-attention.md)

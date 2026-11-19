@@ -53,6 +53,18 @@ const ITEMS = () => [
   { id: 8, title: 'Pay invoice', status: 'todo', priority: 'high', due_date: '2026-11-10', source: 'user', updated_at: AT, created_at: AT },
 ];
 
+// Rows from a T-Agent session: 1 (Needs you, terminal t2 of task 1) and 2 (Review with a link, terminal t1); 9 names a terminal task 1 no longer has
+// (gone); 5 ran on another machine; 4 was added by hand.
+const SESSION_ITEMS = () => [
+  { id: 1, title: 'Allow Bash in the repo', status: 'waiting_user', priority: 'none', source: 'claude', attention_reason: 'Claude needs your permission to use Bash', updated_at: AT, created_at: AT,
+    context: { pending: { kind: 'permission', text: 'Allow Bash: npm test' }, host: 'mac', session: { agent: 'claude', id: 's1', resume: "claude --resume s1" }, tagent: { task_id: '1', terminal_id: 't2' } } },
+  { id: 2, title: 'Check the PR', status: 'review', priority: 'none', source: 'claude', attention_reason: 'Claude finished. Review the result.', link_url: 'https://example.test/pr/1', link_label: 'PR #1', updated_at: AT, created_at: AT,
+    context: { tagent: { task_id: 1, terminal_id: 't1' } } },
+  { id: 4, title: 'Write release notes', status: 'todo', priority: 'low', source: 'user', updated_at: AT, created_at: AT },
+  { id: 5, title: 'Fix the build', status: 'todo', priority: 'high', source: 'cli', updated_at: AT, created_at: AT, context: { host: 'linux-box', tagent: { task_id: '1', terminal_id: 't1' } } },
+  { id: 9, title: 'Old session', status: 'working', priority: 'none', source: 'codex', updated_at: AT, created_at: AT, context: { session: { agent: 'codex', id: 's9', resume: 'codex resume s9' }, tagent: { task_id: '1', terminal_id: 't9' } } },
+];
+
 // The answer of GET /api/attention/plugins (contract: "T-Attention plugin overview"): one listener set up here, one not, a configured notifier and
 // one that failed to load. `settings` is the stubbed state of GET/PUT /api/attention/plugins/:name/config (the enable switch and the values).
 const PLUGINS = (settings = CONFIGS()) => ({
@@ -77,7 +89,7 @@ const CONFIGS = () => ({ telegram: { enabled: true, values: { callSeconds: 45 },
 const configView = entry => ({ name: 'telegram', enabled: entry.enabled, schema: TELEGRAM_SCHEMA, test: true, customUi: 'telegram',
   values: { callSeconds: entry.values.callSeconds === undefined ? 30 : entry.values.callSeconds, botToken: { set: Boolean(entry.secret) } } });
 
-async function openPage(browser, { viewport, touch = true, notify = true, items = null }) {
+async function openPage(browser, { viewport, touch = true, notify = true, items = null, activity = null }) {
   const scale = SHOTS && touch ? { deviceScaleFactor: 3 } : {};
   const context = await browser.newContext({ viewport, ...(touch ? { isMobile: true, hasTouch: true } : {}), ...scale });
   const page = await context.newPage();
@@ -138,6 +150,9 @@ async function openPage(browser, { viewport, touch = true, notify = true, items 
     if (p === '/api/attention-notify/config') return json({ rules: { statuses: ['waiting_user'], modes: {}, callDelayMinutes: 0, quietHours: { enabled: false, start: '22:00', end: '08:00', timeZone: '' }, rateLimit: { message: 20, call: 6 }, publicUrl: '' }, modes: ['message', 'call', 'off'], notifiers: [{ name: 'telegram', label: 'Telegram', status: { loggedIn: true, step: 'done', apiId: 1, hasApiHash: true, phone: '+1***', account: { id: '1', name: 'Ann' }, target: null } }], recent: [] });
     if (p === '/api/tasks' && method === 'GET') return json([{ id: 1, title: 'Fix login', status: 'doing', work_dir: '/work/fix-login' }]);
     if (p === '/api/task-groups') return json([{ key: 'doing', name: 'In progress', sort_order: 1 }]);
+    // The terminal activity (the task list's session states), read by polling: its stream is not mocked (404).
+    if (activity && p === '/api/tasks/terminal-activity') return json(activity);
+    if (activity && p === '/api/tasks/terminal-subagents') return json({});
     if (p === '/api/tasks/1/terminals') return json([{ terminal_id: 't1', title: 'Terminal 1' }, { terminal_id: 't2', title: 'Claude 1', agent: 'claude' }]);
     if (/\/agent\/conversations$/.test(p)) return json([]);
     if (p === '/api/tasks/1/files/content') {
@@ -271,6 +286,7 @@ const panelLayout = page => page.evaluate(() => {
     rows: [...panel.querySelectorAll('.h5-attention-row')].map(node => ({
       id: node.dataset.id, status: text(node.querySelector('.h5-attention-status')), detail: text(node.querySelector('.h5-attention-reason, .h5-attention-progress')),
       actions: [...node.querySelectorAll('.h5-attention-action')].map(text), link: Boolean(node.querySelector('.h5-attention-row-link')),
+      session: text(node.querySelector('.h5-attention-session-name')), details: Boolean(node.querySelector('.h5-attention-details')),
       titleSize: getComputedStyle(node.querySelector('.h5-attention-title')).fontSize,
     })),
   };
@@ -336,7 +352,7 @@ const editLayout = page => page.evaluate(() => {
       assert.equal(phoneLayout.counts, 'Needs you: 2 · Open: 6', 'the header counts what needs the person and what is open');
       assert.equal(await page.locator('#h5-attention-close').getAttribute('aria-label'), 'Back', 'a back arrow on a phone');
       assert.equal(await page.evaluate(() => document.querySelector('.h5-attention-panel header').firstElementChild.id), 'h5-attention-close', 'the back arrow comes first');
-      await row(page, 1).locator('.h5-attention-open').tap();
+      await row(page, 1).locator('.h5-attention-details').tap();
       await page.locator('#h5-attention-edit .MuiDialog-paper').waitFor({ state: 'visible' });
       phoneEdit = await editLayout(page);
       await page.keyboard.press('Escape');
@@ -476,7 +492,7 @@ const editLayout = page => page.evaluate(() => {
       // Context recall: the card of a task that needs the user.
       await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
-      await row(page, 1).locator('.h5-attention-open').tap();
+      await row(page, 1).locator('.h5-attention-details').tap();
       await edit.waitFor({ state: 'visible' });
       const card = page.locator('#h5-attention-context');
       await card.waitFor();
@@ -514,7 +530,7 @@ const editLayout = page => page.evaluate(() => {
       // A file of the context opens in the file sheet (inside the folder of task 1).
       await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
-      await row(page, 1).locator('.h5-attention-open').tap();
+      await row(page, 1).locator('.h5-attention-details').tap();
       await page.locator('.h5-attention-file[data-path="src/login.js"] button').tap();
       await page.locator('#h5-design-body .h5-file-line').first().waitFor();
       assert.equal(await page.locator('#h5-design-title').textContent(), 'login.js');
@@ -525,7 +541,7 @@ const editLayout = page => page.evaluate(() => {
       // A file outside every task folder opens the same way.
       await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
-      await row(page, 1).locator('.h5-attention-open').tap();
+      await row(page, 1).locator('.h5-attention-details').tap();
       await page.locator('.h5-attention-file[data-path="/etc/hosts"] button').tap();
       await page.locator('#h5-design-body .h5-file-line').first().waitFor();
       assert.equal(await page.locator('#h5-design-title').textContent(), 'hosts');
@@ -879,6 +895,125 @@ const editLayout = page => page.evaluate(() => {
       await context.close();
     }
 
+    // ── Phone 390x844, touch: rows from a T-Agent session ("Rows of a session" in docs/design/page-attention.md) ──
+    {
+      const { context, page, errors, calls, db } = await openPage(browser, { viewport: { width: 390, height: 844 }, items: SESSION_ITEMS(), activity: { 1: { t2: 'done' } } });
+      const sheet = page.locator('#h5-attention-sheet .h5-attention-panel');
+      const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
+      const shownName = () => page.locator('#h5-session-name').textContent();
+      const patches = () => calls.filter(call => call.method === 'PATCH').length;
+      await page.locator('#h5-attention').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await settled(page, '#h5-attention-sheet .h5-attention-panel');
+      // The chip: the terminal glyph, the session's name in the task list and its live state (t2 finished: Needs you; t1 idle).
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"] .h5-attention-session-dot[data-state="waiting"]'));
+      assert.equal(await row(page, 1).locator('.h5-attention-session-name').textContent(), 'Claude 1');
+      assert.equal(await row(page, 1).locator('.h5-attention-session').getAttribute('data-terminal'), 't2');
+      assert.equal(await row(page, 1).locator('.h5-attention-session-dot').getAttribute('title'), 'Needs you');
+      assert.equal(await row(page, 2).locator('.h5-attention-session-name').textContent(), 'Terminal 1');
+      assert.equal(await row(page, 2).locator('.h5-attention-session-dot').getAttribute('data-state'), 'idle');
+      assert.equal(await row(page, 1).locator('.h5-attention-meta .h5-attention-status + .h5-attention-session').count(), 1, 'the chip follows the status pill in the meta line');
+      // No chip: a task added by hand, one from the CLI, one whose session is gone (t9 is not among the task's terminals), one of another machine.
+      for (const id of [4, 5, 9]) assert.equal(await row(page, id).locator('.h5-attention-session').count(), 0, `no chip on ${id}`);
+      for (const id of [4, 5, 9]) assert.equal(await row(page, id).locator('.h5-attention-details').count(), 0, `no Details button on ${id}`);
+      // The row's name says what a tap does; the Details button has its own name and a 44px target, always shown on a touch screen.
+      assert.equal(await row(page, 1).locator('.h5-attention-open').getAttribute('aria-label'), 'Allow Bash in the repo, open session Claude 1');
+      assert.equal(await row(page, 4).locator('.h5-attention-open').getAttribute('aria-label'), null, 'a row without a session keeps its content as its name');
+      const details = row(page, 1).locator('.h5-attention-details');
+      assert.equal(await details.getAttribute('aria-label'), 'Details');
+      assert.equal(await details.getAttribute('title'), 'Details');
+      const detailsBox = await details.boundingBox();
+      assert.ok(detailsBox.width >= 43.99 && detailsBox.height >= 43.99, `44px Details button: ${JSON.stringify(detailsBox)}`);
+      assert.equal(await details.evaluate(node => getComputedStyle(node).opacity), '1', 'always shown on a touch screen');
+      assert.equal(await page.locator('#h5-attention-hint').count(), 0, 'the hint is for the side panel only');
+      assert.equal(await shownName(), 'Terminal 1');
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'att-session-list-phone.png') });
+
+      // Details opens the edit view (its "Open terminal" stays); the session is not opened.
+      await details.tap();
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-edit-name').inputValue(), 'Allow Bash in the repo');
+      assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Open terminal');
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+      assert.equal(await shownName(), 'Terminal 1');
+      // A session that is gone: a tap opens the details, where the resume command can still be copied.
+      await row(page, 9).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Copy resume command');
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+      // A task added by hand opens its details as before.
+      await row(page, 4).locator('.h5-attention-open').tap();
+      await edit.waitFor({ state: 'visible' });
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+
+      // The row buttons of a session row act on their own: the link, Reject (its dialog), never the session.
+      const stays = async what => {
+        await page.waitForTimeout(250);
+        assert.ok(await sheet.isVisible(), `${what}: the page stays`);
+        assert.equal(await page.locator('#h5-attention-edit').count(), 0, `${what}: no edit view`);
+        assert.equal(await shownName(), 'Terminal 1', `${what}: no session opened`);
+      };
+      const [popup] = await Promise.all([context.waitForEvent('page'), row(page, 2).locator('a.h5-attention-row-link').tap()]);
+      await popup.close();
+      await stays('the link');
+      await row(page, 2).locator('.h5-attention-action[data-action="reject"]').tap();
+      await page.locator('#h5-attention-reject .MuiDialog-paper').waitFor({ state: 'visible' });
+      await page.locator('#h5-attention-reject-cancel').tap();
+      await page.locator('#h5-attention-reject').waitFor({ state: 'detached' });
+      await stays('Reject');
+
+      // A tap on the row opens its session: the task and terminal are selected, the T-Attention page closes and the bottom navigation shows Sessions;
+      // the status is not changed (no PATCH); a notice names the task with a Details action.
+      const before = patches();
+      await row(page, 1).locator('.h5-attention-open').tap();
+      await sheet.waitFor({ state: 'hidden' });
+      await page.waitForFunction(() => window.sockets.some(socket => socket.url.includes('t2')) && document.getElementById('h5-session-name').textContent === 'Claude 1');
+      assert.equal(await page.locator('#h5-bnav .h5-bnav-item[data-view="sessions"]').getAttribute('aria-current'), 'page', 'Sessions is the shown destination');
+      assert.equal(await page.locator('#h5-bnav .h5-bnav-item[data-view="attention"]').getAttribute('aria-current'), null);
+      const snack = page.locator('.MuiSnackbar-root .h5-notice-action');
+      await snack.waitFor({ state: 'visible' });
+      assert.equal(await snack.locator('.MuiSnackbarContent-message').textContent(), 'Opened from T-Attention: Allow Bash in the repo');
+      assert.equal(await snack.locator('.h5-notice-action-button').textContent(), 'Details');
+      const snackBox = await snack.boundingBox();
+      assert.ok(snackBox.y < 100 && snackBox.x >= 0 && snackBox.x + snackBox.width <= 390, `the notice stays at the top, inside the screen: ${JSON.stringify(snackBox)}`);
+      assert.equal(patches(), before, 'opening the session sends no PATCH');
+      assert.equal(db.items.find(item => item.id === 1).status, 'waiting_user', 'a "Needs you" task stays "Needs you"');
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'att-session-opened-phone.png') });
+      // Details of the notice brings the T-Attention page back with that task's details.
+      await snack.locator('.h5-notice-action-button').tap();
+      await sheet.waitFor({ state: 'visible' });
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-edit-name').inputValue(), 'Allow Bash in the repo');
+      assert.equal(await page.locator('#h5-bnav .h5-bnav-item[data-view="attention"]').getAttribute('aria-current'), 'page');
+      await snack.waitFor({ state: 'hidden' });
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+      assert.equal(await row(page, 1).getAttribute('data-shown'), null, 'no marked row on a phone');
+
+      // Handled, Confirm and the circle of session rows send their own PATCH and open nothing (Claude 1 stays shown).
+      const kept = async what => {
+        await page.waitForTimeout(250);
+        assert.ok(await sheet.isVisible(), `${what}: the page stays`);
+        assert.equal(await page.locator('#h5-attention-edit').count(), 0, `${what}: no edit view`);
+        assert.equal(await shownName(), 'Claude 1', `${what}: the shown session is kept`);
+      };
+      await row(page, 1).locator('.h5-attention-action[data-action="handled"]').tap();
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"][data-status="working"]'));
+      await kept('Handled');
+      await row(page, 2).locator('.h5-attention-action[data-action="confirm"]').tap();
+      await page.waitForFunction(() => !document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="2"][data-status="review"]'));
+      await kept('Confirm');
+      await row(page, 1).locator('.h5-attention-check').tap();
+      await page.waitForFunction(() => !document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"][data-status="working"]'));
+      await kept('the circle');
+      assert.deepEqual(calls.filter(call => call.method === 'PATCH').map(call => [call.path, call.body.status]), [['/api/attention/1', 'working'], ['/api/attention/2', 'done'], ['/api/attention/1', 'done']]);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+
     // ── Phone 320x640, touch: the seven tools fit, Docs among them ──
     {
       const { context, page, errors } = await openPage(browser, { viewport: { width: 320, height: 640 } });
@@ -950,7 +1085,7 @@ const editLayout = page => page.evaluate(() => {
       assert.equal(await page.evaluate(() => document.querySelector('.h5-attention-panel header').lastElementChild.id), 'h5-attention-close', 'the close button comes last');
       if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention.png') });
       // The edit view is a normal dialog; Escape closes it first, then the panel.
-      await row(page, 1).locator('.h5-attention-open').click();
+      await row(page, 1).locator('.h5-attention-details').click();
       const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
       await edit.waitFor({ state: 'visible' });
       assert.ok((await edit.boundingBox()).width < 700, 'a normal dialog on a wide screen');
@@ -1020,6 +1155,77 @@ const editLayout = page => page.evaluate(() => {
       await page.locator('.h5-plugin-page-back').click();
       await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
       if (SHOTS) { await page.locator('#h5-plugins').scrollIntoViewIfNeeded(); await page.screenshot({ path: path.join(SHOTS, 'pc-1440-attention-plugins.png') }); }
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+    // ── Computer 1440x900, mouse: rows from a T-Agent session in the side panel ──
+    {
+      const { context, page, errors, calls } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false, items: SESSION_ITEMS(), activity: { 1: { t2: 'done' } } });
+      const panel = page.locator('#h5-attention-sheet .h5-attention-panel');
+      await page.locator('#h5-more').click();
+      await page.locator('#h5-attention').click();
+      await panel.waitFor({ state: 'visible' });
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-side-panel'));
+      await row(page, 1).locator('.h5-attention-session').waitFor();
+      const shown = () => page.evaluate(() => [...document.querySelectorAll('#h5-attention-sheet .h5-attention-row[data-shown="true"]')].map(node => Number(node.dataset.id)));
+      const opacity = id => row(page, id).locator('.h5-attention-details').evaluate(node => Number(getComputedStyle(node).opacity));
+      // Terminal 1 is shown: the row of its task is marked (primary tint and a 3px indicator at the left), and its chip is stronger.
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="2"][data-shown="true"]'));
+      assert.deepEqual(await shown(), [2]);
+      const look = await row(page, 2).evaluate(node => ({ bg: getComputedStyle(node).backgroundColor, shadow: getComputedStyle(node).boxShadow }));
+      assert.ok(look.bg !== 'rgba(0, 0, 0, 0)' && /inset/.test(look.shadow) && /3px 0px 0px/.test(look.shadow), `the selected look: ${JSON.stringify(look)}`);
+      assert.equal(await row(page, 2).locator('.h5-attention-open').getAttribute('aria-current'), 'true');
+      assert.equal(await page.locator('#h5-attention-hint').count(), 1, 'the side panel says how a session row works');
+      // The Details button shows on hover and on keyboard focus; its place is kept, so nothing moves.
+      await page.mouse.move(10, 890);
+      await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"] .h5-attention-details')).opacity) === 0);
+      const titleBefore = await row(page, 1).locator('.h5-attention-title').boundingBox();
+      await row(page, 1).locator('.h5-attention-title').hover();
+      await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"] .h5-attention-details')).opacity) === 1);
+      assert.deepEqual(await row(page, 1).locator('.h5-attention-title').boundingBox(), titleBefore, 'no layout shift');
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'att-session-pc-hover.png') });
+      await page.mouse.move(10, 890);
+      await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"] .h5-attention-details')).opacity) === 0);
+      await row(page, 1).locator('.h5-attention-details').focus();
+      await page.waitForTimeout(200);
+      assert.equal(await opacity(1), 1, 'shown while it has the keyboard focus');
+      // Its own Tab stop after the row's buttons: Enter opens the details.
+      await page.keyboard.press('Enter');
+      const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-edit-name').inputValue(), 'Allow Bash in the repo');
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+      assert.equal(await page.locator('#h5-session-name').textContent(), 'Terminal 1');
+      // Enter on a focused session row opens the session; the panel stays open and the marked row follows.
+      const before = calls.filter(call => call.method === 'PATCH').length;
+      await row(page, 1).locator('.h5-attention-open').focus();
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.getElementById('h5-session-name').textContent === 'Claude 1');
+      assert.ok(await panel.isVisible(), 'the panel stays open beside the session');
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"][data-shown="true"]'));
+      assert.deepEqual(await shown(), [1]);
+      assert.equal(await page.locator('.MuiSnackbar-root .h5-notice-action').count(), 0, 'no notice on a computer');
+      assert.equal(calls.filter(call => call.method === 'PATCH').length, before, 'no PATCH');
+      // A click on the other session row opens Terminal 1 again; the mark moves back.
+      await row(page, 2).locator('.h5-attention-title').click();
+      await page.waitForFunction(() => document.getElementById('h5-session-name').textContent === 'Terminal 1');
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="2"][data-shown="true"]'));
+      assert.deepEqual(await shown(), [2]);
+      // The shown session changed elsewhere (the task list): the mark follows.
+      await page.locator('#h5-tasks .h5-terminal-row[data-session="t2"] .h5-terminal-main').click();
+      await page.waitForFunction(() => document.getElementById('h5-session-name').textContent === 'Claude 1');
+      await page.waitForFunction(() => document.querySelector('#h5-attention-sheet .h5-attention-row[data-id="1"][data-shown="true"]'));
+      assert.deepEqual(await shown(), [1]);
+      // A row whose session is gone opens its details.
+      await row(page, 9).locator('.h5-attention-open').click();
+      await edit.waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#h5-attention-jump').textContent(), 'Copy resume command');
+      await page.keyboard.press('Escape');
+      await edit.waitFor({ state: 'hidden' });
+      await row(page, 1).locator('.h5-attention-title').hover();
+      await page.waitForTimeout(200);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'att-session-pc-marked.png') });
       assert.deepEqual(errors, []);
       await context.close();
     }

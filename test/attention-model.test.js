@@ -491,6 +491,61 @@ test('jump back: the T-Agent terminal when its task is in the local list, else t
   assert.equal(jumpBack({ ...context, host: 'My-Mac' }, { sourceKey: 'local', groups, localHost: 'my-mac' }).kind, 'terminal', 'the host is compared without case');
 });
 
+test('a gone session: the task\'s known sessions do not hold the terminal; sessions not read count as there', async () => {
+  const { jumpBack, sessionGone } = await load();
+  const known = rows => ({ label: 'Fix', note: null, rows });
+  assert.equal(sessionGone({ sessions: known([{ kind: 'terminal', id: 't1' }]) }, 't2'), true);
+  assert.equal(sessionGone({ sessions: known([{ kind: 'terminal', id: 't2' }]) }, 't2'), false);
+  assert.equal(sessionGone({ sessions: known([{ kind: 'open', id: 'open' }]) }, 't2'), true, 'a task without terminals ("Open this task")');
+  assert.equal(sessionGone({ sessions: null }, 't2'), false, 'a folded task: its sessions are not known');
+  assert.equal(sessionGone({ sessions: { note: 'Loading…', rows: [] } }, 't2'), false, 'still loading');
+  assert.equal(sessionGone({ sessions: { note: 'Could not load the sessions', rows: [] } }, 't2'), false);
+  assert.equal(sessionGone(null, 't2'), false);
+  // jumpBack then copies the resume command (local and another engine).
+  const context = { tagent: { task_id: '9', terminal_id: 'h5-abc' }, session: { resume: 'claude --resume s1' } };
+  const groups = [{ tasks: [{ id: 9, sessions: known([{ kind: 'terminal', id: 'other' }]) }] }];
+  assert.deepEqual(jumpBack(context, { sourceKey: 'local', groups }), { kind: 'copy', command: 'claude --resume s1' });
+  assert.equal(jumpBack({ tagent: context.tagent }, { sourceKey: 'local', groups }), null, 'no resume command: nothing');
+  const tasks = [{ id: 9, ref: 'remote:7|9', source: 'remote:7', sessions: known([]) }];
+  assert.equal(jumpBack(context, { sourceKey: 'remote:7', tasks }).kind, 'copy');
+  assert.equal(jumpBack(context, { sourceKey: 'remote:7', tasks: [{ ...tasks[0], sessions: known([{ kind: 'terminal', id: 'h5-abc' }]) }] }).kind, 'terminal');
+});
+
+test('sessionOf: the chip of a row from a T-Agent session (name, state, device), null without one or when it is gone', async () => {
+  const { sessionOf } = await load();
+  const device = { key: 'local', local: true, label: 'This machine', name: 'mac', instanceId: 'i1' };
+  const context = { tagent: { task_id: '9', terminal_id: 't2' }, session: { agent: 'codex', resume: 'codex resume s1' } };
+  const open = { id: 9, sessions: { note: null, rows: [{ kind: 'terminal', id: 't1', title: 'Shell', status: 'idle' }, { kind: 'terminal', id: 't2', title: 'Codex: review', agent: 'codex', status: 'waiting' }] } };
+  const tasks = [{ ...open, ref: 'local|9', source: 'local', device }];
+  assert.deepEqual(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [open] }], tasks }), { taskId: 9, terminalId: 't2', title: 'Codex: review', agent: 'codex', status: 'waiting', device });
+  // A folded task: no name yet, the state from the activity feed of its row (idle when the feed does not list it), the agent of the context.
+  const folded = { id: 9, sessions: null, sessionStates: { t2: 'running' } };
+  assert.deepEqual(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [folded] }], tasks: [] }), { taskId: 9, terminalId: 't2', title: '', agent: 'codex', status: 'running', device: null });
+  assert.equal(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [{ ...folded, sessionStates: {} }] }] }).status, 'idle');
+  assert.equal(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [{ id: 9, sessions: null }] }] }).status, null, 'no activity known');
+  // Another engine: its row of the one list, the ref to open.
+  const remote = [{ id: 9, ref: 'remote:7|9', source: 'remote:7', sessions: null, sessionStates: {}, device: { key: 'remote:7', label: 'K01' } }];
+  assert.equal(sessionOf({ ...context, host: 'k01' }, { sourceKey: 'remote:7', tasks: remote, localHost: 'K01' }).taskId, 'remote:7|9');
+  assert.equal(sessionOf({ ...context, host: 'k01' }, { sourceKey: 'remote:7', tasks: remote, localHost: 'K01' }).device.label, 'K01');
+  // None: no tagent (by hand, the CLI), the task not listed, another machine, the session gone.
+  assert.equal(sessionOf({ session: context.session }, { sourceKey: 'local', groups: [{ tasks: [open] }] }), null);
+  assert.equal(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [{ id: 3 }] }] }), null);
+  assert.equal(sessionOf({ ...context, host: 'box' }, { sourceKey: 'local', groups: [{ tasks: [open] }], localHost: 'mac' }), null);
+  assert.equal(sessionOf({ ...context, tagent: { task_id: '9', terminal_id: 'gone' } }, { sourceKey: 'local', groups: [{ tasks: [open] }] }), null);
+  assert.equal(sessionOf(null, {}), null);
+});
+
+test('isShownSession: the shown terminal of the page against the session of an item of its engine', async () => {
+  const { isShownSession } = await load();
+  const context = { tagent: { task_id: 9, terminal_id: 't2' } };
+  assert.equal(isShownSession(context, 'local', { sourceKey: 'local', taskId: 9, terminalId: 't2' }), true);
+  assert.equal(isShownSession(context, 'local', { sourceKey: 'local', taskId: '9', terminalId: 't2' }), true, 'ids compared as text');
+  assert.equal(isShownSession(context, 'remote:7', { sourceKey: 'local', taskId: 9, terminalId: 't2' }), false, 'another engine');
+  assert.equal(isShownSession(context, 'local', { sourceKey: 'local', taskId: 9, terminalId: 't1' }), false);
+  assert.equal(isShownSession(context, 'local', null), false);
+  assert.equal(isShownSession({}, 'local', { sourceKey: 'local', taskId: 9, terminalId: 't2' }), false);
+});
+
 test('onThisMachine: context.host against the host of GET /api/attention; unknown on either side is this machine', async () => {
   const { onThisMachine } = await load();
   assert.equal(onThisMachine({ host: 'box' }, 'box'), true);

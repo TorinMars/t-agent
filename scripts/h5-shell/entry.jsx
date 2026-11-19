@@ -35,9 +35,11 @@ ui.fileKinds = { kindOf, isRaw: kind => RAW_KINDS.has(kind) };
 // The rules of the shared task order (task-order.mjs), for h5.js: where each task goes, and the whole order to save after a move.
 ui.taskOrder = { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget };
 let notices = 0;
-ui.notify = (message, type = 'info') => {
+// `action`: one action of the notice, `{ label, run }` (an English label, a function), shown as a text button ("Floating notices" in docs/design/toast.md).
+ui.notify = (message, type = 'info', { action = null } = {}) => {
   const text = String(message === undefined || message === null ? '' : message).trim();
-  if (text) ui.set({ notice: { id: ++notices, message: text, type } });
+  const one = action && typeof action.run === 'function' && action.label ? { label: String(action.label), run: action.run } : null;
+  if (text) ui.set({ notice: { id: ++notices, message: text, type, action: one } });
 };
 window.H5UI = ui;
 // Voice input turned off (voice-input.js owns the setting, but runs after the first paint can happen): the microphone button must not show and then vanish.

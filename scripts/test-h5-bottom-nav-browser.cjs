@@ -117,7 +117,7 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       assert.equal(await nav.evaluate(el => [el.tagName, el.getAttribute('aria-label')].join('|')), 'NAV|Views');
       assert.deepEqual(await rect(page, '#h5-bnav'), { x: 0, y: 844 - 56, w: 390, h: 56, right: 390 }, '56px at the bottom, the whole width');
       assert.deepEqual(await nav.evaluate(el => [...el.querySelectorAll('.h5-bnav-item')].map(node => [node.id, node.querySelector('.h5-bnav-label').textContent])),
-        [['h5-bnav-sessions', 'Sessions'], ['h5-attention', 'Attention'], ['h5-bnav-maps', 'Mind maps'], ['h5-bnav-settings', 'Settings']]);
+        [['h5-bnav-sessions', 'Sessions'], ['h5-attention', 'Attention'], ['h5-bnav-maps', 'Mind maps'], ['h5-bnav-learn', 'Learn'], ['h5-bnav-settings', 'Settings']]);
       assert.equal(await page.locator('#h5-attention').count(), 1, 'one #h5-attention in the page');
       assert.equal(await view(page), 'sessions');
       assert.equal(await page.locator('#h5-bnav-sessions .h5-bnav-label').evaluate(el => getComputedStyle(el).color), 'rgb(144, 202, 249)', 'the current one in the primary colour');

@@ -909,6 +909,9 @@
   let settingsSeq = 0;
   ui.actions.openSettings = group => ui.set({ settingsOpen: true, settingsTarget: typeof group === 'string' && group ? { id: group, seq: ++settingsSeq } : null });
   ui.actions.closeSettings = () => ui.set({ settingsOpen: false, settingsTarget: null });
+  // The Learn page (scripts/h5-shell/Learn.jsx, a destination of the rail and the bottom navigation; "The Learn page" in docs/design/learn-english-page.md).
+  ui.actions.openLearn = () => ui.set({ learnOpen: true });
+  ui.actions.closeLearn = () => ui.set({ learnOpen: false });
   ui.actions.toggleTask = ref => { const hit = resolveRef(ref); if (hit) toggleTask(hit.from, hit.item); };
   // A tap on a session row: on the selected task it goes to the terminal or chat; on another task it selects that task and shows the session.
   ui.actions.openRow = (ref, row) => {

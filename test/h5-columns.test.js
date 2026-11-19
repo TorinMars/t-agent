@@ -444,8 +444,8 @@ test('the navigation rail: the arrow keys move between its destinations, the bad
 test('the page navigation rail: its destinations and the one that is the current page', async () => {
   const { railDestinations, railView, NAV_WIDTH } = await load();
   assert.equal(NAV_WIDTH, 72);
-  assert.deepEqual(railDestinations(true).map(item => item.id), ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps']);
-  assert.deepEqual(railDestinations(false).map(item => item.id), ['h5-nav-sessions', 'h5-nav-attention', 'h5-nav-maps'], 'no Columns where the view cannot be shown');
+  assert.deepEqual(railDestinations(true).map(item => item.id), ['h5-nav-sessions', 'h5-nav-columns', 'h5-nav-attention', 'h5-nav-maps', 'h5-nav-learn']);
+  assert.deepEqual(railDestinations(false).map(item => item.id), ['h5-nav-sessions', 'h5-nav-attention', 'h5-nav-maps', 'h5-nav-learn'], 'no Columns where the view cannot be shown');
   assert.equal(railDestinations(true).find(item => item.view === 'attention').toggle, true, 'Attention toggles a panel, it is not a page');
   assert.equal(railView({}), 'sessions');
   assert.equal(railView({ columns: null }), 'sessions', 'a framed page has no columns view');
@@ -454,14 +454,18 @@ test('the page navigation rail: its destinations and the one that is the current
   assert.equal(railView({ columns: { shown: true, tab: 'maps' } }), 'maps');
   assert.equal(railView({ columns: { shown: true, tab: 'bogus' } }), 'columns');
   assert.equal(railView({ settingsOpen: true, columns: { shown: true, tab: 'maps' } }), 'settings', 'Settings is current while it is open, in either view');
+  assert.equal(railView({ learnOpen: true, columns: { shown: true, tab: 'columns' } }), 'learn', 'the Learn page is current while it is open, in either view');
+  assert.equal(railView({ settingsOpen: true, learnOpen: true }), 'settings');
 });
 
 test('the phone bottom navigation: the rail\'s destinations without Columns, then Settings, and the one that is shown', async () => {
   const { phoneDestinations, phoneView } = await load();
-  assert.deepEqual(phoneDestinations().map(item => [item.view, item.id]), [['sessions', 'h5-bnav-sessions'], ['attention', 'h5-attention'], ['maps', 'h5-bnav-maps'], ['settings', 'h5-bnav-settings']]);
+  assert.deepEqual(phoneDestinations().map(item => [item.view, item.id]), [['sessions', 'h5-bnav-sessions'], ['attention', 'h5-attention'], ['maps', 'h5-bnav-maps'], ['learn', 'h5-bnav-learn'], ['settings', 'h5-bnav-settings']]);
   assert.ok(phoneDestinations().every(item => !item.toggle), 'on a phone every destination is a page');
   assert.equal(phoneView({}), 'sessions');
   assert.equal(phoneView({ attentionOpen: true }), 'attention');
   assert.equal(phoneView({ mindmapOpen: true }), 'maps');
+  assert.equal(phoneView({ learnOpen: true, mindmapOpen: true }), 'learn');
+  assert.equal(phoneView({ attentionOpen: true, learnOpen: true }), 'attention');
   assert.equal(phoneView({ settingsOpen: true, attentionOpen: true, mindmapOpen: true }), 'settings', 'the page on top wins');
 });

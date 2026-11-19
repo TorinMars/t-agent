@@ -1,5 +1,5 @@
 // The screens that open on demand: Settings (with the plugin market, engines, pairing, remote access, rule sync and the notifiers inside it), the
-// T-Attention panel, the design document and file tree sheets, the session switcher and the task dialogs (delete, working directory, archive,
+// T-Attention panel, the design document and file tree sheets, the session switcher, the Learn page and the task dialogs (delete, working directory, archive,
 // visibility). They are not in public/js/h5-shell.js: each is a chunk of its own
 // (scripts/build-page-bundles.js) that is imported the first time it opens, so the first screen downloads and parses only what it draws.
 //
@@ -62,6 +62,7 @@ export const FileTreeSheet = screen(() => import('./screen-files.jsx'), 'FileTre
 export const SwitcherScreen = screen(() => import('./screen-switcher.jsx'), 'Switcher', state => Boolean(state.switcher), ui => ui.actions.closeSwitcher && ui.actions.closeSwitcher());
 // The Recent tab of the task list (TaskDrawer.jsx draws it only while the tab is chosen); nothing to close after a failed load.
 export const RecentScreen = screen(() => import('./screen-recent.jsx'), 'RecentList', () => true, () => {});
+export const LearnScreen = screen(() => import('./screen-learn.jsx'), 'LearnPage', state => Boolean(state.learnOpen), ui => ui.actions.closeLearn && ui.actions.closeLearn());
 export const TaskDialogScreen = screen(() => import('./screen-task-dialog.jsx'), 'TaskDialog', state => Boolean(state.taskDialog), ui => ui.set && ui.set({ taskDialog: null }));
 
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
@@ -73,6 +74,7 @@ const OPENERS = [
   ['#h5-design-files', FileTreeSheet],
   ['#h5-cycle', SwitcherScreen],
   ['#h5-tab-recent', RecentScreen],
+  ['#h5-nav-learn, #h5-bnav-learn', LearnScreen],
 ];
 export function preloadOnIntent(root = document) {
   const handle = event => {

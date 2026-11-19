@@ -13,10 +13,10 @@ import { countRender, useStore } from './use-store.mjs';
 
 // The phone's bottom navigation (#h5-bnav, a nav landmark "Views"): the phone counterpart of the navigation rail (Columns.jsx `NavRail`), on the narrow
 // layout only and never in a pane. An MD2 bottom navigation bar, 56px plus the bottom safe-area inset, fixed at the bottom of the window (z-index 1150:
-// under MUI's modals, so the drawer, a dialog or a deeper full-screen page such as a plugin page of Settings lies over it, while the three destination
+// under MUI's modals, so the drawer, a dialog or a deeper full-screen page such as a plugin page of Settings lies over it, while the four destination
 // pages end above it and leave it free): Sessions (the terminal page), Attention (`#h5-attention` on a touch screen, `#h5-bnav-attention` with a
 // mouse, whose "More tools" menu keeps `#h5-attention`; with the red count of the T-Attention items that
-// need the person), Mind maps and Settings, each an icon over a label, the shown one in the primary colour with `aria-current="page"`. The three
+// need the person), Mind maps, Learn and Settings, each an icon over a label, the shown one in the primary colour with `aria-current="page"`. The four
 // destinations other than Sessions are pages over the terminal page that end above the bar (h5.css `html[data-bnav]`, h5.js `bottomNavSpace`); one is
 // open at a time, choosing another closes it, Sessions closes them all, and the back button closes the open one (back.mjs: each is a layer), which is
 // Sessions again. The arrow keys move between the items (`railKey`).
@@ -29,7 +29,7 @@ const BNAV = state => ({
   pane: Boolean(state.pane), narrow: !state.wide, pointer: state.input === 'pointer',
   osk: Boolean(state.osk), typing: state.keyboard === 'draft' || Boolean(state.softKeyboard), soft: Boolean(state.softKeyboard),
   under: Boolean(state.tasksOpen),
-  view: phoneView({ settingsOpen: state.settingsOpen, attentionOpen: Boolean(state.attention && state.attention.open), mindmapOpen: Boolean(state.mindmapOpen) }),
+  view: phoneView({ settingsOpen: state.settingsOpen, attentionOpen: Boolean(state.attention && state.attention.open), learnOpen: Boolean(state.learnOpen), mindmapOpen: Boolean(state.mindmapOpen) }),
   needs: Number(state.attention && state.attention.needs) || 0,
 });
 
@@ -40,7 +40,9 @@ export function choosePhoneView(ui, view) {
   if (view !== 'settings' && state.settingsOpen && ui.actions.closeSettings) ui.actions.closeSettings();
   if (view !== 'attention' && attentionOpen && ui.actions.closeAttention) ui.actions.closeAttention();
   if (view !== 'maps' && state.mindmapOpen && ui.actions.closeMindmaps) ui.actions.closeMindmaps();
+  if (view !== 'learn' && state.learnOpen && ui.actions.closeLearn) ui.actions.closeLearn();
   if (view === 'settings' && !state.settingsOpen) ui.actions.openSettings();
+  else if (view === 'learn' && !state.learnOpen) ui.actions.openLearn();
   else if (view === 'attention' && !attentionOpen) ui.actions.openAttention();
   else if (view === 'maps' && !state.mindmapOpen) ui.actions.openMindmaps();
 }

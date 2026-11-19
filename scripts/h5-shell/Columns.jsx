@@ -740,7 +740,7 @@ const NAV = state => {
   const live = { activity: state.terminalActivity, items: state.attention && state.attention.items };
   return {
     wide: state.wide, pane: state.pane, canColumns: Boolean(columns),
-    view: railView({ settingsOpen: state.settingsOpen, columns }),
+    view: railView({ settingsOpen: state.settingsOpen, learnOpen: state.learnOpen, columns }),
     attentionOpen: Boolean(state.attention && state.attention.open),
     attentionNeeds: Number(state.attention && state.attention.needs) || 0,
     // Only while the view is shown: the panes' titles are what the count is about.
@@ -766,11 +766,14 @@ export function NavRail({ ui }) {
     return () => document.documentElement.removeAttribute('data-nav-rail');
   }, [shown]);
   if (state.pane) return null;
-  // Settings goes away before any other destination is shown.
+  // Settings and the Learn page go away before any other destination is shown.
   const leaveSettings = () => { if (ui.get().settingsOpen && ui.actions.closeSettings) ui.actions.closeSettings(); };
+  const leaveLearn = () => { if (ui.get().learnOpen && ui.actions.closeLearn) ui.actions.closeLearn(); };
   const choose = item => {
     const settings = ui.get().settingsOpen;
     leaveSettings();
+    if (item.view === 'learn') { if (!ui.get().learnOpen && ui.actions.openLearn) ui.actions.openLearn(); return; }
+    leaveLearn();
     if (item.view === 'attention') {
       const open = Boolean(ui.get().attention && ui.get().attention.open);
       if (open && !settings) ui.actions.closeAttention();
@@ -823,7 +826,7 @@ export function NavRail({ ui }) {
         <UpdateButton ui={ui} />
       </Box>
       <ButtonBase id="h5-nav-settings" className="h5-nav-item" data-view="settings" {...named(settingsLabel)} aria-current={settingsCurrent ? 'page' : undefined}
-        onClick={() => { if (!ui.get().settingsOpen) ui.actions.openSettings(); }}
+        onClick={() => { leaveLearn(); if (!ui.get().settingsOpen) ui.actions.openSettings(); }}
         sx={theme => ({ ...RAIL_ACTION_SX, borderRadius: '50%', color: settingsCurrent ? theme.palette.primary.main : theme.palette.text.secondary,
           backgroundColor: settingsCurrent ? alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) : 'transparent',
           '@media (hover: hover)': { '&:hover': { backgroundColor: theme.palette.action.hover } },

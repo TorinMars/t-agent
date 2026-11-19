@@ -554,6 +554,17 @@ func runSelfTest() -> Never {
         guard let item = find(selector) else { return false }
         return item.keyEquivalent == key && item.keyEquivalentModifierMask == modifiers
     }
+    // Title bar in the page's colour (never shown: the window is only created).
+    let barWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled, .closable], backing: .buffered, defer: true)
+    applyPageTitleBar(barWindow, color: nil)
+    let barFill = barWindow.backgroundColor.usingColorSpace(.sRGB)
+    check("title bar: transparent over the page colour #1e1e1e, title shown", barWindow.titlebarAppearsTransparent && barWindow.titleVisibility == .visible
+          && barFill.map { abs($0.redComponent - 30 / 255.0) < 0.002 && abs($0.greenComponent - 30 / 255.0) < 0.002 && abs($0.blueComponent - 30 / 255.0) < 0.002 } == true)
+    check("title bar: a dark colour gives the dark appearance", barWindow.appearance?.name == .darkAqua)
+    applyPageTitleBar(barWindow, color: NSColor(srgbRed: 0.98, green: 0.98, blue: 0.98, alpha: 1))
+    check("title bar: a light theme colour gives the light appearance", barWindow.appearance?.name == .aqua)
+    applyPageTitleBar(barWindow, color: NSColor(srgbRed: 0.07, green: 0.07, blue: 0.07, alpha: 1))
+    check("title bar: follows the page's theme colour", barWindow.appearance?.name == .darkAqua && abs((barWindow.backgroundColor.usingColorSpace(.sRGB)?.redComponent ?? 0) - 0.07) < 0.002)
     check("main menu: App, File, Edit, View, History, Window", mainMenu.items.map { $0.title } == ["T-Agent", "File", "Edit", "View", "History", "Window"])
     check("main menu: Edit has copy, paste, cut and select all", key("copy:", "c") && key("paste:", "v") && key("cut:", "x") && key("selectAll:", "a"))
     check("main menu: Edit has undo and redo", key("undo:", "z") && key("redo:", "z", [.command, .shift]))

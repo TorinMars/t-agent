@@ -200,3 +200,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.142.0 English learning: progress shared across linked engines, company computers keep only a card cache; the page's own keyboard and kept focus on Learn
 > v2.143.0 Shared page state: Recent sessions and the page's other remembered choices are the same on every device and engine; browser storage through one registry with a guard test
 > v2.143.1 Phone: the key row and the tools row step aside while the draft box types with the phone keyboard
+> v2.144.0 Notice after an update; shared page state pushed live; server state registry with a guard; Environment compare in Settings; Learn: auto-check, phonetics, automatic audio with repeat, key haptics and bubble, one-line words; first screen 48 KB under its budget

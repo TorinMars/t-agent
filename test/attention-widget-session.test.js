@@ -260,6 +260,7 @@ test('activity: the live terminals that are not idle, running first, then waitin
     engine: 'local', task_id: String(other.id), task_title: 'Second task', terminal_id: made.doneNew.terminal_id, title: 'Named one', agent: 'codex',
     state: 'done', since: list[3].since, open_path: `/?openTerminal=local:${other.id}:${made.doneNew.terminal_id}`,
   });
+  assert.equal(list[2].waiting_kind, 'accept', 'a question names its kind (an attention without one: accept)');
   assert.equal(list[1].task_title, 'Widget session task');
   assert.equal(list[1].title, made.running.title);
   assert.match(made.running.title, /^Codex \d+$/);

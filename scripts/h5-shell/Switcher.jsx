@@ -20,7 +20,7 @@ import { alpha, getOverlayAlpha, lighten } from '@mui/material/styles';
 import { Pill, deviceText, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { DeviceTag, SessionKindIcon } from './TaskDrawer.jsx';
-import { columnStatus } from './columns.mjs';
+import { columnStatus, stateWord } from './columns.mjs';
 import { cardPlace, recentKey, recentTaskRef, rowPick, rowScrollFor, settleIndex, startIndex, switcherCards, switcherRow } from './recent-sessions.mjs';
 import { useStoreKeys } from './use-store.mjs';
 
@@ -129,6 +129,8 @@ function OpenSwitcher({ ui, switcher }) {
   const leaveScroll = useRef(0);
 
   const statusOf = card => columnStatus({ target: card }, { activity: state.terminalActivity, items: state.attention && state.attention.items }).state;
+  // The kind of the question a card's session waits at ('select' | 'accept'), else null: its word says "Needs selection" / "Needs acceptance".
+  const waitOf = card => columnStatus({ target: card }, { activity: state.terminalActivity, items: state.attention && state.attention.items }).kind;
 
   const close = () => ui.actions.closeSwitcher();
   const choose = index => {
@@ -317,7 +319,7 @@ function OpenSwitcher({ ui, switcher }) {
             <Box sx={{ position: 'relative', width: row.contentW, height: '100%' }}>
               {cards.map((card, index) => (
                 <WideCard
-                  key={recentKey(card)} card={card} index={index} row={row} area={area} status={statusOf(card)} taskRow={tasks.get(recentTaskRef(card))}
+                  key={recentKey(card)} card={card} index={index} row={row} area={area} status={statusOf(card)} kind={waitOf(card)} taskRow={tasks.get(recentTaskRef(card))}
                   preview={(switcher.previews || {})[recentKey(card)]} previewRows={previewRows} selected={index === centred} leaving={leaving}
                   growLeft={leaveScroll.current} motion={motion} reduced={reduced} cardRef={el => { cardRefs.current[index] = el; }}
                   onChoose={() => { if (dragged.current) { dragged.current = false; return; } choose(index); }}
@@ -329,6 +331,7 @@ function OpenSwitcher({ ui, switcher }) {
           const rel = index - pos;
           const place = cardPlace(rel, { step: g.step, offset: g.offset, far: g.far });
           const status = statusOf(card);
+          const word = t(stateWord(STATE_WORDS, status, waitOf(card)));
           const row = tasks.get(recentTaskRef(card));
           const taskTitle = (row && row.title) || '';
           const device = row ? row.device : null;
@@ -338,7 +341,7 @@ function OpenSwitcher({ ui, switcher }) {
           const behind = rel > 0.5;
           const isCentred = index === centred;
           const grow = leaving === index;
-          const label = [device ? deviceText(device) : '', name, taskTitle, t(STATE_WORDS[status]), card.current ? t('Current') : ''].filter(Boolean).join(', ');
+          const label = [device ? deviceText(device) : '', name, taskTitle, word, card.current ? t('Current') : ''].filter(Boolean).join(', ');
           const edge = isCentred ? 'primary.main' : status === 'waiting' ? 'warning.main' : null;
           return (
             <ButtonBase
@@ -396,7 +399,7 @@ function OpenSwitcher({ ui, switcher }) {
                   sx={theme => ({ position: 'absolute', left: 0, right: 0, bottom: 0, height: 40, display: 'flex', alignItems: 'center', gap: 1, pl: 1.5, pr: card.current ? 1.5 : `${g.cardW - g.offset + 12}px`, background: `linear-gradient(transparent, ${alpha(theme.palette.common.black, 0.85)})` })}
                 >
                   <Typography component="span" variant="caption" className="h5-switcher-task" sx={{ flex: '1 1 auto', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'text.secondary' }}>{taskTitle}</Typography>
-                  <Typography component="span" variant="caption" className="h5-switcher-state" sx={{ flex: '0 0 auto', color: STATE_TEXT[status] }}>{t(STATE_WORDS[status])}</Typography>
+                  <Typography component="span" variant="caption" className="h5-switcher-state" sx={{ flex: '0 0 auto', color: STATE_TEXT[status] }}>{word}</Typography>
                   {card.current ? <Pill className="h5-switcher-current" label={t('Current')} filled sx={{ flex: '0 0 auto', height: 18, px: 0.75, typography: 'caption', lineHeight: 1 }} /> : null}
                 </Box>
                 {/* Each step behind the centred card is a little darker. */}
@@ -444,14 +447,15 @@ function OpenSwitcher({ ui, switcher }) {
 // A card of the wide row: a header that names the task (the agent's tile, the task as the title, then the device tag, the session, the state dot and
 // word), "Current" on the current card, then the preview lines or the quiet placeholder. The selected card has the primary edge (it holds the focus),
 // one that needs the person the orange one.
-function WideCard({ card, index, row, area, status, taskRow, preview, previewRows, selected, leaving, growLeft, motion, reduced, cardRef, onChoose }) {
+function WideCard({ card, index, row, area, status, kind, taskRow, preview, previewRows, selected, leaving, growLeft, motion, reduced, cardRef, onChoose }) {
   const device = taskRow ? taskRow.device : null;
   const taskTitle = (taskRow && taskRow.title) || '';
   const name = card.title || t(kindOf(card.agent));
   const heading = taskTitle || name;
   const lines = preview && Array.isArray(preview.lines) ? preview.lines.slice(-previewRows) : [];
   const grow = leaving === index;
-  const label = [device ? deviceText(device) : '', name, taskTitle, t(STATE_WORDS[status]), card.current ? t('Current') : ''].filter(Boolean).join(', ');
+  const word = t(stateWord(STATE_WORDS, status, kind));
+  const label = [device ? deviceText(device) : '', name, taskTitle, word, card.current ? t('Current') : ''].filter(Boolean).join(', ');
   const edge = selected ? 'primary' : status === 'waiting' ? 'warning' : null;
   const lineHeight = 1.6;
   return (
@@ -486,7 +490,7 @@ function WideCard({ card, index, row, area, status, taskRow, preview, previewRow
               {device ? <DeviceTag device={device} /> : null}
               <Typography component="span" variant="caption" className="h5-switcher-name" sx={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: 'text.secondary' }}>{name}</Typography>
               <Box component="span" className="h5-switcher-dot" sx={{ flex: '0 0 auto', width: 6, height: 6, borderRadius: '50%', bgcolor: STATE_DOT[status] }} />
-              <Typography component="span" variant="caption" className="h5-switcher-state" sx={{ flex: '0 0 auto', color: STATE_TEXT[status] }}>{t(STATE_WORDS[status])}</Typography>
+              <Typography component="span" variant="caption" className="h5-switcher-state" sx={{ flex: '0 0 auto', color: STATE_TEXT[status] }}>{word}</Typography>
             </Box>
           </Box>
         </Box>

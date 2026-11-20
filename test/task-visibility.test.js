@@ -599,6 +599,10 @@ test('real services: terminals and event streams end at the moment of denial, an
   const running = async token => (await owner.call('GET', '/v1/terminal-activity', undefined, bearer(token))).body;
   await until(async () => (await running(plain))[hidden], 'the plain token sees the running terminal', 10000);
   assert.equal((await running(peerLink.token))[hidden], undefined);
+  // With the waiting kinds (`?kinds=1`, "Two waiting kinds" in docs/design/terminals.md): the same rule on both parts of the answer.
+  const withKinds = async token => (await owner.call('GET', '/v1/terminal-activity?kinds=1', undefined, bearer(token))).body;
+  assert.ok((await withKinds(plain)).activity[hidden]);
+  assert.deepEqual(await withKinds(peerLink.token), { activity: await running(peerLink.token), waiting_kind: {} });
   const reconnected = await openStream(owner, '/v1/terminal-activity/stream', peerLink.token);
   t.after(() => reconnected.abort());
   await until(() => reconnected.chunks.join('').includes('event: activity'), 'first snapshot');

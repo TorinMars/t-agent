@@ -26,6 +26,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { DialogError, DomIcon, api, deviceParts, deviceText, t, terminalMark, useShared } from './common.jsx';
 import { writeShared } from './shared-store.mjs';
 import { shortName, tagColor } from './task-order.mjs';
+import { stateWord } from './columns.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
@@ -49,10 +50,11 @@ export const STATE_TEXT = { running: 'success.light', waiting: 'warning.light', 
 // What a session row is: "Claude session", "Codex session" or "Terminal" (the glyph of its tile shows it; screen readers get the words).
 const kindOf = row => (AGENT_NAMES[row.agent] ? `${AGENT_NAMES[row.agent]} session` : 'Terminal');
 
-// The second line of a session row: its live state ("Running", "Needs you", "Idle"; what it is while the state is not known), then the folder of a
-// terminal that kept its own directory after the task's working directory changed (the full path is the row's tooltip).
+// The second line of a session row: its live state ("Running", "Needs you", "Idle", and for a question h5.js names in `row.waiting` "Needs
+// selection" / "Needs acceptance"; what it is while the state is not known), then the folder of a terminal that kept its own directory after the
+// task's working directory changed (the full path is the row's tooltip).
 function subtitle(row) {
-  const state = row.status ? t(STATE_WORDS[row.status]) : row.kind === 'terminal' ? t(kindOf(row)) : '';
+  const state = row.status ? t(stateWord(STATE_WORDS, row.status, row.waiting)) : row.kind === 'terminal' ? t(kindOf(row)) : '';
   const folder = row.otherDir ? row.otherDir.replace(/\/+$/, '').split('/').pop() || row.otherDir : '';
   return [state, folder].filter(Boolean).join(' \u00B7 ');
 }
@@ -266,7 +268,7 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
         <React.Fragment key={`${row.kind}:${row.id}`}>
         {row.more && menu && menu.rename && menu.rename.task === taskId && menu.rename.kind === row.kind && menu.rename.id === row.id ? <RenameRow menu={menu} ui={ui} row={row} /> : (
         <Box
-          className="h5-terminal-row" data-session={row.kind === 'terminal' ? row.id : undefined} data-status={row.status || undefined} data-movable={movable(row) ? 'true' : undefined} {...(movable(row) && drag ? drag.hold() : {})}
+          className="h5-terminal-row" data-session={row.kind === 'terminal' ? row.id : undefined} data-status={row.status || undefined} data-waiting={row.waiting || undefined} data-movable={movable(row) ? 'true' : undefined} {...(movable(row) && drag ? drag.hold() : {})}
           sx={theme => ({ display: 'flex', alignItems: 'center', gap: 0.5, pr: 0.5, [TOUCH]: { gap: 1, pr: 0 }, borderRadius: 2, ...(row.current ? SELECTED_SX(theme) : HOVER_SX), ...REVEAL_SX, ...HELD_ROW_SX })}
         >
           <ListItemButton

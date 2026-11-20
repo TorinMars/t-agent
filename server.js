@@ -61,9 +61,11 @@ function getLocalIP() {
 
 // Agent hooks inside a terminal report activity here; authenticated by the
 // per-terminal token in the PTY environment, so it sits outside the session/API auth.
-// event=session carries a small JSON body (the Claude session the terminal now runs; scripts/claude-session-hook.js).
+// event=session carries a small JSON body (the Claude session the terminal now runs; scripts/claude-session-hook.js). event=attention may carry
+// kind=select|accept and via=tool ("Two waiting kinds" in docs/design/terminals.md).
 app.post('/hooks/terminal-activity', express.json({ limit: '64kb' }), (req, res) => {
-  const status = terminal.reportHook(Number(req.query.task), req.query.terminal, req.get('x-ta-token'), String(req.query.event || ''), req.body);
+  const options = { kind: String(req.query.kind || ''), via: String(req.query.via || '') };
+  const status = terminal.reportHook(Number(req.query.task), req.query.terminal, req.get('x-ta-token'), String(req.query.event || ''), req.body, options);
   res.status(status).end();
 });
 

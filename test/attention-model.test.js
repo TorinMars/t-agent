@@ -517,10 +517,15 @@ test('sessionOf: the chip of a row from a T-Agent session (name, state, device),
   const context = { tagent: { task_id: '9', terminal_id: 't2' }, session: { agent: 'codex', resume: 'codex resume s1' } };
   const open = { id: 9, sessions: { note: null, rows: [{ kind: 'terminal', id: 't1', title: 'Shell', status: 'idle' }, { kind: 'terminal', id: 't2', title: 'Codex: review', agent: 'codex', status: 'waiting' }] } };
   const tasks = [{ ...open, ref: 'local|9', source: 'local', device }];
-  assert.deepEqual(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [open] }], tasks }), { taskId: 9, terminalId: 't2', title: 'Codex: review', agent: 'codex', status: 'waiting', device });
+  assert.deepEqual(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [open] }], tasks }), { taskId: 9, terminalId: 't2', title: 'Codex: review', agent: 'codex', status: 'waiting', waiting: null, device });
   // A folded task: no name yet, the state from the activity feed of its row (idle when the feed does not list it), the agent of the context.
   const folded = { id: 9, sessions: null, sessionStates: { t2: 'running' } };
-  assert.deepEqual(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [folded] }], tasks: [] }), { taskId: 9, terminalId: 't2', title: '', agent: 'codex', status: 'running', device: null });
+  assert.deepEqual(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [folded] }], tasks: [] }), { taskId: 9, terminalId: 't2', title: '', agent: 'codex', status: 'running', waiting: null, device: null });
+  // A question: the row's `waiting`, or a feed state of that kind, gives the kind; the status is waiting.
+  const asking = { id: 9, sessions: { note: null, rows: [{ kind: 'terminal', id: 't2', title: 'Codex: review', agent: 'codex', status: 'waiting', waiting: 'accept' }] } };
+  assert.deepEqual([sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [asking] }] })].map(found => [found.status, found.waiting]), [['waiting', 'accept']]);
+  const foldedAsk = sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [{ ...folded, sessionStates: { t2: 'select' } }] }] });
+  assert.deepEqual([foldedAsk.status, foldedAsk.waiting], ['waiting', 'select']);
   assert.equal(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [{ ...folded, sessionStates: {} }] }] }).status, 'idle');
   assert.equal(sessionOf(context, { sourceKey: 'local', groups: [{ tasks: [{ id: 9, sessions: null }] }] }).status, null, 'no activity known');
   // Another engine: its row of the one list, the ref to open.

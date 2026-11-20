@@ -51,6 +51,8 @@
   "{1} open · {2} need you · {3} running",
   "Running",
   "Waiting for you",
+  "Needs selection",
+  "Needs acceptance",
   "Finished",
   "Terminal",
   "{1}s",

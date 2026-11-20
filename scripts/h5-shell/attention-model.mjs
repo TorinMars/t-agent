@@ -605,17 +605,20 @@ export function sessionGone(row, terminalId) {
 // docs/design/page-attention.md): null whenever `jumpBack` would not open a terminal (no `context.tagent`, another machine, the task not listed, the
 // session gone). Else `{ taskId, terminalId, title, agent, status, device }`: `title` is the session's name in the task list ('' while its sessions
 // are not known), `agent` its kind (else `context.session.agent`), `status` the state the task list shows ('running', 'waiting', 'idle': from the
-// session row, else from the task row's `sessionStates`, the activity feed's terminals that are not idle; null while no activity is known) and
-// `device` the device tag of the task row (null when the task list shows none).
+// session row, else from the task row's `sessionStates`, the activity feed's terminals that are not idle; null while no activity is known), `waiting`
+// the kind of the question it waits at ('select' | 'accept', the row's `waiting` or a `sessionStates` value of that name; else null) and `device` the
+// device tag of the task row (null when the task list shows none).
 export function sessionOf(context, { sourceKey, groups, tasks, localHost } = {}) {
   const found = listedTask(context, { sourceKey, groups, tasks, localHost });
   if (!found || sessionGone(found.row, found.terminalId)) return null;
   const entry = (knownSessions(found.row) || []).find(session => String(session.id) === found.terminalId) || null;
   const listed = found.row.source === sourceKey ? found.row : (tasks || []).find(row => row && row.source === sourceKey && String(row.id) === String(found.row.id)) || null;
   const states = found.row.sessionStates || (listed && listed.sessionStates) || null;
-  const status = entry && entry.status ? entry.status : states ? states[found.terminalId] || 'idle' : null;
+  const raw = entry && entry.status ? entry.status : states ? states[found.terminalId] || 'idle' : null;
+  const waiting = (entry && entry.status ? entry.waiting : raw === 'select' || raw === 'accept' ? raw : null) || null;
+  const status = raw === 'select' || raw === 'accept' ? 'waiting' : raw;
   const agent = (entry && entry.agent) || (context.session && context.session.agent) || null;
-  return { taskId: found.taskId, terminalId: found.terminalId, title: (entry && entry.title) || '', agent, status, device: (listed && listed.device) || null };
+  return { taskId: found.taskId, terminalId: found.terminalId, title: (entry && entry.title) || '', agent, status, waiting, device: (listed && listed.device) || null };
 }
 
 // Whether the shown session (`state.shownTarget` of h5.js: `{ sourceKey, taskId, terminalId }`, the task id as its engine knows it) is the one an

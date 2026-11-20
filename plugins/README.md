@@ -26,6 +26,7 @@ plugins/listeners/<name>/
 |---|---|
 | `UserPromptSubmit` | `working`; the first prompt (80 characters) is the title; clears the reason; `meta` `{cwd, host}` |
 | `Notification` (`permission_prompt`, `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input`, `worker_permission_prompt`) | `waiting_user`, reason = the message |
+| `PreToolUse` (`AskUserQuestion`, `ExitPlanMode`: they stop for the person without a Notification) | `waiting_user`, reason = the question (several joined with ` / `), or "Review the plan"; pending `question` / `permission`. A Notification for the same dialog within 2 minutes changes nothing; their `PostToolUse` brings the task back to `working` |
 | `Stop` | `review`, reason = Claude's last message. While sub-agents of the session still run (their logs in `<session>/subagents/`, recent and unfinished): stays `working` with a timeline note, so the Stop after the last sub-agent is the one that notifies |
 | `StopFailure` (API error) | `failed`, reason = the error |
 | `SessionEnd` | `review` if it was still `working` or `waiting_user` |

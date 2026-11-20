@@ -11,7 +11,7 @@ import IconButton from '@mui/material/IconButton';
 import ListItemButton from '@mui/material/ListItemButton';
 import Typography from '@mui/material/Typography';
 import { t } from './common.jsx';
-import { columnStatus } from './columns.mjs';
+import { columnStatus, stateWord } from './columns.mjs';
 import { Icon } from './Icons.jsx';
 import { filterRecent, recentCounts, recentRows, recentWhen } from './recent-rows.mjs';
 import { shallowEqual } from './store.mjs';
@@ -43,7 +43,7 @@ function useMinute() {
   return now;
 }
 
-const ROW_KEYS = ['key', 'ref', 'terminalId', 'agent', 'name', 'named', 'taskTitle', 'status', 'current'];
+const ROW_KEYS = ['key', 'ref', 'terminalId', 'agent', 'name', 'named', 'taskTitle', 'status', 'waiting', 'current'];
 const sameRow = (a, b) => a.ui === b.ui && a.when === b.when && a.rename === b.rename
   && ROW_KEYS.every(key => a.row[key] === b.row[key]) && (a.row.device === b.row.device || shallowEqual(a.row.device, b.row.device));
 
@@ -52,10 +52,10 @@ const RecentRow = React.memo(function RecentRow({ row, when, ui, rename }) {
   countRender('RecentRow');
   const target = { kind: 'terminal', id: row.terminalId };
   if (rename) return <RenameRow menu={rename} ui={ui} row={row} />;
-  const state = t(STATE_WORDS[row.status] || 'Idle');
+  const state = t(stateWord(STATE_WORDS, row.status, row.waiting) || 'Idle');
   return (
     <Box
-      component="li" className="h5-recent-row" data-key={row.key} data-status={row.status} data-current={row.current ? 'true' : undefined}
+      component="li" className="h5-recent-row" data-key={row.key} data-status={row.status} data-waiting={row.waiting || undefined} data-current={row.current ? 'true' : undefined}
       sx={theme => ({
         position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 2, ...(row.current ? SELECTED_SX(theme) : {}), ...REVEAL_SX,
         // On a computer the "⋯" takes the place of the time while the pointer is over the row or the focus is in it.
@@ -108,6 +108,7 @@ export function RecentList({ ui, query, filter, rename, onCounts }) {
   const all = recentRows(state.recent, {
     shown: state.shownTarget, tasks: state.taskList && state.taskList.tasks,
     statusOf: entry => columnStatus({ target: entry }, { activity: state.activity, items }).state,
+    kindOf: entry => columnStatus({ target: entry }, { activity: state.activity, items }).kind,
   });
   const counts = recentCounts(all);
   useEffect(() => { onCounts(counts); }, [counts.running, counts.pending]); // eslint-disable-line react-hooks/exhaustive-deps

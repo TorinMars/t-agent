@@ -84,10 +84,34 @@ function sharedClaudeSettings() {
     return {};
   }
 }
+// The same settings carry the terminal activity hooks of rules/claude/settings.json (the groups whose every command posts to $TA_HOOK_URL:
+// start, stop, the questions with their waiting kind, end), so the state of a T-Agent terminal does not depend on what ~/.claude/settings.json
+// holds ("Activity hooks come with the terminal" in docs/design/terminals.md). That file gets them only from scripts/agent-sync.py, which `ta`
+// runs and T-Agent's own terminals do not. Claude Code runs the hooks of every settings source; an identical command in the person's file
+// runs once, and an older copy there (another command) only reports the same event again.
+const RULES_SETTINGS = path.resolve(__dirname, '..', 'rules', 'claude', 'settings.json');
+let activityHooks = null;
+function claudeActivityHooks() {
+  if (activityHooks) return activityHooks;
+  const out = {};
+  try {
+    const rules = JSON.parse(fs.readFileSync(RULES_SETTINGS, 'utf8'));
+    for (const [event, groups] of Object.entries((rules && rules.hooks) || {})) {
+      const mine = (Array.isArray(groups) ? groups : []).filter(group => group && Array.isArray(group.hooks) && group.hooks.length
+        && group.hooks.every(hook => hook && typeof hook.command === 'string' && hook.command.includes('$TA_HOOK_URL')));
+      if (mine.length) out[event] = mine;
+    }
+  } catch (error) {
+    console.warn(`[terminal] could not read the activity hooks of rules/claude/settings.json: ${error.message}`);
+  }
+  activityHooks = out;
+  return out;
+}
 function claudeSettings(peer = false) {
   const command = `${shellQuote(process.execPath)} ${shellQuote(SESSION_HOOK_SCRIPT)} >/dev/null 2>&1 || true`;
   const shared = sharedClaudeSettings();
-  const settings = { ...shared, hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 10 }] }] } };
+  const activity = claudeActivityHooks();
+  const settings = { ...shared, hooks: { ...activity, SessionStart: [...(activity.SessionStart || []), { hooks: [{ type: 'command', command, timeout: 10 }] }] } };
   if (peer) settings.permissions = { ...(shared.permissions || {}), allow: [`mcp__${PEER_MCP_NAME}`] };
   return JSON.stringify(settings);
 }
@@ -271,8 +295,9 @@ function bindReportedSession(taskId, id, report) {
 // else the bound one.
 const liveAgentSessionId = (live, bound) => (live && live.currentAgentSessionId) || bound;
 
-/** Handles one hook report; returns an HTTP status code. `body` is the parsed JSON body (event=session only). */
-function reportHook(taskId, requestedTerminalId, token, event, body) {
+/** Handles one hook report; returns an HTTP status code. `body` is the parsed JSON body (event=session only). `options` (event=attention):
+ *  { kind: 'select' | 'accept', via: 'tool' } from the hook's query ("Two waiting kinds" in docs/design/terminals.md). */
+function reportHook(taskId, requestedTerminalId, token, event, body, options = {}) {
   let id;
   try { id = terminalId(requestedTerminalId); } catch { return 400; }
   const expected = Buffer.from(hookToken(taskId, id));
@@ -281,7 +306,8 @@ function reportHook(taskId, requestedTerminalId, token, event, body) {
   if (event === 'session') return bindReportedSession(Number(taskId), id, body);
   const session = sessions.get(sessionKey(taskId, id));
   if (!session || !session.activity) return 404;
-  return session.activity.report(event) ? 204 : 400;
+  const report = event === 'attention' ? { kind: options.kind || null, tool: options.via === 'tool' } : undefined;
+  return session.activity.report(event, report) ? 204 : 400;
 }
 
 function terminalId(value) {
@@ -1055,6 +1081,21 @@ function activitySnapshot(taskIds) {
   return result;
 }
 
+/** The kind of every open question of the given tasks' listed terminals ("Two waiting kinds" in docs/design/terminals.md):
+ *  { [taskId]: { [terminalId]: 'select' | 'accept' } }. Such a terminal is 'done' in activitySnapshot (what an older page reads as "needs you"). */
+function waitingKindSnapshot(taskIds) {
+  const wanted = new Set();
+  for (const taskId of taskIds) wanted.add(Number(taskId));
+  const result = {};
+  for (const s of sessions.values()) {
+    if (!wanted.has(s.taskId) || !s.activity) continue;
+    const kind = s.activity.waitingKind();
+    if (!kind || !isListedTerminal(s.taskId, s.terminalId)) continue;
+    (result[s.taskId] ||= {})[s.terminalId] = kind;
+  }
+  return result;
+}
+
 /** Running sub-agents of the live Claude terminals of the given tasks: { [taskId]: { [terminalId]: count } } (terminals with none are left out).
  *  Only a terminal whose shell is alive and that is bound to a Claude session (agent_session_id) can have one; see runningSubagents.
  *  The count reads the session the live shell really runs (after /clear, the cleared one), not only the binding. */
@@ -1114,6 +1155,7 @@ function updateIdleTerminals() {
 // The sub-agent counts of all live Claude terminals are read once per refresh, whatever the number of open streams.
 const activityStream = createActivityStream({
   activity: activitySnapshot,
+  waitingKinds: waitingKindSnapshot,
   subagents: () => subagentSnapshot(null),
 });
 function serveActivityStream(req, res, taskIds, options) {
@@ -1192,7 +1234,8 @@ function sendToTerminal(taskId, requestedTerminalId, text, { enterDelayMs = REPL
 }
 
 // The live terminals of every task that are not idle, for the window's activity list: [{ task_id, task_title, terminal_id, title, agent, state, since }],
-// state 'running' | 'waiting' (done at a permission prompt: awaitingAnswer) | 'done' (finished, not acknowledged yet); since: ms of the last state change.
+// state 'running' | 'waiting' (done at a question: awaitingAnswer, with waiting_kind 'select' | 'accept') | 'done' (finished, not acknowledged yet);
+// since: ms of the last state change.
 // The title and agent are the ones the task's terminal list shows (listTerminals: an agent terminal is named after its session). They are read
 // from the terminal's own row; only the name of an agent session comes from the last terminal listing (sessionNames), which is made again here
 // when it is older than SESSION_NAMES_MS, so a call inside that time reads no session file and lists no folder.
@@ -1205,7 +1248,7 @@ function liveTerminalActivity() {
     const state = s.activity.state();
     if (state === 'idle') continue;
     if (!byTask.has(s.taskId)) byTask.set(s.taskId, []);
-    byTask.get(s.taskId).push({ s, state: state === 'done' && s.activity.awaitingAnswer() ? 'waiting' : state });
+    byTask.get(s.taskId).push({ s, state: state === 'done' && s.activity.awaitingAnswer() ? 'waiting' : state, kind: s.activity.waitingKind() });
   }
   const out = [];
   for (const [taskId, live] of byTask) {
@@ -1214,11 +1257,11 @@ function liveTerminalActivity() {
     let rows = [];
     try { rows = live.map(({ s }) => listedTerminal(taskId, s.terminalId)); } catch { rows = []; }
     const names = rows.some(row => row && row.follows) ? currentSessionNames(taskId) : null;
-    live.forEach(({ s, state }, index) => {
+    live.forEach(({ s, state, kind }, index) => {
       const row = rows[index];
       if (!row) return; // a legacy phone shell (h5-...) or a terminal deleted meanwhile
       const title = (row.follows && names && names.get(s.terminalId)) || row.title;
-      out.push({ task_id: String(taskId), task_title: task.title || '', terminal_id: s.terminalId, title: title || '', agent: row.agent || null, state, since: s.activity.since() });
+      out.push({ task_id: String(taskId), task_title: task.title || '', terminal_id: s.terminalId, title: title || '', agent: row.agent || null, state, ...(state === 'waiting' && kind ? { waiting_kind: kind } : {}), since: s.activity.since() });
     });
   }
   return out;
@@ -1289,4 +1332,4 @@ function shutdownTerminals() {
   } catch {}
 }
 
-module.exports = { offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity };
+module.exports = { offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity };

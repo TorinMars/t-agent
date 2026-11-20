@@ -80,6 +80,9 @@ const current = page => page.evaluate(() => [...document.querySelectorAll('#h5-c
 const activeId = page => page.evaluate(() => document.activeElement && document.activeElement.id);
 const ui = (page, key) => page.evaluate(name => { const value = window.H5UI.get()[name]; return value && typeof value === 'object' ? JSON.parse(JSON.stringify(value)) : value; }, key);
 // The terminal of task 1 runs (the pushed activity stream, h5-activity-stream-mock.cjs).
+// A question of the shown terminal while a sub-agent of it runs ("Two waiting kinds" in docs/design/terminals.md); `kind` null: a finished turn from an
+// older Engine, without kinds and without the sub-agent (plain "needs you").
+const pushWaiting = (page, kind) => page.waitForFunction(k => window.activityStream && window.activityStream.push('/api/tasks/terminal-activity/stream', { activity: { 1: { c1: 'done' } }, ...(k ? { subagents: { 1: { c1: 1 } }, waiting_kind: { 1: { c1: k } } } : { subagents: {} }) }), kind, { timeout: 8000 });
 const pushRunning = page => page.waitForFunction(() => window.activityStream && window.activityStream.push('/api/tasks/terminal-activity/stream', { activity: { 1: { c1: 'running' } }, subagents: {} }), null, { timeout: 8000 });
 async function openTerminal(page, task, terminal, how = 'click') {
   const row = page.locator('#h5-tasks .h5-terminal-main', { hasText: terminal });
@@ -131,6 +134,15 @@ async function openTerminal(page, task, terminal, how = 'click') {
       assert.equal(await page.locator('#h5-task-name').textContent(), 'Fix login');
       assert.equal(await page.locator('#h5-session-name').textContent(), 'Claude: login fix');
       assert.equal(await page.locator('.h5-header .h5-header-hint').textContent(), 'Claude · running');
+      // At a question the chip names its kind, orange like "Needs you", even while a sub-agent of it runs.
+      for (const [kind, words] of [['select', 'Needs selection'], ['accept', 'Needs acceptance'], [null, 'Needs you']]) {
+        await pushWaiting(page, kind);
+        await page.waitForFunction(text => document.querySelector('.h5-header .h5-header-needs')?.textContent === text, words, { timeout: 5000 });
+        assert.equal(await page.locator('.h5-header .h5-header-dot').getAttribute('data-state'), 'waiting');
+      }
+      assert.equal(await page.locator('.h5-header .h5-header-needs').evaluate(el => getComputedStyle(el).color), 'rgb(255, 167, 38)', 'the warning colour');
+      await pushRunning(page);
+      await page.locator('.h5-header .h5-header-dot[data-state="running"]').waitFor({ timeout: 5000 });
       const header = page.locator('.h5-header');
       assert.equal(await header.locator('#h5-update, #h5-columns-open, #h5-refresh').count(), 0, 'no Update, columns switch or refresh button in the header');
       assert.equal(await header.locator('#h5-sidebar-toggle').count(), 1, 'the fold toggle stays at the left');
@@ -244,6 +256,12 @@ async function openTerminal(page, task, terminal, how = 'click') {
       await pushRunning(page);
       await page.locator('.h5-header .h5-header-dot[data-state="running"]').waitFor({ timeout: 5000 });
       assert.equal(await page.locator('.h5-header .h5-header-state').textContent(), '· running');
+      await pushWaiting(page, 'select');
+      await page.waitForFunction(() => document.querySelector('.h5-header .h5-header-state')?.textContent === '\u00b7 needs selection', null, { timeout: 5000 });
+      await pushWaiting(page, 'accept');
+      await page.waitForFunction(() => document.querySelector('.h5-header .h5-header-state')?.textContent === '\u00b7 needs acceptance', null, { timeout: 5000 });
+      await pushRunning(page);
+      await page.locator('.h5-header .h5-header-dot[data-state="running"]').waitFor({ timeout: 5000 });
       // More: Refresh the page and Update (with the red dot of a waiting update, also on the button).
       await page.locator('#h5-header-more[data-attention="true"]').waitFor({ timeout: 5000 });
       await page.locator('#h5-header-more').tap();

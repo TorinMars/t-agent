@@ -680,3 +680,45 @@ test('counting sub-agent logs is quick: 200 recent logs of 1 MiB each', () => {
   assert.equal(runningSubagents(undefined), 0);
   assert.equal(runningSubagents('/not/a/transcript'), 0);
 });
+
+test('a question tool makes the task waiting_user with its words (AskUserQuestion: the question; ExitPlanMode: Review the plan), its answer brings it back', async () => {
+  const fake = await fakeServer();
+  const dir = dataDir();
+  configure(dir, fake.url);
+  const ask = { ...base, hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'toolu_q1',
+    tool_input: { questions: [{ question: 'Where should the script run?', header: 'Script', options: [{ label: 'New terminal' }, { label: 'Here' }] }, { header: 'Shots', options: [] }] } };
+  const answered = { ...base, hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_input: ask.tool_input, tool_response: {}, tool_use_id: 'toolu_q1' };
+  const planned = { ...base, hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_input: { plan: '1. Do it' }, tool_use_id: 'toolu_p1' };
+  const rejected = { ...base, hook_event_name: 'PostToolUseFailure', tool_name: 'ExitPlanMode', tool_input: { plan: '1. Do it' }, error: 'rejected', tool_use_id: 'toolu_p1' };
+  try {
+    await hook(dir, events.prompt);
+    const [item] = fake.items.values();
+    let before = fake.requests.length;
+    const asked = await hook(dir, ask);
+    assert.deepEqual([asked.code, asked.out], [0, ''], 'prints nothing: a PreToolUse hook that printed could change the tool call');
+    assert.deepEqual([item.status, item.attention_reason], ['waiting_user', 'Where should the script run? / Shots']);
+    const sent = fake.requests.slice(before).find(request => request.method === 'PATCH' || request.method === 'PUT');
+    assert.deepEqual(sent.body.context.pending, { kind: 'question', text: 'Where should the script run? / Shots' });
+    assert.deepEqual(sent.body.activity, { kind: 'question', text: 'Where should the script run? / Shots' });
+    before = fake.requests.length;
+    await hook(dir, events.question); // a Notification for the same dialog keeps the tool's words
+    assert.equal(fake.requests.length, before);
+    assert.equal(item.attention_reason, 'Where should the script run? / Shots');
+    await hook(dir, answered);
+    assert.deepEqual([item.status, item.attention_reason], ['working', null]);
+
+    await hook(dir, planned);
+    assert.deepEqual([item.status, item.attention_reason], ['waiting_user', 'Review the plan']);
+    assert.deepEqual(item.context.pending, { kind: 'permission', text: 'Review the plan', tool: 'ExitPlanMode' });
+    await hook(dir, rejected);
+    assert.equal(item.status, 'working');
+
+    before = fake.requests.length;
+    await hook(dir, events.other); // PreToolUse of any other tool: nothing
+    assert.equal(fake.requests.length, before);
+    await hook(dir, events.permission); // a later permission Notification is heard again
+    assert.equal(item.attention_reason, 'Claude needs your permission to use Bash');
+  } finally {
+    await fake.close();
+  }
+});

@@ -36,6 +36,9 @@ const TOOL_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
 // it fires after a finished turn has waited, and the task is already in review then.
 const WAITING_TYPES = new Set(['permission_prompt', 'elicitation_dialog', 'elicitation_url_dialog', 'agent_needs_input', 'worker_permission_prompt']);
 const PERMISSION_TYPES = new Set(['permission_prompt', 'worker_permission_prompt']);
+// Tools that stop for the person without a Notification (Claude Code 2.1.x): a question to answer and the plan to approve. Their PreToolUse
+// makes the task waiting_user, their PostToolUse (the answer) brings it back to working. "Two waiting kinds" in docs/design/terminals.md.
+const WAITING_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 // Claude Code 2.1.x runs UserPromptSubmit for the message that wakes a session when a background task ends. It is not the user's prompt.
 const WAKE_UP_PROMPT = /^\s*(?:<system-reminder>[\s\S]*?)?<task-notification>/;
 
@@ -296,6 +299,12 @@ function runningSubagents(transcriptPath, now = Date.now()) {
   return agentSessions.runningSubagentsIn(path.join(transcriptPath.slice(0, -'.jsonl'.length), 'subagents'), now);
 }
 
+// The questions of an AskUserQuestion call ({ questions: [{ question, header, options }] }), one line, joined; '' when there are none.
+function questionText(input) {
+  const questions = input && Array.isArray(input.questions) ? input.questions : [];
+  return questions.map(item => oneLine(item && (item.question || item.header))).filter(Boolean).join(' / ');
+}
+
 // ---------- event mapping ----------
 function meta(event) {
   const out = { host: os.hostname() };
@@ -335,9 +344,27 @@ function plan(event, state = null, now = new Date(), subagents = 0) {
         state: { status: 'working', turns, goal: Boolean(prompt) || Boolean(state && state.goal), started_at: (state && state.started_at) || at, pending: null, ...turnState },
       };
     }
+    case 'PreToolUse': {
+      const tool = String(event.tool_name || '');
+      if (!WAITING_TOOLS.has(tool)) return null;
+      const question = tool === 'AskUserQuestion';
+      const text = clip(question ? questionText(event.tool_input) || 'Claude has a question for you' : 'Review the plan', PENDING_MAX);
+      const pending = question ? { kind: 'question', text } : { kind: 'permission', text, tool };
+      return {
+        // No git diff here: the dialog shows only after this hook has finished.
+        kind: 'upsert', title: fallbackTitle(event), transition: previous !== 'waiting_user', files: false,
+        body: { status: 'waiting_user', attention_reason: clip(text, REASON_MAX) },
+        context: { pending, branch: branchOf(event.cwd) || undefined },
+        activity: { kind: pending.kind, text: clip(oneLine(text), ACTIVITY_MAX) },
+        state: { status: 'waiting_user', pending, tool_wait: { tool, at } },
+      };
+    }
     case 'Notification': {
       const type = event.notification_type;
       if (type && !WAITING_TYPES.has(type)) return null;
+      // The tool's own words (the question, "Review the plan") are better than the Notification of the same dialog.
+      const toolWait = state && state.tool_wait;
+      if (previous === 'waiting_user' && toolWait && now - new Date(toolWait.at) < PENDING_TOOL_FRESH_MS) return null;
       const text = clip(String(event.message || event.title || 'Claude is waiting for you').trim(), PENDING_MAX);
       const kind = PERMISSION_TYPES.has(type) ? 'permission' : 'question';
       const pending = { kind, text };
@@ -395,7 +422,7 @@ function plan(event, state = null, now = new Date(), subagents = 0) {
       return {
         kind: 'resume', body: { status: 'working', attention_reason: null }, context: { pending: null },
         activity: { kind: 'resumed', text: clip(event.tool_name ? `Claude continued (${event.tool_name})` : 'Claude continued', ACTIVITY_MAX) },
-        state: { status: 'working', pending: null, pending_tool: null },
+        state: { status: 'working', pending: null, pending_tool: null, tool_wait: null },
       };
     case 'SessionEnd':
       return { kind: 'session-end', activity: { kind: 'session_end', text: clip(`Session ended${event.reason ? ` (${event.reason})` : ''}`, ACTIVITY_MAX) } };
@@ -529,4 +556,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { supersededEntry, plan, runningSubagents, titleFrom, readTranscript, tagentFrom, branchOf, changedFiles, commandOf, WAITING_TYPES };
+module.exports = { WAITING_TOOLS, questionText, supersededEntry, plan, runningSubagents, titleFrom, readTranscript, tagentFrom, branchOf, changedFiles, commandOf, WAITING_TYPES };

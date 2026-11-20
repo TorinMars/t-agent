@@ -27,13 +27,13 @@ test('a stream gets the snapshot of its own tasks on connect and again after eac
   hub.serve(req, res, () => [1]);
   assert.equal(res.headers['content-type'], 'text/event-stream');
   assert.equal(res.headers['x-accel-buffering'], 'no');
-  assert.deepEqual(res.events(), [{ activity: { 1: { default: 'running' } }, subagents: {} }], 'task 2 belongs to someone else');
+  assert.deepEqual(res.events(), [{ activity: { 1: { default: 'running' } }, subagents: {}, waiting_kind: {} }], 'task 2 belongs to someone else');
 
   activity = { 1: { default: 'done' }, 2: { other: 'done' } };
   hub.notify();
   hub.notify(); // a burst is one message
   await tick(30);
-  assert.deepEqual(res.events().at(-1), { activity: { 1: { default: 'done' } }, subagents: {} });
+  assert.deepEqual(res.events().at(-1), { activity: { 1: { default: 'done' } }, subagents: {}, waiting_kind: {} });
   assert.equal(res.events().length, 2);
 
   // Nothing changed for this stream (only another owner's task did): no message.
@@ -45,7 +45,7 @@ test('a stream gets the snapshot of its own tasks on connect and again after eac
   activity = {};
   hub.notify();
   await tick(30);
-  assert.deepEqual(res.events().at(-1), { activity: {}, subagents: {} }, 'acknowledged: idle terminals are left out');
+  assert.deepEqual(res.events().at(-1), { activity: {}, subagents: {}, waiting_kind: {} }, 'acknowledged: idle terminals are left out');
 
   req.emit('close');
   assert.equal(hub.size(), 0);
@@ -94,4 +94,20 @@ test('the tracker change callback, a closed session and an ack reach the stream 
   assert.match(source, /createActivityTracker\(pty, shell, \(\) => \{\s*activityStream\.notify\(\);/);
   assert.equal((source.match(/activityStream\.notify\(\)/g) || []).length, 4, 'tracker changes, natural exit, close / restart / delete and a Claude session rebind');
   assert.match(source, /UPDATE task_terminals SET agent_session_id = \? WHERE task_id = \? AND terminal_id = \?'\)\.run\(sessionId, taskId, id\);\n\s*if \(rebind \|\| running !== sessionId\) activityStream\.notify\(\);/, 'a rebind, or a /clear that changes the live session, pushes the sub-agent count of the new session');
+});
+
+test('the kinds of the questions ride on the snapshot, only of the stream\'s own tasks, and a change of kind alone is sent', async () => {
+  const activity = { 1: { a: 'done' }, 2: { b: 'done' } };
+  let kinds = { 1: { a: 'select' }, 2: { b: 'accept' } };
+  const pick = (all, ids) => Object.fromEntries(ids.filter(id => all[id]).map(id => [id, all[id]]));
+  const hub = createActivityStream({ activity: ids => pick(activity, ids), waitingKinds: ids => pick(kinds, ids), subagents: () => ({}), debounceMs: 5 });
+  const { req, res } = fakeStream();
+  hub.serve(req, res, () => [1]);
+  assert.deepEqual(res.events(), [{ activity: { 1: { a: 'done' } }, subagents: {}, waiting_kind: { 1: { a: 'select' } } }]);
+  kinds = { 1: { a: 'accept' }, 2: { b: 'accept' } };
+  hub.notify();
+  await tick(30);
+  assert.deepEqual(res.events().at(-1).waiting_kind, { 1: { a: 'accept' } });
+  assert.equal(res.events().length, 2);
+  req.emit('close');
 });

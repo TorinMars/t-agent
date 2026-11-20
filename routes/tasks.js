@@ -198,8 +198,10 @@ router.post('/:id/rename-folder', (req, res) => {
   } catch (error) { res.status(error.statusCode || 500).json(taskRename.errorBody(error)); }
 });
 
+// `?kinds=1`: { activity, waiting_kind } ("Two waiting kinds" in docs/design/terminals.md); without it the bare activity, as older pages read it.
 router.get('/terminal-activity', (req, res) => {
-  res.json(terminal.activitySnapshot(taskArchive.activeTaskIds(db, ownerFilter(req))));
+  const ids = taskArchive.activeTaskIds(db, ownerFilter(req));
+  res.json(req.query.kinds === '1' ? { activity: terminal.activitySnapshot(ids), waiting_kind: terminal.waitingKindSnapshot(ids) } : terminal.activitySnapshot(ids));
 });
 
 // The same activity and sub-agent snapshot pushed as server-sent events (`event: activity`), on connect and on every change.

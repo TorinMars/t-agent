@@ -113,6 +113,8 @@ function createMindmapService({
   dataDir, now = () => new Date(), log = message => console.warn(message), maxMaps = LIMITS.maps, maxDataBytes = LIMITS.dataBytes,
   // Who this engine is ({ instance_id, name }): the server passes services/engine-identity.js. A test that passes nothing gets an id of its own.
   identity = null,
+  // Tests only: { beforeWrite(entry) } is awaited before a map or tombstone with a change number is written, to hold a write while something else runs.
+  hooks = {},
 } = {}) {
   if (!dataDir) throw new Error('createMindmapService needs the data folder');
   const ownId = `engine-${crypto.randomUUID()}`;
@@ -205,9 +207,12 @@ function createMindmapService({
   }
 
   async function writeAtomic(record, options) {
-    known.delete(record.id);
-    await writeFileAtomic(dir, fileOf(record.id), JSON.stringify(record), options);
-    known.delete(record.id);
+    try {
+      if (hooks.beforeWrite) await hooks.beforeWrite(record);
+      known.delete(record.id);
+      await writeFileAtomic(dir, fileOf(record.id), JSON.stringify(record), options);
+      known.delete(record.id);
+    } finally { written(record); } // written, or failed: either way no longer on its way (a failed write leaves a gap)
   }
 
   // ---- The counter, the clock and the names (sync/state.json) ----
@@ -225,7 +230,14 @@ function createMindmapService({
   }
   // Written in order, so the last rename holds the newest state.
   const saveState = () => serial(META_QUEUE, () => writeFileAtomic(syncDir, stateFile, JSON.stringify(meta)));
-  const nextSeq = () => { meta.seq += 1; return meta.seq; };
+  // A change number is taken before its file is written, and the write takes a moment. Until it is on disk the number is "on its way" (`onTheirWay`):
+  // a page made meanwhile stops before the lowest such number, and the newest number told to a peer is below it, so a peer never records a number
+  // as had while its entry was missing from the page ("Change numbers and pages" in docs/design/mind-maps.md).
+  const onTheirWay = new Set();
+  const nextSeq = () => { meta.seq += 1; onTheirWay.add(meta.seq); return meta.seq; };
+  const written = entry => { if (entry && entry.sync && entry.sync.seq) onTheirWay.delete(entry.sync.seq); };
+  // The newest change number whose entry, and every one before it, is on disk.
+  const settledSeq = () => (onTheirWay.size ? Math.min(...onTheirWay) - 1 : meta.seq);
   function tick() {
     meta.clock = Math.max(now().getTime(), meta.clock + 1);
     return meta.clock;
@@ -265,8 +277,11 @@ function createMindmapService({
   }
   const tombRecord = tomb => ({ id: tomb.id, deleted_at: tomb.deleted_at, revision: tomb.revision, sync: tomb.sync });
   async function writeTomb(tomb) {
-    tombs.set(tomb.id, tomb);
-    await writeFileAtomic(tombDir, tombOf(tomb.id), JSON.stringify(tombRecord(tomb)));
+    try {
+      if (hooks.beforeWrite) await hooks.beforeWrite(tomb);
+      tombs.set(tomb.id, tomb);
+      await writeFileAtomic(tombDir, tombOf(tomb.id), JSON.stringify(tombRecord(tomb)));
+    } finally { written(tomb); }
   }
   async function dropTomb(id) {
     if (!tombs.has(id)) return;
@@ -520,7 +535,7 @@ function createMindmapService({
   }
 
   // ---- For the sync (services/mindmap-sync.js) ----
-  const maxSeq = () => meta.seq;
+  const maxSeq = () => settledSeq();
 
   // A peer's entry, checked like one made here, or null.
   function cleanIncoming(raw) {
@@ -605,10 +620,12 @@ function createMindmapService({
   // `maxRows` entries: { maps, tombstones, after, next, more }. `next`: the number to ask after next time.
   async function exportPage(after, { maxBytes = 2 * 1024 * 1024, maxRows = 500 } = {}) {
     await prepare();
-    const newest = meta.seq;
+    // Taken before the files are read: an entry written after this has a larger number and goes in a later page.
+    const newest = settledSeq();
+    const inPage = seq => seq > after && seq <= newest;
     const rows = [
-      ...(await readAll()).filter(entry => entry.sync && entry.sync.seq > after).map(entry => ({ kind: 'map', id: entry.id, seq: entry.sync.seq })),
-      ...[...tombs.values()].filter(tomb => tomb.sync.seq > after).map(tomb => ({ kind: 'tomb', id: tomb.id, seq: tomb.sync.seq, tomb })),
+      ...(await readAll()).filter(entry => entry.sync && inPage(entry.sync.seq)).map(entry => ({ kind: 'map', id: entry.id, seq: entry.sync.seq })),
+      ...[...tombs.values()].filter(tomb => inPage(tomb.sync.seq)).map(tomb => ({ kind: 'tomb', id: tomb.id, seq: tomb.sync.seq, tomb })),
     ].sort((a, b) => a.seq - b.seq);
     const page = { maps: [], tombstones: [], after, next: Math.max(newest, after), more: false };
     let bytes = 0;

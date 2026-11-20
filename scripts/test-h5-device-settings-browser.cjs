@@ -176,7 +176,7 @@ async function testChooseK01(browser) {
   await openSheet(page);
   await page.locator('#h5-settings-tabs').waitFor({ state: 'visible' });
   const tabs = await page.locator('#h5-settings-tabs [role="tab"]').evaluateAll(nodes => nodes.map(node => [node.dataset.tab, node.innerText.replace(/\s+/g, ' ').trim(), node.disabled || node.getAttribute('aria-disabled') === 'true']));
-  assert.deepEqual(tabs, [['shared', 'Shared', false], ['local', 'This device', false], ['2', 'K01', false], ['3', 'Old Mac Update Old Mac first', true]]);
+  assert.deepEqual(tabs, [['shared', 'Shared', false], ['2', 'K01', false], ['3', 'Old Mac Update Old Mac first', true], ['local', 'This device', false]], 'the devices by name, this one among them');
   assert.equal(await chosenTab(page), 'shared', 'Shared by default');
   await chooseTab(page, '2');
   assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'These settings are read and saved on K01');
@@ -314,7 +314,7 @@ async function testWithoutSyncPeers(browser) {
   await openSheet(page);
   await page.locator('#h5-settings-tabs').waitFor({ state: 'visible' });
   const tabs = await page.locator('#h5-settings-tabs [role="tab"]').evaluateAll(nodes => nodes.map(node => [node.dataset.tab, node.disabled || node.getAttribute('aria-disabled') === 'true']));
-  assert.deepEqual(tabs, [['local', false], ['2', false], ['3', true]]);
+  assert.deepEqual(tabs, [['2', false], ['3', true], ['local', false]], 'the devices by name ("This device" of an older server after K01 and Old Mac)');
   assert.equal(await chosenTab(page), '2', 'the remembered K01 tab');
   await toggleGroup(page, 'devices');
   await page.waitForFunction(() => window.calls.some(call => call.url === '/api/device-settings/2/peer-fs/settings'));
@@ -413,7 +413,7 @@ async function testChinese(browser) {
   await page.locator('#h5-settings-tab-hint').waitFor();
   assert.equal(await page.locator('#h5-settings-tabs [role="tablist"]').getAttribute('aria-label'), '\u8bbe\u7f6e\u5bf9\u8c61');
   const tabs = await page.locator('#h5-settings-tabs [role="tab"]').allInnerTexts();
-  assert.deepEqual(tabs.map(text => text.replace(/\s+/g, ' ').trim()), ['\u5171\u4eab', '\u672c\u673a', 'K01', 'Old Mac \u8bf7\u5148\u5347\u7ea7 Old Mac']);
+  assert.deepEqual(tabs.map(text => text.replace(/\s+/g, ' ').trim()), ['\u5171\u4eab', 'K01', 'Old Mac \u8bf7\u5148\u5347\u7ea7 Old Mac', '\u672c\u673a'], 'by name; an older server without an engine name is placed by its label');
   assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), '\u8fd9\u4e9b\u8bbe\u7f6e\u4f1a\u8bfb\u53d6\u5e76\u4fdd\u5b58\u5230 K01');
   await toggleGroup(page, 'devices');
   await page.waitForFunction(() => document.getElementById('h5-link-remote'));

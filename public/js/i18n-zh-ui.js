@@ -134,6 +134,7 @@ I18n.add({
   "CPU {1}% · {2} · {3} · {4} restarts": "CPU {1}% · {2} · {3} · 重启 {4}",
   "Create": "创建",
   "Create on": "创建到",
+  "The machine you chose last time": "上次选择的机器",
   "Create {1}": "创建 {1}",
   "Created {1}": "已创建 {1}",
   "Current version": "当前版本",
@@ -1078,7 +1079,7 @@ I18n.add({
   "close": "关闭",
   // Single page, phase 2: Engines settings, Update details, task actions
   "Devices": "设备",
-  "The machines whose tasks and terminals this page shows, this one first. To add one, link it below.": "本页面显示其任务和终端的机器，本机排在第一位。要添加设备，请在下面关联。",
+  "The machines whose tasks and terminals this page shows, by name. To add one, link it below.": "本页面显示其任务和终端的机器，按名称排列。要添加设备，请在下面关联。",
   "Local": "本地",
   "No other devices yet": "还没有其他设备",
   "URL": "地址",

@@ -10,7 +10,7 @@ function unique(order) {
   return (Array.isArray(order) ? order : []).filter(key => typeof key === 'string' && !seen.has(key) && seen.add(key));
 }
 
-// The rows of the list in the shared order. `rows` are in today's order (this machine first, then each service, each in its own order), each with its
+// The rows of the list in the shared order. `rows` are in today's order (the devices by name, device-order.mjs, each in its own order), each with its
 // `key` (null while its device has no instance id: an older Engine). Without an order (an older server, or none read yet) that order stays as it is.
 // With one: the rows whose key is not in it come first (new or restored tasks), in today's order; then the rows in the order's order; then the rows
 // without a key, which cannot be placed.

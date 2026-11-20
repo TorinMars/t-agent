@@ -6,6 +6,7 @@
 //                                          'offline', 'update' (too old to tell) or 'failed'.
 // A tool's status: 'ok' (value: its version, a name such as `zsh`, or '' when found without a version), 'missing' (fix: the install hint of the
 // environment check), 'not-needed' (Swift off macOS), 'unknown' (the probe failed or took too long).
+import { orderDevices } from './device-order.mjs';
 
 const numeric = value => /^v?\d+(?:\.\d+)+$/.test(value);
 const parts = value => value.replace(/^v/, '').split('.').map(Number);
@@ -21,10 +22,8 @@ function newer(a, b) {
 const same = value => String(value || '').replace(/^v(?=\d)/, '');
 
 // The machines in one order on every page, whichever engine serves it: by name (numbers in names by value), so T01's page and K01's page draw the
-// same table. `columns`: [{ key, name, ... }].
-export function orderColumns(columns) {
-  return [...columns].sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }) || String(a.key).localeCompare(String(b.key)));
-}
+// same table (the shared rule of device-order.mjs). `columns`: [{ key, name, instanceId?, ... }].
+export const orderColumns = columns => orderDevices(columns);
 
 // The value the others are compared with, among the found values: the newest version when they are all versions, else the most common one
 // (on a tie the first column's).

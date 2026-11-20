@@ -1,6 +1,6 @@
 // T-Attention of every engine in one list (scripts/h5-shell/Attention.jsx, attention-feed.mjs, attention-model.mjs; "T-Attention on the page" in docs/design/page-attention.md),
 // in real Chromium with the API mocked by Playwright routes and a fake EventSource per stream:
-// - this machine ("mac") and K01 (remote 7, 'attention:remote') merged in one list, each row with the engine tag of the task list, each group in engine
+// - this machine ("Air", so by name it comes before K01) and K01 (remote 7, 'attention:remote') merged in one list, each row with the engine tag of the task list, each group in engine
 //   blocks (this machine first) with repeating ids; Old (no capability) and Legacy (capability, answers 501) left out silently; Hidden (hidden from the
 //   task list) left out; Down (its list answers 502) named by a muted "Could not load Down" line; Gone (offline in the task list) never read;
 // - a live change of K01's stream updates the list, the badge and reminds with "(K01)"; one of this machine reminds without a name;
@@ -103,7 +103,7 @@ async function serve(world, route) {
   const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
   if (p === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
   if (/^\/(js|css|vendor)\//.test(p)) return route.fulfill({ contentType: TYPES[path.extname(p)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', p)) });
-  if (p === '/api/system/version') return json({ engine_name: 'mac', instance_id: 'inst-local' });
+  if (p === '/api/system/version') return json({ engine_name: 'Air', instance_id: 'inst-local' });
   if (p === '/api/remote-servers') return json(world.remotes ? SERVERS.map(server => ({ id: server.id, name: server.name, status: server.offline ? 'offline' : 'online', enabled: true, instance_id: server.instance_id })) : []);
   if (p === '/api/task-list/hidden-devices') {
     if (method === 'PUT') world.hidden = JSON.parse(request.postData()).hidden;
@@ -225,11 +225,11 @@ async function testPhone(browser) {
   await openSheet(page, 'tap');
   await page.locator(`${SHEET} .h5-attention-failed`).waitFor();
 
-  // One list: this machine's block first, then K01's, each by sort_order; ids repeat, keys do not.
+  // One list: the engines by name (Air, this machine, before K01), each by sort_order; ids repeat, keys do not.
   assert.deepEqual(await keysIn(page, 'todo'), ['local:10', 'local:11', 'local:14', 'remote:7:10', 'remote:7:11', 'remote:7:14']);
   assert.deepEqual(await keysIn(page, 'needs_you'), ['local:1', 'remote:7:2', 'local:2', 'remote:7:1', 'remote:7:3', 'remote:7:4'], 'Needs you: waiting_user, then review');
   // The engine tag of the task list in front of every title.
-  assert.equal(await row(page, 'local:10').locator('.h5-attention-engine .h5-device-tag').textContent(), 'mac');
+  assert.equal(await row(page, 'local:10').locator('.h5-attention-engine .h5-device-tag').textContent(), 'Air');
   assert.equal(await row(page, 'remote:7:10').locator('.h5-attention-engine .h5-device-tag').textContent(), 'K01');
   const colors = await page.evaluate(sheet => [...new Set([...document.querySelectorAll(`${sheet} .h5-attention-engine .h5-device-tag`)].map(el => `${el.dataset.source}=${el.dataset.color}`))], SHEET);
   const { tagColorIndex } = await import(require('node:url').pathToFileURL(path.join(root, 'scripts/h5-shell/task-order.mjs')).href);
@@ -248,7 +248,7 @@ async function testPhone(browser) {
   // Every control is 44px; the quick add has "on <engine>".
   const small = await page.evaluate(sheet => [...document.querySelectorAll(`${sheet} button, ${sheet} input, ${sheet} select`)].map(el => { const r = (el.closest('.MuiInputBase-root') || el).getBoundingClientRect(); return { cls: el.className.split(' ')[0], id: el.id, w: r.width, h: r.height }; }).filter(r => r.w && (r.w < 44 || r.h < 44)), SHEET);
   assert.deepEqual(small, [], 'every control is 44px');
-  assert.deepEqual(await page.locator('#h5-attention-add-on option').allTextContents(), ['on mac', 'on K01']);
+  assert.deepEqual(await page.locator('#h5-attention-add-on option').allTextContents(), ['on Air', 'on K01']);
   assert.deepEqual(await noOverflow(page), []);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'h5-attention-remote-phone.png') });
 
@@ -259,10 +259,10 @@ async function testPhone(browser) {
   assert.equal(await notice(page).textContent(), 'Needs you: Pick a region (K01) — eu or us?');
   await row(page, 'remote:7:30').waitFor();
   assert.equal(await page.locator('#h5-attention').getAttribute('aria-label'), 'Attention (3)');
-  // One of this machine names no engine; an equal id on the other engine is not touched.
+  // One of this machine names its engine too (more than one engine is listed); an equal id on the other engine is not touched.
   await page.evaluate(change => window.emitOn('/api/attention/stream', change), { kind: 'updated', item: { ...LOCAL_ITEMS()[3], status: 'review', attention_reason: 'Look at it', updated_at: '2026-11-06T00:00:00Z' }, previous: LOCAL_ITEMS()[3], event: { actor: 'claude', type: 'status' } });
   await notice(page).filter({ hasText: 'Changelog' }).waitFor();
-  assert.equal(await notice(page).textContent(), 'Review: Changelog — Look at it');
+  assert.equal(await notice(page).textContent(), 'Review: Changelog (Air) — Look at it');
   assert.equal(await row(page, 'remote:7:11').getAttribute('data-status'), 'todo');
 
   // The row buttons go to K01.
@@ -447,7 +447,7 @@ async function testChinese(browser) {
   await openSheet(page, 'tap');
   await page.locator(`${SHEET} .h5-attention-failed`).waitFor();
   assert.equal(await page.locator(`${SHEET} .h5-attention-failed`).textContent(), '\u65e0\u6cd5\u52a0\u8f7d Down');
-  assert.deepEqual(await page.locator('#h5-attention-add-on option').allTextContents(), ['\u5230 mac', '\u5230 K01']);
+  assert.deepEqual(await page.locator('#h5-attention-add-on option').allTextContents(), ['\u5230 Air', '\u5230 K01']);
   assert.equal(await page.locator('#h5-attention-add-on').getAttribute('aria-label'), '\u6dfb\u52a0\u5230');
   await page.evaluate(change => window.emitOn('/api/remote-servers/7/attention/stream', change), { kind: 'created', item: node(31, 'Pick a region', 'waiting_user', null, 70, { attention_reason: 'eu or us?' }) });
   await notice(page).filter({ hasText: 'Pick a region' }).waitFor();

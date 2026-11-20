@@ -1,6 +1,7 @@
 // The mind map view: the list of maps and the editor around one map. Plain DOM (the page's React bundle is not available here and would cost more than this file).
 import { PATHS } from '../h5-shell/Icons.jsx';
 import { readShared, writeShared } from '../h5-shell/shared-store.mjs';
+import { shortName, tagColor } from '../h5-shell/task-order.mjs';
 import { localGet, localSet } from '../h5-shell/local-keys.mjs';
 import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
@@ -8,8 +9,10 @@ import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
 import { buildXmind, parseXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
 
 const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
-// The services whose maps are listed (`sources` of the mount options, in list order): { key, label, base, online }. `base` is where that service's maps are
-// (`/api/mindmaps` here, `/api/remote-servers/:id/mindmaps` for a connected service, same shapes). Without the option the view shows this machine only.
+// The services whose maps are listed (`sources` of the mount options, in the one order of devices, by name): { key, label, base, online, instanceId }.
+// `label` is the device's name (this machine's engine name too); `base` is where that service's maps are (`/api/mindmaps` here,
+// `/api/remote-servers/:id/mindmaps` for a connected service, same shapes); `instanceId` gives its tag the colour it has in the task list. Without the
+// option the view shows this machine only.
 const LOCAL_KEY = 'local';
 const LOCAL_SOURCE = { key: LOCAL_KEY, label: 'This machine', local: true, base: '/api/mindmaps', online: true };
 // A draft is kept per service and map. This machine keeps the key it always had, so a draft written before maps were shared still comes back; a connected
@@ -24,6 +27,9 @@ const FLUSH_WAIT_MS = 3000;
 const FOLD_KEY = 'h5-mindmap-list-folded';
 const readFolded = () => readShared(FOLD_KEY) === '1';
 const writeFolded = on => writeShared(FOLD_KEY, on ? '1' : null);
+// The machine "Create on" starts with: the one a task or map was last made on (a source key here; the shared page state keeps the instance id), the
+// same on every device and engine ("Create on" in docs/design/entry-symmetry.md).
+const CREATE_ON_KEY = 'h5-create-on';
 const CODE_MESSAGES = {
   MINDMAP_NOT_FOUND: 'This map no longer exists',
   INVALID_MINDMAP: 'The service refused this map because its content is not valid',
@@ -61,7 +67,7 @@ async function call(method, url, body) {
   return answer.json;
 }
 
-const sourceName = src => (src.local ? tr(src.label || LOCAL_SOURCE.label) : src.label);
+const sourceName = src => (src.local && (!src.label || src.label === LOCAL_SOURCE.label) ? tr(LOCAL_SOURCE.label) : src.label); // "This machine" only on an older server without a name
 // A connected service that did not answer (the proxy says 502). This machine never answers that way.
 const isOffline = error => error instanceof ApiError && (error.status === 502 || OFFLINE_CODES.has(error.code));
 const isUnsupported = error => error instanceof ApiError && (error.status === 501 || error.code === 'MINDMAPS_UNSUPPORTED');
@@ -86,7 +92,7 @@ function normalizeSources(list) {
     if (!item || typeof item.key !== 'string' || typeof item.base !== 'string' || seen.has(item.key)) continue;
     seen.add(item.key);
     const local = item.key === LOCAL_KEY;
-    out.push({ key: item.key, label: String(item.label || (local ? LOCAL_SOURCE.label : item.key)), local, base: item.base.replace(/\/+$/, ''), online: local || item.online !== false });
+    out.push({ key: item.key, label: String(item.label || (local ? LOCAL_SOURCE.label : item.key)), local, base: item.base.replace(/\/+$/, ''), online: local || item.online !== false, instanceId: typeof item.instanceId === 'string' ? item.instanceId : null });
   }
   return out;
 }
@@ -165,7 +171,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   let sources = given === undefined ? [LOCAL_SOURCE] : normalizeSources(given);
   const lists = new Map();
   let loadSeq = 0;
-  let createOn = LOCAL_KEY; // "Create on": the service a new or imported map goes to
+  let createOn = null; // "Create on": the service chosen in this view; null: the one chosen last time (CREATE_ON_KEY), else the first
   let importTarget = null;
   let dialog = null; // the open dialog: { close }
   let active = split ? activeGiven !== false : true;
@@ -283,8 +289,11 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   const createTargets = () => sources.filter(src => (src.local ? listOf(src).status !== 'unsupported' : src.online && listOf(src).status === 'ready'));
   function createTarget() {
     const targets = createTargets();
-    return targets.find(src => src.key === createOn) || targets.find(src => src.local) || targets[0] || sourceByKey(LOCAL_KEY) || LOCAL_SOURCE;
+    const last = createOn === null ? readShared(CREATE_ON_KEY) : null;
+    return targets.find(src => src.key === createOn) || targets.find(src => src.key === last) || targets[0] || sourceByKey(LOCAL_KEY) || LOCAL_SOURCE;
   }
+  // A map made on `src`: the next "Create on" starts there, here and on every other device (only when there was a choice).
+  const noteCreated = src => { if (createTargets().length > 1) writeShared(CREATE_ON_KEY, src.key); };
   function updateCreateOn() {
     const targets = createTargets();
     const picked = createTarget();
@@ -323,22 +332,32 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     return Promise.all(sources.map(src => loadSource(src)));
   }
 
-  function mapRow(src, map) {
+  // The engine tag of a row (`tagged`: more than one service is listed): the device's name cut to 8 characters in the colour its instance id gives it in
+  // the task list (task-order.mjs), muted when the service is offline.
+  function tagOf(src) {
+    const { index, color, background } = tagColor(src.instanceId);
+    const name = sourceName(src);
+    return el('span', { class: 'mm-row-tag', translate: 'no', title: name, 'data-source': src.key, 'data-color': String(index), style: `color:${color};background:${background}`, text: shortName(name) });
+  }
+  function mapRow(src, map, tagged = false) {
     const when = parseTime(map.updated_at);
     const meta = [when ? when.toLocaleString() : '', sizeText(map.size)].filter(Boolean).join(' · ');
     const ref = `${src.key}|${map.id}`;
     return el('div', { class: 'mm-row', role: 'listitem', 'data-source': src.key, 'data-id': map.id, 'data-ref': ref },
       el('button', { type: 'button', class: 'mm-row-open', 'data-part': 'open', onClick: () => { void openFromList(src, map.id); } },
         el('span', { class: 'mm-row-title', translate: 'no', text: map.title || tr('Untitled map') }),
-        el('span', { class: 'mm-row-meta', translate: 'no', text: meta })),
+        el('span', { class: 'mm-row-line' }, tagged ? tagOf(src) : null, el('span', { class: 'mm-row-meta', translate: 'no', text: meta }))),
       iconButton('draftKeyboard', 'Rename', () => renameMap(src, map), { 'data-part': 'rename' }),
       iconButton('delete', 'Delete', () => deleteMap(src, map), { 'data-part': 'delete' }));
   }
   const note = (text, extra = '') => el('p', { class: `mm-note${extra}`, text });
   const retry = src => el('button', { type: 'button', class: 'mm-btn mm-retry', text: tr('Try again'), onClick: () => { void loadSource(src); } });
 
-  // One list: this machine first, then each other service in the order of the task list, each under a small header (its name, and "Offline"). This machine
-  // alone has no header and looks as it always did.
+  // One list of the maps of every listed service, the last edited first ("Mind maps in one list" in docs/design/entry-symmetry.md): each row with its
+  // engine tag when more than one service is listed, no group per service and no place of its own for this machine, so the page of every engine shows
+  // the same list. A service that cannot list its maps now says so in one line under the list (its name, and "Loading...", "Offline" or the error
+  // with Try again), in the one order of devices.
+  const editedAt = map => { const when = parseTime(map.updated_at); return when ? when.getTime() : 0; };
   function renderList() {
     updateCreateOn();
     // The focus stays on the same button of the same row when a service's answer redraws the list.
@@ -347,26 +366,26 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     const focus = focusRow ? [focusRow.dataset.ref, active.dataset.part] : null;
     const shown = sources.filter(src => listOf(src).status !== 'unsupported');
     if (!shown.length) { rows.replaceChildren(note(tr(sources.length ? 'No mind maps yet. Create one or import a .xmind file.' : 'Loading...'))); return; }
-    const alone = shown.length === 1 && shown[0].local;
-    rows.replaceChildren(...shown.map(src => {
+    const tagged = shown.length > 1;
+    const rank = new Map(shown.map((src, index) => [src.key, index]));
+    const all = shown.filter(src => listOf(src).status === 'ready').flatMap(src => listOf(src).maps.map(map => ({ src, map })));
+    const maps = (query ? all.filter(({ map }) => String(map.title || tr('Untitled map')).toLowerCase().includes(query)) : all)
+      .sort((a, b) => editedAt(b.map) - editedAt(a.map) || rank.get(a.src.key) - rank.get(b.src.key) || String(a.map.id).localeCompare(String(b.map.id)));
+    const waiting = shown.filter(src => listOf(src).status !== 'ready');
+    const parts = [];
+    if (maps.length) parts.push(el('div', { class: 'mm-section-rows', role: 'list' }, ...maps.map(({ src, map }) => mapRow(src, map, tagged))));
+    else if (waiting.length === shown.length && waiting.every(src => listOf(src).status === 'loading')) parts.push(note(tr('Loading...')));
+    else if (query && all.length) parts.push(note(tr('No maps match')));
+    else if (!waiting.length || !all.length) parts.push(note(tr(waiting.length ? 'No mind maps' : 'No mind maps yet. Create one or import a .xmind file.')));
+    for (const src of waiting) {
       const list = listOf(src);
-      const section = el('section', { class: 'mm-section', 'data-source': src.key });
-      if (!alone) {
-        section.append(el('h2', { class: 'mm-source', 'data-source': src.key },
-          el('span', { class: 'mm-source-name', translate: src.local ? false : 'no', text: sourceName(src) }),
-          list.status === 'offline' ? el('span', { class: 'mm-source-offline', text: tr('Offline') }) : null));
-      }
-      const small = alone ? '' : ' mm-note-small';
-      if (list.status === 'loading') section.append(note(tr('Loading...'), small));
-      else if (list.status === 'error') section.append(note(messageFor(list.error, src), small), retry(src));
-      else if (list.status === 'ready' && !list.maps.length) section.append(note(tr(alone ? 'No mind maps yet. Create one or import a .xmind file.' : 'No mind maps'), small));
-      else if (list.status === 'ready') {
-        const maps = query ? list.maps.filter(map => String(map.title || tr('Untitled map')).toLowerCase().includes(query)) : list.maps;
-        if (maps.length) section.append(el('div', { class: 'mm-section-rows', role: 'list' }, ...maps.map(map => mapRow(src, map))));
-        else section.append(note(tr('No maps match'), small));
-      }
-      return section; // offline: the header says so, and nothing else is shown
-    }));
+      const name = tagged ? el('span', { class: 'mm-source-name', translate: 'no', text: sourceName(src) }) : null;
+      const line = el('p', { class: 'mm-source', 'data-source': src.key, 'data-state': list.status }, name,
+        list.status === 'offline' ? el('span', { class: 'mm-source-offline', text: tr('Offline') })
+          : el('span', { class: 'mm-source-state', text: list.status === 'error' ? messageFor(list.error, src) : tr('Loading...') }));
+      parts.push(list.status === 'error' ? el('div', { class: 'mm-source-error' }, line, retry(src)) : line);
+    }
+    rows.replaceChildren(...parts);
     markCurrent();
     if (focus) {
       const row = [...rows.querySelectorAll('.mm-row')].find(node => node.dataset.ref === focus[0]);
@@ -395,7 +414,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     const before = new Map(sources.map(src => [src.key, src]));
     sources = next;
     for (const key of [...lists.keys()]) if (!sourceByKey(key)) lists.delete(key);
-    if (!sourceByKey(createOn)) createOn = LOCAL_KEY;
+    if (!sourceByKey(createOn)) createOn = null;
     for (const src of next) {
       const old = before.get(src.key);
       const back = old && !old.online && src.online;
@@ -425,6 +444,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     try {
       const title = tr('Untitled map');
       const created = await call('POST', src.base, { title });
+      noteCreated(src);
       showEditor(created, src);
     } catch (error) { say(messageFor(error, src), 'error'); }
   }
@@ -477,6 +497,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
       const { doc, lost } = parseXmind(bytes, { parseXml: text => new DOMParser().parseFromString(text, 'text/xml') });
       const title = clipTitle(file.name.replace(/\.xmind$/i, '')) || tr('Imported map');
       const created = await call('POST', src.base, { title, data: doc });
+      noteCreated(src);
       const dropped = describeLost(lost, tr);
       say(dropped.length ? `${tr('Imported.')} ${dropped.join(', ')}` : tr('Imported'), dropped.length ? 'warning' : 'success');
       await openMap(src, created.id);

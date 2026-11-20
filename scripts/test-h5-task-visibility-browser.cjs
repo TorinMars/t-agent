@@ -152,7 +152,8 @@ function helpers(page, server, wide, label) {
   const closeDialog = async () => { await press(page.locator('#h5-task-dialog-cancel')); await dialog.waitFor({ state: 'detached' }); };
   const save = async () => { await press(page.locator('#h5-task-dialog-ok')); };
   const device = id => page.locator(`.h5-visibility-row[data-link="${id}"]`);
-  const checked = () => page.locator('.h5-visibility-row').evaluateAll(rows => rows.map(entry => [entry.dataset.link, entry.querySelector('input').checked]));
+  // By link id (the rows are drawn by name: the order is checked on its own).
+  const checked = () => page.locator('.h5-visibility-row').evaluateAll(rows => rows.map(entry => [entry.dataset.link, entry.querySelector('input').checked]).sort((a, b) => a[0].localeCompare(b[0])));
   // The list must be open: a closed sheet of a phone has no rows at all, and the check would pass without looking.
   const gone = async title => { await sheet(); await row(title).waitFor({ state: 'detached', timeout: 3000 }).catch(() => assert.fail(`${label}: ${title} leaves the list`)); };
   const empty = () => page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Choose a task', null, { timeout: 3000 }).catch(() => assert.fail(`${label}: no task is shown`));
@@ -206,7 +207,7 @@ async function run(browser, wide) {
 
   // ── It lists the devices with their state, all allowed by default, and says what it does not do ──
   assert.deepEqual(await h.checked(), [['L1', true], ['L2', true], ['L3', true]], `${label}: all allowed by default`);
-  assert.deepEqual(await page.locator('.h5-visibility-name').allTextContents(), ['Studio Mac', 'Home server', 'Laptop']);
+  assert.deepEqual(await page.locator('.h5-visibility-name').allTextContents(), ['Home server', 'Laptop', 'Studio Mac'], `${label}: by name, as every list of devices`);
   assert.deepEqual(await page.locator('.h5-visibility-offline').allTextContents(), ['Offline'], `${label}: only the offline one says so`);
   assert.equal((await h.device('L2').textContent()).includes('Offline'), true, `${label}: on its own row`);
   assert.equal(await page.locator('#h5-task-visibility-denied').count(), 0, `${label}: nothing to say while all are checked`);
@@ -245,7 +246,7 @@ async function run(browser, wide) {
   assert.deepEqual(await h.checked(), [['L1', false], ['L2', false], ['L3', false]]);
   await h.save();
   await h.dialog.waitFor({ state: 'detached' });
-  assert.deepEqual(server.puts.at(-1).body, { denied: ['L1', 'L2', 'L3'] }, `${label}: none checked is sent`);
+  assert.deepEqual(server.puts.at(-1).body, { denied: ['L2', 'L3', 'L1'] }, `${label}: none checked is sent (in the order shown, by name)`);
   server.devices = DEVICES();
 
   // ── Busy while saving: nothing can change and the dialog cannot be closed ──

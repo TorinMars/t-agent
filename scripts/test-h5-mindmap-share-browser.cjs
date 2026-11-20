@@ -1,7 +1,9 @@
 // Mind maps shared across connected services, in real Chromium with every route mocked here: the maps of this machine and of each connected service are in ONE list,
-// each under a small header in task list order; each map stays on its own service, so opening, saving, renaming, deleting, conflicts, "save as a new copy" and drafts go
-// to that service's `/api/remote-servers/:id/mindmaps` (this machine: `/api/mindmaps`). A service answering 501 is left out, a hidden device's maps are not shown, an
-// offline one shows "Offline" and holds nothing up, and a single machine looks as it always did. Each case collects its failures; all are printed at the end.
+// the last edited first, each row with its engine tag (no group per service, no place of its own for this machine: docs/design/entry-symmetry.md); each map stays on
+// its own service, so opening, saving, renaming, deleting, conflicts, "save as a new copy" and drafts go to that service's `/api/remote-servers/:id/mindmaps` (this
+// machine: `/api/mindmaps`). A service answering 501 is left out, a hidden device's maps are not shown, an offline one says "Offline" in a line under the list and
+// holds nothing up, "Create on" starts on the first machine by name (then on the one chosen last), and a single machine looks as it always did. Each case collects
+// its failures; all are printed at the end.
 // MINDMAP_SHOTS=<dir> saves a 390px screenshot of the list with two services. MINDMAP_ONLY=<text> runs the cases whose name has it.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -125,8 +127,10 @@ async function openPage(browser, world, { touch = false } = {}) {
 
 function tools(page, touch) {
   const press = locator => (touch ? locator.tap() : locator.click());
-  const section = key => page.locator(`.mm-section[data-source="${key}"]`);
-  const row = (key, title) => section(key).locator('.mm-row').filter({ has: page.locator('.mm-row-title', { hasText: new RegExp(`^${title}$`) }) });
+  // `section(key)`: the line a service that cannot list its maps now has under the list (its name and "Loading...", "Offline" or the error).
+  const section = key => page.locator(`.mm-source[data-source="${key}"]`);
+  const rowsOf = key => page.locator(`.mm-row[data-source="${key}"]`);
+  const row = (key, title) => rowsOf(key).filter({ has: page.locator('.mm-row-title', { hasText: new RegExp(`^${title}$`) }) });
   const openView = async () => {
     // A phone: Mind maps in the bottom navigation (the drawer, open at the start, lies over it: closed first).
     if (touch && await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
@@ -134,12 +138,11 @@ function tools(page, touch) {
     if (touch) await press(page.locator('#h5-bnav-maps')); else await page.evaluate(() => window.H5UI.actions.openMindmaps());
     await page.locator('#mm-new').waitFor();
   };
-  const sections = () => page.evaluate(() => [...document.querySelectorAll('.mm-section')].map(node => ({
-    key: node.dataset.source,
-    header: node.querySelector('.mm-source-name') ? node.querySelector('.mm-source-name').textContent : null,
-    offline: Boolean(node.querySelector('.mm-source-offline')),
-    rows: [...node.querySelectorAll('.mm-row-title')].map(title => title.textContent),
-  })));
+  // The one list: its rows (service, title, tag) in order, and the lines of the services that cannot list their maps now.
+  const sections = () => page.evaluate(() => ({
+    rows: [...document.querySelectorAll('.mm-row')].map(node => ({ key: node.dataset.source, title: node.querySelector('.mm-row-title').textContent, tag: node.querySelector('.mm-row-tag') ? node.querySelector('.mm-row-tag').dataset.source : null })),
+    lines: [...document.querySelectorAll('.mm-source')].map(node => ({ key: node.dataset.source, state: node.dataset.state, name: node.querySelector('.mm-source-name') ? node.querySelector('.mm-source-name').textContent : null, offline: Boolean(node.querySelector('.mm-source-offline')) })),
+  }));
   const newTopic = async text => {
     await page.keyboard.press('Home');
     await page.keyboard.press('Tab');
@@ -152,16 +155,17 @@ function tools(page, touch) {
   const back = async () => { await press(page.locator('#mm-back')); await page.locator('.mm-list').waitFor({ state: 'visible' }); };
   const notices = () => page.evaluate(() => window.notices.join(' | '));
   const noticed = (text, timeout = 6000) => page.waitForFunction(want => window.notices.some(message => message.includes(want)), text, { timeout });
-  return { press, section, row, openView, sections, newTopic, waitState, back, notices, noticed };
+  return { press, section, rowsOf, row, openView, sections, newTopic, waitState, back, notices, noticed };
 }
 
 const CASES = {
   async 'phone: two services in one list, a 501, a hidden and an offline one'(browser) {
     const world = makeWorld({ servers: [OFFICE, OLD, HIDDEN, DOWN], hidden: ['remote:4'] });
-    world.store(LOCAL_BASE).make('Home plan', doc('a'));
-    world.store(LOCAL_BASE).make('Shopping', doc('b'));
-    world.store(OFFICE_BASE).make('Office roadmap', doc('c'));
-    world.store(OFFICE_BASE).make('Team chart', doc('d'));
+    const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
+    world.store(LOCAL_BASE).make('Home plan', doc('a')).updated_at = ago(10);
+    world.store(LOCAL_BASE).make('Shopping', doc('b')).updated_at = ago(30);
+    world.store(OFFICE_BASE).make('Office roadmap', doc('c')).updated_at = ago(5);
+    world.store(OFFICE_BASE).make('Team chart', doc('d')).updated_at = ago(60);
     world.store('/api/remote-servers/3/mindmaps').control.mode = 'unsupported';
     world.store('/api/remote-servers/4/mindmaps').make('Secret map', doc('e'));
     world.store('/api/remote-servers/5/mindmaps').make('Unreachable map', doc('f'));
@@ -170,26 +174,25 @@ const CASES = {
     const t = tools(page, true);
     await t.openView();
 
-    // The local rows are there while the slow service is still loading, under their own header.
+    // The local rows are there while the slow service is still loading; its line says so.
     await t.row('local', 'Home plan').waitFor({ timeout: 2000 });
     let shown = await t.sections();
-    const office = shown.find(item => item.key === 'remote:2');
-    check(office && office.rows.length === 0 && /Loading/.test(await t.section('remote:2').textContent()), `the slow service is still loading while this machine is listed: ${JSON.stringify(shown)}`);
+    check(!shown.rows.some(item => item.key === 'remote:2') && /Loading/.test(await t.section('remote:2').textContent()), `the slow service is still loading while this machine is listed: ${JSON.stringify(shown)}`);
     await t.row('remote:2', 'Office roadmap').waitFor({ timeout: 6000 });
     shown = await t.sections();
-    check(JSON.stringify(shown.map(item => item.key)) === JSON.stringify(['local', 'remote:2', 'remote:5']), `order: this machine, then the task list order; the 501 one and the hidden one are left out: ${JSON.stringify(shown.map(item => item.key))}`);
-    check(shown[0].header === 'This machine' && shown[1].header === 'Office Mac' && shown[2].header === 'Down box', `each service has a header: ${JSON.stringify(shown.map(item => item.header))}`);
-    check(!shown[0].offline && !shown[1].offline && shown[2].offline, 'only the offline service says Offline');
-    check(shown[2].rows.length === 0 && !/Unreachable map/.test(await page.locator('.mm-rows').textContent()), 'the offline service shows no rows');
-    check(JSON.stringify(shown[0].rows) === JSON.stringify(['Shopping', 'Home plan']) && JSON.stringify(shown[1].rows) === JSON.stringify(['Team chart', 'Office roadmap']), `each section has its own maps: ${JSON.stringify(shown)}`);
+    check(JSON.stringify(shown.rows.map(item => item.title)) === JSON.stringify(['Office roadmap', 'Home plan', 'Shopping', 'Team chart']), `one list, the last edited first, whatever the service: ${JSON.stringify(shown.rows)}`);
+    check(shown.rows.every(item => item.tag === item.key), `every row has the engine tag of its service: ${JSON.stringify(shown.rows)}`);
+    check(JSON.stringify(shown.lines) === JSON.stringify([{ key: 'remote:5', state: 'offline', name: 'Down box', offline: true }]), `only the offline service has a line, with its name and Offline; the 501 one and the hidden one are left out: ${JSON.stringify(shown.lines)}`);
+    check(!/Unreachable map/.test(await page.locator('.mm-rows').textContent()), 'the offline service shows no rows');
+    check(await page.locator('.mm-section, h2.mm-source').count() === 0, 'no group or header per service');
     check(!/Secret map|Old box|Hidden box/.test(await page.locator('#h5-mindmap').textContent()), 'nothing of the hidden device or the too-old service is shown');
     check(world.requests('/api/remote-servers/4/mindmaps').length === 0, 'the hidden device\'s maps are not even read');
     check(world.requests('/api/remote-servers/5/mindmaps').length === 0, 'a service the page knows is offline is not asked');
     check(await page.locator('.mm-row[data-ref]').evaluateAll(nodes => nodes.every(node => node.dataset.ref === `${node.dataset.source}|${node.dataset.id}`)), 'each row is keyed by its service and id');
-    // "Create on": this machine and the online service that answered, not the offline, the too-old or the hidden one.
+    // "Create on": this machine and the online service that answered, by name, not the offline, the too-old or the hidden one.
     const options = await page.locator('#mm-create-on option').evaluateAll(nodes => nodes.map(node => node.value));
-    check(JSON.stringify(options) === JSON.stringify(['local', 'remote:2']), `Create on offers the services that can take a map: ${options}`);
-    check(await page.locator('#mm-create-on').inputValue() === 'local', 'Create on starts on this machine');
+    check(JSON.stringify(options) === JSON.stringify(['remote:2', 'local']), `Create on offers the services that can take a map, by name: ${options}`);
+    check(await page.locator('#mm-create-on').inputValue() === 'remote:2', 'Create on starts on the first machine by name (nothing chosen yet), not on this page\'s engine');
     const width = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, view: document.getElementById('h5-mindmap').scrollWidth, inner: window.innerWidth }));
     check(width.page <= width.inner && width.view <= width.inner, `nothing scrolls sideways at 390px: ${JSON.stringify(width)}`);
     if (SHOT_DIR) { fs.mkdirSync(SHOT_DIR, { recursive: true }); await page.screenshot({ path: path.join(SHOT_DIR, 'mindmap-share-list-390.png') }); }
@@ -198,11 +201,11 @@ const CASES = {
     world.hidden = [];
     await page.evaluate(() => window.H5UI.actions.enginesChanged());
     await t.row('remote:4', 'Secret map').waitFor({ timeout: 5000 });
-    check(JSON.stringify((await t.sections()).map(item => item.key)) === JSON.stringify(['local', 'remote:2', 'remote:4', 'remote:5']), 'a device shown again takes its place in the order');
+    check((await t.sections()).rows.some(item => item.key === 'remote:4' && item.tag === 'remote:4'), 'a device shown again has its rows in the list, tagged');
     // And hidden again: gone at once.
     world.hidden = ['remote:4'];
     await page.evaluate(() => window.H5UI.actions.enginesChanged());
-    await t.section('remote:4').waitFor({ state: 'detached', timeout: 5000 });
+    await t.rowsOf('remote:4').first().waitFor({ state: 'detached', timeout: 5000 });
     await context.close();
   },
 
@@ -216,9 +219,9 @@ const CASES = {
       await t.openView();
       await t.row('local', 'Only map').waitFor();
       if (servers.length) { await until(() => world.requests('/api/remote-servers/3/mindmaps').length > 0); await page.waitForTimeout(200); } // the 501 answer has arrived
-      check(await page.locator('.mm-source').count() === 0, `no service header (${servers.length ? 'with a too-old service' : 'alone'})`);
+      check(await page.locator('.mm-source').count() === 0, `no service line (${servers.length ? 'with a too-old service' : 'alone'})`);
       check(await page.locator('.mm-on').isHidden(), 'no Create on choice');
-      check(await page.locator('.mm-section').count() === 1, 'one section');
+      check(await page.locator('.mm-row-tag').count() === 0, 'no engine tag with one service');
       await context.close();
       // Empty, it says what it always said.
       const empty = makeWorld({ servers });
@@ -274,21 +277,25 @@ const CASES = {
     await t.openView();
     await page.locator('#mm-create-on').waitFor({ state: 'visible' });
     check((await page.locator('.mm-on').textContent()).includes('Create on'), 'the choice says Create on');
-    // The default is this machine.
+    // Nothing chosen yet: the first machine by name (Office Mac before "This machine"), never this page's engine.
+    check(await page.locator('#mm-create-on').inputValue() === 'remote:2', 'Create on starts on the first machine by name');
     await page.locator('#mm-new').click();
     await page.locator('.me-tpc').first().waitFor();
-    check(world.requests(LOCAL_BASE, 'POST').length === 1 && !world.requests(OFFICE_BASE, 'POST').length, 'a new map goes to this machine by default');
-    await t.back();
-    await page.locator('#mm-create-on').selectOption('remote:2');
-    await page.locator('#mm-new').click();
-    await page.locator('.me-tpc').first().waitFor();
-    check(world.requests(OFFICE_BASE, 'POST').length === 1 && world.requests(LOCAL_BASE, 'POST').length === 1, 'with Office Mac chosen the map is created there');
+    check(world.requests(OFFICE_BASE, 'POST').length === 1 && !world.requests(LOCAL_BASE, 'POST').length, 'a new map goes to Office Mac by default');
     await t.newTopic('Made remotely');
     await t.waitState('saved');
     const made = [...world.store(OFFICE_BASE).maps.values()][0];
     check(JSON.stringify(made.data).includes('Made remotely'), 'its edits save on that service');
     await t.back();
-    await t.section('remote:2').locator('.mm-row').first().waitFor();
+    await t.rowsOf('remote:2').first().waitFor();
+    // This machine chosen: the map is made here, and the next Create on starts here (the machine chosen last, kept in the shared page state).
+    await page.locator('#mm-create-on').selectOption('local');
+    await page.locator('#mm-new').click();
+    await page.locator('.me-tpc').first().waitFor();
+    check(world.requests(OFFICE_BASE, 'POST').length === 1 && world.requests(LOCAL_BASE, 'POST').length === 1, 'with this machine chosen the map is created here');
+    check(await page.evaluate(() => localStorage.getItem('h5-create-on')) === 'local', 'the machine chosen last is kept');
+    await t.back();
+    await page.locator('#mm-create-on').selectOption('remote:2');
     // Import follows the same choice (the file is built with the page's own converter by an export first).
     const { zipSync, strToU8 } = await import('fflate');
     const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'mindmap-share-'));

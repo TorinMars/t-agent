@@ -1,4 +1,5 @@
-// The tabs at the top of the settings sheet ("Settings of a linked device" in docs/design/linked-device-settings.md): Shared, then this device, then each linked device. A tab
+// The tabs at the top of the settings sheet ("Settings of a linked device" in docs/design/linked-device-settings.md): Shared, then every device by name (this
+// device among them, with "This device" under its name; the one order of devices of device-order.mjs). A tab
 // shows only the parts whose changes belong to it: Shared holds the parts copied to every linked device (and Telegram, one setting with one sender),
 // a device tab holds the "This device only" parts of that device (a linked device's are read and saved through /api/device-settings, DeviceTarget.jsx).
 // The Shared tab exists only while the settings sync shares with a linked device (`shared`, DeviceTarget.jsx). Without it (the sync is turned off,
@@ -6,6 +7,7 @@
 // are then this device's own. Pure functions, no React: which part is in which tab, which group has anything in a tab, the tab a part opened from
 // code needs, the tab entries and the remembered choice. `t` translates; `shared` is true unless said otherwise.
 import { selectable } from './device-target.mjs';
+import { orderDevices } from './device-order.mjs';
 
 const plain = text => text;
 export const SHARED_TAB = 'shared';
@@ -120,15 +122,13 @@ export function deviceOfTab(tab, devices) {
 // The words of this device's tab: with a Shared tab it holds what only this device uses; without one it holds every part, all saved on this device.
 const localText = shared => (shared ? 'Only this device uses these settings' : 'Changes here are saved on this device');
 
-// The entries of the tab row: { value, label, note, disabled, title, local, company }. `localName` is this device's engine name ('' on an older
-// server: the tab then says just "This device"). A linked device that cannot be chosen is shown disabled with the reason under its name. A linked
+// The entries of the tab row: { value, label, note, disabled, title, local, company }: Shared, then the devices by name, this one among them (so the
+// page of every engine shows the same row). `localName` is this device's engine name ('' on an older server: the tab then says just "This device",
+// and is placed by that name). A linked device that cannot be chosen is shown disabled with the reason under its name. A linked
 // device marked as a company computer says "Company computer" under its name when nothing else is said there (`company` true: the page draws that
 // note in the warning colour, as the pill of the device list). No Shared entry without the sync (`shared` false).
 export function tabEntries(devices, { localName = '', t = plain, shared = true } = {}) {
-  const entries = [
-    ...(shared ? [{ value: SHARED_TAB, label: t('Shared'), note: '', disabled: false, title: t('Changes here are copied to every linked device'), local: false }] : []),
-    { value: LOCAL_TAB, label: localName || t('This device'), note: localName ? t('This device') : '', disabled: false, title: t(localText(shared)), local: true },
-  ];
+  const entries = [{ value: LOCAL_TAB, label: localName || t('This device'), note: localName ? t('This device') : '', disabled: false, title: t(localText(shared)), local: true }];
   for (const device of devices || []) {
     const offline = device.supported === null || !device.online;
     const company = device.supported !== false && !offline && device.company_computer === true;
@@ -138,7 +138,10 @@ export function tabEntries(devices, { localName = '', t = plain, shared = true }
         : t(`These settings are read and saved on ${device.name}`);
     entries.push({ value: String(device.id), label: device.name, note, disabled: !selectable(device), title, local: false, company });
   }
-  return entries;
+  return [
+    ...(shared ? [{ value: SHARED_TAB, label: t('Shared'), note: '', disabled: false, title: t('Changes here are copied to every linked device'), local: false }] : []),
+    ...orderDevices(entries, entry => ({ name: entry.label, key: entry.value })),
+  ];
 }
 
 // The line under the tab row: what a change in the chosen tab affects.

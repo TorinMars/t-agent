@@ -51,7 +51,7 @@ import { DIALOG_RADIUS, TOUCH } from './theme.mjs';
 // reorder it among its siblings of the same status group (the server's order is per status) or dropped on another section's title to change its
 // status (Needs you gives waiting_user, Done gives done; `POST /api/attention/:id/move`, useListDrag of list-drag.jsx). Every such change is drawn at
 // once and put back when it fails.
-// Several engines (`state.attention.engines`, attention-feed.mjs): one list, each group in engine blocks (this machine first), every row with the engine
+// Several engines (`state.attention.engines`, attention-feed.mjs): one list, each group in engine blocks (by name), every row with the engine
 // tag of the task list (`DeviceTag`) in front of its title; a row is named by its `key` (ids repeat between engines), every request goes to its engine,
 // and a row is dragged only among the rows of its own engine. With one engine the panel looks as it always did (no tags, no "on <engine>").
 
@@ -281,18 +281,19 @@ function RejectDialog({ item, onCancel, onReject }) {
   );
 }
 
-// The engine a new task goes to when more than one is listed (`h5-attention-add-on`, an engine key); this machine unless another was chosen. The
-// person's choice on every device and engine (the shared page state keeps it by instance id, shared-store.mjs).
+// The engine a new task goes to when more than one is listed (`h5-attention-add-on`, an engine key): the one chosen last, else the first in the one
+// order of devices (never "the engine of this page", so every engine's page starts alike; docs/design/entry-symmetry.md). The person's choice on
+// every device and engine (the shared page state keeps it by instance id, shared-store.mjs); this machine is kept by its key too.
 const ADD_ON_KEY = 'h5-attention-add-on';
 
 function QuickAdd({ ui, engines }) {
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
-  const on = useShared(ADD_ON_KEY) || 'local';
-  // A choice that left the list (unlinked, hidden, offline) falls back to this machine, or the first engine that is left.
-  const picked = engines.find(engine => engine.key === on) || engines.find(engine => engine.key === 'local') || engines[0];
+  const on = useShared(ADD_ON_KEY);
+  // A choice that left the list (unlinked, hidden, offline) falls back to the first engine that is left.
+  const picked = engines.find(engine => engine.key === on) || engines[0];
   const engine = picked ? picked.key : 'local';
-  const choose = key => writeShared(ADD_ON_KEY, key === 'local' ? null : key);
+  const choose = key => writeShared(ADD_ON_KEY, key);
   const submit = async event => {
     event.preventDefault();
     const text = title.trim();
@@ -827,7 +828,7 @@ export function AttentionPanel({ state, ui }) {
   const collapsedText = useShared(COLLAPSED_KEY);
   const collapsed = useMemo(() => readCollapsed(collapsedText), [collapsedText]);
   const items = attention.items || [];
-  // The engines of the list, this machine first (attention-feed.mjs); with more than one every row has its engine tag.
+  // The engines of the list, by name (attention-feed.mjs); with more than one every row has its engine tag.
   const engines = useMemo(() => (Array.isArray(attention.engines) && attention.engines.length ? attention.engines : [{ key: 'local', local: true, label: 'This machine', name: '' }]), [attention.engines]);
   const tagged = engines.length > 1;
   const tags = useMemo(() => new Map(engines.map(engine => [engine.key, engine])), [engines]);

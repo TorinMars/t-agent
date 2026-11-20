@@ -67,18 +67,21 @@ test('the remembered tab is kept while it means something, else Shared; a device
   for (const junk of ['', '7abc', '-7', '0', 'x']) assert.equal(resolveTab(junk, DEVICES).tab, 'shared', junk);
 });
 
-test('the tab entries: Shared, this device under its name, then each linked device with the reason when it cannot be chosen', async () => {
+test('the tab entries: Shared, then every device by name (this one with "This device" under it), with the reason when one cannot be chosen', async () => {
   const { tabEntries, deviceOfTab, tabHint } = await load('settings-tabs.mjs');
   const entries = tabEntries(DEVICES, { localName: 'T01' });
   assert.deepEqual(entries.map(entry => [entry.value, entry.label, entry.note, entry.disabled]), [
-    ['shared', 'Shared', '', false], ['local', 'T01', 'This device', false], ['7', 'K01', '', false],
-    ['9', 'Old Mac', 'Update Old Mac first', true], ['11', 'Away', 'Offline', true], ['12', 'Sleeping', 'Offline', false],
+    ['shared', 'Shared', '', false], ['11', 'Away', 'Offline', true], ['7', 'K01', '', false],
+    ['9', 'Old Mac', 'Update Old Mac first', true], ['12', 'Sleeping', 'Offline', false], ['local', 'T01', 'This device', false],
   ]);
   assert.equal(entries[3].title, 'Old Mac is too old to be changed from here. Update Old Mac first.');
-  assert.equal(entries[5].title, 'Sleeping is offline. Its settings can be read and saved again once it is back online.');
+  assert.equal(entries[4].title, 'Sleeping is offline. Its settings can be read and saved again once it is back online.');
+  // The page of K01 (T01 is a linked device there) shows the same row of devices: the one order does not depend on which engine serves the page.
+  const fromK01 = tabEntries([{ id: 3, name: 'T01', online: true, supported: true }, ...DEVICES.slice(1)], { localName: 'K01' });
+  assert.deepEqual(fromK01.map(entry => entry.label), entries.map(entry => entry.label));
   assert.deepEqual(tabEntries([], {}).map(entry => [entry.label, entry.note]), [['Shared', ''], ['This device', '']], 'an older server has no name');
   const marked = tabEntries([{ ...DEVICES[0], company_computer: true }, { ...DEVICES[3], company_computer: true }], { localName: 'T01' });
-  assert.deepEqual(marked.map(entry => [entry.label, entry.note, entry.company]), [['Shared', '', undefined], ['T01', 'This device', undefined], ['K01', 'Company computer', true], ['Sleeping', 'Offline', false]],
+  assert.deepEqual(marked.map(entry => [entry.label, entry.note, entry.company]), [['Shared', '', undefined], ['K01', 'Company computer', true], ['Sleeping', 'Offline', false], ['T01', 'This device', undefined]],
     'a company computer says so under its name, unless another reason is said there');
   const shout = text => text.toUpperCase();
   assert.equal(tabEntries([], { t: shout })[0].label, 'SHARED', 'the words go through `t`');
@@ -107,9 +110,9 @@ test('without the settings sync (no Shared tab) the tabs are this device and eac
   // The entries: no Shared, K01 can be chosen, the older and unknown devices stay disabled.
   const entries = tabEntries(DEVICES, { localName: 'T01', ...off });
   assert.deepEqual(entries.map(entry => [entry.value, entry.label, entry.disabled]), [
-    ['local', 'T01', false], ['7', 'K01', false], ['9', 'Old Mac', true], ['11', 'Away', true], ['12', 'Sleeping', false],
+    ['11', 'Away', true], ['7', 'K01', false], ['9', 'Old Mac', true], ['12', 'Sleeping', false], ['local', 'T01', false],
   ]);
-  assert.equal(entries[0].title, 'Changes here are saved on this device');
+  assert.equal(entries[4].title, 'Changes here are saved on this device');
   assert.equal(entries.some(entry => /copied/.test(entry.title)), false, 'nothing says a change is copied');
   // The line under the tabs never says a change is copied.
   assert.equal(tabHint('local', DEVICES, off), 'Changes here are saved on this device');

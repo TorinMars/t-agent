@@ -44,6 +44,7 @@
 | [linked-device-settings.md](docs/design/linked-device-settings.md) | Reading and changing the per-device settings of a linked device from this page; the settings tabs; the "Company computer" device tier. | 16 KB |
 | [peer-file-access.md](docs/design/peer-file-access.md) | Read-only file access of agent sessions to linked Engines (MCP tools, scope, the switch). | 8 KB |
 | [engine-names.md](docs/design/engine-names.md) | One name per Engine, kept by that Engine and shown everywhere. | 3 KB |
+| [entry-symmetry.md](docs/design/entry-symmetry.md) | The same page from any engine: devices in one order by name, "Create on" and the T-Attention engine from the last choice, labels without "This machine", mind maps in one list, and the audit of what still treats this machine specially. | 7 KB |
 
 ### The page (`/` and `/h5`)
 

@@ -355,19 +355,25 @@
     let servers;
     const version = api('GET', '/api/system/version').then(answer => answer, () => null);
     try { servers = await api('GET', '/api/remote-servers'); }
-    catch { sources = sources.filter(item => item === LOCAL || item.label); await readLocalName(version); publishSources(); return; } // this time only: what was known stays
+    catch { sources = sources.filter(item => item === LOCAL || item.label); await readLocalName(version); sources = inOrder(sources); publishSources(); return; } // this time only: what was known stays
     await readLocalName(version);
     const before = new Map(sources.map(item => [item.key, item]));
-    sources = [LOCAL, ...(Array.isArray(servers) ? servers : []).filter(server => server.enabled !== false).map(server => {
+    sources = inOrder([LOCAL, ...(Array.isArray(servers) ? servers : []).filter(server => server.enabled !== false).map(server => {
       const kept = before.get(`remote:${server.id}`);
       const from = kept ? Object.assign(kept, { label: server.name }) : remoteSource(server.id, server.name);
       from.instanceId = instanceIdOf(server.instance_id);
       if (!kept && server.status === 'offline') from.status = 'offline'; // the first read of its tasks says for sure
       return from;
-    })];
+    })]);
     for (const from of before.values()) if (!sources.includes(from)) forgetSource(from);
     publishSources();
   }
+  // The services in the one order of devices (device-order.mjs: by name, then instance id), this machine among them, so the page of every engine lists them
+  // alike: the task list (new tasks before the shared order has them), "Create on", the mind maps and T-Attention ("Devices in one order" in
+  // docs/design/entry-symmetry.md). An older server without its engine name is "This machine" here too.
+  const sourceName = from => (from === LOCAL ? LOCAL.name || LOCAL.label : from.label);
+  const byDevice = (list, describe) => (ui.orderDevices ? ui.orderDevices(list, describe) : list);
+  const inOrder = list => byDevice(list, from => ({ name: sourceName(from), instanceId: from.instanceId, key: from.key }));
   // A failed read keeps the name (and the instance id) that was known.
   async function readLocalName(pending) {
     const answer = await pending;
@@ -519,7 +525,7 @@
   // ── Task order: one flat list in the order every client shares (`GET` / `PUT /api/task-order`; rules in scripts/h5-shell/task-order.mjs) ──
   // The list has no section per device and no group headers (it never showed group titles): every task of the listed devices, in the shared order. A task
   // is named in it by `<instance id>:<task id>`. The tasks not in the order (new, restored) come first, each device in its own order (groups by `sort_order`,
-  // then its list), this machine first; the tasks of a device without an instance id (an older Engine) come last and cannot be moved. The keys in the order
+  // then its list), the devices by name (`inOrder`); the tasks of a device without an instance id (an older Engine) come last and cannot be moved. The keys in the order
   // that match no task shown here (a hidden or offline device, a task not visible here) are kept in their places when a new order is saved.
   // An older server answers 404: then the list keeps today's order (each device after the other) and offers no sorting.
   const ORDER_URL = '/api/task-order';
@@ -1206,7 +1212,9 @@
   // ── Task actions (the "⋯" of a task): move to another group, change the working directory, delete (optionally with the directory) ──
   // The task endpoints, through the task base of the engine, so local, Engine and proxied tasks work alike.
   // Every action below belongs to the row it was started from: the service of that row, whichever task is shown.
-  const serviceOf = from => (from === LOCAL ? null : from.label); // the name a dialog or menu shows beside the title: tasks of two services can have the same title
+  // The name a dialog or menu shows beside the title (tasks of two services can have the same title): with more than one device, every task's device,
+  // this machine's too, so the same task reads the same on every engine's page; with this machine alone, none.
+  const serviceOf = from => (from === LOCAL ? (sources.length > 1 && LOCAL.name) || null : from.label);
   const dialogFor = (kind, from, item, extra = {}) => ({ kind, sourceKey: from.key, service: serviceOf(from), id: item.id, title: item.title, workDir: item.work_dir || '', error: '', busy: false, ...extra });
   const dialogSource = dialog => (dialog ? sources.find(item => item.key === dialog.sourceKey) : null);
   // anchor: the "⋯" it was opened from: the actions are a popup under it, like those of a session row (TermMenu.jsx `SessionPopup`), which lists only
@@ -1478,7 +1486,7 @@
     let patch;
     try {
       const answer = await api('GET', `${from.tasksBase}/${item.id}/visibility`);
-      if (Array.isArray(answer && answer.devices)) patch = { status: 'ready', devices: answer.devices };
+      if (Array.isArray(answer && answer.devices)) patch = { status: 'ready', devices: byDevice(answer.devices.filter(Boolean), device => ({ name: device.name, key: String(device.link_id) })) }; // by name, as every list of devices
       else { visibilityMissing = true; patch = { status: 'error', error: tr(VISIBILITY_TOO_OLD) }; }
     } catch (error) { patch = { status: 'error', error: visibilityError(error) }; }
     const dialog = visibilityDialog();
@@ -2039,7 +2047,7 @@
   const mindmapView = $('h5-mindmap');
   // The services whose maps the view lists: the same ones, in the same order, as the task list (a device hidden from the list is left out). Until the
   // services and what is hidden are known, none: the view says "Loading…", so a hidden device's maps never flash by.
-  const mindmapSources = () => (listReady ? listedSources() : []).map(from => ({ key: from.key, label: from.label, base: from.mindmapBase, online: from.status !== 'offline' }));
+  const mindmapSources = () => (listReady ? listedSources() : []).map(from => ({ key: from.key, label: sourceName(from), base: from.mindmapBase, online: from.status !== 'offline', instanceId: from.instanceId || null }));
   function syncMindmapSources() {
     const list = mindmapSources();
     const text = JSON.stringify(list);

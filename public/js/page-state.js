@@ -24,7 +24,7 @@
   const CACHE_KEY = 'ta-page-state';
   const IMPORTED_KEY = 'ta-page-state-imported'; // the parts of this browser's old state already sent: 'keys', 'codec', 'recent'
   const MOVED = [
-    'h5-task-list-tab', 'h5-columns', 'h5-sidebar-collapsed', 'h5-design-outline', 'h5-attention-collapsed', 'h5-attention-add-on',
+    'h5-task-list-tab', 'h5-columns', 'h5-sidebar-collapsed', 'h5-design-outline', 'h5-attention-collapsed', 'h5-attention-add-on', 'h5-create-on',
     'ta-saved-commands-used', 'h5-mindmap-list-folded', 'word-translate', 'ta-lang',
   ];
   // Kept on the server as JSON (not as the text the browser keeps), so the server can merge it: the recency of saved commands, per command.
@@ -87,6 +87,15 @@
   // `remote:<n>:<id>` keys; shared, `<instance>:<id>`. An id of a device this page does not list is kept as it was.
   const COLLAPSED = /^(local|remote:[1-9]\d*):(\d+)$/;
   const SHARED_ITEM = /^([A-Za-z0-9-]{1,64}):(\d+)$/;
+  // One engine: a source key on the page, its instance id in the shared state.
+  const ENGINE_CODEC = {
+    decode(value, sources) { return typeof value === 'string' ? sourceOf(value, sources) : null; },
+    encode(text, sources, previous) {
+      if (text === null) return null;
+      const from = (sources || []).find(entry => entry.key === text);
+      return from && from.instanceId ? from.instanceId : previous === undefined ? null : previous;
+    },
+  };
   const CODECS = {
     'h5-attention-collapsed': {
       decode(value, sources) {
@@ -113,14 +122,9 @@
       },
     },
     // The engine a new T-Attention task goes to: a source key here, an instance id shared.
-    'h5-attention-add-on': {
-      decode(value, sources) { return typeof value === 'string' ? sourceOf(value, sources) : null; },
-      encode(text, sources, previous) {
-        if (text === null) return null;
-        const from = (sources || []).find(entry => entry.key === text);
-        return from && from.instanceId ? from.instanceId : previous === undefined ? null : previous;
-      },
-    },
+    'h5-attention-add-on': ENGINE_CODEC,
+    // The machine "Create on" starts with (a new task, a new mind map): the one chosen last, the same way.
+    'h5-create-on': ENGINE_CODEC,
   };
   // Every codec needs this page's own instance id (it names this machine's tasks).
   const canCode = sources => (Array.isArray(sources) ? sources : []).some(from => from.key === 'local' && from.instanceId);

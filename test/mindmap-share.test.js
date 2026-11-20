@@ -187,21 +187,25 @@ test('/v1/mindmaps keeps the 8 MB limit with its own parser', async () => {
   assert.equal((await call('DELETE', `${v1}/${full.body.id}`, undefined, auth)).status, 204);
 });
 
+// The filler files are written and removed without blocking: this process runs the servers and the client, and a loop of 2000 synchronous writes
+// under load held the event loop for over 10 s, long enough for the server's keep-alive timeout and the client's reuse of the same idle connection
+// to meet in one turn (ECONNRESET before the request reached the server).
+async function eachInBatches(items, run, size = 50) {
+  for (let start = 0; start < items.length; start += size) await Promise.all(items.slice(start, start + size).map(run));
+}
+
 test('/v1/mindmaps keeps the map limit', async () => {
-  const before = fs.readdirSync(mapsDir).filter(name => name.endsWith('.json')).length;
+  const before = (await fs.promises.readdir(mapsDir)).filter(name => name.endsWith('.json')).length;
   const filler = [];
-  for (let index = before; index < LIMITS.maps; index += 1) {
-    const id = `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`;
-    filler.push(id);
-    fs.writeFileSync(path.join(mapsDir, `${id}.json`), JSON.stringify({ id, title: 'x', data: null, revision: 1, created_at: 'a', updated_at: 'a' }));
-  }
+  for (let index = before; index < LIMITS.maps; index += 1) filler.push(`${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`);
+  await eachInBatches(filler, id => fs.promises.writeFile(path.join(mapsDir, `${id}.json`), JSON.stringify({ id, title: 'x', data: null, revision: 1, created_at: 'a', updated_at: 'a' })));
   try {
     const refused = await call('POST', `${engine}/v1/mindmaps`, { title: 'one too many' }, auth);
     assert.equal(refused.status, 409);
     assert.equal(refused.body.error, 'MINDMAP_LIMIT');
     assert.deepEqual(await call('POST', `${proxy}/api/remote-servers/${ids.engine}/mindmaps`, { title: 'one too many' }), refused);
   } finally {
-    for (const id of filler) fs.rmSync(path.join(mapsDir, `${id}.json`), { force: true });
+    await eachInBatches(filler, id => fs.promises.rm(path.join(mapsDir, `${id}.json`), { force: true }));
   }
 });
 

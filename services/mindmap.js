@@ -17,8 +17,9 @@
 // - seq: the change number of the last write here, from one counter per folder. A peer asks for the entries after the number it has.
 // - Deletes leave a tombstone sync/tombstones/<id>.json { id, deleted_at, revision, sync }, kept TOMB_DAYS days, so the delete reaches every engine.
 // - sync/state.json: { seq, clock, names } (the counter, the clock, the names of the engines seen in versions).
-// - Migration: a file from before (no `sync`) gets { vv: { <this engine>: 1 }, at: its updated_at, by: this engine } and a change number the first
-//   time the folder is read; its id stays (ids are random UUIDs, so the maps of two engines never collide and same-named maps stay two maps).
+// - Migration: a file from before (no `sync`) gets { vv: { <this engine>: 1 }, at: its updated_at, by: this engine } and a change number, in the
+//   background after the folder is first used (`migrate`), never inside a request; its id stays (ids are random UUIDs, so the maps of two engines
+//   never collide and same-named maps stay two maps). A file written into the folder behind the server's back is adopted the same way.
 // - `cache` (a company computer only): { opened_at }, the last time the page opened the map here; never sent to a peer.
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
@@ -35,6 +36,9 @@ const CREATE_QUEUE = 'create';
 const META_QUEUE = 'meta';
 const LIST_BATCH = 8; // files read at once by the list: at most 8 maps of 8 MB in memory
 const TOMB_DAYS = 30;
+// A server that stopped between writing a map and writing sync/state.json leaves the counter a little behind the files; at each start the counter
+// jumps this far ahead instead of reading every file to find the newest number (gaps in the numbers are harmless).
+const SEQ_MARGIN = 1000;
 const DAY = 24 * 60 * 60 * 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAP_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/;
@@ -143,11 +147,17 @@ function createMindmapService({
             if (name.endsWith(TEMP_SUFFIX)) await fs.rm(path.join(folder, name), { force: true });
           }
         }
-        await loadState();
+        const hadState = await loadState();
         await loadTombs();
-        // Every map is read once: its change number and time set the counter and the clock, and a file from before gets its version.
-        await scan();
+        if (hadState) meta.seq += SEQ_MARGIN;
+        else {
+          // The first start with copies (no sync/state.json yet): every file is read once, only read, so the counter and the clock start past
+          // whatever versions are already there (a folder copied from another engine, a state file deleted by hand).
+          for (const entry of await readAll()) if (entry.sync) observe(entry.sync);
+        }
         await saveState();
+        // Files without a version get theirs in the background, never inside a request ("Migration" in docs/design/mind-maps.md).
+        void migrate();
       })().catch(error => { ready = null; throw error; });
     }
     return ready;
@@ -175,7 +185,8 @@ function createMindmapService({
     }
   }
 
-  async function writeFileAtomic(folder, target, text) {
+  // `durable` false (the migration): the folder is synced once after many files instead of after each one.
+  async function writeFileAtomic(folder, target, text, { durable = true } = {}) {
     const temp = path.join(folder, `.${path.basename(target, '.json')}.${process.pid}.${crypto.randomBytes(6).toString('hex')}${TEMP_SUFFIX}`);
     let handle;
     try {
@@ -190,25 +201,27 @@ function createMindmapService({
       await fs.rm(temp, { force: true }).catch(() => {});
       throw error;
     }
-    await syncFolder(folder);
+    if (durable) await syncFolder(folder);
   }
 
-  async function writeAtomic(record) {
+  async function writeAtomic(record, options) {
     known.delete(record.id);
-    await writeFileAtomic(dir, fileOf(record.id), JSON.stringify(record));
+    await writeFileAtomic(dir, fileOf(record.id), JSON.stringify(record), options);
     known.delete(record.id);
   }
 
   // ---- The counter, the clock and the names (sync/state.json) ----
+  // True when the folder had a state file.
   async function loadState() {
     let value = null;
     try { value = JSON.parse(await fs.readFile(stateFile, 'utf8')); } catch { value = null; }
-    if (!isObject(value)) return;
+    if (!isObject(value)) return false;
     meta = {
       seq: Number.isSafeInteger(value.seq) && value.seq >= 0 ? value.seq : 0,
       clock: Number.isSafeInteger(value.clock) && value.clock >= 0 ? value.clock : 0,
       names: isObject(value.names) ? Object.fromEntries(Object.entries(value.names).filter(([id, name]) => merge.INSTANCE_ID.test(id) && typeof name === 'string').map(([id, name]) => [id, cleanName(name)])) : {},
     };
+    return true;
   }
   // Written in order, so the last rename holds the newest state.
   const saveState = () => serial(META_QUEUE, () => writeFileAtomic(syncDir, stateFile, JSON.stringify(meta)));
@@ -345,7 +358,7 @@ function createMindmapService({
 
   // A map without a version (from before, or put back from the trash by hand) gets one now, and a map next to its own tombstone (put back by hand)
   // wins over it: both count as a change here, so they travel.
-  async function adopt(id) {
+  async function adopt(id, options) {
     return serial(id, async () => {
       const record = await load(id);
       if (!record) return;
@@ -356,19 +369,38 @@ function createMindmapService({
       const base = merge.joined(sync ? sync.vv : {}, tomb ? tomb.sync.vv : {});
       const version = sync || tomb ? ownVersion(base) : { vv: { [self.instance_id]: 1 }, at: Math.max(Date.parse(record.updated_at) || 0, 0), by: self.instance_id, by_name: self.name, seq: nextSeq() };
       if (version.at > meta.clock) meta.clock = version.at;
-      await writeAtomic({ ...record, sync: version });
+      await writeAtomic({ ...record, sync: version }, options);
       if (tomb) await dropTomb(id);
     });
   }
 
-  async function scan() {
-    for (const entry of await readAll()) {
-      if (entry.sync) observe(entry.sync);
-    }
-    for (const entry of await readAll()) {
-      if (!entry.sync || tombs.has(entry.id)) await adopt(entry.id);
-    }
+  // The migration, in the background: every file without a version (from before copies, or written into the folder behind the server's back) and
+  // every file next to its own tombstone is adopted, one at a time with a pause between them, so requests keep their turn (each id's queue is
+  // shared with the page's writes). The folder is synced once at the end. A request never waits for it: until a file has its version it is listed
+  // (with no "edited on") and travels from its first round after.
+  let migrating = null;
+  let migrateAgain = false;
+  function migrate() {
+    if (migrating) { migrateAgain = true; return migrating; }
+    migrating = (async () => {
+      do {
+        migrateAgain = false;
+        const todo = (await readAll()).filter(entry => !entry.sync || tombs.has(entry.id)).map(entry => entry.id);
+        for (const id of todo) {
+          await adopt(id, { durable: false });
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        if (todo.length) {
+          await syncFolder(dir);
+          await saveState();
+          changed();
+        }
+      } while (migrateAgain);
+    })().catch(error => log(`Mind maps: the migration of map files failed (${error.code || error.name})`)).finally(() => { migrating = null; });
+    return migrating;
   }
+  // Resolves when no migration is running (tests).
+  const settled = async () => { while (migrating) await migrating; };
 
   function checkData(value) {
     if (!isObject(value)) throw invalid('The map data must be a JSON object');
@@ -389,12 +421,8 @@ function createMindmapService({
 
   async function list() {
     await prepare();
-    let all = await readAll();
-    if (all.some(entry => !entry.sync || tombs.has(entry.id))) {
-      for (const entry of all) if (!entry.sync || tombs.has(entry.id)) await adopt(entry.id);
-      await saveState();
-      all = await readAll();
-    }
+    const all = await readAll();
+    if (all.some(entry => !entry.sync || tombs.has(entry.id))) void migrate();
     const maps = all.map(pageSummary);
     maps.sort((a, b) => (a.updated_at === b.updated_at ? a.id.localeCompare(b.id) : (a.updated_at < b.updated_at ? 1 : -1)));
     return maps;
@@ -665,7 +693,7 @@ function createMindmapService({
 
   return {
     list, get, head, create, update, remove, dir, trashDir, syncDir,
-    maxSeq, applyEntries, exportPage, exportIds, exportSummaries, localEntries, noteOpened, forget, purgeTombs, onChanged, prepare,
+    maxSeq, applyEntries, exportPage, exportIds, exportSummaries, localEntries, noteOpened, forget, purgeTombs, onChanged, prepare, settled,
     identity: me,
   };
 }

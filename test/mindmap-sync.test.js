@@ -59,6 +59,9 @@ test('existing map files get a version and a change number on first read; ids an
   for (const record of old) fs.writeFileSync(path.join(dir, `${record.id}.json`), JSON.stringify(record));
   const identity = () => ({ instance_id: 'engine-t01', name: 'T01' });
   const service = createMindmapService({ dataDir, identity, now: () => new Date(NOW), log: () => {} });
+  const first = await service.list();
+  assert.deepEqual(first.map(map => [map.id, map.title, map.revision]), [[old[0].id, 'Plan', 7], [old[1].id, 'Notes', 1]], 'listed at once, before the migration');
+  await service.settled(); // the migration runs in the background, never inside a request
   const listed = await service.list();
   assert.deepEqual(listed.map(map => [map.id, map.title, map.revision, map.by, map.by_name]), [[old[0].id, 'Plan', 7, 'engine-t01', 'T01'], [old[1].id, 'Notes', 1, 'engine-t01', 'T01']]);
   const stored = JSON.parse(fs.readFileSync(path.join(dir, `${old[0].id}.json`), 'utf8'));
@@ -67,13 +70,31 @@ test('existing map files get a version and a change number on first read; ids an
   assert.equal(stored.sync.at, Date.parse(old[0].updated_at), 'the version time is when it was last edited');
   assert.equal(service.maxSeq(), 2);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'sync', 'state.json'), 'utf8')).seq, 2);
-  // A second start: nothing to migrate, the counter goes on.
+  // A second start: nothing to migrate and no file read; the counter goes on past a margin (a stop between a map and the state file is covered).
   const again = createMindmapService({ dataDir, identity, now: () => new Date(NOW), log: () => {} });
   await again.list();
-  assert.equal(again.maxSeq(), 2);
+  assert.equal(again.maxSeq(), 1002);
   const made = await again.create({ title: 'New' });
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, `${made.id}.json`), 'utf8')).sync.seq, 3);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, `${made.id}.json`), 'utf8')).sync.seq, 1003);
   assert.deepEqual((await again.get(old[0].id)).data, topic('old plan'));
+});
+
+test('a folder at the map limit with unversioned files written behind the server\'s back: requests answer at once, the files are adopted in the background', async t => {
+  const dataDir = folder(t, 't-agent-mindmap-limit-');
+  const service = createMindmapService({ dataDir, identity: () => ({ instance_id: 'engine-a', name: 'A' }), now: () => new Date(NOW), log: () => {}, maxMaps: 300 });
+  await service.create({ title: 'Real' });
+  for (let index = 1; index < 300; index += 1) {
+    const id = `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`;
+    fs.writeFileSync(path.join(service.dir, `${id}.json`), JSON.stringify({ id, title: 'x', data: null, revision: 1, created_at: 'a', updated_at: 'a' }));
+  }
+  // The limit answers without touching the files.
+  await assert.rejects(service.create({ title: 'one too many' }), error => error.code === 'MINDMAP_LIMIT');
+  const listed = await service.list();
+  assert.equal(listed.length, 300, 'listed at once');
+  assert.equal(listed.filter(map => map.by === null).length, 299, 'not yet adopted when the list answers');
+  await service.settled();
+  assert.equal((await service.list()).filter(map => map.by === null).length, 0, 'adopted in the background');
+  assert.equal((await service.exportPage(0, { maxRows: 1000 })).maps.length, 300, 'and every one travels');
 });
 
 test('a map put back from the trash by hand wins over its tombstone and travels again', async t => {
@@ -85,6 +106,7 @@ test('a map put back from the trash by hand wins over its tombstone and travels 
   const trashed = fs.readdirSync(service.trashDir)[0];
   fs.renameSync(path.join(service.trashDir, trashed), path.join(service.dir, `${made.id}.json`));
   assert.deepEqual((await service.list()).map(map => map.id), [made.id]);
+  await service.settled();
   const page = await service.exportPage(0);
   assert.deepEqual(page.tombstones, []);
   assert.deepEqual(page.maps[0].sync.vv, { 'engine-a': 3 }, 'made, deleted, put back: three changes of this engine');
@@ -373,7 +395,9 @@ test('a round that fails (a link reset while it comes up) is tried again by itse
   A.sync.start();
   A.failNext = 1;
   await A.page('POST', '', { title: 'After a reset' });
-  await until(async () => (await B.titles()).includes('After a reset'), 'the retry brings the map to B');
+  await until(async () => (await B.titles()).includes('After a reset'), 'the retry brings the map to B').catch(error => {
+    throw new Error(`${error.message}; A asked: ${A.requests.join(', ')}; A logged: ${A.logs.join(' | ')}`);
+  });
   assert.ok(A.logs.some(line => line.includes('failed: MINDMAP_SYNC_FAILED')), 'the failure is logged once, by code');
 });
 

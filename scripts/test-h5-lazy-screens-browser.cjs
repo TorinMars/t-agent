@@ -1,7 +1,8 @@
 // The screens that open on demand come from chunks of their own (scripts/h5-shell/lazy-screens.jsx, scripts/build-page-bundles.js), in real Chromium
 // at phone and computer size with the API mocked: the shell loads none of them at start; each is fetched the first time it opens (or earlier, when
 // the pointer, a finger or the focus reaches its button) and works as before, with every Settings group and the T-Attention settings slots; a chunk
-// that cannot be loaded closes the screen with a notice and is asked for again on the next opening; and the page has no errors.
+// that cannot be loaded closes the screen with a notice and is asked for again on the next opening (one that cannot be closed, the upload progress,
+// is not asked for again until it opens anew); and the page has no errors.
 const { chromium } = require('playwright');
 const { addShell } = require('./h5-shell-test-script.cjs');
 const { openGroup: openSettingsGroup, backToList, groupShown, wideLayout, listedTitles } = require('./settings-test-helper.cjs');
@@ -64,6 +65,16 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       await page.locator('#h5-attention-sheet').waitFor({ state: 'visible' });
       assert.ok(chunks.includes('screen-attention'));
       await page.evaluate(() => window.H5UI.actions.closeAttention());
+      // The terminal's dialogs (copy view, upload, Paste sheet, uploaded link): one chunk, fetched when the first of them opens.
+      assert.ok(!chunks.includes('screen-dialogs'), 'the dialogs chunk is not fetched before a dialog opens');
+      await page.evaluate(() => { const ui = window.H5UI; ui.actions.copyClose = () => ui.set({ copyText: null }); ui.set({ copyText: 'hello from the terminal' }); });
+      await page.locator('#h5-copy-text', { hasText: 'hello from the terminal' }).waitFor({ state: 'visible' });
+      await page.evaluate(() => window.H5UI.actions.copyClose());
+      await page.locator('#h5-copy').waitFor({ state: 'hidden' });
+      await page.evaluate(() => window.H5UI.set({ upload: { status: 'Uploading…', progress: 40 } }));
+      await page.locator('.h5-upload-overlay [role="progressbar"]').waitFor({ state: 'visible' });
+      await page.evaluate(() => window.H5UI.set({ upload: null }));
+      assert.equal(chunks.filter(name => name === 'screen-dialogs').length, 1, 'one chunk for every dialog of the terminal');
       assert.deepEqual(errors, []);
       await context.close();
     }
@@ -78,6 +89,18 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       await page.locator('#h5-nav-settings').click();
       await page.locator('#h5-settings').waitFor({ state: 'visible' });
       assert.equal(chunks.filter(name => name === 'screen-settings').length, 1);
+      await page.evaluate(() => window.H5UI.set({ settingsOpen: false }));
+      await page.locator('#h5-settings').waitFor({ state: 'hidden' });
+      // The Update dialog: the rail's button (with its dot and poll) is there at start, the dialog is a chunk asked for on hover and drawn on the click.
+      assert.ok(!chunks.includes('screen-update'));
+      await page.locator('#h5-update').hover();
+      await page.waitForFunction(() => performance.getEntriesByType('resource').some(entry => /\/js\/chunks\/screen-update-/.test(entry.name)));
+      assert.equal(await page.locator('#h5-update-dialog').count(), 0, 'only fetched, not drawn');
+      await page.locator('#h5-update').click();
+      await page.locator('#h5-update-dialog #h5-update-state').waitFor({ state: 'visible' });
+      await page.locator('#h5-update-dismiss').click();
+      await page.locator('#h5-update-dialog').waitFor({ state: 'hidden' });
+      assert.equal(chunks.filter(name => name === 'screen-update').length, 1);
       assert.deepEqual(errors, []);
       await context.close();
     }
@@ -109,7 +132,32 @@ async function openPage(browser, { viewport, touch, zh = false }) {
       assert.equal(await again.page.locator('#h5-settings-groups .h5-settings-group-item').count(), 6);
       await again.context.close();
     }
-    console.log('Lazy screens: chunks on first open or hover, every Settings group and slot, a failed chunk retried: passed.');
+
+    // 4. The upload progress cannot be closed by the page (the upload goes on): a dialogs chunk that cannot be loaded says so once, and is not asked
+    // for again while that upload lasts; the next upload asks again.
+    {
+      const { context, page, errors } = await openPage(browser, { viewport: { width: 390, height: 800 }, touch: true });
+      await page.route('**/js/chunks/screen-dialogs-*.js', route => route.abort('internetdisconnected'));
+      await page.evaluate(() => {
+        const ui = window.H5UI;
+        const notify = ui.notify;
+        window.failures = 0;
+        ui.notify = (message, type, options) => { if (type === 'error') window.failures += 1; return notify(message, type, options); };
+        ui.set({ upload: { status: 'Uploading…', progress: 10 } });
+      });
+      await page.waitForFunction(() => window.failures === 1);
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400))); // time for a retry loop to show, if there were one
+      assert.equal(await page.evaluate(() => window.failures), 1, 'one notice, no retry while the same upload lasts');
+      await page.evaluate(() => window.H5UI.set({ upload: { status: 'Uploading…', progress: 50 } }));
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 100)));
+      assert.equal(await page.evaluate(() => window.failures), 1, 'its progress is no new opening');
+      await page.evaluate(() => window.H5UI.set({ upload: null }));
+      await page.evaluate(() => window.H5UI.set({ upload: { status: 'Uploading…', progress: 0 } }));
+      await page.waitForFunction(() => window.failures === 2);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+    console.log('Lazy screens: chunks on first open or hover (Settings, T-Attention, the Update dialog, the terminal dialogs), every Settings group and slot, a failed chunk retried, an open upload not retried: passed.');
   } finally {
     await browser.close();
   }

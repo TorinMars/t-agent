@@ -25,7 +25,7 @@ const entries = install.listenerEntries();
 const listenerCount = Object.values(entries).reduce((sum, groups) => sum + groups.length, 0);
 
 test('the listener entries are the groups of rules/claude/settings.json that read the hook path, with the $TA_ATTENTION_HOOK fallback', () => {
-  assert.deepEqual(Object.keys(entries).sort(), ['Notification', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'SessionEnd', 'Stop', 'StopFailure', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(entries).sort(), ['Notification', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreToolUse', 'SessionEnd', 'Stop', 'StopFailure', 'UserPromptSubmit']);
   for (const groups of Object.values(entries)) {
     for (const group of groups) {
       const command = group.hooks[0].command;
@@ -63,7 +63,7 @@ test('merge keeps other keys and other hooks, backs the file up once, keeps its 
   const merged = read(m.settings);
   assert.equal(merged.model, 'opus');
   assert.deepEqual(merged.permissions, original.permissions);
-  assert.deepEqual(merged.hooks.PreToolUse, original.hooks.PreToolUse);
+  assert.deepEqual(merged.hooks.PreToolUse, [...original.hooks.PreToolUse, ...entries.PreToolUse], 'the person\'s own PreToolUse hook stays first');
   assert.deepEqual(merged.hooks.Stop, [mine, ...entries.Stop], 'the user hook stays first; the listener is added after it');
 
   const before = fs.readFileSync(m.settings, 'utf8');

@@ -460,24 +460,35 @@
     const own = item && (item.work_dir || (item.md_path ? item.md_path.replace(/\/[^/]*$/, '') : ''));
     return row.work_dir && own && row.work_dir !== own ? row.work_dir : null;
   };
+  // The kind of the question a terminal waits at ('select' | 'accept', "Two waiting kinds" in docs/design/terminals.md), from a feed snapshot; null
+  // when it does not wait at one (an older Engine sends no kinds: its waits are plain "needs you"). Such a terminal needs the person even while
+  // its sub-agents run.
+  const waitKind = (snap, taskId, id) => {
+    const kind = ((snap.waiting_kind[taskId] || {})[id]) || null;
+    return (kind === 'select' || kind === 'accept') && ((snap.activity[taskId] || {})[id]) === 'done' ? kind : null;
+  };
   // The live state of a session row, from the pushed terminal activity of its service (the feed snapshot that also drives the Running and Needs you
-  // filters): 'running' (also a running sub-agent), 'waiting' (finished and not seen yet: it needs the person), 'idle', or null while the service's activity
-  // is not known (hidden, offline, no feed yet). TaskDrawer.jsx shows it as the row's dot and status line; a change redraws only the rows it changes (`share`).
+  // filters): 'running' (also a running sub-agent), 'waiting' (at a question, or finished and not seen yet: it needs the person), 'idle', or null while
+  // the service's activity is not known (hidden, offline, no feed yet). TaskDrawer.jsx shows it as the row's dot and status line, with `sessionKind`
+  // naming the question; a change redraws only the rows it changes (`share`).
   function sessionState(from, taskId, id) {
     const snap = snapshotOf(from);
     if (!snap) return null;
+    if (waitKind(snap, taskId, id)) return 'waiting';
     if (((snap.activity[taskId] || {})[id]) === 'running' || Number((snap.subagents[taskId] || {})[id]) > 0) return 'running';
     return ((snap.activity[taskId] || {})[id]) === 'done' ? 'waiting' : 'idle';
   }
-  // The states of a task's terminals that are not idle, `{ <terminal id>: 'running' | 'waiting' }`, from the activity feed (null while none is known):
-  // T-Attention's session chip reads them for a task whose sessions are not listed (a folded task; `sessionOf` in attention-model.mjs).
+  const sessionKind = (from, taskId, id) => { const snap = snapshotOf(from); return snap ? waitKind(snap, taskId, id) : null; };
+  // The states of a task's terminals that are not idle, `{ <terminal id>: 'running' | 'waiting' | 'select' | 'accept' }` (the last two: waiting at that
+  // kind of question), from the activity feed (null while none is known): T-Attention's session chip reads them for a task whose sessions are not
+  // listed (a folded task; `sessionOf` in attention-model.mjs).
   function sessionStates(from, taskId) {
     const snap = snapshotOf(from);
     if (!snap) return null;
     const states = {};
     for (const id of new Set([...Object.keys(snap.activity[taskId] || {}), ...Object.keys(snap.subagents[taskId] || {})])) {
       const state = sessionState(from, taskId, id);
-      if (state !== 'idle') states[id] = state;
+      if (state !== 'idle') states[id] = waitKind(snap, taskId, id) || state;
     }
     return states;
   }
@@ -486,7 +497,7 @@
     return {
       label: 'Phone terminals', note: null, movable: ordersTerminals(source) && terminals.length > 1,
       rows: [
-        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true, status: sessionState(source, task.id, row.terminal_id) })), // no row is current while a chat covers the terminal
+        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true, status: sessionState(source, task.id, row.terminal_id), waiting: sessionKind(source, task.id, row.terminal_id) })), // no row is current while a chat covers the terminal
       ],
     };
   }
@@ -497,7 +508,7 @@
     if (!peek || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
-      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true, status: sessionState(from, item.id, row.terminal_id) })),
+      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true, status: sessionState(from, item.id, row.terminal_id), waiting: sessionKind(from, item.id, row.terminal_id) })),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
     return { label, note: null, rows, movable: ordersTerminals(from) && peek.terminals.length > 1 };
@@ -3211,11 +3222,15 @@
     }
     showActiveCount();
   }
+  // -> [activity, subagents, waiting_kind]. `?kinds=1` answers { activity, waiting_kind }; an older Engine answers the bare activity (task ids are
+  // numbers, so it has no "activity" key) and no kinds.
   async function readActivity(from) {
-    return Promise.all([
-      api('GET', `${from.activityBase}/terminal-activity`),
+    const [answer, subagents] = await Promise.all([
+      api('GET', `${from.activityBase}/terminal-activity?kinds=1`),
       api('GET', `${from.activityBase}/terminal-subagents`).catch(() => ({})), // an Engine older than this feature: no sub-agent information
     ]);
+    const withKinds = Boolean(answer && answer.activity && typeof answer.activity === 'object');
+    return [withKinds ? answer.activity : answer, subagents, withKinds ? answer.waiting_kind : null];
   }
   // A failed feed may mean that the service went away: the list is read at once (at most every few seconds), which says so.
   function checkSource(from) {
@@ -3235,7 +3250,8 @@
     let running = 0;
     let pending = 0;
     for (const id of new Set([...Object.keys(states), ...Object.keys(subs)])) {
-      if (states[id] === 'running' || Number(subs[id]) > 0) running += 1;
+      if (waitKind(snap, taskId, id)) pending += 1; // both kinds of question count as Needs you
+      else if (states[id] === 'running' || Number(subs[id]) > 0) running += 1;
       else if (states[id] === 'done') pending += 1;
     }
     return { running, pending };
@@ -3257,9 +3273,9 @@
     ui.set({ activeCount: count });
     publishActivity();
   }
-  // The running ('running', also a running sub-agent) and finished-not-seen ('done') terminals of every listed service, for the rail of a maximized
-  // column and the column headers (Columns.jsx, columns.mjs `columnStatus`): `state.terminalActivity` = { sourceKey: { taskId: { terminalId: state } } }. Only the
-  // top page, which keeps the feeds; set only when it changed.
+  // The running ('running', also a running sub-agent), waiting ('select' / 'accept': at that kind of question) and finished-not-seen ('done') terminals of
+  // every listed service, for the rail of a maximized column, the column headers, the session header, the Recent list and the switcher (columns.mjs
+  // `columnStatus`): `state.terminalActivity` = { sourceKey: { taskId: { terminalId: state } } }. Only the top page, which keeps the feeds; set only when it changed.
   function publishActivity() {
     if (PANE) return;
     const all = {};
@@ -3272,7 +3288,9 @@
         const subs = snap.subagents[taskId] || {};
         const row = {};
         for (const id of new Set([...Object.keys(states), ...Object.keys(subs)])) {
-          if (states[id] === 'running' || Number(subs[id]) > 0) row[id] = 'running';
+          const kind = waitKind(snap, taskId, id);
+          if (kind) row[id] = kind;
+          else if (states[id] === 'running' || Number(subs[id]) > 0) row[id] = 'running';
           else if (states[id] === 'done') row[id] = 'done';
         }
         if (Object.keys(row).length) tasks[taskId] = row;
@@ -3285,14 +3303,14 @@
     const from = f.source;
     if (feeds.get(from.key) !== f) return;
     const object = value => (value && typeof value === 'object' ? value : {});
-    const next = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents) };
+    const next = { activity: object(snap && snap.activity), subagents: object(snap && snap.subagents), waiting_kind: object(snap && snap.waiting_kind) };
     const changed = JSON.stringify(next) !== JSON.stringify(f.snapshot);
     f.snapshot = next;
     showActiveCount();
     if (changed) renderTasks(); // the Running and Pending filters
-    // The shown terminal finished while the person is looking at it: it is seen.
+    // The shown terminal finished while the person is looking at it: it is seen (a question stays until it is answered; the server keeps it).
     const s = shownTerminal();
-    if (s && s.source === from && ((next.activity[s.task.id] || {})[s.terminalId]) === 'done') ackShown();
+    if (s && s.source === from && ((next.activity[s.task.id] || {})[s.terminalId]) === 'done' && !waitKind(next, s.task.id, s.terminalId)) ackShown();
   }
   function stopFeed(f) {
     if (f.ctrl) f.ctrl.abort();
@@ -3306,7 +3324,7 @@
     const from = f.source;
     const tick = async () => {
       if (document.visibilityState !== 'visible' || f.live || feeds.get(from.key) !== f) return;
-      try { const [activity, subagents] = await readActivity(from); applyActivity(f, { activity, subagents }); } catch { checkSource(from); /* keep the last state */ }
+      try { const [activity, subagents, kinds] = await readActivity(from); applyActivity(f, { activity, subagents, waiting_kind: kinds }); } catch { checkSource(from); /* keep the last state */ }
     };
     f.poll = setInterval(() => void tick(), FALLBACK_POLL_MS);
     void tick();

@@ -6,9 +6,9 @@ import { recentKey, recentTaskRef, switcherCards } from './recent-sessions.mjs';
 const KINDS = { claude: 'Claude session', codex: 'Codex session' };
 // The rows of the tab: the switcher's cards in their order (the shown session first, then the others, most recently used first), each with what the
 // task list knows of its task (`tasks`: the rows of `state.taskList.tasks`; `taskTitle`, `device` when the list tags its rows) and its live state
-// (`statusOf(entry)`: 'running' | 'waiting' | 'idle', the header's rule). `name` is the session's name, else (`named` false) its kind in English, which
-// the page translates.
-export function recentRows(list, { shown = null, tasks = [], statusOf = () => 'idle' } = {}) {
+// (`statusOf(entry)`: 'running' | 'waiting' | 'idle', the header's rule; `kindOf(entry)`: the kind of the question it waits at, 'select' | 'accept' or
+// null). `name` is the session's name, else (`named` false) its kind in English, which the page translates.
+export function recentRows(list, { shown = null, tasks = [], statusOf = () => 'idle', kindOf = () => null } = {}) {
   const byRef = new Map((Array.isArray(tasks) ? tasks : []).map(row => [`${row.source}|${row.id}`, row]));
   return switcherCards(list, shown).map(entry => {
     const ref = recentTaskRef(entry);
@@ -16,7 +16,7 @@ export function recentRows(list, { shown = null, tasks = [], statusOf = () => 'i
     return {
       key: recentKey(entry), ref, sourceKey: entry.sourceKey, taskId: entry.taskId, terminalId: entry.terminalId, agent: entry.agent,
       name: entry.title || KINDS[entry.agent] || 'Terminal', named: Boolean(entry.title), taskTitle: (task && task.title) || '', device: (task && task.device) || null,
-      status: statusOf(entry) || 'idle', current: entry.current, lastUsed: entry.lastUsed || null,
+      status: statusOf(entry) || 'idle', waiting: kindOf(entry) || null, current: entry.current, lastUsed: entry.lastUsed || null,
     };
   });
 }

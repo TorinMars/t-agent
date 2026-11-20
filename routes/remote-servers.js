@@ -436,7 +436,8 @@ router.get('/:id/workspace/cleanup', (req, res) => proxyWorkspace(req, res, '/v1
 router.post('/:id/workspace/cleanup', (req, res) => proxyWorkspace(req, res, '/v1/workspace/cleanup', 'POST'));
 router.post('/:id/workspace/restore', (req, res) => proxyWorkspace(req, res, '/v1/workspace/restore', 'POST'));
 
-router.get('/:id/terminal-activity', forwardJson('GET', () => '/v1/terminal-activity'));
+// `?kinds=1` is passed on; an older Engine ignores it and answers the bare activity, which the page also reads.
+router.get('/:id/terminal-activity', forwardJson('GET', req => `/v1/terminal-activity${req.query.kinds === '1' ? '?kinds=1' : ''}`));
 router.get('/:id/terminal-subagents', forwardJson('GET', () => '/v1/terminal-subagents'));
 // Piped unbuffered; an Engine older than the stream answers 404, which reaches the page as is (it then polls).
 router.get('/:id/terminal-activity/stream', (req, res) => {

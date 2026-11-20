@@ -56,7 +56,7 @@ running or pending session" in [page-terminal-and-bottom-bar.md](page-terminal-a
 - **A card in the stack** (`.h5-switcher-card`, a ButtonBase, `data-key`, `data-status`, `data-centred`, `data-current`): above it the session's tile (Claude /
   Codex mark or `>_`, `SessionKindIcon` of TaskDrawer.jsx, as the task list), the device tag (`DeviceTag`, when the list tags its rows), the name
   (subtitle2) and the state dot; a card behind the centred one shows only its tile. Inside: the preview lines (caption, monospace); at the bottom over
-  a dark gradient: the task (caption), the state word (Running / Needs you / Idle in success.light / warning.light / text.secondary) and a "Current"
+  a dark gradient: the task (caption), the state word (Running / Needs you / Idle in success.light / warning.light / text.secondary; Needs selection / Needs acceptance in warning.light at a question) and a "Current"
   pill on the current card. The state is the header's rule (`columnStatus` on `state.terminalActivity` and the T-Attention items), so it follows the
   activity feed; no new polling. Edge: the centred card 2px primary (it holds the focus), a card that needs the person 2px warning (orange), else the
   1px divider; 8px corners (the project's card radius; the mockup drew 16px) and elevation 8. Title "Recent sessions" (h6; subtitle1 on a phone),

@@ -80,8 +80,8 @@ test('a new Claude terminal starts with its session id and the per-process sessi
   assert.match(env.TA_HOOK_TOKEN, /^[0-9a-f]{64}$/);
   const settings = JSON.parse(env.TA_CLAUDE_SETTINGS);
   assert.deepEqual(Object.keys(settings), ['hooks'], 'only adds a hook; nothing else of the person\'s settings is overridden');
-  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart']);
-  const hook = settings.hooks.SessionStart[0].hooks[0];
+  assert.ok(Object.keys(settings.hooks).includes('SessionStart') && Object.keys(settings.hooks).includes('PreToolUse'), 'the session hook and the activity hooks');
+  const hook = settings.hooks.SessionStart[settings.hooks.SessionStart.length - 1].hooks[0];
   assert.equal(hook.type, 'command');
   assert.ok(hook.command.includes(`'${hookScript}'`) && hook.command.includes(`'${process.execPath}'`));
   assert.match(hook.command, />\/dev\/null 2>&1 \|\| true$/, 'prints nothing and never fails Claude');

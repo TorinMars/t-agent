@@ -13,8 +13,8 @@ import Typography from '@mui/material/Typography';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import { Pill, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
-import { Dot, overlay, useShownState } from './Columns.jsx';
-import { AGENT_NAMES, STATE_WORDS } from './columns.mjs';
+import { Dot, overlay, useShownKind, useShownState } from './Columns.jsx';
+import { AGENT_NAMES, STATE_WORDS, WAITING_WORDS, stateWord } from './columns.mjs';
 import { DeviceTag } from './TaskDrawer.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore } from './use-store.mjs';
@@ -122,10 +122,12 @@ function StateDot({ ui }) {
   const state = useShownState(ui) || 'idle';
   return <Dot state={state} className="h5-header-dot" />;
 }
-// Computer: the agent and "running" in a caption after the names (as a column header shows the agent), or a "Needs you" chip.
+// Computer: the agent and "running" in a caption after the names (as a column header shows the agent), or a "Needs you" chip ("Needs selection" /
+// "Needs acceptance" while it waits at that kind of question).
 function StateHint({ ui, agent }) {
   const state = useShownState(ui);
-  if (state === 'waiting') return <Pill className="h5-header-needs" label={t('Needs you')} tone="warning" sx={{ flex: '0 0 auto', height: 22, px: 1, typography: 'caption', fontWeight: 500 }} />;
+  const kind = useShownKind(ui);
+  if (state === 'waiting') return <Pill className="h5-header-needs" data-waiting={kind || undefined} label={t(WAITING_WORDS[kind] || 'Needs you')} tone="warning" sx={{ flex: '0 0 auto', height: 22, px: 1, typography: 'caption', fontWeight: 500 }} />;
   if (state !== 'running') return null;
   return (
     <Typography className="h5-header-hint" variant="caption" component="span" color="text.secondary" noWrap sx={{ flex: '0 0 auto' }}>
@@ -136,10 +138,11 @@ function StateHint({ ui, agent }) {
 // Phone: "· running" / "· needs you" after the session name on the status line.
 function StateWord({ ui }) {
   const state = useShownState(ui);
+  const kind = useShownKind(ui);
   if (state !== 'running' && state !== 'waiting') return null;
   return (
     <Typography className="h5-header-state" variant="caption" component="span" noWrap color={state === 'waiting' ? 'warning.main' : 'text.secondary'} sx={{ flex: '0 0 auto' }}>
-      {`· ${t(STATE_WORDS[state])}`}
+      {`· ${t(stateWord(STATE_WORDS, state, kind))}`}
     </Typography>
   );
 }

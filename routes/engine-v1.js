@@ -569,7 +569,9 @@ router.get('/tasks/:id/terminals/:terminalId/cwd', requireEngineAuth('terminal:e
 });
 
 router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
-  res.json(terminal.activitySnapshot(visibleTo(req, taskArchive.activeTaskIds(db, principal(req)))));
+  // `?kinds=1`: { activity, waiting_kind } ("Two waiting kinds" in docs/design/terminals.md); without it the bare activity, as older Clients read it.
+  const ids = visibleTo(req, taskArchive.activeTaskIds(db, principal(req)));
+  res.json(req.query.kinds === '1' ? { activity: terminal.activitySnapshot(ids), waiting_kind: terminal.waitingKindSnapshot(ids) } : terminal.activitySnapshot(ids));
 });
 
 router.get('/terminal-activity/stream', requireEngineAuth('terminal:execute'), (req, res) => {

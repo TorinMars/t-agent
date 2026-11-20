@@ -354,6 +354,21 @@ async function testListLook(browser, wide) {
   assert.deepEqual(await state('local', 'default'), { status: 'running', line: 'Terminal, Running', color: 'rgb(129, 199, 132)', dot: 'rgb(102, 187, 106)' }, `${label}: a running session says so in green (the kind is read out first)`);
   assert.deepEqual(await state('remote:7', 'b1'), { status: 'waiting', line: 'Terminal, Needs you', color: 'rgb(255, 183, 77)', dot: 'rgb(255, 167, 38)' }, `${label}: a finished, unseen session needs the person, in orange`);
   assert.equal(await t.row('remote:7', 'Beta').locator('.h5-task-dot').getAttribute('data-state'), 'waiting', `${label}: the task row has the orange dot`);
+  // A question names its kind ("Two waiting kinds" in docs/design/terminals.md), in the same orange, even while a sub-agent runs; both count as Needs you.
+  const kindLine = (kind, words) => page.waitForFunction(([want, text]) => {
+    const row = document.querySelector('.h5-task[data-source="remote:7"] .h5-terminal-row[data-session="b1"]');
+    return row && (row.dataset.waiting || null) === want && row.querySelector('.h5-terminal-sub').textContent === text;
+  }, [kind, words]);
+  await pushActivity(page, REMOTE_STREAM, { activity: { 2: { b1: 'done' } }, subagents: { 2: { b1: 1 } }, waiting_kind: { 2: { b1: 'select' } } });
+  await kindLine('select', 'Terminal, Needs selection');
+  assert.deepEqual(await state('remote:7', 'b1'), { status: 'waiting', line: 'Terminal, Needs selection', color: 'rgb(255, 183, 77)', dot: 'rgb(255, 167, 38)' }, `${label}: a question to answer says Needs selection in orange, over a running sub-agent`);
+  assert.equal(await page.locator('.h5-task-filters [data-filter="pending"]').textContent(), 'Needs you 1', `${label}: it counts as Needs you`);
+  await pushActivity(page, REMOTE_STREAM, { activity: { 2: { b1: 'done' } }, subagents: {}, waiting_kind: { 2: { b1: 'accept' } } });
+  await kindLine('accept', 'Terminal, Needs acceptance');
+  assert.equal((await state('remote:7', 'b1')).color, 'rgb(255, 183, 77)', `${label}: an approval says Needs acceptance in the same orange`);
+  assert.equal(await page.locator('.h5-task-filters [data-filter="pending"]').textContent(), 'Needs you 1', `${label}: it counts as Needs you too`);
+  await pushActivity(page, REMOTE_STREAM, { activity: { 2: { b1: 'done' } }, subagents: {} }); // an older Engine: no kinds, plain Needs you
+  await kindLine(null, 'Terminal, Needs you');
   await pushActivity(page, LOCAL_STREAM, { activity: {}, subagents: {} });
   await page.waitForFunction(() => document.querySelector('.h5-task[data-source="local"] .h5-terminal-row[data-session="default"]').dataset.status === 'idle');
   assert.equal((await state('local', 'default')).line, 'Terminal, Idle', `${label}: then idle`);

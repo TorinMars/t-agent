@@ -109,6 +109,7 @@ function RowLink({ item }) {
 // session's name and its live state dot (the task list's colours). Drawn inside the row's button, so the row's own accessible name tells what a tap does.
 const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
 const STATE_LABEL = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
+const WAIT_LABEL = { select: 'Needs selection', accept: 'Needs acceptance' }; // a session at a question (columns.mjs WAITING_WORDS)
 const AGENT_NAME = { claude: 'Claude', codex: 'Codex' };
 const sessionName = session => session.title || AGENT_NAME[session.agent] || t('Session');
 function SessionChip({ session, shown }) {
@@ -123,7 +124,7 @@ function SessionChip({ session, shown }) {
       <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flex: '0 0 auto' }}><Icon name="terminalKeyboard" size={14} /></Box>
       {session.device ? <DeviceTag device={session.device} /> : null}
       <Box component="span" className="h5-attention-session-name" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sessionName(session)}</Box>
-      {session.status ? <Box component="span" className="h5-attention-session-dot" data-state={session.status} title={t(STATE_LABEL[session.status])} sx={{ flex: '0 0 auto', width: 6, height: 6, borderRadius: '50%', bgcolor: STATE_DOT[session.status] }} /> : null}
+      {session.status ? <Box component="span" className="h5-attention-session-dot" data-state={session.status} data-waiting={session.waiting || undefined} title={t((session.status === 'waiting' && WAIT_LABEL[session.waiting]) || STATE_LABEL[session.status])} sx={{ flex: '0 0 auto', width: 6, height: 6, borderRadius: '50%', bgcolor: STATE_DOT[session.status] }} /> : null}
     </Box>
   );
 }

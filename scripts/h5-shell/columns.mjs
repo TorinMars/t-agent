@@ -302,19 +302,21 @@ export const maximizeKey = ({ key, ctrlKey = false, metaKey = false, shiftKey = 
   key === 'Enter' && shiftKey && !altKey && (ctrlKey || metaKey) && !isComposing && keyCode !== 229
 );
 
-// The state of a column's tile: 'running' (green: the terminal runs, or a sub-agent of it), 'waiting' (orange: a T-Attention task of that terminal
-// waits for the person, or the terminal finished and was not seen yet), 'idle' (grey: anything else, a column with no terminal).
-// `activity` is the top page's terminal activity, { sourceKey: { taskId: { terminalId: 'running' | 'done' } } } (h5.js `terminalActivity`); `items`
-// the T-Attention items of the top page (`state.attention.items`, tagged with their engine). `count` is the number of items that need the person, and
-// `question` the pending text of the newest of them ('' when none).
+// The state of a column's tile: 'running' (green: the terminal runs, or a sub-agent of it), 'waiting' (orange: the terminal waits at a question, a
+// T-Attention task of that terminal waits for the person, or the terminal finished and was not seen yet), 'idle' (grey: anything else, a column with
+// no terminal). `kind` names the question the terminal waits at, 'select' or 'accept' ("Two waiting kinds" in docs/design/terminals.md), else null.
+// `activity` is the top page's terminal activity, { sourceKey: { taskId: { terminalId: 'running' | 'select' | 'accept' | 'done' } } } (h5.js
+// `terminalActivity`); `items` the T-Attention items of the top page (`state.attention.items`, tagged with their engine). `count` is the number of items
+// that need the person, and `question` the pending text of the newest of them ('' when none).
 export function columnStatus(info, { activity, items } = {}) {
   const target = info ? info.target : null;
-  if (!target) return { state: 'idle', count: 0, question: '' };
+  if (!target) return { state: 'idle', kind: null, count: 0, question: '' };
   const needs = (Array.isArray(items) ? items : []).filter(item => item && item.status === 'waiting_user' && (item.engine || 'local') === target.sourceKey && matchesTarget(item, target));
   needs.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
   const ran = ((((activity || {})[target.sourceKey] || {})[target.taskId]) || {})[target.terminalId];
-  const state = needs.length || ran === 'done' ? 'waiting' : ran === 'running' ? 'running' : 'idle';
-  return { state, count: needs.length, question: needs.length ? pendingText(needs[0]) : '' };
+  const kind = WAITING_WORDS[ran] ? ran : null;
+  const state = needs.length || kind || ran === 'done' ? 'waiting' : ran === 'running' ? 'running' : 'idle';
+  return { state, kind, count: needs.length, question: needs.length ? pendingText(needs[0]) : '' };
 }
 const contextOfItem = item => {
   const raw = item && item.context;
@@ -333,6 +335,15 @@ const pendingText = item => {
 };
 // The English words of a tile's state (the page translates them): the label of the tile is "<name>, <agent> <state>".
 export const STATE_WORDS = { running: 'running', waiting: 'needs you', idle: 'idle' };
+// A wait at a question says which kind it is, in the same colour: "Needs selection" (the agent asks the person to choose or enter something) or
+// "Needs acceptance" (it waits for an approval); "Needs you" stays for a finished turn not seen yet and a T-Attention task.
+export const WAITING_WORDS = { select: 'Needs selection', accept: 'Needs acceptance' };
+// The words of a state from one of the word tables (capitalized like TaskDrawer.jsx `STATE_WORDS`, or lower case like the ones here), with the kind.
+export const stateWord = (words, state, kind) => {
+  const named = state === 'waiting' && WAITING_WORDS[kind];
+  if (!named) return words[state];
+  return words.waiting === 'needs you' ? named.toLowerCase() : named;
+};
 export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 // The short name of a column for its tile and peek: the task, else '' (the caller says "Column N").
 export const columnName = info => (info && info.title) || '';

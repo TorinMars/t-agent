@@ -26,8 +26,10 @@ test('the rows follow the switcher: the shown session first, then the most recen
   assert.deepEqual(rows.map(row => row.current), [true, false, false, false]);
   assert.deepEqual(rows[0], {
     key: 'remote:7|3|m', ref: 'remote:7|3', sourceKey: 'remote:7', taskId: '3', terminalId: 'm', agent: 'claude', name: 'MAIN', named: true,
-    taskTitle: 'Search popup', device, status: 'waiting', current: true, lastUsed: 80,
+    taskTitle: 'Search popup', device, status: 'waiting', waiting: null, current: true, lastUsed: 80,
   });
+  const asking = recentRows(LIST, { tasks: TASKS, statusOf, kindOf: item => (item.terminalId === 'm' ? 'select' : null) });
+  assert.deepEqual(asking.map(row => row.waiting), [null, null, 'select', null], 'the kind of a question rides on its row');
   assert.deepEqual([rows[2].name, rows[2].named], ['Codex session', false], 'no name: the kind, for the page to translate');
   assert.deepEqual([rows[3].lastUsed, rows[3].status], [null, 'idle'], 'an old entry has no time');
   const none = recentRows(LIST, { shown: null, tasks: TASKS, statusOf });

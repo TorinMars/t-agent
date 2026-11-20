@@ -102,9 +102,14 @@ test('a receiver injects the shared values under T-Agent\'s session hook', () =>
   assert.equal(settings._comment, undefined, 'the notice is not passed on');
   assert.equal(settings.env, undefined, 'a denied key in the file is never injected');
   assert.equal(settings.apiKeyHelper, undefined);
-  assert.deepEqual(Object.keys(settings.hooks), ['SessionStart'], 'T-Agent\'s hook wins; hooks are never shared');
+  assert.ok(!JSON.stringify(settings.hooks).includes('evil'), 'T-Agent\'s hooks win; hooks are never shared');
+  assert.ok(Object.keys(settings.hooks).includes('SessionStart') && Object.keys(settings.hooks).every(event => event === 'SessionStart' || rulesHooks.includes(event)),
+    'only the session hook and the activity hooks of rules/claude/settings.json');
   assert.match(settings.hooks.SessionStart[0].hooks[0].command, /claude-session-hook\.js/);
 });
+
+// The events of the terminal activity hooks of rules/claude/settings.json, which every Claude session T-Agent starts gets (routes/terminal.js claudeSettings).
+const rulesHooks = Object.keys(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'rules', 'claude', 'settings.json'), 'utf8')).hooks);
 
 test('with peer file access the peer permission joins the shared permission mode in one permissions object', () => {
   setState({ role: 'receive', following: SOURCE });

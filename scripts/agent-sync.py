@@ -216,6 +216,32 @@ def merge_json(local, remote):
     return remote
 
 
+ACTIVITY_MARK = "$TA_HOOK_URL"
+
+
+def activity_only(group):
+    """A hook group made only of T-Agent terminal activity commands (they post to $TA_HOOK_URL)."""
+    hooks = group.get("hooks") if isinstance(group, dict) else None
+    return bool(hooks) and isinstance(hooks, list) and all(
+        isinstance(hook, dict) and isinstance(hook.get("command"), str) and ACTIVITY_MARK in hook["command"] for hook in hooks)
+
+
+def drop_old_activity_hooks(local_obj, remote_obj):
+    """Arrays are unioned, so a changed activity command would run next to its older copy. For every hook event the remote lists, the local
+    groups made only of activity commands that the remote no longer has are dropped first: the remote's activity groups replace them
+    ("Two waiting kinds" in docs/design/terminals.md). Groups of the person or of other tools are never touched."""
+    local_hooks = local_obj.get("hooks") if isinstance(local_obj, dict) else None
+    remote_hooks = remote_obj.get("hooks") if isinstance(remote_obj, dict) else None
+    if not isinstance(local_hooks, dict) or not isinstance(remote_hooks, dict):
+        return local_obj
+    for event, wanted in remote_hooks.items():
+        groups = local_hooks.get(event)
+        if not isinstance(groups, list) or not isinstance(wanted, list) or not any(activity_only(group) for group in wanted):
+            continue
+        local_hooks[event] = [group for group in groups if not activity_only(group) or group in wanted]
+    return local_obj
+
+
 # ---------- Config: TOML key override (keep the rest of the content and comments) ----------
 HEADER = re.compile(r"^\s*(\[\[?)\s*([^\[\]]+?)\s*\]\]?\s*(#.*)?$")
 KEYVAL = re.compile(r"^\s*([A-Za-z0-9_\-\.\"']+)\s*=\s*(.*?)\s*$")
@@ -312,7 +338,7 @@ def sync_json(remote_config, override_text, override_path, config_path, dry_run)
     if not isinstance(local_obj, dict):
         raise ValueError("local %s is not a JSON object; skipped" % os.path.basename(config_path))
     before = json.dumps(local_obj, sort_keys=True)
-    merged_obj = merge_json(local_obj, remote_obj)
+    merged_obj = merge_json(drop_old_activity_hooks(local_obj, remote_obj), remote_obj)
     if json.dumps(merged_obj, sort_keys=True) == before and local:
         return False
     if not dry_run:

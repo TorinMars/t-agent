@@ -56,6 +56,18 @@ struct ActivityTerminal: Equatable {
     var state: ActivityState = .running
     var since: Date?  // the last state change; nil when the answer has none
     var openPath = ""  // a path activityOpenPath accepts, else empty (the row then opens nothing)
+    /// A waiting terminal's question: "select" (choose or enter something) or "accept" (an approval), else "" (an older server).
+    var waitingKind = ""
+
+    /// The state's words; a wait names its kind ("Two waiting kinds" in docs/design/terminals.md).
+    var stateLabel: String {
+        guard state == .waiting else { return state.label }
+        switch waitingKind {
+        case "select": return L("Needs selection")
+        case "accept": return L("Needs acceptance")
+        default: return state.label
+        }
+    }
 }
 
 let activityTimeFormatters: [ISO8601DateFormatter] = {
@@ -104,7 +116,8 @@ func decodeActivityTerminal(_ object: [String: Any]) -> ActivityTerminal? {
                             terminalID: text("terminal_id"), title: text("title"),
                             agent: agent == "claude" || agent == "codex" ? agent : "", state: state,
                             since: activityTime(object["since"]),
-                            openPath: (object["open_path"] as? String).flatMap(activityOpenPath) ?? "")
+                            openPath: (object["open_path"] as? String).flatMap(activityOpenPath) ?? "",
+                            waitingKind: ["select", "accept"].contains(text("waiting_kind")) ? text("waiting_kind") : "")
 }
 
 /// Waiting first, then running, then done; inside a state the newest `since` first (a missing one last).
@@ -164,7 +177,7 @@ func activityPanelRows(_ terminals: [ActivityTerminal]) -> (shown: [ActivityTerm
 func activityRowSpeech(_ terminal: ActivityTerminal, now: Date) -> String {
     var parts = [activityAgentLabel(terminal)]
     if !terminal.taskTitle.isEmpty { parts.append(terminal.taskTitle) }
-    parts.append(terminal.state.label)
+    parts.append(terminal.stateLabel)
     if let since = terminal.since { parts.append(elapsedText(now.timeIntervalSince(since))) }
     return parts.joined(separator: ", ")
 }
@@ -259,7 +272,7 @@ final class ActivityRowView: NSView {
 
     /// The state and the time since `since`, and the VoiceOver label with them; called on each refresh tick.
     func updateClock(_ now: Date) {
-        let text = NSMutableAttributedString(string: terminal.state.label, attributes: [
+        let text = NSMutableAttributedString(string: terminal.stateLabel, attributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
             .foregroundColor: terminal.state == .waiting ? terminal.state.color : NSColor.secondaryLabelColor,
             .paragraphStyle: truncating,
@@ -498,6 +511,15 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
     check("strings: the elapsed time and the states come from the table", elapsedText(125) == "2 min" && elapsedText(3720) == "1 h 2 min"
           && ActivityState.waiting.label == "W")
     stringTable = [:]
+    let kinds = decodeActivity(Data("""
+    {"terminals":[{"task_id":"1","state":"waiting","waiting_kind":"select"},{"task_id":"2","state":"waiting","waiting_kind":"accept"},
+      {"task_id":"3","state":"waiting","waiting_kind":"odd"},{"task_id":"4","state":"running","waiting_kind":"select"}]}
+    """.utf8)) ?? []
+    let kindLabel = { (id: String) in kinds.first { $0.taskID == id }?.stateLabel ?? "" }
+    check("activity: a waiting terminal names its kind, an unknown kind or another state keeps the plain words",
+          kindLabel("1") == "Needs selection" && kindLabel("2") == "Needs acceptance" && kindLabel("3") == "Waiting for you"
+          && kindLabel("4") == "Running" && kinds.first { $0.taskID == "3" }?.waitingKind == ""
+          && activityRowSpeech(kinds.first { $0.taskID == "1" }!, now: Date()).contains("Needs selection"))
     check("activity: the agent label is Claude, Codex, the title, else Terminal",
           activityAgentLabel(ActivityTerminal(title: "Claude 2", agent: "claude")) == "Claude"
           && activityAgentLabel(ActivityTerminal(agent: "codex")) == "Codex"

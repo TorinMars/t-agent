@@ -364,7 +364,7 @@ test('Cmd/Ctrl+Shift+Enter maximizes or restores; Alt or an IME composition does
 test('the state of a rail tile: running, needs you (with the count and the question), or idle', async () => {
   const { columnStatus, columnName } = await load();
   const info = { title: 'Re-render', target: { sourceKey: 'local', taskId: 4, terminalId: 'default' }, agent: 'codex' };
-  assert.deepEqual(columnStatus(info, {}), { state: 'idle', count: 0, question: '' });
+  assert.deepEqual(columnStatus(info, {}), { state: 'idle', kind: null, count: 0, question: '' });
   assert.equal(columnStatus(info, { activity: { local: { 4: { default: 'running' } } } }).state, 'running');
   assert.equal(columnStatus(info, { activity: { local: { 4: { default: 'done' } } } }).state, 'waiting', 'finished and not seen yet');
   assert.equal(columnStatus(info, { activity: { local: { 4: { other: 'running' } } } }).state, 'idle', 'another terminal of the task');
@@ -372,8 +372,8 @@ test('the state of a rail tile: running, needs you (with the count and the quest
   const items = [item(1, { updated_at: '2026-01-01' }), item(2, { updated_at: '2026-02-01' }), item(3, { status: 'working' }), item(4, { engine: 'remote:2' }),
     { id: 5, status: 'waiting_user', engine: 'local', context: JSON.stringify({ tagent: { task_id: 4, terminal_id: 'default' } }), attention_reason: 'Allow edit?', updated_at: '2025-01-01' }];
   const status = columnStatus(info, { activity: { local: { 4: { default: 'running' } } }, items });
-  assert.deepEqual(status, { state: 'waiting', count: 3, question: 'Q2' }, 'needs you wins over running; the newest question');
-  assert.deepEqual(columnStatus({ title: 'No terminal' }, { items }), { state: 'idle', count: 0, question: '' }, 'a column with no terminal');
+  assert.deepEqual(status, { state: 'waiting', kind: null, count: 3, question: 'Q2' }, 'needs you wins over running; the newest question');
+  assert.deepEqual(columnStatus({ title: 'No terminal' }, { items }), { state: 'idle', kind: null, count: 0, question: '' }, 'a column with no terminal');
   assert.equal(columnName(info), 'Re-render');
   assert.equal(columnName({ title: '', map: { title: 'Plan', screen: 'editor' } }), '', 'a map is never a column name any more');
   assert.equal(columnName(null), '');
@@ -468,4 +468,24 @@ test('the phone bottom navigation: the rail\'s destinations without Columns, the
   assert.equal(phoneView({ learnOpen: true, mindmapOpen: true }), 'learn');
   assert.equal(phoneView({ attentionOpen: true, learnOpen: true }), 'attention');
   assert.equal(phoneView({ settingsOpen: true, attentionOpen: true, mindmapOpen: true }), 'settings', 'the page on top wins');
+});
+
+test('a terminal at a question: waiting with its kind, in the words of each table ("Two waiting kinds" in docs/design/terminals.md)', async () => {
+  const { columnStatus, stateWord, STATE_WORDS, LIST_WORDS, WAITING_WORDS } = await load();
+  const info = { target: { sourceKey: 'remote:7', taskId: 4, terminalId: 'c1' } };
+  for (const kind of ['select', 'accept']) {
+    assert.deepEqual(columnStatus(info, { activity: { 'remote:7': { 4: { c1: kind } } } }), { state: 'waiting', kind, count: 0, question: '' });
+  }
+  assert.equal(columnStatus(info, { activity: { 'remote:7': { 4: { c1: 'done' } } } }).kind, null, 'a finished turn: plain needs you');
+  assert.equal(columnStatus(info, { activity: { 'remote:7': { 4: { c1: 'running' } } } }).kind, null);
+  assert.deepEqual(WAITING_WORDS, { select: 'Needs selection', accept: 'Needs acceptance' });
+  const TASK_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Idle' }; // TaskDrawer.jsx STATE_WORDS
+  assert.equal(stateWord(TASK_WORDS, 'waiting', 'select'), 'Needs selection');
+  assert.equal(stateWord(TASK_WORDS, 'waiting', 'accept'), 'Needs acceptance');
+  assert.equal(stateWord(TASK_WORDS, 'waiting', null), 'Needs you');
+  assert.equal(stateWord(TASK_WORDS, 'running', 'select'), 'Running', 'a kind only names a wait');
+  assert.equal(stateWord(STATE_WORDS, 'waiting', 'select'), 'needs selection', 'lower case in the labels');
+  assert.equal(stateWord(LIST_WORDS, 'waiting', 'accept'), 'needs acceptance');
+  assert.equal(stateWord(LIST_WORDS, 'focused', 'accept'), 'focused');
+  assert.equal(stateWord(STATE_WORDS, 'idle', undefined), 'idle');
 });

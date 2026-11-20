@@ -26,7 +26,7 @@ import {
   STORAGE_KEY, newId, canAdd, canClose, canOfferColumns, columnMove, columnStep, columnsFor, forgetMessage, hiddenEdges, minColumnWidth, mountOrder,
   moveColumn, openMessage, paneUrl, readLayout, readPaneMessage, revealLeft, shiftColumn, sidewaysDelta, stepTarget, tagOf, targetColumn, writeLayout,
   AGENT_NAMES, MESSAGE_TYPE, RAIL_WIDTH, STATE_WORDS, canMaximize, columnName, columnStatus, keptMaximized, maximizeKey,
-  railColumns, toggleMaximize, LIST_WORDS, actionMessage, headerLabel, headerName, listState, summarize,
+  railColumns, toggleMaximize, LIST_WORDS, WAITING_WORDS, actionMessage, headerLabel, headerName, listState, stateWord, summarize,
   NAV_WIDTH, dropMapColumns, legacyMapKeyOf, needsCount, railKey, readTab, stripWidthOf, railDestinations, railView,
 } from './columns.mjs';
 
@@ -392,6 +392,11 @@ const SHOWN_STATE = state => (state.shownTarget
   ? columnStatus({ target: state.shownTarget }, { activity: state.terminalActivity, items: state.attention && state.attention.items }).state
   : null);
 export const useShownState = ui => useStore(ui, SHOWN_STATE);
+// The kind of the question the shown session waits at ('select' | 'accept'), else null; a string too.
+const SHOWN_KIND = state => (state.shownTarget
+  ? columnStatus({ target: state.shownTarget }, { activity: state.terminalActivity, items: state.attention && state.attention.items }).kind
+  : null);
+export const useShownKind = ui => useStore(ui, SHOWN_KIND);
 // The name of a column as its header and the column list show it: { title, session, shown (what is drawn when the pane said nothing), tag }.
 function nameOf(columns, id, index) {
   const info = columns.titles[id];
@@ -427,14 +432,14 @@ function ColumnHeader({ id, index, columns, closable, touch, ui, drag, onMenu, o
   const width = info && info.width ? info.width : null;
   const wide = Boolean(width && width.mode === 'wide');
   const agent = info && status.state === 'running' && AGENT_NAMES[info.agent] ? AGENT_NAMES[info.agent] : '';
-  const label = headerLabel(info, [t(STATE_WORDS[status.state]), focused ? t('focused') : ''].filter(Boolean).join(', '), name.shown);
+  const label = headerLabel(info, [t(stateWord(STATE_WORDS, status.state, status.kind)), focused ? t('focused') : ''].filter(Boolean).join(', '), name.shown);
   const sheetLabel = t('Switch task or session');
   const maximizeLabel = maximized ? t('Restore columns') : t('Maximize');
   const act = { className: 'h5-column-act', size: 'small' };
   // A click on the header itself (not on one of its buttons) focuses the column and moves the keyboard into it.
   const onClick = event => { if (!event.target.closest || !event.target.closest('button')) ui.actions.showColumn(id, { focusFrame: true }); };
   return (
-    <Box className="h5-column-head" role="group" aria-label={label} data-pane-id={id} data-state={status.state} data-focused={focused ? '' : undefined}
+    <Box className="h5-column-head" role="group" aria-label={label} data-pane-id={id} data-state={status.state} data-waiting={status.kind || undefined} data-focused={focused ? '' : undefined}
       data-menu={menuOpen ? '' : undefined} onClick={onClick} {...drag.hold()}
       sx={theme => ({
         flex: '0 0 auto', position: 'relative', height: HEAD_HEIGHT, [TOUCH]: { height: HEAD_TOUCH, pr: 0 }, boxSizing: 'border-box', display: 'flex', alignItems: 'center',
@@ -472,7 +477,7 @@ function ColumnHeader({ id, index, columns, closable, touch, ui, drag, onMenu, o
         <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flex: '0 0 auto', color: 'text.secondary' }}><Icon name="down" size={12} /></Box>
       </ButtonBase>
       <Box sx={{ flex: '1 1 0', minWidth: 0 }} />
-      {waiting ? <Pill className="h5-column-needs" label={t('Needs you')} tone="warning" sx={{ flex: '0 0 auto', height: 22, px: 1, fontSize: 12, fontWeight: 600 }} /> : null}
+      {waiting ? <Pill className="h5-column-needs" label={t(WAITING_WORDS[status.kind] || 'Needs you')} tone="warning" sx={{ flex: '0 0 auto', height: 22, px: 1, fontSize: 12, fontWeight: 600 }} /> : null}
       {!waiting && agent ? <Box component="span" className="h5-column-hint" sx={{ flex: '0 0 auto', fontSize: 12, color: 'text.secondary', whiteSpace: 'nowrap' }}>{agent}</Box> : null}
       <Box className="h5-column-actions" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 0.25, [TOUCH]: { gap: 0 } }}>
         {touch ? null : (
@@ -585,7 +590,7 @@ function ColumnSummary({ columns, open, ui }) {
               <Box component="span" sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 0.75 }}><ColumnName name={name} /></Box>
               <Box component="span" className="h5-columns-list-state"
                 sx={{ flex: '0 0 auto', fontSize: 12, color: state === 'focused' ? 'primary.light' : state === 'waiting' ? 'warning.light' : 'text.secondary' }}>
-                {t(LIST_WORDS[state])}
+                {t(stateWord(LIST_WORDS, state, status.kind))}
               </Box>
             </MenuItem>
           );
@@ -612,7 +617,7 @@ const PEEK_DELAY_MS = 250;
 const PEEK_WIDTH = 300;
 const tileWords = (info, status) => {
   const agent = info && AGENT_NAMES[info.agent] ? AGENT_NAMES[info.agent] : '';
-  return [agent, t(STATE_WORDS[status.state])].filter(Boolean).join(' ');
+  return [agent, t(stateWord(STATE_WORDS, status.state, status.kind))].filter(Boolean).join(' ');
 };
 function ColumnRail({ ui }) {
   const state = useStoreKeys(ui, RAIL_KEYS);

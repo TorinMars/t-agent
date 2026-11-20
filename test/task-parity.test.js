@@ -281,10 +281,15 @@ async function firstActivity(url, headers = {}) {
 
 test('terminal activity is pushed by the local routes, the Engine and the proxy; an older Engine answers 404 through the proxy', async () => {
   await createTask(backends()[1], 'activity-stream');
-  const empty = { activity: {}, subagents: {} };
+  const empty = { activity: {}, subagents: {}, waiting_kind: {} };
   assert.deepEqual(await firstActivity(`${local}/api/tasks/terminal-activity/stream`), empty);
   assert.deepEqual(await firstActivity(`${engine}/v1/terminal-activity/stream`, { Authorization: `Bearer ${engineToken}` }), empty);
   assert.deepEqual(await firstActivity(`${proxy}/api/remote-servers/${remoteId}/terminal-activity/stream`), empty);
+  // The polled answer with the waiting kinds ("Two waiting kinds" in docs/design/terminals.md): the same on the three paths; the proxy passes ?kinds=1 on.
+  for (const [url, headers] of [[`${local}/api/tasks/terminal-activity`, {}], [`${engine}/v1/terminal-activity`, { Authorization: `Bearer ${engineToken}` }], [`${proxy}/api/remote-servers/${remoteId}/terminal-activity`, {}]]) {
+    assert.deepEqual(await (await fetch(`${url}?kinds=1`, { headers })).json(), { activity: {}, waiting_kind: {} }, url);
+    assert.deepEqual(await (await fetch(url, { headers })).json(), {}, `${url}: the bare activity without it`);
+  }
   assert.equal((await fetch(`${engine}/v1/terminal-activity/stream`, { headers: { Authorization: 'Bearer nope' } })).status, 401);
   assert.equal((await fetch(`${engine}/v1/terminal-activity/stream`)).status, 401);
   const info = await (await fetch(`${engine}/v1/info`, { headers: { Authorization: `Bearer ${engineToken}` } })).json();

@@ -868,6 +868,7 @@ function createAttentionWidgetRoutes({
         title: typeof entry.title === 'string' ? entry.title : '',
         agent: entry.agent === 'claude' || entry.agent === 'codex' ? entry.agent : null,
         state: entry.state,
+        ...(entry.state === 'waiting' && (entry.waiting_kind === 'select' || entry.waiting_kind === 'accept') ? { waiting_kind: entry.waiting_kind } : {}),
         since: new Date(Number(entry.since) || 0).toISOString(),
         open_path: openTerminalPath('local', entry.task_id, entry.terminal_id),
       }));

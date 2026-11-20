@@ -206,3 +206,23 @@ test('A corrupted local hooks.json is not overwritten and is reported', { skip: 
   assert.equal(m.read('.codex/hooks.json'), '{broken');
   assert.match(result.stderr, /hooks\.json/);
 });
+
+test('A changed terminal activity hook replaces its older copy; the person\'s own hooks and the listener stay', { skip: !python }, () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'rules', 'claude', 'settings.json'), 'utf8'));
+  const m = machine({ ...REMOTE, 'claude/settings.json': JSON.stringify({ hooks: rules.hooks }) });
+  const curl = query => ({ type: 'command', command: `[ -n "$TA_HOOK_URL" ] && curl -s -m 1 -o /dev/null -X POST -H "X-TA-Token: $TA_HOOK_TOKEN" "$TA_HOOK_URL&${query}" || true` });
+  // What `ta` wrote before the waiting kinds: one Notification group without a kind, next to the person's own Notification hook.
+  const older = { matcher: 'permission_prompt|elicitation_dialog|agent_needs_input', hooks: [curl('event=attention')] };
+  const own = { matcher: 'idle_prompt', hooks: [{ type: 'command', command: 'say done' }] };
+  const mixed = { hooks: [curl('event=attention'), { type: 'command', command: 'echo mine' }] };
+  fs.writeFileSync(m.file('.claude/settings.json'), JSON.stringify({ model: 'opus', hooks: { Notification: [older, own, mixed], UserPromptSubmit: [{ hooks: [curl('event=start')] }] } }));
+  assert.equal(m.sync().status, 0);
+  const settings = JSON.parse(m.read('.claude/settings.json'));
+  assert.deepEqual(settings.hooks.Notification, [own, mixed, ...rules.hooks.Notification.filter(group => !group.hooks.every(hook => hook.command === 'say done'))],
+    'the older activity group is gone; a group with a command of the person\'s own is never dropped');
+  assert.deepEqual(settings.hooks.UserPromptSubmit, rules.hooks.UserPromptSubmit, 'an unchanged activity group stays once');
+  assert.deepEqual(settings.hooks.PreToolUse, rules.hooks.PreToolUse, 'the question tools arrive');
+  const again = m.read('.claude/settings.json');
+  m.sync();
+  assert.equal(m.read('.claude/settings.json'), again, 'a second run changes nothing');
+});

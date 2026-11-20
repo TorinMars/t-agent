@@ -71,6 +71,9 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `ui_usage_home_v1` | system_state | runtime | on a company computer: the normal machine its usage data was last handed to | `services/ui-events-sync.js` |
 | `ui_usage_seq_v1` | system_state | runtime | the newest change number of the usage data, kept when rows are deleted so the numbers never go back | `services/ui-events.js` |
 | `ui_usage_engines_v1` | system_state | runtime | the names of the engines whose button presses are in the usage data (a cache from the sync pages) | `services/ui-events.js` |
+| `attention_copy_peers_v1` | system_state | runtime | the T-Attention copies' change numbers and capability per peer | `services/attention-copy.js` |
+| `attention_copy_owners_v1` | system_state | runtime | the names, hosts and last-heard times of the engines whose T-Attention items are copied here (a cache from the sync pages) | `services/attention-copy.js` |
+| `attention_copy_clock_v1` | system_state | runtime | the T-Attention copies' version clock and newest change number, kept so neither goes back when rows are removed | `services/attention-copy.js` |
 | `remote_engine_instances_v1` | system_state | runtime | the instance id each `remote_servers` row's engine reported in `/v1/info` (a cache) | `services/engine-name.js` |
 | `attention_widget_page_language_v1` | system_state | runtime | the language the person's page last used, learned from its cookie (a cache for the desktop window) | `services/attention-widget.js` |
 | `instance_id` | engine_identity | device | the identity of this engine, made once; every shared state names engines by it | `services/engine-identity.js` |

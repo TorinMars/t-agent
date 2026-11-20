@@ -216,6 +216,42 @@ function remoteEngine(remote, row, { readTimeoutMs, kinds = new Map() }) {
   };
 }
 
+// A linked engine whose items this one keeps a read copy of (services/attention-copy.js, docs/design/attention-copies.md): the window reads the copies (the
+// same items as the page, also while that engine is offline), and its changes go to the engine itself while it answers; while it is offline the safe
+// ones are queued here and the others refused, as on the page. `serverId`: the remote_servers row.
+const cannotReach = error => !(error instanceof RemoteAttentionError) || error.statusCode >= 502 || /OFFLINE|CONNECTION|TIMEOUT/.test(String(error.message || ''));
+function copyEngine(engine, serverId, copy) {
+  const fromCopy = (method, itemId = null, sub = '', body) => {
+    const answer = copy.offline({ serverId, method, itemId, sub, body });
+    if (!answer) throw new RemoteAttentionError(502, { error: 'REMOTE_OFFLINE' });
+    if (answer.status >= 400) throw new RemoteAttentionError(answer.status, answer.body);
+    return answer.body;
+  };
+  const live = async (method, itemId, sub, body, run) => {
+    if (!copy.peerOnline(serverId)) return fromCopy(method, itemId, sub, body);
+    try {
+      const result = await run();
+      if (method !== 'GET') copy.nudge(serverId);
+      return result;
+    } catch (error) {
+      if (cannotReach(error)) return fromCopy(method, itemId, sub, body);
+      throw error;
+    }
+  };
+  return {
+    copy: true,
+    list() { return fromCopy('GET').items; },
+    async get(id) {
+      try { return await live('GET', id, '', undefined, () => engine.get(id)).then(found => (found && found.item ? found.item : found)); }
+      catch (error) { if (error instanceof RemoteAttentionError && error.statusCode === 404) return null; throw error; }
+    },
+    async create(body) { return live('POST', null, '', body, () => engine.create(body)); },
+    async update(id, body) { return live('PATCH', id, '', body, () => engine.update(id, body)); },
+    async move(id, body) { await live('POST', id, '/move', body, () => engine.move(id, body)); },
+    async remove(id) { await live('DELETE', id, '', undefined, () => engine.remove(id)); },
+  };
+}
+
 // Rejects a promise that takes longer than ms.
 function within(promise, ms) {
   let timer;
@@ -281,6 +317,8 @@ function createAttentionWidgetRoutes({
   pages = null,
   bridge = null,
   bridgeWaitMs = BRIDGE_WAIT_MS,
+  // The read copies of linked engines (services/attention-copy.js), or null when they are off.
+  copies = () => require('../services/attention-copy').sharedCopy(),
   remoteTtlMs = REMOTE_TTL_MS,
   enginesTtlMs = ENGINES_TTL_MS,
   agentsTtlMs = AGENTS_TTL_MS,
@@ -301,7 +339,13 @@ function createAttentionWidgetRoutes({
     const id = Number(String(key).slice('remote:'.length));
     const row = db.prepare('SELECT * FROM remote_servers WHERE id = ? AND owner_id = ? AND enabled = 1').get(id, owner());
     if (!row) throw new WidgetError('ENGINE_NOT_FOUND', 'This device is not connected', 404);
-    return remoteEngine(remote, row, { readTimeoutMs, kinds: remoteKinds });
+    return engineOfRow(row);
+  }
+  // A connected service's engine: its read copy when the copies cover it, else read live.
+  function engineOfRow(row) {
+    const engine = remoteEngine(remote, row, { readTimeoutMs, kinds: remoteKinds });
+    const copy = copies();
+    return copy && copy.covers(row.id) ? copyEngine(engine, Number(row.id), copy) : engine;
   }
   const localEntry = () => ({ key: 'local', name: localName(), local: true, color_index: tagColorIndex(localInstanceId()), engine: localEngine(service) });
   // The engines of the merged list, in the page's order (this machine first): { key, name, local, color_index, engine }.
@@ -315,7 +359,10 @@ function createAttentionWidgetRoutes({
       if (hidden.has(key)) continue;
       let instanceId = null;
       try { instanceId = remoteInstanceId(row); } catch { /* no colour */ }
-      out.push({ key, name: row.name, local: false, color_index: tagColorIndex(instanceId), engine: remoteEngine(remote, row, { readTimeoutMs, kinds: remoteKinds }) });
+      const engine = engineOfRow(row);
+      const copied = engine.copy ? (copies().owners().find(entry => entry.engine === key) || null) : null;
+      // A copied engine that is offline says since when its items are as shown (`as_of`).
+      out.push({ key, name: row.name, local: false, color_index: tagColorIndex(instanceId), engine, ...(copied && !copied.online ? { offline: true, as_of: copied.as_of } : {}) });
     }
     // As on the page: when every device is hidden or none is left, this machine is shown.
     if (!out.length) out.push(localEntry());
@@ -339,7 +386,15 @@ function createAttentionWidgetRoutes({
   const touch = key => { if (parts.has(key)) parts.get(key).serial += 1; };
   const localBus = typeof service.onChange === 'function';
   if (localBus) service.onChange(() => touch('local'));
-  const ttlOf = entry => (entry.local ? (localBus ? Infinity : 0) : remoteTtlMs);
+  // A copied engine's part is read again after a change of its copies (their own bus), and every part when an owner went offline or came back.
+  const copyBus = copies();
+  if (copyBus) {
+    copyBus.onChange(change => {
+      if (change && change.kind === 'owners') { for (const key of parts.keys()) if (key !== 'local') touch(key); enginesKept = null; return; }
+      if (change && change.item && typeof change.item.owner_engine === 'string') touch(change.item.owner_engine);
+    });
+  }
+  const ttlOf = entry => (entry.local ? (localBus ? Infinity : 0) : entry.engine && entry.engine.copy ? Infinity : remoteTtlMs);
   // This machine's failed read is never kept (the next tick tries again, as GET /items did); a connected service's is, for its TTL.
   const fresh = (entry, part, at) => part.result !== null && !(entry.local && part.result.error) && part.applied === part.serial && at - part.startedAt < ttlOf(entry);
 
@@ -437,7 +492,7 @@ function createAttentionWidgetRoutes({
     finished = finished.sort((a, b) => b.at.localeCompare(a.at)).slice(0, FINISHED_KEEP);
     const outs = [...open, ...finished].sort((a, b) => b.order - a.order || b.id - a.id).map(entry => entry.out);
     const sessions = localSessions(outs, force);
-    const engineList = shown.map(({ key, name, local, color_index: color }) => ({ key, name, local, color_index: color }));
+    const engineList = shown.map(({ key, name, local, color_index: color, offline, as_of: asOf }) => ({ key, name, local, color_index: color, ...(offline ? { offline: true, as_of: asOf || null } : {}) }));
     const key = JSON.stringify([engineList, failed, answers.map(({ entry }) => `${entry.key}:${partOf(entry.key).version}`), sessions.stamp]);
     if (!force && memo && memo.key === key) return memo;
     const items = outs.map(out => {
@@ -714,4 +769,4 @@ function createAttentionWidgetRoutes({
   return { bearer, settings: settingsRouterFor({ notePage: true }), peerSettings: settingsRouterFor({ notePage: false }) };
 }
 
-module.exports = { createAttentionWidgetRoutes, tagColorIndex, widgetItem, sessionOf, parseItemKey, createDictionary, readStringList, STRINGS_FILE };
+module.exports = { createAttentionWidgetRoutes, copyEngine, tagColorIndex, widgetItem, sessionOf, parseItemKey, createDictionary, readStringList, STRINGS_FILE };

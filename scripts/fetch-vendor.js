@@ -35,6 +35,29 @@ async function download(url) {
     fs.writeFileSync(target, body);
     console.log(`${mode === 'update' ? 'updated ' : 'fetched '} ${lib.file}  ${lib.sha256}`);
   }
+  // Data files made from a pinned download (the `data` part; today the pronunciation data of the Learn page): the source and its licence are
+  // checked against their SHA-256, the `build` script makes the file, and the SHA-256 of the text it made (not of the compressed bytes, which may
+  // differ between compressor versions) must match `content_sha256`.
+  const zlib = require('node:zlib');
+  for (const item of manifest.data || []) {
+    const target = path.join(root, item.file);
+    const licence = path.join(root, item.license);
+    let current = null;
+    try { current = sha256(zlib.brotliDecompressSync(fs.readFileSync(target))); } catch { /* missing or broken */ }
+    const licenceOk = fs.existsSync(licence) && sha256(fs.readFileSync(licence)) === item.license_sha256;
+    if (mode !== 'update' && current === item.content_sha256 && licenceOk) { console.log(`ok       ${item.file}`); continue; }
+    if (mode === 'check') { console.error(`MISMATCH ${current === item.content_sha256 ? item.license : item.file}`); failed = true; continue; }
+    const [source, licenceBody] = await Promise.all([download(item.url), download(item.license_url)]);
+    if (mode === 'update') { item.sha256 = sha256(source); item.license_sha256 = sha256(licenceBody); }
+    if (sha256(source) !== item.sha256 || sha256(licenceBody) !== item.license_sha256) { console.error(`SHA-256 mismatch; refusing to build ${item.file}`); failed = true; continue; }
+    const built = require(path.join(root, item.build)).build(source, item.version);
+    if (mode === 'update') item.content_sha256 = sha256(Buffer.from(built.text, 'utf8'));
+    else if (sha256(Buffer.from(built.text, 'utf8')) !== item.content_sha256) { console.error(`Built data differs from the pinned SHA-256; refusing to write ${item.file}`); failed = true; continue; }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, built.file);
+    fs.writeFileSync(licence, licenceBody);
+    console.log(`${mode === 'update' ? 'updated ' : 'built   '} ${item.file}  ${item.content_sha256}`);
+  }
   if (mode === 'update') fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   process.exit(failed ? 1 : 0);
 })().catch(error => { console.error(error.message); process.exit(1); });

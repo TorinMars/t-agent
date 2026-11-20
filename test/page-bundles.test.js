@@ -64,9 +64,10 @@ test('React and highlight.js exist once among the bundles, and every chunk on di
   visit('/js/agent-chat-ui.js');
   assert.deepEqual(files.filter(url => !reached.has(url)), [], 'no stale chunk');
   for (const url of files.slice(2)) assert.match(url, /^\/js\/chunks\/[\w.-]+-[A-Z0-9]{8}\.js$/, `${url} is named by its hash`);
-  // The screens (and the Recent tab of the task list, the Update dialog and the terminal's dialogs) are chunks the shell imports when they open; usage-recorder is the recorder of usage data (usage-track.mjs), loaded when recording is on.
+  // The screens (and the Recent tab of the task list, the Update dialog and the terminal's dialogs) are chunks the shell imports when they open; usage-recorder is the recorder of usage data (usage-track.mjs), loaded when recording is on;
+  // key-feedback is the haptic tick and the key bubble of the page's own keyboard (Osk.jsx), loaded at the first key press.
   const dynamic = new Set(files.flatMap(url => importsOf(read(url)).dynamics).map(url => url.replace(/-[A-Z0-9]{8}\.js$/, '').replace('/js/chunks/', '')));
-  assert.deepEqual([...dynamic].sort(), ['markdown-view-entry', 'screen-attention', 'screen-design', 'screen-dialogs', 'screen-files', 'screen-learn', 'screen-recent', 'screen-settings', 'screen-switcher', 'screen-task-dialog', 'screen-update', 'screen-updated', 'usage-recorder']);
+  assert.deepEqual([...dynamic].sort(), ['key-feedback', 'markdown-view-entry', 'screen-attention', 'screen-design', 'screen-dialogs', 'screen-files', 'screen-learn', 'screen-recent', 'screen-settings', 'screen-switcher', 'screen-task-dialog', 'screen-update', 'screen-updated', 'usage-recorder']);
 });
 
 test('shell-core.mjs names every module entry.jsx imports, so the first screen stays in one shared chunk', () => {

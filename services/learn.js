@@ -4,10 +4,13 @@
 // up, through `lookupWord` (routes/learn.js hands in the same path as POST /api/translate/word); no other outside service is called.
 // Every change stamps the hybrid clock and the change number of the sync (services/learn-sync-store.js, "Sync across linked devices" there): the
 // content clock for an edit, the review-state clock for an answer, a random id for an answer, and a move record when a card's text changes.
+// A word card's phonetic transcription (`phonetic`, schema 15) comes from the bundled dictionary (services/phonetics.js) and, for a word it does not
+// have, from the translator's answer; like a filled-in meaning it keeps the content clock ("Phonetic transcription" in docs/design/learn-english.md).
 const { readState, writeState, isPlainObject } = require('./settings-sync-store');
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('./learn-starter');
+const phonetics = require('./phonetics');
 
 const KINDS = ['word', 'sentence'];
 const SOURCES = ['translation', 'lookup', 'starter', 'manual'];
@@ -22,8 +25,19 @@ const MAX_ANSWER = 500;
 const MAX_LIMIT = 100;
 const MEANING_CACHE_SIZE = 1000;
 const MEANING_CONCURRENCY = 4;
-const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter']);
-const DEFAULT_SETTINGS = { collect: true, daily_goal: 20, starter: 'dev' };
+// The audio of the practice ("Audio" in docs/design/learn-english-page.md): each field with its default and its allowed values. Shared like the other
+// learning settings (the same on every device and linked engine).
+const AUDIO_SETTINGS = {
+  audio_words: { default: true, values: [true, false] }, // a word is read when its card appears and once more after the answer
+  audio_sentences: { default: true, values: [true, false] },
+  audio_sentences_at: { default: 'after', values: ['after', 'start'] }, // Build, Fill the gap and a sentence in Review (Dictation and Say it: at the start)
+  audio_repeat: { default: 2, values: [1, 2, 3, 5] },
+  audio_pause: { default: 2, values: [1, 2, 3] }, // seconds between repeats
+  audio_speed: { default: 'normal', values: ['normal', 'slow'] },
+  audio_stop_on_typing: { default: true, values: [true, false] },
+};
+const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS)]);
+const DEFAULT_SETTINGS = { collect: true, daily_goal: 20, starter: 'dev', ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.default])) };
 
 const WORD = /^[A-Za-z][A-Za-z'-]{0,39}$/;
 const LETTER_WORD = /[A-Za-z][A-Za-z'-]*/g;
@@ -94,7 +108,7 @@ const iso = ms => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
 // The JSON of a card for the page. Times are ISO 8601 strings.
 function cardJson(row) {
   return {
-    id: row.id, kind: row.kind, en: row.en, zh: row.zh, source: row.source, context: row.context,
+    id: row.id, kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context,
     due_at: iso(row.due_at), interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: iso(row.last_at), suspended: Boolean(row.suspended), created_at: iso(row.created_at),
   };
@@ -105,9 +119,10 @@ const settingsKey = owner => `learn_v1:${owner}`;
 const settingsVersionKey = owner => `learn_v1_sync:${owner}`;
 
 // `cacheOnly()`: this machine is a company computer whose learning data lives on a normal machine (services/learn-sync.js); it then imports no
-// starter list of its own (the cards come from that machine).
-function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false } = {}) {
+// starter list of its own (the cards come from that machine). `lookupPhonetic(word)`: the dictionary's transcription or '' (tests hand in a fixture).
+function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false, lookupPhonetic = phonetics.lookupPhonetic } = {}) {
   const meanings = new Map(); // `${owner}|${word}` -> zh, least recently used first
+  const askedPhonetic = new Set(); // `${owner}|${norm}` the translator was asked for a transcription (once per word while the server runs)
   const stamp = () => syncStore.stamp(db, now());
   const seq = () => syncStore.nextSeq(db);
   const changed = () => syncStore.learnChanged(db);
@@ -123,6 +138,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       collect: typeof value.collect === 'boolean' ? value.collect : DEFAULT_SETTINGS.collect,
       daily_goal: Number.isInteger(value.daily_goal) && value.daily_goal >= 1 && value.daily_goal <= 200 ? value.daily_goal : DEFAULT_SETTINGS.daily_goal,
       starter: value.starter === null || Object.hasOwn(STARTER_LISTS, value.starter) ? value.starter : DEFAULT_SETTINGS.starter,
+      ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.values.includes(value[key]) ? value[key] : field.default])),
     };
   }
   function saveSettings(owner, body) {
@@ -139,6 +155,11 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     if (body.starter !== undefined) {
       if (body.starter !== null && !Object.hasOwn(STARTER_LISTS, body.starter)) throw bad('Unknown starter list');
       next.starter = body.starter;
+    }
+    for (const [key, field] of Object.entries(AUDIO_SETTINGS)) {
+      if (body[key] === undefined) continue;
+      if (!field.values.includes(body[key])) throw bad('Invalid audio setting');
+      next[key] = body[key];
     }
     writeState(db, settingsKey(owner), next);
     settingsChanged(owner);
@@ -164,15 +185,20 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     const en = checkEnglish(body.kind, body.en);
     const zh = checkMeaning(body.zh);
     const context = checkContext(body.context);
+    if (body.phonetic !== undefined && body.phonetic !== null && typeof body.phonetic !== 'string') throw bad('Invalid card');
+    // A word's transcription: the dictionary's first, else the one the page got with the meaning (tap to translate asks the translator for it).
+    const phonetic = body.kind === 'word' ? (lookupPhonetic(en) || phonetics.cleanPhonetic(body.phonetic)) : '';
     // Collected material (a translation, a looked-up word) is not kept while the person turned collecting off, also when a page still thinks it is on.
     if (COLLECTED.includes(source) && !settings(owner).collect) return { card: null, created: false, collecting: false };
     const norm = normalize(en);
     const existing = db.prepare('SELECT * FROM learn_cards WHERE owner = ? AND kind = ? AND norm = ?').get(owner, body.kind, norm);
     if (existing) {
-      if (!existing.zh && zh) {
-        // A filled-in meaning keeps the content clock: an empty meaning never wins over one in the merge, so it reaches every device anyway.
-        db.prepare('UPDATE learn_cards SET zh = ?, sync_seq = ? WHERE id = ?').run(zh, seq(), existing.id);
-        existing.zh = zh;
+      if ((!existing.zh && zh) || (!existing.phonetic && phonetic)) {
+        // A filled-in meaning or transcription keeps the content clock: an empty one never wins over a filled one in the merge, so it reaches every
+        // device anyway.
+        existing.zh = existing.zh || zh;
+        existing.phonetic = existing.phonetic || phonetic;
+        db.prepare('UPDATE learn_cards SET zh = ?, phonetic = ?, sync_seq = ? WHERE id = ?').run(existing.zh, existing.phonetic, seq(), existing.id);
         changed();
       }
       return { card: cardJson(existing), created: false };
@@ -181,8 +207,8 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     const { lastInsertRowid } = db.transaction(() => {
       // The text comes back after a move away from it: the card lives here again.
       db.prepare('DELETE FROM learn_card_moves WHERE owner = ? AND kind = ? AND norm = ?').run(owner, body.kind, norm);
-      return db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, source, context, at, at, review.EASE_START, stamp(), seq());
+      return db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, phonetic, source, context, at, at, review.EASE_START, stamp(), seq());
     })();
     changed();
     return { card: cardJson(getCard(owner, lastInsertRowid)), created: true };
@@ -191,13 +217,14 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
   function updateCard(owner, id, body) {
     const row = mustCard(owner, id);
     if (!isPlainObject(body) || Object.keys(body).some(key => !['zh', 'en', 'suspended'].includes(key))) throw bad('Invalid card change');
-    const next = { zh: row.zh, en: row.en, norm: row.norm, suspended: row.suspended };
+    const next = { zh: row.zh, en: row.en, norm: row.norm, suspended: row.suspended, phonetic: row.phonetic || '' };
     if (body.zh !== undefined) next.zh = checkMeaning(body.zh);
     if (body.en !== undefined) {
       next.en = checkEnglish(row.kind, body.en);
       next.norm = normalize(next.en);
       const other = db.prepare('SELECT id FROM learn_cards WHERE owner = ? AND kind = ? AND norm = ? AND id <> ?').get(owner, row.kind, next.norm, row.id);
       if (other) throw new LearnError('A card with this text already exists', 409);
+      if (next.norm !== row.norm) next.phonetic = row.kind === 'word' ? lookupPhonetic(next.en) : ''; // another word: its own transcription
     }
     if (body.suspended !== undefined) {
       if (typeof body.suspended !== 'boolean') throw bad('Invalid card change');
@@ -205,7 +232,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     }
     const at = stamp();
     db.transaction(() => {
-      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, content_at = @at, content_by = '', sync_seq = @seq
+      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, phonetic = @phonetic, content_at = @at, content_by = '', sync_seq = @seq
         WHERE id = @id`).run({ ...next, at, seq: seq(), id: row.id });
       if (next.norm !== row.norm) {
         // The card leaves its old text: a move record tells the linked devices that still have it there (services/learn-sync.js).
@@ -278,20 +305,56 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     const word = typeof value === 'string' ? wordForm(value) : '';
     if (!WORD.test(word)) throw bad('Enter an English word');
     const norm = word.toLowerCase();
-    const card = db.prepare("SELECT id, zh FROM learn_cards WHERE owner = ? AND kind = 'word' AND norm = ?").get(owner, norm);
-    if (card && card.zh) return { zh: card.zh };
+    const card = db.prepare("SELECT id, zh, phonetic FROM learn_cards WHERE owner = ? AND kind = 'word' AND norm = ?").get(owner, norm);
+    if (card && card.zh) return { zh: card.zh, phonetic: card.phonetic || lookupPhonetic(word) };
     const key = `${owner}|${norm}`;
     let zh = meanings.get(key);
+    let phonetic = lookupPhonetic(word);
     if (zh === undefined) {
       if (!lookupWord) throw new LearnError('Translation service not configured yet', 503);
       const entry = await lookupWord(owner, word);
       zh = collapse((entry && entry.meaning) || '').slice(0, MAX_ZH);
       if (!zh) throw new LearnError('The translation service gave an answer that could not be read', 502);
+      if (!phonetic) phonetic = translatorPhonetic(word, entry);
     } else meanings.delete(key);
     meanings.set(key, zh);
     if (meanings.size > MEANING_CACHE_SIZE) meanings.delete(meanings.keys().next().value);
     if (db.prepare("UPDATE learn_cards SET zh = ?, sync_seq = ? WHERE owner = ? AND kind = 'word' AND norm = ? AND zh = ''").run(zh, seq(), owner, norm).changes) changed();
-    return { zh };
+    if (phonetic) storePhonetic(owner, norm, phonetic);
+    return { zh, phonetic };
+  }
+
+  // The translator's transcription of the word itself (not of another form it named as the dictionary form), checked; else ''.
+  function translatorPhonetic(word, entry) {
+    if (!entry || (entry.base && String(entry.base).trim().toLowerCase() !== word.toLowerCase())) return '';
+    return phonetics.cleanPhonetic(entry.phonetic);
+  }
+  // A transcription for a word card that has none; keeps the content clock (an empty one never wins in the merge).
+  function storePhonetic(owner, norm, phonetic) {
+    if (db.prepare("UPDATE learn_cards SET phonetic = ?, sync_seq = ? WHERE owner = ? AND kind = 'word' AND norm = ? AND phonetic = ''").run(phonetic, seq(), owner, norm).changes) changed();
+  }
+  // Fills the transcriptions of word cards from the dictionary. `ask`: a word the dictionary does not have is asked of the translator once while the
+  // server runs (a few at a time; stops after the first failure); a word nobody knows keeps ''.
+  async function fillPhonetics(owner, rows, { ask = false } = {}) {
+    const todo = [];
+    for (const row of rows) {
+      if (row.kind !== 'word' || row.phonetic) continue;
+      const found = lookupPhonetic(row.en);
+      if (found) { row.phonetic = found; storePhonetic(owner, row.norm, found); } else if (ask && lookupWord && !askedPhonetic.has(`${owner}|${row.norm}`)) todo.push(row);
+    }
+    let failed = false;
+    const worker = async () => {
+      while (todo.length && !failed) {
+        const row = todo.shift();
+        askedPhonetic.add(`${owner}|${row.norm}`);
+        if (askedPhonetic.size > MEANING_CACHE_SIZE) askedPhonetic.delete(askedPhonetic.values().next().value);
+        try {
+          const found = translatorPhonetic(row.en, await lookupWord(owner, row.en));
+          if (found) { row.phonetic = found; storePhonetic(owner, row.norm, found); }
+        } catch { failed = true; }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(MEANING_CONCURRENCY, todo.length) }, worker));
   }
 
   // Fills the empty meanings of word cards, a few at a time. Stops asking after the first failure (no translator, the service away): those cards keep ''.
@@ -328,10 +391,11 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     }
     await fillMeanings(owner, rows);
     if (mode === 'spell') rows = rows.filter(row => row.zh).slice(0, limit);
+    await fillPhonetics(owner, rows, { ask: true });
     return { cards: rows.map(cardJson) };
   }
 
-  function list(owner, query = {}) {
+  async function list(owner, query = {}) {
     const kind = query.kind === undefined || query.kind === '' ? null : query.kind;
     if (kind !== null && !KINDS.includes(kind)) throw bad('The kind must be word or sentence');
     const limit = query.limit === undefined || query.limit === '' ? 50 : Number(query.limit);
@@ -343,8 +407,9 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       AND NOT (source = 'starter' AND reps = 0 AND @starter IS NULL)`;
     const params = { owner, kind, q, like, starter: settings(owner).starter, limit, offset };
     const total = db.prepare(`SELECT COUNT(*) FROM learn_cards WHERE ${where}`).pluck().get(params);
-    const cards = db.prepare(`SELECT * FROM learn_cards WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`).all(params).map(cardJson);
-    return { cards, total };
+    const rows = db.prepare(`SELECT * FROM learn_cards WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`).all(params);
+    await fillPhonetics(owner, rows); // the dictionary only: a list never asks the translator
+    return { cards: rows.map(cardJson), total };
   }
 
   // Imports a starter list once: words already there (from the list or from the person) are kept as they are. The new words become due
@@ -385,5 +450,5 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
 
 module.exports = {
   createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS,
 };

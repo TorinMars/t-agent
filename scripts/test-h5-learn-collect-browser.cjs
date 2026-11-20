@@ -140,7 +140,7 @@ async function tapFlow(browser) {
     let collect = true;
     await tab.route('**/api/translate/word', route => {
       const { word } = route.request().postDataJSON();
-      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ word, base: word === 'resolved' ? 'resolve' : word.toLowerCase(), phonetic: '', pos: 'v.', meaning: `\u610f\u601d:${word}` }) });
+      route.fulfill({ contentType: 'application/json', body: JSON.stringify({ word, base: word === 'resolved' ? 'resolve' : word.toLowerCase(), phonetic: word === 'conflicts' ? '/ˈkɑnflɪkts/' : '', pos: 'v.', meaning: `\u610f\u601d:${word}` }) });
     });
     await tab.route('**/api/learn/settings', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ collect, daily_goal: 20, starter: 'dev' }) }));
     await tab.route('**/api/learn/cards', route => { cards.push(route.request().postDataJSON()); route.fulfill({ contentType: 'application/json', body: '{"card":{"id":1},"created":true}' }); });
@@ -175,7 +175,7 @@ async function tapFlow(browser) {
     await tab.keyboard.press('Escape');
     await tap('conflicts');
     await tab.waitForTimeout(300);
-    assert.deepEqual(cards.at(-1), { kind: 'word', en: 'conflicts', zh: '\u610f\u601d:conflicts', source: 'lookup' });
+    assert.deepEqual(cards.at(-1), { kind: 'word', en: 'conflicts', zh: '\u610f\u601d:conflicts', source: 'lookup', phonetic: '/ˈkɑnflɪkts/' }, 'the transcription that was shown goes with it');
   } finally { server.close(); }
 }
 

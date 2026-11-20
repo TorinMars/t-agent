@@ -487,19 +487,46 @@ test('a schema 13 database gets the learning sync columns (schema 14), with a co
   assert.equal(fs.readdirSync(path.join(root, 'backups')).length, 1, 'no second copy');
 });
 
-test('a schema 14 database is refused by a version that knows schema 13 at most', t => {
-  // An older app: the same code with schema_version 13 in its VERSION.json (lib/data-home.js reads it from there).
+test('a schema 14 database gets learn_cards.phonetic (schema 15), with a copy taken first; cards are kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: learn_cards without phonetic, user_version 14.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE learn_cards DROP COLUMN phonetic');
+  old.prepare("INSERT INTO learn_cards (owner, kind, en, norm, zh, source, created_at, due_at, content_at, sync_seq) VALUES ('owner', 'word', 'merge', 'merge', 'm', 'lookup', 1, 2, 5, 3)").run();
+  old.pragma('user_version = 14');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 14 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const card = after.prepare('SELECT * FROM learn_cards').get();
+  assert.deepEqual([card.en, card.zh, card.content_at, card.sync_seq, card.phonetic], ['merge', 'm', 5, 3, ''], 'kept, with no transcription yet');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-14-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
+test('a schema 15 database is refused by a version that knows schema 14 at most', t => {
+  // An older app: the same code with schema_version 14 in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
   const older = spawnSync(process.execPath, ['-e', [
     "const dataHome = require('./lib/data-home');",
-    'dataHome.codeSchemaVersion = () => 13;',
+    'dataHome.codeSchemaVersion = () => 14;',
     "require('./db').close();",
   ].join(' ')], { cwd: ROOT, env: childEnv({ TAGENT_HOME: root }), encoding: 'utf8' });
   assert.notEqual(older.status, 0);
-  assert.match(older.stderr, /was written by a newer T-Agent \(database schema 14; this version supports up to 13\)/);
+  assert.match(older.stderr, /was written by a newer T-Agent \(database schema 15; this version supports up to 14\)/);
   const after = new Database(path.join(root, 'db.sqlite'), { readonly: true });
-  assert.equal(after.pragma('user_version', { simple: true }), 14, 'the stored version is not changed');
+  assert.equal(after.pragma('user_version', { simple: true }), 15, 'the stored version is not changed');
   after.close();
 });
 

@@ -32,11 +32,12 @@ const ZH_EXPIRE = '\u8fc7\u671f\uff1b\u5230\u671f';
 const ZH_LOOP = '\u8bf7\u4fee\u590d\u4f1a\u8bdd cookie \u8fc7\u671f\u540e\u7684\u767b\u5f55\u91cd\u5b9a\u5411\u5faa\u73af\u3002';
 const ZH_TESTS = '\u5408\u5e76\u524d\u518d\u8dd1\u4e00\u904d\u6d4b\u8bd5\u3002';
 const ZH_DEPLOY = '\u4eca\u665a\u90e8\u7f72\u9884\u53d1\u73af\u5883\u3002';
+const IPA_EXPIRE = '/\u026ak\u02c8spa\u026a\u0259r/';
 const card = (id, kind, en, zh, source, extra = {}) => ({
   id, kind, en, zh, source, context: '', due_at: AT, interval_days: 0, ease: 2.5, reps: 0, lapses: 0, last_result: null, last_at: null, suspended: false, created_at: AT, ...extra,
 });
 const WORDS = [
-  card(1, 'word', 'expire', ZH_EXPIRE, 'lookup', { context: 'after the session cookie expires' }),
+  card(1, 'word', 'expire', ZH_EXPIRE, 'lookup', { context: 'after the session cookie expires', phonetic: IPA_EXPIRE }),
   card(2, 'word', 'deploy', '', 'starter'),
 ];
 const SENTENCES = [
@@ -59,7 +60,7 @@ function learnMock() {
     if (p === '/api/learn/meaning') return mock.translator ? { zh: 'zh' } : [503, { error: 'No translator is configured' }];
     if (p === '/api/learn/queue') {
       const mode = url.searchParams.get('mode');
-      if (mode === 'spell') return { cards: WORDS };
+      if (mode === 'spell') return { cards: mock.spellCards || WORDS };
       if (mode === 'review') return { cards: [WORDS[0], SENTENCES[0]] };
       if (mode === 'mistakes') return { cards: [WORDS[0], SENTENCES[1], SENTENCES[2]] };
       return { cards: SENTENCES };
@@ -105,7 +106,20 @@ async function openPage(browser, { viewport, touch = false, speech = true }) {
     // Speech output that records what it reads, or none at all; no voice input in the second case either.
     window.spoken = [];
     if (withSpeech) {
-      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: { speak(u) { window.spoken.push({ text: u.text, rate: u.rate, lang: u.lang }); }, cancel() {}, getVoices: () => [{ lang: 'en-US', name: 'Test', localService: true }], addEventListener() {}, removeEventListener() {} } });
+      // A reading starts at once and ends after window.speechMs (60 ms); window.refuseSpeech answers 'not-allowed' like iOS before the first tap.
+      window.speechMs = 60;
+      window.spokenAt = [];
+      window.cancels = 0;
+      Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
+        speak(u) {
+          window.spoken.push({ text: u.text, rate: u.rate, lang: u.lang });
+          window.spokenAt.push({ text: u.text, at: performance.now() });
+          if (window.refuseSpeech) { setTimeout(() => u.onerror && u.onerror({ error: 'not-allowed' }), 0); return; }
+          setTimeout(() => u.onstart && u.onstart(), 0);
+          setTimeout(() => u.onend && u.onend(), window.speechMs);
+        },
+        cancel() { window.cancels += 1; }, getVoices: () => [{ lang: 'en-US', name: 'Test', localService: true }], addEventListener() {}, removeEventListener() {},
+      } });
       window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
     } else {
       Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: undefined });
@@ -113,6 +127,9 @@ async function openPage(browser, { viewport, touch = false, speech = true }) {
       Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, value: undefined });
       localStorage.setItem('voice-enabled', '0');
     }
+    // The haptic tick of the page's keyboard (key-feedback.mjs) through navigator.vibrate, counted.
+    window.vibrations = [];
+    Object.defineProperty(navigator, 'vibrate', { configurable: true, value: ms => { window.vibrations.push(ms); return true; } });
     window.collectCalls = [];
     // The page's own public/js/learn-collect.js (h5.html) defines window.LearnCollect when it runs; until then a stand-in. Either way the calls of
     // set() are counted: the real object's set is wrapped once it appears (the property's setter), the stand-in records them directly.
@@ -719,6 +736,217 @@ async function toTerminal(page) {
       await page.locator('#h5-learn .h5-learn-home').waitFor({ state: 'visible' });
       await page.locator('#h5-bnav-settings').tap();
       await waitFor(async () => (await ui(page, 'settingsOpen')) && !(await ui(page, 'learnOpen')), 'Settings replaces Learn');
+      await context.close();
+    }
+
+    // ── Auto-check at the last letter, the phonetic transcription, the audio with repeat, the key bubble and haptic, one-line letters ──
+    {
+      const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+      mock.translator = true;
+      mock.settings = { ...mock.settings, audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 1, audio_speed: 'normal', audio_stop_on_typing: true };
+      await toTerminal(page);
+      await page.locator('#h5-bnav-learn').tap();
+      await page.locator('#h5-learn-due').waitFor();
+      const spell = '#h5-learn-spell-input';
+      const spokenOf = word => page.evaluate(w => window.spokenAt.filter(item => item.text === w), word);
+      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('#h5-learn-meaning').waitFor();
+      // The word plays when its card appears, twice with a pause of 1 s; the button says so, with Stop.
+      await waitFor(async () => (await spokenOf('expire')).length >= 1, 'the word plays when the card appears');
+      await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
+      assert.match(await text(page, '#h5-learn-hear'), /^Playing [12] of 2$/);
+      assert.equal(await page.locator('#h5-learn-stop').count(), 1, 'Stop while it plays');
+      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'learn-phone-spell-playing.png') }); }
+      await waitFor(async () => (await spokenOf('expire')).length === 2, 'the repeat', 4000);
+      const [first, second] = await spokenOf('expire');
+      assert.ok(second.at - first.at >= 1000 && second.at - first.at < 1800, `the pause between repeats (${Math.round(second.at - first.at)} ms)`);
+      await waitFor(async () => (await page.locator('#h5-learn-hear[data-playing]').count()) === 0, 'idle after the repeats');
+      assert.equal(await text(page, '#h5-learn-hear'), 'Hear it');
+      // The transcription next to Hear it (the sound is offered there), as user content.
+      assert.equal(await text(page, '#h5-learn-phonetic'), '/ɪkˈspaɪər/');
+      assert.equal(await page.locator('#h5-learn-phonetic').getAttribute('translate'), 'no');
+      await shot(page, 'learn-phone-spell-phonetic.png');
+      // Hear it by hand plays again with the same repeat; typing a letter skips the rest (Stop when I start typing).
+      const before = (await spokenOf('expire')).length;
+      await page.locator('#h5-learn-hear').tap();
+      await tapKeys(page, 'e');
+      await page.waitForTimeout(1600);
+      assert.equal((await spokenOf('expire')).length, before + 1, 'typing skipped the repeat');
+      // Stop cancels the pending repeat.
+      await page.locator('#h5-learn-hear').tap();
+      await page.locator('#h5-learn-stop').tap();
+      await page.waitForTimeout(1500);
+      assert.equal((await spokenOf('expire')).length, before + 2, 'Stop: no repeat');
+      assert.equal(await page.locator('#h5-learn-stop').count(), 0);
+      assert.equal(await active(page), 'h5-learn-spell-input', 'Hear it and Stop leave the focus in the letters');
+      // The key bubble: on pointerdown over a character key, the character larger above it, inside the keyboard; away on pointerup. One haptic tick a press.
+      const vibrations = await page.evaluate(() => window.vibrations.length);
+      const qKey = page.locator('#h5-learn-keys button[data-char="q"]');
+      await qKey.dispatchEvent('pointerdown', { button: 0, pointerId: 3, pointerType: 'touch', isPrimary: true });
+      await page.locator('.h5-key-bubble').waitFor({ state: 'visible' });
+      assert.equal(await text(page, '.h5-key-bubble'), 'q');
+      assert.equal(await page.locator('.h5-key-bubble').getAttribute('aria-hidden'), 'true');
+      const bubble = await rect(page, '.h5-key-bubble');
+      const qRect = await rect(page, '#h5-learn-keys button[data-char="q"]');
+      const keysRect = await rect(page, '#h5-learn-keys');
+      assert.ok(bubble.bottom <= qRect.y && bubble.bottom >= qRect.y - 8, `the bubble sits just above the key (${bubble.bottom}, ${qRect.y})`);
+      assert.ok(bubble.x >= keysRect.x && bubble.x + bubble.w <= keysRect.x + keysRect.w + 1, 'clamped inside the keyboard at the left edge');
+      assert.ok(bubble.y < keysRect.y, 'above the top row, outside the keyboard box (not clipped)');
+      assert.ok(bubble.w > qRect.w && bubble.h > qRect.h, 'larger than the key');
+      await shot(page, 'learn-phone-key-bubble.png');
+      await qKey.dispatchEvent('pointerup', { button: 0, pointerId: 3, pointerType: 'touch', isPrimary: true });
+      await page.locator('.h5-key-bubble').waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => window.vibrations.length), vibrations + 1, 'one haptic tick for the press');
+      assert.deepEqual(await page.evaluate(() => window.vibrations.at(-1)), 8);
+      assert.equal(await value(page, spell), 'eq');
+      const pRect = await page.locator('#h5-learn-keys button[data-char="p"]').evaluate(el => { const r = el.getBoundingClientRect(); return { right: r.right }; });
+      await page.locator('#h5-learn-keys button[data-char="p"]').dispatchEvent('pointerdown', { button: 0, pointerId: 4, pointerType: 'touch', isPrimary: true });
+      const right = await rect(page, '.h5-key-bubble');
+      assert.ok(right.x + right.w <= keysRect.x + keysRect.w + 1 && right.x + right.w >= pRect.right - 30, 'clamped inside the keyboard at the right edge');
+      await page.locator('#h5-learn-keys button[data-char="p"]').dispatchEvent('pointercancel', { button: 0, pointerId: 4, pointerType: 'touch', isPrimary: true });
+      await page.locator('.h5-key-bubble').waitFor({ state: 'hidden' });
+      // No bubble for Backspace; a held Backspace ticks once, not on each repeat.
+      const ticks = await page.evaluate(() => window.vibrations.length);
+      const back = page.locator('#h5-learn-keys button[data-key="Backspace"]');
+      await back.dispatchEvent('pointerdown', { button: 0, pointerId: 5, pointerType: 'touch', isPrimary: true });
+      await page.waitForTimeout(650);
+      assert.equal(await page.locator('.h5-key-bubble').isVisible(), false, 'no bubble for Backspace');
+      await back.dispatchEvent('pointerup', { button: 0, pointerId: 5, pointerType: 'touch', isPrimary: true });
+      assert.equal(await page.evaluate(() => window.vibrations.length), ticks + 1, 'a held Backspace ticks once');
+      assert.equal(await value(page, spell), '');
+      assert.equal(await active(page), 'h5-learn-spell-input', 'the keys never take the focus');
+      // Auto-check at the last letter: a short answer waits; Backspace in the pause cancels; the last letter checks by itself after a moment.
+      await tapKeys(page, 'expir');
+      await page.waitForTimeout(500);
+      assert.equal(await page.locator('#h5-learn-feedback').count(), 0, 'a shorter answer waits for Check');
+      await tapKeys(page, 'e{Backspace}');
+      await page.waitForTimeout(500);
+      assert.equal(await page.locator('#h5-learn-feedback').count(), 0, 'Backspace in the pause cancels the check');
+      assert.equal(await value(page, spell), 'expir');
+      const spokenBefore = (await spokenOf('expire')).length;
+      await tapKeys(page, 'e');
+      assert.equal(await page.locator('#h5-learn-feedback').count(), 0, 'the last letter is seen first');
+      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor({ timeout: 2000 });
+      assert.equal(mock.posts(/\/answer$/).length, 0, 'checked, not graded: the grade is still the person\'s');
+      assert.equal(await text(page, '#h5-learn-feedback-phonetic'), '/ɪkˈspaɪər/', 'the transcription with the word after the answer');
+      await waitFor(async () => (await spokenOf('expire')).length === spokenBefore + 1, 'the word plays once more after the answer');
+      await page.waitForTimeout(1300);
+      assert.equal((await spokenOf('expire')).length, spokenBefore + 1, 'once, not repeated');
+      await shot(page, 'learn-phone-spell-answer.png');
+      await page.locator('#h5-learn-grade-good').tap();
+      await waitFor(() => mock.posts(/\/answer$/).length === 1, 'the grade');
+      // Leaving the card cancels its audio: the next word plays, never the last one over it.
+      await page.locator('#h5-learn-letters, .h5-learn-letters').first().waitFor();
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+
+      // Build the sentence and Fill the gap: the sentence plays after the answer by default, never before (it would give the answer away).
+      const sentence = SENTENCES[0].en;
+      const { gapFor } = await import(path.join(root, 'scripts/h5-shell/learn-model.mjs'));
+      await page.locator('#h5-learn-mode-fill').tap();
+      await page.locator('#h5-learn-gap-input').waitFor();
+      await page.waitForTimeout(600);
+      assert.equal((await spokenOf(sentence)).length, 0, 'Fill the gap: nothing before the answer');
+      const gapWord = gapFor(SENTENCES[0]).word;
+      await tapKeys(page, gapWord.slice(0, -1));
+      await page.waitForTimeout(450);
+      assert.equal(await page.locator('#h5-learn-feedback').count(), 0);
+      await tapKeys(page, gapWord.slice(-1));
+      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor({ timeout: 2000 });
+      await waitFor(async () => (await spokenOf(sentence)).length === 1, 'the sentence plays after the answer');
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+      await page.locator('#h5-learn-mode-build').tap();
+      await page.locator('#h5-learn-chinese').waitFor();
+      await page.waitForTimeout(600);
+      assert.equal((await spokenOf(sentence)).length, 1, 'Build the sentence: nothing before the answer');
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+
+      // Learn settings → Audio: each choice is saved at once.
+      await page.locator('#h5-learn-settings').tap();
+      await page.locator('#h5-learn-audio-card').waitFor();
+      assert.equal(await page.locator('#h5-learn-audio-repeat button[data-value="2"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('#h5-learn-audio-pause button[data-value="1"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('#h5-learn-audio-when button[data-value="after"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('#h5-learn-audio-speed button[data-value="normal"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('#h5-learn-audio-words').isChecked(), true);
+      assert.equal(await page.locator('#h5-learn-audio-stop').isChecked(), true);
+      await shot(page, 'learn-phone-audio-settings.png');
+      await page.locator('#h5-learn-audio-stop').scrollIntoViewIfNeeded();
+      await shot(page, 'learn-phone-audio-settings-2.png');
+      await page.locator('#h5-learn-audio-repeat button[data-value="3"]').tap();
+      await waitFor(() => mock.posts(/\/settings$/).some(item => item.body.audio_repeat === 3), 'repeat saved');
+      await page.locator('#h5-learn-audio-when button[data-value="start"]').tap();
+      await waitFor(() => mock.posts(/\/settings$/).some(item => item.body.audio_sentences_at === 'start'), 'when saved');
+      await page.locator('#h5-learn-audio-speed button[data-value="slow"]').tap();
+      await waitFor(() => mock.posts(/\/settings$/).some(item => item.body.audio_speed === 'slow'), 'speed saved');
+      await page.locator('#h5-learn-audio-words').tap();
+      await waitFor(() => mock.posts(/\/settings$/).some(item => item.body.audio_words === false), 'words switch saved');
+      await page.locator('#h5-learn-audio-sentences').tap();
+      await waitFor(async () => await page.locator('#h5-learn-audio-when button[data-value="start"]').isDisabled(), 'the choice is off with the sentences');
+      await page.locator('#h5-learn-audio-sentences').tap();
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+      // "When the card appears" and Slow: Build now plays at the start, slowly.
+      await page.locator('#h5-learn-mode-build').tap();
+      await page.locator('#h5-learn-chinese').waitFor();
+      await waitFor(async () => (await spokenOf(sentence)).length === 2, 'Build plays at the start when chosen');
+      assert.equal(await page.evaluate(() => window.spoken.at(-1).rate), 0.65, 'slow');
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+
+      // A 16-letter word stays on one line at 390px (the slots shrink); at 320px it wraps into two even rows.
+      mock.spellCards = [card(7, 'word', 'responsibilities', ZH_EXPIRE, 'lookup', { phonetic: '/rɪˌspɑnsəˈbɪlətiz/' })];
+      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('.h5-learn-letter').first().waitFor();
+      await page.waitForTimeout(200);
+      const tops = async () => page.locator('.h5-learn-letter').evaluateAll(list => [...new Set(list.map(el => Math.round(el.getBoundingClientRect().top)))]);
+      assert.equal((await tops()).length, 1, 'one line at 390px');
+      const slots = await page.locator('.h5-learn-letter').evaluateAll(list => list.map(el => el.getBoundingClientRect()));
+      assert.ok(slots[0].width >= 18 && slots.at(-1).right <= 390 - 16 + 1 && slots[0].left >= 16 - 1, `inside the page (${slots[0].width})`);
+      await shot(page, 'learn-phone-spell-long-390.png');
+      await page.setViewportSize({ width: 320, height: 700 });
+      await page.waitForTimeout(300);
+      const rows320 = await page.locator('.h5-learn-letter-row').evaluateAll(list => list.map(row => row.children.length));
+      assert.deepEqual(rows320, [8, 8], 'two even rows at 320px');
+      const width320 = await page.locator('.h5-learn-letter').evaluateAll(list => Math.max(...list.map(el => el.getBoundingClientRect().right)));
+      assert.ok(width320 <= 320 - 16 + 1, 'inside the page at 320px');
+      await shot(page, 'learn-phone-spell-long-320.png');
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+      await context.close();
+    }
+    // ── A browser that refuses sound before the first tap: "Tap to play" once ──
+    {
+      const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+      mock.translator = true;
+      await toTerminal(page);
+      await page.evaluate(() => { window.refuseSpeech = true; });
+      await page.locator('#h5-bnav-learn').tap();
+      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('#h5-learn-tap-play').waitFor({ timeout: 4000 });
+      assert.equal(await page.locator('#h5-learn-hear').count(), 0);
+      await page.evaluate(() => { window.refuseSpeech = false; });
+      await page.locator('#h5-learn-tap-play').tap();
+      await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
+      await context.close();
+    }
+    // ── A computer: the hardware keyboard checks by itself at the last letter too; Backspace in the pause cancels ──
+    {
+      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
+      await page.locator('#h5-nav-learn').click();
+      await page.locator('#h5-learn-mode-spell').click();
+      await page.locator('#h5-learn-meaning').waitFor();
+      await page.locator('.h5-learn-letters').click();
+      await page.keyboard.type('expire');
+      await page.keyboard.press('Backspace');
+      await page.waitForTimeout(500);
+      assert.equal(await page.locator('#h5-learn-feedback').count(), 0, 'Backspace in the pause cancels');
+      await page.keyboard.type('a');
+      await page.locator('#h5-learn-feedback[data-correct="false"]').waitFor({ timeout: 2000 });
+      assert.match(await text(page, '#h5-learn-feedback'), /You wrote: expira/);
       await context.close();
     }
   } finally {

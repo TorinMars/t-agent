@@ -42,5 +42,20 @@
       "url": "https://unpkg.com/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js",
       "sha256": "b0c3be540a9984713aea996966c24ed1a639d11f60d44986b22661e3a8a148d0"
     }
+  ],
+  "data": [
+    {
+      "name": "cmudict",
+      "version": "7479086",
+      "note": "The CMU Pronouncing Dictionary (BSD licence, vendor/cmudict/LICENSE), made into the Learn page's compact pronunciation data by scripts/build-phonetics.js",
+      "url": "https://cdn.jsdelivr.net/gh/cmusphinx/cmudict@74790861f652b15e4ac49015a90074ad62a27690/cmudict.dict",
+      "sha256": "81917843c7f44ce2b094ac63873c2c7a4cf802040792c455ba3ca406891c3d22",
+      "license_url": "https://cdn.jsdelivr.net/gh/cmusphinx/cmudict@74790861f652b15e4ac49015a90074ad62a27690/LICENSE",
+      "license": "vendor/cmudict/LICENSE",
+      "license_sha256": "bd4ce8e44170a5f9f481310ca85c51de3c4f851a65e679b40e603b143bd3542a",
+      "build": "scripts/build-phonetics.js",
+      "file": "vendor/cmudict/cmudict-7479086.txt.br",
+      "content_sha256": "1a527ed619330451b2775086e3cc4e9f974e301cc9839fe4a7e4e603a8f1a063"
+    }
   ]
 }

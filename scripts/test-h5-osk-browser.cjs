@@ -21,6 +21,9 @@ async function openPage(browser, viewport) {
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.addInitScript(() => {
+    // The haptic tick of the keys (key-feedback.mjs) through navigator.vibrate, counted.
+    window.vibrations = [];
+    Object.defineProperty(navigator, 'vibrate', { configurable: true, value: ms => { window.vibrations.push(ms); return true; } });
     window.sockets = [];
     window.WebSocket = class {
       constructor(url) { this.url = url; this.readyState = 0; this.sent = []; window.sockets.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
@@ -174,8 +177,52 @@ const terminalText = page => page.evaluate(() => document.querySelector('.h5-xte
       assert.deepEqual(now.typed.slice(12), ['\x03', '\x12', '\x1b']);
       assert.equal(now.editable, false);
 
+      // The bubble above a held character key (the terminal's keyboard too): the character larger, above the key, inside the keyboard; gone on
+      // release. One haptic tick per press; the focus does not move.
+      const focusBefore = await page.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.className));
+      const ticks = await page.evaluate(() => window.vibrations.length);
+      const bubbleOf = selector => page.evaluate(async sel => {
+        const el = document.querySelector(`#h5-osk ${sel}`);
+        const init = { bubbles: true, cancelable: true, pointerType: 'touch', pointerId: 11, isPrimary: true, button: 0 };
+        el.dispatchEvent(new PointerEvent('pointerdown', init));
+        for (let i = 0; i < 50; i += 1) {
+          const shown = document.querySelector('.h5-key-bubble');
+          if (shown && shown.style.display !== 'none') break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        const bubble = document.querySelector('.h5-key-bubble');
+        const visible = Boolean(bubble && bubble.style.display !== 'none');
+        const b = bubble ? bubble.getBoundingClientRect() : null;
+        const k = el.getBoundingClientRect();
+        const box = document.getElementById('h5-osk').getBoundingClientRect();
+        const result = { visible, text: bubble ? bubble.textContent : '', hidden: bubble ? bubble.getAttribute('aria-hidden') : null,
+          bubble: b && { left: b.left, right: b.right, bottom: b.bottom, top: b.top }, key: { top: k.top, width: k.width }, box: { left: box.left, right: box.right, top: box.top } };
+        el.dispatchEvent(new PointerEvent('pointerup', init));
+        result.afterUp = Boolean(bubble && bubble.style.display !== 'none');
+        await new Promise(resolve => setTimeout(resolve, 30));
+        result.afterUp = Boolean(bubble && bubble.style.display !== 'none');
+        return result;
+      }, selector);
+      const g = await bubbleOf('[data-char="g"]');
+      assert.equal(g.visible, true, 'a bubble while the key is held');
+      assert.equal(g.text, 'g');
+      assert.equal(g.hidden, 'true');
+      assert.ok(g.bubble.bottom <= g.key.top && g.bubble.bottom >= g.key.top - 8, 'just above the key');
+      assert.equal(g.afterUp, false, 'gone on release');
+      const q = await bubbleOf('[data-char="q"]');
+      assert.ok(q.bubble.left >= q.box.left - 0.5, 'clamped at the left edge');
+      assert.ok(q.bubble.top < q.box.top, 'above the top row, not clipped by the keyboard');
+      const p = await bubbleOf('[data-char="p"]');
+      assert.ok(p.bubble.right <= p.box.right + 0.5, 'clamped at the right edge');
+      const space = await bubbleOf('[data-key="Space"]');
+      assert.equal(space.visible, false, 'no bubble for Space');
+      assert.equal(await page.evaluate(() => window.vibrations.length), ticks + 4, 'one haptic tick per press');
+      assert.equal(await page.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.className)), focusBefore, 'the focus does not move');
+      const typedAfterBubbles = (await page.evaluate(state)).typed.length;
+
       // Backspace repeats while held (in-page timing: hold 900 ms).
-      const before = (await page.evaluate(state)).typed.length;
+      const before = typedAfterBubbles;
+      const ticksBeforeHold = await page.evaluate(() => window.vibrations.length);
       await page.evaluate(async () => {
         const el = document.querySelector('#h5-osk [data-key="Backspace"]');
         const init = { bubbles: true, cancelable: true, pointerType: 'touch', pointerId: 9, isPrimary: true, button: 0 };
@@ -188,6 +235,7 @@ const terminalText = page => page.evaluate(() => document.querySelector('.h5-xte
       });
       const held = (await page.evaluate(state)).typed.slice(before);
       assert.ok(held.length >= 3 && held.every(item => item === '\x7f'), `a held Backspace repeats (${held.length} times)`);
+      assert.equal(await page.evaluate(() => window.vibrations.length), ticksBeforeHold + 1, 'a held Backspace ticks once, not on each repeat');
       const settled = (await page.evaluate(state)).typed.length;
       await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 200)));
       assert.equal((await page.evaluate(state)).typed.length, settled, 'the repeat stops on release');

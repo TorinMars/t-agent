@@ -320,6 +320,9 @@ CREATE TABLE IF NOT EXISTS learn_cards (
   state_at      INTEGER NOT NULL DEFAULT 0,
   state_by      TEXT    NOT NULL DEFAULT '',
   sync_seq      INTEGER NOT NULL DEFAULT 0,
+  -- Schema 15: the phonetic transcription of a word card (IPA between slashes, '' when none is known), part of the content like zh; filled in from
+  -- the bundled dictionary (services/phonetics.js) or the translator, never replaced by '' in the sync. services/learn-sync-store.js adds it.
+  phonetic      TEXT    NOT NULL DEFAULT '',
   UNIQUE (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);

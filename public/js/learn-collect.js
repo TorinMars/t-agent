@@ -24,9 +24,11 @@ const LearnCollect = (() => {
       if (!text || text.length > 300 || /[{}]/.test(text) || (text.match(/[A-Za-z][A-Za-z'-]*/g) || []).length < 3) return;
       add({ kind: 'sentence', en: text, zh: String(zh || '').trim().slice(0, 500), source: 'translation', context: String(context || '').slice(0, 120) });
     },
-    word(en, zh) {
+    // `phonetic`: the transcription shown with the meaning, kept when the server's dictionary has none for the word.
+    word(en, zh, phonetic) {
       const text = String(en || '').trim().replace(/\u2019/g, "'");
-      if (/^[A-Za-z][A-Za-z'-]{0,39}$/.test(text)) add({ kind: 'word', en: text, zh: String(zh || '').trim().slice(0, 500), source: 'lookup' });
+      const ipa = typeof phonetic === 'string' ? phonetic.trim().slice(0, 60) : '';
+      if (/^[A-Za-z][A-Za-z'-]{0,39}$/.test(text)) add({ kind: 'word', en: text, zh: String(zh || '').trim().slice(0, 500), source: 'lookup', ...(ipa ? { phonetic: ipa } : {}) });
     },
     set(value) { collecting = Promise.resolve(Boolean(value)); },
   };

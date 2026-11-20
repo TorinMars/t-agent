@@ -14,14 +14,14 @@ const listeners = new Set();
 // The sync columns of schema 14 on an older database (13 had learn_cards and learn_reviews without them), and the indexes on them. Safe to run on
 // every start: a column or an index that is there is left alone. Rows from before get: a content clock of 0 (they never beat a real edit), the
 // time of the last answer as the review-state clock (so on the first merge the side answered last keeps its schedule), a random review id, and
-// change numbers in their order of creation.
+// change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way.
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
   if (!cards.length) return;
   const addCard = [];
   for (const [name, type] of [['content_at', 'INTEGER NOT NULL DEFAULT 0'], ['content_by', "TEXT NOT NULL DEFAULT ''"], ['state_at', 'INTEGER NOT NULL DEFAULT 0'],
-    ['state_by', "TEXT NOT NULL DEFAULT ''"], ['sync_seq', 'INTEGER NOT NULL DEFAULT 0']]) {
+    ['state_by', "TEXT NOT NULL DEFAULT ''"], ['sync_seq', 'INTEGER NOT NULL DEFAULT 0'], ['phonetic', "TEXT NOT NULL DEFAULT ''"]]) {
     if (!cards.includes(name)) addCard.push(`ALTER TABLE learn_cards ADD COLUMN ${name} ${type}`);
   }
   const reviews = columns('learn_reviews');

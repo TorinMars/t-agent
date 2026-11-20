@@ -31,6 +31,10 @@ const SHIFT_SLOT = {
 const DOUBLE_TAP_MS = 350; // a second Shift tap within this time turns on caps lock
 const REPEAT_DELAY_MS = 400;
 const REPEAT_EVERY_MS = 60;
+// The haptic tick and the key bubble (key-feedback.mjs, a chunk loaded at the first press): on pointerdown (`d` true; not on a held key's repeats) and
+// on release.
+let fx;
+const feel = (key, d) => { (fx || (fx = import('./key-feedback.mjs'))).then(m => m.feel(key, d), () => {}); };
 
 // `start`: the grid column of the first key (2 indents the row by half a key); without it the keys follow the ones before them.
 export const chars = (text, start) => Array.from(text).map((ch, index) => ({ ch, col: index === 0 ? start : undefined }));
@@ -96,6 +100,7 @@ export function Keyboard({ rows, onKey, sx, ...props }) {
     if (event.button > 0) return;
     event.preventDefault(); // no focus moves, so neither keyboard opens or closes
     event.currentTarget.setAttribute('data-down', '');
+    feel(event.currentTarget, 1);
     stopRepeat();
     if (item.click) return; // pressed on click (Hide): a key that takes the keyboard away must not let the rest of the tap land on what lies under it
     press(item);
@@ -103,7 +108,7 @@ export function Keyboard({ rows, onKey, sx, ...props }) {
     const again = () => { press(item); repeat.current = setTimeout(again, REPEAT_EVERY_MS); };
     repeat.current = setTimeout(again, REPEAT_DELAY_MS);
   };
-  const up = event => { event.currentTarget.removeAttribute('data-down'); stopRepeat(); };
+  const up = event => { event.currentTarget.removeAttribute('data-down'); feel(0, 0); stopRepeat(); };
   // A click without a pointer before it (a screen reader, a switch device; `detail` is 0) presses the key too.
   const click = (event, item) => { if (event.detail === 0 || item.click) press(item); };
 

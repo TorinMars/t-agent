@@ -37,6 +37,27 @@ export function speak(text, { slow = false } = {}) {
     return false;
   }
 }
+// Reads `text` once and reports it (the player of learn-audio.mjs repeats with this): `onStart`, `onEnd`, `onError(name)` ('not-allowed' when the
+// browser refuses sound before a tap; 'interrupted' / 'canceled' when it was stopped). Returns false when the browser cannot read.
+export function speakOnce(text, { slow = false, onStart = () => {}, onEnd = () => {}, onError = () => {} } = {}) {
+  const speech = synth();
+  if (!speech || !text) return false;
+  try {
+    speech.cancel();
+    const utterance = new window.SpeechSynthesisUtterance(String(text));
+    utterance.lang = 'en-US';
+    const voice = pickVoice(typeof speech.getVoices === 'function' ? speech.getVoices() : []);
+    if (voice) utterance.voice = voice;
+    utterance.rate = slow ? 0.65 : 1;
+    utterance.onstart = () => onStart();
+    utterance.onend = () => onEnd();
+    utterance.onerror = event => onError(String((event && event.error) || 'error'));
+    speech.speak(utterance);
+    return true;
+  } catch {
+    return false;
+  }
+}
 export function stopSpeaking() { const speech = synth(); if (speech) try { speech.cancel(); } catch { /* nothing to stop */ } }
 
 const Recognition = () => (typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition || null : null);

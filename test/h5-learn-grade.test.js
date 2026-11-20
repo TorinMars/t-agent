@@ -121,3 +121,16 @@ test('edit distance', async () => {
   assert.equal(editDistance('', 'abc'), 3);
   assert.equal(editDistance('same', 'same'), 0);
 });
+
+test('the automatic check: when the typed letters reach the length of the word (spaces, case and a curly apostrophe do not count)', async () => {
+  const { typedInFull, AUTO_CHECK_MS } = await load();
+  assert.equal(AUTO_CHECK_MS, 300);
+  assert.equal(typedInFull('expir', 'expire'), false, 'a shorter answer waits for Check');
+  assert.equal(typedInFull('expire', 'expire'), true);
+  assert.equal(typedInFull('EXPIRE', 'expire'), true);
+  assert.equal(typedInFull('expira', 'expire'), true, 'a wrong last letter is checked too');
+  assert.equal(typedInFull(' exp ire ', 'expire'), true);
+  assert.equal(typedInFull('wasn’t', "wasn't"), true);
+  assert.equal(typedInFull('trade-off', 'trade-off'), true);
+  assert.equal(typedInFull('', ''), false);
+});

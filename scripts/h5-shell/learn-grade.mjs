@@ -187,6 +187,14 @@ export function spellCheck(expected, answer) {
   return { ok: want.toLowerCase() === got.toLowerCase(), letters, right: letters.filter(letter => letter.ok).length, total: letters.length };
 }
 
+// The automatic check of Spell and Fill the gap: the answer is checked by itself AUTO_CHECK_MS after the typed letters reach the word's length (the
+// last letter is seen first; a change in that pause, such as Backspace, starts over). A shorter answer waits for Check.
+export const AUTO_CHECK_MS = 300;
+export const typedInFull = (answer, word) => {
+  const want = unify(word).trim();
+  return want.length > 0 && unify(answer).replace(/\s+/g, '').length === want.length;
+};
+
 // The grade offered after an answer (Enter takes it): right without help is Good, right with help (a hint, the first letter) is Hard, wrong is Again.
 export function suggestedGrade({ correct, helped = false }) {
   if (!correct) return 'again';

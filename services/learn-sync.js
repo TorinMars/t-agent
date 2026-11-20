@@ -193,7 +193,7 @@ function createLearnSync(options) {
     const name = o();
     const seqFor = current => (bump ? syncStore.nextSeq(db) : current);
     let applied = 0;
-    const writeCard = (id, card, currentSeq) => db.prepare(`UPDATE learn_cards SET created_at = @created_at, en = @en, zh = @zh, source = @source,
+    const writeCard = (id, card, currentSeq) => db.prepare(`UPDATE learn_cards SET created_at = @created_at, en = @en, zh = @zh, phonetic = @phonetic, source = @source,
       context = @context, suspended = @suspended, content_at = @content_at, content_by = @content_by, due_at = @due_at, interval_days = @interval_days,
       ease = @ease, reps = @reps, lapses = @lapses, last_result = @last_result, last_at = @last_at, last_correct = @last_correct, state_at = @state_at,
       state_by = @state_by, sync_seq = @sync_seq WHERE id = @id`).run({ ...card, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: seqFor(currentSeq), id });
@@ -220,8 +220,8 @@ function createLearnSync(options) {
       }
       if (!local) {
         if (follow) return; // the card it moved to is not here: nothing to merge into
-        db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, interval_days, ease, reps, lapses, last_result,
-          last_at, last_correct, suspended, content_at, content_by, state_at, state_by, sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @source, @context,
+        db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, reps, lapses, last_result,
+          last_at, last_correct, suspended, content_at, content_by, state_at, state_by, sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @phonetic, @source, @context,
           @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result, @last_at, @last_correct, @suspended, @content_at, @content_by, @state_at,
           @state_by, @sync_seq)`).run({ ...card, owner: name, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
         applied += 1;

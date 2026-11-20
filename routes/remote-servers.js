@@ -820,16 +820,37 @@ async function attentionTarget(req, res) {
   return target;
 }
 
-function proxyAttention(method, upstream, { success = 200 } = {}) {
+// A linked engine whose items this one keeps a read copy of (services/attention-copy.js, docs/design/attention-copies.md): while it is offline, or when
+// the request does not reach it, the copy answers instead (a read, a queued change, or a clear refusal); a write that reached it brings the copies up to
+// date at once.
+const attentionCopy = () => require('../services/attention-copy').sharedCopy();
+const cannotReach = error => !(error instanceof RemoteAttentionError) || error.statusCode >= 502 || /OFFLINE|CONNECTION|TIMEOUT/.test(String(error.message || ''));
+function answerFromCopy(res, copy, target, method, req, sub) {
+  const itemId = req.params.itemId === undefined ? null : Number(req.params.itemId);
+  const answer = copy.offline({ serverId: target.row.id, method, itemId, sub, body: req.body });
+  if (!answer) return false;
+  res.set('Cache-Control', 'no-store');
+  res.status(answer.status).json(answer.body);
+  return true;
+}
+
+function proxyAttention(method, upstream, { success = 200, sub = () => '' } = {}) {
   return async (req, res) => {
     const target = remoteTarget(req, res);
     if (!target) return;
+    const copy = attentionCopy();
+    const covered = Boolean(copy && copy.covers(target.row.id));
+    if (covered && !copy.peerOnline(target.row.id) && answerFromCopy(res, copy, target, method, req, sub(req))) return;
     try {
       const result = await getRemoteAttention().call(target.row, { method, path: upstream(req), body: req.body, token: target.token });
+      if (covered && method !== 'GET') copy.nudge(target.row.id);
       if (method === 'DELETE') return res.status(204).end();
       res.set('Cache-Control', 'no-store');
       res.status(success).json(result);
-    } catch (error) { sendRemoteAttentionError(res, error); }
+    } catch (error) {
+      if (covered && cannotReach(error) && answerFromCopy(res, copy, target, method, req, sub(req))) return;
+      sendRemoteAttentionError(res, error);
+    }
   };
 }
 
@@ -852,8 +873,8 @@ router.post('/:id/attention', proxyAttention('POST', () => '', { success: 201 })
 router.get('/:id/attention/:itemId', checkAttentionId, proxyAttention('GET', attentionItemPath));
 router.patch('/:id/attention/:itemId', checkAttentionId, proxyAttention('PATCH', attentionItemPath));
 router.delete('/:id/attention/:itemId', checkAttentionId, proxyAttention('DELETE', attentionItemPath));
-router.post('/:id/attention/:itemId/move', checkAttentionId, proxyAttention('POST', req => `${attentionItemPath(req)}/move`));
-router.post('/:id/attention/:itemId/summarize', checkAttentionId, proxyAttention('POST', req => `${attentionItemPath(req)}/summarize`, { success: 202 }));
+router.post('/:id/attention/:itemId/move', checkAttentionId, proxyAttention('POST', req => `${attentionItemPath(req)}/move`, { sub: () => '/move' }));
+router.post('/:id/attention/:itemId/summarize', checkAttentionId, proxyAttention('POST', req => `${attentionItemPath(req)}/summarize`, { success: 202, sub: () => '/summarize' }));
 
 router.put('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   const row = getServer(req);

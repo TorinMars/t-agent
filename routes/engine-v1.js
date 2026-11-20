@@ -45,6 +45,8 @@ router.use('/settings-sync', require('./settings-sync').createEngineSettingsSync
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
 // The usage data sync between linked services (routes/ui-events-sync.js), link tokens only; the rows travel sealed for the link.
 router.use('/usage-sync', require('./ui-events-sync').createEngineUsageSyncRouter());
+// The T-Attention read copies between linked services (routes/attention-copy.js), link tokens only; the rows travel sealed for the link.
+router.use('/attention-copy', require('./attention-copy').createEngineAttentionCopyRouter());
 // The shared page state between linked services (routes/page-state.js), link tokens only; the state travels sealed for the link.
 router.use('/page-state', require('./page-state').createEnginePageStateRouter());
 // "Updated to v…" (routes/updated-notice.js): this engine's notice about its own update, read and acknowledged by a linked service's page.
@@ -199,6 +201,9 @@ function infoHandler(req, res) {
       // usage:sync: GET|PUT /v1/usage-sync, POST /v1/usage-sync/pull and GET /v1/usage-sync/summary (routes/ui-events-sync.js), the usage data linked
       // services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or USAGE_SYNC_ENABLED=false.
       ...(require('../services/ui-events-sync').syncEnabled() ? [require('../services/ui-events-sync').CAPABILITY] : []),
+      // attention:copy: GET|PUT /v1/attention-copy and POST /v1/attention-copy/pull (routes/attention-copy.js), the read copies of every linked engine's
+      // T-Attention items (link tokens only). A linked service without it is read live, as before. Off with SETTINGS_SYNC_ENABLED=false or ATTENTION_COPY_ENABLED=false.
+      ...(require('../services/attention-copy').syncEnabled() ? [require('../services/attention-copy').CAPABILITY] : []),
       // learn:reports: the detail of wrong answers and the mistake reports travel with the learning data, and the home routes of the reports
       // (/v1/learn-sync/mistakes, /reports, /report, /analyze) answer; the weekly report is made by one of the engines that list it.
       ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').REPORTS_CAPABILITY] : []),

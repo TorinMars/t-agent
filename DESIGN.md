@@ -74,6 +74,7 @@
 | File | What is in it | Size |
 | --- | --- | --- |
 | [attention-cli-and-listener.md](docs/design/attention-cli-and-listener.md) | The `t-attention` command, the Claude listener plugin, plugin overview and settings, easy listener install, the plugin marketplace, the agent skills. | 58 KB |
+| [attention-copies.md](docs/design/attention-copies.md) | T-Attention read copies on every linked engine: the copy sync, an offline owner "as of", queued and refused actions, no double notification. | 10 KB |
 | [attention-notifiers.md](docs/design/attention-notifiers.md) | Telling the user on another channel: rules, the wait before a message, one Telegram sender, direct messages, Telegram, email, the desktop bubble. | 43 KB |
 | [attention-desktop-window.md](docs/design/attention-desktop-window.md) | The native macOS window: launch, auth, API and merge rules, notices, panel look, live activity, settings, page link to a terminal. | 34 KB |
 

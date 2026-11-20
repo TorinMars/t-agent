@@ -1342,6 +1342,17 @@ I18n.add({
   "Could not load {1}": "无法加载 {1}",
   "on": "到", // "on <engine>" of the quick add (the engine name is added after it)
   "Add on": "添加到",
+  // T-Attention read copies of other engines (Attention.jsx, attention-feed.mjs; docs/design/attention-copies.md)
+  "Will be sent to {1}": "将在连上 {1} 后发送",
+  "Not sent: it was changed on {1} first": "未发送：{1} 上已先有新的改动",
+  "{1} is offline": "{1} 已离线",
+  "{1} is not linked to this device": "{1} 没有与这台设备关联",
+  "Its tasks as of {1}": "任务截至 {1}",
+  "Changes are sent when it is back": "改动会在它上线后发送",
+  "As of {1}": "截至 {1}",
+  "The history is kept on {1}": "历史记录保存在 {1} 上",
+  "Not sent to {1}": "未发送到 {1}",
+  "it was changed there in the meantime": "那边在此期间已有改动",
   "Write a 3-line summary when a task needs you or is ready for review": "任务需要你或等待审阅时，生成 3 行摘要",
   "Provider": "服务商",
   "no key saved": "未保存 Key",

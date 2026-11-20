@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
@@ -8,15 +8,21 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
 import Drawer from '@mui/material/Drawer';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import LinearProgress from '@mui/material/LinearProgress';
 import ListItemButton from '@mui/material/ListItemButton';
 import NativeSelect from '@mui/material/NativeSelect';
 import OutlinedInput from '@mui/material/OutlinedInput';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { alpha } from '@mui/material/styles';
-import { DialogError, Pill, deviceParts, deviceText, errorText, named, t, useShared } from './common.jsx';
+import { DialogError, Pill, api, deviceParts, deviceText, errorText, named, t, useShared } from './common.jsx';
+import { baseOf } from './attention-feed.mjs';
 import { readShared, writeShared } from './shared-store.mjs';
 import { DeviceTag } from './TaskDrawer.jsx';
 import { shortName } from './task-order.mjs';
@@ -30,7 +36,9 @@ import {
   MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
   groupOf, hasTree, homeDetail, homeGroups, isShownSession, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, readCollapsed, rollbackItems,
   linkParts, safeLink, sessionOf, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
+  WEEKDAYS, applyChange, momentOf, momentTokens, scheduleLine, tagItem, thenOf, timedSections,
 } from './attention-model.mjs';
+import { FREQUENCIES, hasSchedule, retryActions, scheduleForm, scheduleFromForm, schedulePatch, scriptTerminal, sessionTasks, targetName } from './attention-schedule.mjs';
 import { DIALOG_RADIUS, TOUCH } from './theme.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
@@ -64,7 +72,9 @@ const CIRCLE_X = 26; // the middle of the circle from the left edge of a row (it
 const ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
 const ACTION_SX = { minWidth: 0, px: 1, py: 0.25, minHeight: 32 };
 // The dot of a section heading (theme colours) and the tone of a status pill.
-const SECTION_DOT = { needs_you: 'error.main', working: 'success.main', todo: 'warning.main', closed: 'text.disabled' };
+const SECTION_DOT = { needs_you: 'error.main', working: 'success.main', todo: 'warning.main', scheduled: 'primary.main', recurring: 'info.main', closed: 'text.disabled' };
+// The sections of tasks that wait for their time (Scheduled, Recurring): ordered by that time, so their rows are not dragged and their titles take no drop.
+const TIMED = new Set(['scheduled', 'recurring']);
 const STATUS_TONE = { waiting_user: 'warning', review: 'info', working: 'success', done: 'success', failed: 'error' };
 const PILL_SX = { height: 20, typography: 'caption', px: 1, flex: '0 0 auto' };
 const DETAIL_COLOR = { reason: null, confirm: 'info.light', progress: 'text.secondary' };
@@ -142,6 +152,29 @@ const DETAILS_SX = theme => ({
 // The row of the session the page shows (wide layout): MD2's selected look, the primary colour at 8% and a 3px indicator at the left edge.
 const SHOWN_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.08), boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` });
 
+// Tokens of a schedule line or a moment (`scheduleLine`, `momentTokens` of attention-model.mjs) as text: an English word is translated, a time or date
+// is shown as it is, and a session name is never translated.
+function Words({ tokens }) {
+  return tokens.map((token, index) => (
+    <Fragment key={index}>
+      {index ? ' ' : ''}
+      {typeof token === 'string' ? t(token) : token.name != null ? <span className="h5-attention-schedule-session" translate="no">{token.name}</span> : token.raw}
+    </Fragment>
+  ));
+}
+// The schedule line of a row ("Scheduled and recurring tasks" in docs/design/page-attention.md): the icon (clock-circle once, sync recurring, send for
+// a prompt), the rule, the next time, when it was last done and the session a prompt goes to, joined with " · ".
+function ScheduleLine({ line }) {
+  return (
+    <Box className="h5-attention-schedule" data-kind={line.kind} data-icon={line.icon} sx={{ mt: 0.25, display: 'flex', alignItems: 'flex-start', gap: 0.5, typography: 'body2', color: 'text.secondary' }}>
+      <Box component="span" aria-hidden="true" sx={{ flex: '0 0 auto', display: 'inline-flex', mt: '3px', color: 'primary.light' }}><Icon name={line.icon} size={14} /></Box>
+      <Box component="span" className="h5-attention-schedule-text" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+        {line.parts.map((part, index) => <Fragment key={index}>{index ? ' · ' : ''}<Words tokens={part} /></Fragment>)}
+      </Box>
+    </Box>
+  );
+}
+
 // One row. `node` (the tree, buildTree) gives its indent and, for a sub-task of a task in another group, that parent (`node.parent`, the "↳" hint);
 // `fold` is the collapse button of a parent; `act` runs a row button (Confirm, Reject, Handled); `hold` are the drag props (useListDrag) or null.
 // `section`: the key of the Home view section it is drawn in ('closed' in the unfolded Done list); the row has its status pill, the section's detail
@@ -149,8 +182,9 @@ const SHOWN_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.08), b
 // `session` (`sessionOf`): the row came from a T-Agent session that is still there; it has the session chip, a tap opens that session (`onJump`) and
 // the Details button opens the edit view. `shown`: that session is the one the page shows (wide layout), and the row is marked.
 // `ownerName`: the device of a read copy (docs/design/attention-copies.md), for the lines of a change queued for it ("Will be sent to K01") or dropped
-// there; `dismiss` reads the note of a dropped one.
-function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section, session, shown, onJump, ownerName, dismiss }) {
+// there; `dismiss` reads the note of a dropped one. `line`: the schedule line of a task with a schedule (`scheduleLine`). In Scheduled and Recurring
+// the status pill is left out (every task there is To do until its time).
+function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section, session, shown, onJump, ownerName, dismiss, line }) {
   const done = item.status === 'done';
   const detail = homeDetail(item, section);
   const second = fields && ['review', 'done'].includes(item.status) && item.result ? { kind: 'result', text: String(item.result) } : null;
@@ -162,7 +196,8 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
   };
   const mark = done ? 'Mark as not done' : 'Mark as done';
   const indent = node ? node.indent : 0;
-  const actions = item.status === 'review' ? ['Confirm', 'Reject'] : item.status === 'waiting_user' ? ['Handled'] : [];
+  // A scheduled task that waits for the person: a prompt whose session was busy has "Send now", a failed script "Open terminal" and "Run again".
+  const actions = item.status === 'review' ? ['Confirm', 'Reject'] : item.status === 'waiting_user' ? [...retryActions(item), 'Handled'] : [];
   const pending = Array.isArray(item.pending) && item.pending.length > 0;
   const dropped = Array.isArray(item.dropped) && item.dropped.length > 0;
   const linked = Boolean(safeLink(item.link_url));
@@ -195,13 +230,14 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
               {detail.kind === 'confirm' ? t(detail.text) : detail.text}
             </Box>
           ) : null}
+          {line ? <ScheduleLine line={line} /> : null}
           {second ? <Box className="h5-attention-result" sx={{ mt: 0.25, typography: 'body2', color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{second.text}</Box> : null}
           {/* A change made here while the item's device was offline: shown at once, sent when it is back (or not sent, when it was changed there first). */}
           {pending ? <Box className="h5-attention-pending" sx={{ mt: 0.25, typography: 'caption', color: 'info.light', overflowWrap: 'anywhere' }}>{t(`Will be sent to ${ownerName}`)}</Box> : null}
           {dropped ? <Box className="h5-attention-dropped" sx={{ mt: 0.25, typography: 'caption', color: 'warning.light', overflowWrap: 'anywhere' }}>{t(`Not sent: it was changed on ${ownerName} first`)}</Box> : null}
           {/* The meta line: the status pill, the time of the last change, the source, the priority and the due date. */}
           <Box className="h5-attention-meta" sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 0.75, rowGap: 0.5, typography: 'caption', color: 'text.secondary' }}>
-              <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} />
+              {TIMED.has(section) ? null : <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} />}
               {session ? <SessionChip session={session} shown={shown} /> : null}
               {updated ? <Box component="span" className="h5-attention-updated" title={when(item.updated_at)} sx={{ fontVariantNumeric: 'tabular-nums' }}>{updated}</Box> : null}
               {item.source && item.source !== 'user' ? <Pill className="h5-attention-source" label={item.source} translate="no" sx={{ height: 20, typography: 'caption', px: 1 }} /> : null}
@@ -213,7 +249,7 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
           <Box className="h5-attention-actions" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, pb: 1, mt: -0.5 }}>
             {act ? actions.map(name => (
               <Button
-                key={name} className="h5-attention-action" data-action={name.toLowerCase()} size="small" variant="text" disabled={busy}
+                key={name} className="h5-attention-action" data-action={name.toLowerCase().replace(/ /g, '-')} size="small" variant="text" disabled={busy}
                 color={name === 'Reject' ? 'inherit' : 'primary'} onClick={() => act(item, name)} sx={ACTION_SX}
               >{t(name)}</Button>
             )) : null}
@@ -247,14 +283,14 @@ function Node({ node, group, ctx }) {
   const open = !ctx.collapsed.has(collapseId(item));
   const count = children.length;
   const fold = count ? <Fold id={collapseId(item)} open={open} count={count} onToggle={ctx.toggleCollapsed} /> : null;
-  const movable = ctx.hold && ctx.movable(engine);
+  const movable = ctx.hold && ctx.movable(engine) && !TIMED.has(group);
   const session = ctx.sessionOf(item);
   return (
     <Box className="h5-attention-node" data-id={item.id} data-key={keyOf(item)} data-engine={engine} data-group={group} data-status={item.status} data-sgroup={groupOf(item)} data-movable={movable ? 'true' : undefined} role="listitem" sx={{ position: 'relative' }}>
       <Row
         item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null}
         tag={ctx.tagOf(engine)} section={group} session={session} shown={Boolean(session) && ctx.shownOf(item)} onJump={ctx.jump}
-        ownerName={ctx.nameOf(engine)} dismiss={ctx.dismiss}
+        ownerName={ctx.nameOf(engine)} dismiss={ctx.dismiss} line={ctx.lineOf(item)}
       />
       {count && open ? (
         <Box
@@ -483,11 +519,204 @@ function Timeline({ events, titleOf }) {
   );
 }
 
+// ── "When" and "Then" of the edit view ("Scheduled and recurring tasks" in docs/design/page-attention.md) ──
+
+// The sessions a prompt can go to are those of the item's own engine. The task list knows the sessions of an open task; the others are read here when
+// "Send a prompt to a session" is shown (`GET <tasks>/:id/terminals` of that engine) and kept for the page's life, so the row lines can name them too.
+const sessionReads = new Map(); // engine key -> Map('<task id>' -> [{ id, title, agent }])
+const readsOf = engine => sessionReads.get(engine) || new Map();
+const tasksBaseOf = engine => (engine === 'local' ? '/api/tasks' : /^remote:\d+$/.test(engine) ? `/api/remote-servers/${engine.slice(7)}/tasks` : null);
+const MAX_SESSION_READS = 40;
+function useSessionTasks(state, engine, active) {
+  const [, setTick] = useState(0);
+  const tasks = sessionTasks((state.taskList || {}).tasks, engine, readsOf(engine));
+  const missing = tasks.filter(task => !task.sessions).slice(0, MAX_SESSION_READS).map(task => task.taskId);
+  const base = tasksBaseOf(engine);
+  useEffect(() => {
+    if (!active || !base || !missing.length) return undefined;
+    let live = true;
+    const reads = readsOf(engine);
+    sessionReads.set(engine, reads);
+    void Promise.all(missing.map(id => api('GET', `${base}/${encodeURIComponent(id)}/terminals`)
+      .then(rows => { reads.set(String(id), (Array.isArray(rows) ? rows : []).map(row => ({ id: String(row.terminal_id), title: row.title || '', agent: row.agent || null }))); })
+      .catch(() => { reads.set(String(id), []); }))).then(() => { if (live) setTick(tick => tick + 1); });
+    return () => { live = false; };
+  }, [active, base, engine, missing.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  return tasks;
+}
+
+const OVERLINE = { typography: 'overline', fontWeight: 500, lineHeight: 1.5, color: 'text.secondary', mt: 0.5 };
+const PAIR = { display: 'flex', gap: 1.5, '& > *': { flex: '1 1 0', minWidth: 0 } };
+const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' };
+// A day chip of "Every week": a round 40px toggle (44px on touch) with the day's letter; its accessible name is the day.
+const DAY_SX = { width: 40, height: 40, minWidth: 40, p: 0, borderRadius: '50% !important', border: 1, borderColor: 'divider', typography: 'body2', fontWeight: 500, [TOUCH]: { width: 44, height: 44 } };
+// The letter on a day chip: M T W T F S S in English; in Chinese the last character of the translated day name (the "one" of Monday's name, ...).
+// Kept out of the dictionaries, where a bare "M" or "T" would change every such text of the page.
+const dayLetter = day => { const name = t(day.long); return name !== day.long && name ? name.slice(-1) : day.letter; };
+const SCRIPT_EXAMPLE = './scripts/backup.sh && git push'; // a placeholder that is code, never translated
+const THEN_CHOICES = [
+  ['remind', 'Remind me', 'The task comes back to To do and you are told as for Needs you'],
+  ['prompt', 'Send a prompt to a session', 'At that time the prompt is typed into the session you pick, when it is idle'],
+  ['script', 'Run a script', 'In a new terminal of the task you pick; the exit code is kept'],
+];
+const WHEN_CHOICES = [['none', 'No date'], ['once', 'Once'], ['repeat', 'Repeats']];
+const ENDS_CHOICES = [['never', 'Never'], ['on', 'On a date'], ['after', 'After N times']];
+
+// "Next time: Mon 11-24 09:00 · Every Monday at 09:00": the owner engine's preview of the schedule in the form (`POST <engine>/schedule/preview`, 300 ms
+// after the last change), or what the form still lacks. An engine that cannot preview (an older one, a read copy) shows nothing.
+function useSchedulePreview(engine, form) {
+  const made = form.when === undefined || form.when === 'none' ? null : scheduleFromForm({ ...form, then: 'remind' });
+  const body = made && !made.error ? JSON.stringify(made.schedule) : '';
+  const [answer, setAnswer] = useState(null);
+  useEffect(() => {
+    setAnswer(null);
+    if (!body) return undefined;
+    let live = true;
+    const timer = setTimeout(() => {
+      api('POST', `${baseOf(engine)}/schedule/preview`, { schedule: JSON.parse(body) })
+        .then(data => { if (live) setAnswer(data && typeof data === 'object' ? data : null); })
+        .catch(error => { if (live) setAnswer(error.status === 400 && error.data ? { error: error.data.message || error.message } : null); });
+    }, 300);
+    return () => { live = false; clearTimeout(timer); };
+  }, [engine, body]);
+  if (made && made.error) return { error: made.error };
+  return answer;
+}
+
+function ScheduleFields({ form, setForm, item, state }) {
+  const engine = engineOf(item);
+  const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
+  const put = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  const preview = useSchedulePreview(engine, form);
+  const tasks = useSessionTasks(state, engine, form.when !== 'none' && form.then === 'prompt');
+  const listed = tasks.some(task => (task.sessions || []).some(session => `${task.taskId}|${session.id}` === form.session));
+  const next = preview && Array.isArray(preview.next) && preview.next.length ? momentOf(preview.next[0]) : null;
+  return (
+    <Box id="h5-attention-schedule" component="section" aria-label={t('When')} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <Box id="h5-attention-when-title" sx={OVERLINE}>{t('When')}</Box>
+      <ToggleButtonGroup
+        id="h5-attention-when" exclusive fullWidth size="small" value={form.when} aria-labelledby="h5-attention-when-title"
+        onChange={(event, value) => { if (value) put('when', value); }}
+      >
+        {WHEN_CHOICES.map(([value, label]) => <ToggleButton key={value} value={value} data-value={value}>{t(label)}</ToggleButton>)}
+      </ToggleButtonGroup>
+      {form.when === 'once' ? (
+        <Box sx={PAIR}>
+          <TextField id="h5-attention-once-date" label={t('Date')} size="small" type="date" value={form.onceDate} onChange={set('onceDate')} slotProps={{ inputLabel: { shrink: true } }} />
+          <TextField id="h5-attention-once-time" label={t('Time')} size="small" type="time" value={form.onceTime} onChange={set('onceTime')} slotProps={{ inputLabel: { shrink: true } }} />
+        </Box>
+      ) : null}
+      {form.when === 'repeat' ? (
+        <>
+          <Box sx={PAIR}>
+            <TextField id="h5-attention-repeat-freq" select label={t('Repeats')} size="small" value={form.freq} onChange={set('freq')} slotProps={{ select: { native: true } }}>
+              {FREQUENCIES.map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
+            </TextField>
+            <TextField id="h5-attention-repeat-time" label={t('At')} size="small" type="time" value={form.time} onChange={set('time')} slotProps={{ inputLabel: { shrink: true } }} />
+          </Box>
+          {form.freq === 'weekly' ? (
+            <ToggleButtonGroup
+              id="h5-attention-repeat-days" value={form.days} aria-label={t('Days of the week')} onChange={(event, value) => put('days', value.map(Number).sort((a, b) => a - b))}
+              sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, '& .MuiToggleButtonGroup-grouped': { m: 0, border: 1, borderColor: 'divider' } }}
+            >
+              {WEEKDAYS.map(day => (
+                <ToggleButton
+                  key={day.n} value={day.n} data-day={day.n} {...named(t(day.long))}
+                  sx={theme => ({ ...DAY_SX, '&.Mui-selected, &.Mui-selected:hover': { bgcolor: 'primary.main', color: 'primary.contrastText', borderColor: `${theme.palette.primary.main} !important` } })}
+                ><span translate="no">{dayLetter(day)}</span></ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          ) : null}
+          {form.freq === 'monthly' ? (
+            <TextField id="h5-attention-repeat-day" label={t('Day of the month')} size="small" type="number" value={form.day} onChange={set('day')} helperText={t('A month without that day uses its last day')} slotProps={{ htmlInput: { min: 1, max: 31, inputMode: 'numeric' } }} />
+          ) : null}
+          {form.freq === 'every' ? (
+            <TextField id="h5-attention-repeat-interval" label={t('Every how many days')} size="small" type="number" value={form.interval} onChange={set('interval')} slotProps={{ htmlInput: { min: 1, max: 365, inputMode: 'numeric' } }} />
+          ) : null}
+          <Box sx={PAIR}>
+            <TextField id="h5-attention-repeat-ends" select label={t('Ends')} size="small" value={form.endsKind} onChange={set('endsKind')} slotProps={{ select: { native: true } }}>
+              {ENDS_CHOICES.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
+            </TextField>
+            <TextField id="h5-attention-repeat-starts" label={t('Starts')} size="small" type="date" value={form.starts} onChange={set('starts')} slotProps={{ inputLabel: { shrink: true } }} />
+          </Box>
+          {form.endsKind === 'on' ? <TextField id="h5-attention-repeat-ends-date" label={t('End date')} size="small" type="date" value={form.endsDate} onChange={set('endsDate')} slotProps={{ inputLabel: { shrink: true } }} /> : null}
+          {form.endsKind === 'after' ? <TextField id="h5-attention-repeat-ends-count" label={t('Times')} size="small" type="number" value={form.endsCount} onChange={set('endsCount')} slotProps={{ htmlInput: { min: 1, max: 9999, inputMode: 'numeric' } }} /> : null}
+        </>
+      ) : null}
+      {form.when !== 'none' && preview ? (
+        <Box id="h5-attention-schedule-next" role="status" data-error={preview.error ? 'true' : undefined} sx={{ typography: 'body2', color: preview.error ? 'error.light' : 'primary.light', overflowWrap: 'anywhere' }}>
+          {preview.error ? t(preview.error) : next ? (
+            <>{`${t('Next time')}: `}<Words tokens={momentTokens(next)} />{form.when === 'repeat' && preview.text ? <>{' · '}{t(preview.text)}</> : null}</>
+          ) : t('Nothing left to run')}
+        </Box>
+      ) : null}
+      {form.when !== 'none' ? (
+        <>
+          <Box id="h5-attention-then-title" sx={OVERLINE}>{t('Then')}</Box>
+          <RadioGroup id="h5-attention-then" aria-labelledby="h5-attention-then-title" value={form.then} onChange={set('then')} sx={{ gap: 1 }}>
+            {THEN_CHOICES.map(([value, label, hint]) => (
+              <FormControlLabel
+                key={value} value={value} control={<Radio size="small" inputProps={{ 'data-value': value }} />} sx={{ alignItems: 'flex-start', mx: 0, '& .MuiRadio-root': { mt: -0.75, ml: -1 } }}
+                label={<Box><Box sx={{ typography: 'body1' }}>{t(label)}</Box><Box sx={{ typography: 'caption', color: 'text.secondary' }}>{t(hint)}</Box></Box>}
+              />
+            ))}
+          </RadioGroup>
+          {form.then === 'prompt' ? (
+            <>
+              <TextField
+                id="h5-attention-then-session" select label={t('Session')} size="small" value={form.session} onChange={set('session')} slotProps={{ select: { native: true } }}
+                helperText={tasks.length ? null : t('No sessions of this device are in the task list')}
+              >
+                <option value="">{t('Choose a session')}</option>
+                {form.session && !listed ? <option value={form.session}>{t('The saved session')}</option> : null}
+                {tasks.map(task => (
+                  <optgroup key={task.taskId} label={task.title}>
+                    {task.sessions === null ? <option disabled value={`loading:${task.taskId}`}>{t('Loading…')}</option> : null}
+                    {(task.sessions || []).map(session => (
+                      <option key={session.id} value={`${task.taskId}|${session.id}`}>{session.title || AGENT_LABEL[session.agent] || t('Session')}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </TextField>
+              <Field id="h5-attention-then-prompt" label="Prompt" value={form.prompt} onChange={set('prompt')} multiline minRows={3} maxRows={10} htmlInput={{ maxLength: 4000 }} />
+            </>
+          ) : null}
+          {/* Run a script: in a new terminal of a task of the item's own engine (its folder, the person's shell); only the person can set it (the
+              server answers 403 SCRIPT_NEEDS_PERSON to an agent's token, and its message shows in the error line). */}
+          {form.then === 'script' ? (
+            <>
+              <TextField
+                id="h5-attention-then-task" select label={t('In task')} size="small" value={form.scriptTask} onChange={set('scriptTask')} slotProps={{ select: { native: true } }}
+                helperText={tasks.length ? null : t('No tasks of this device are in the task list')}
+              >
+                <option value="">{t('Choose a task')}</option>
+                {form.scriptTask && !tasks.some(task => String(task.taskId) === form.scriptTask) ? <option value={form.scriptTask}>{t('The saved task')}</option> : null}
+                {tasks.map(task => <option key={task.taskId} value={String(task.taskId)}>{task.title}</option>)}
+              </TextField>
+              <Field
+                id="h5-attention-then-script" label="Script" value={form.script} onChange={set('script')} multiline minRows={2} maxRows={10} placeholder={SCRIPT_EXAMPLE}
+                htmlInput={{ maxLength: 4000, translate: 'no', autoCorrect: 'off' }} sx={{ '& textarea': { typography: 'body2', fontFamily: MONO } }}
+              />
+              <TextField
+                id="h5-attention-then-timeout" label={t('Stop after (minutes)')} size="small" type="number" value={form.timeoutMin} onChange={set('timeoutMin')}
+                slotProps={{ htmlInput: { min: 1, max: 720, inputMode: 'numeric' } }} sx={{ maxWidth: 200 }}
+              />
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </Box>
+  );
+}
+
 // The edit view of one task. The form starts from the item; Save sends only the changed fields (PATCH). The history is read when it opens.
 // `owner`: the engine entry of the item's engine; a read copy of an offline engine says since when it is as shown, and that its history is kept there.
 function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui, onClose, onLeave, onOpen, onMove }) {
   const key = keyOf(item);
+  // "When" and "Then" for an engine whose items carry a schedule (an older engine's edit view has neither).
+  const timed = hasSchedule(items.filter(entry => engineOf(entry) === engineOf(item)));
   const [form, setForm] = useState(() => ({
+    ...(timed ? scheduleForm(item) : {}),
     title: item.title || '', notes: item.notes || '', status: item.status, priority: item.priority || 'none', due_date: item.due_date || '',
     link_url: item.link_url || '', link_label: item.link_label || '',
     ...(fields ? { custom_status: item.custom_status || '', result: item.result || '', parent_id: item.parent_id == null ? '' : String(item.parent_id) } : {}),
@@ -506,7 +735,10 @@ function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui,
   const save = async event => {
     if (event) event.preventDefault();
     if (busy) return;
-    const body = patchFor(item, form);
+    const made = timed ? scheduleFromForm(form) : null;
+    if (made && made.error) { setError(t(made.error)); return; }
+    const changes = { ...(patchFor(item, form) || {}), ...(timed ? schedulePatch(item, form) : {}) };
+    const body = Object.keys(changes).length ? changes : null;
     if (!body) { onClose(); return; }
     if (body.title !== undefined && !body.title) { setError(t('The title cannot be empty')); return; }
     setBusy(true);
@@ -550,6 +782,7 @@ function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui,
           <Box id="h5-attention-edit-reason" sx={{ p: 2, borderRadius: 1, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], ...BODY, whiteSpace: 'pre-wrap' }}><Linked text={item.attention_reason} /></Box>
         ) : null}
         <Field id="h5-attention-edit-name" label="Title" value={form.title} onChange={set('title')} htmlInput={{ maxLength: 300 }} />
+        {timed ? <ScheduleFields form={form} setForm={setForm} item={item} state={state} /> : null}
         <Field id="h5-attention-edit-notes" label="Notes" value={form.notes} onChange={set('notes')} multiline minRows={3} maxRows={12} htmlInput={{ maxLength: 20000 }} />
         {/* The link: an http(s) address or a page path of this app; the server checks it (a refusal shows its message in the error line). */}
         <Field
@@ -681,10 +914,11 @@ const DROP_SX = theme => ({
 
 // The list (the Home view, on both layouts): the sections with their dotted headings (MD2 list subheaders with the section's count; each a drop target;
 // empty: "None"), then "Done: N", which unfolds the finished tasks (`closed`, the closed group of `groupItems`) but the ones already drawn in a section
-// (a finished parent kept above an open sub-task), so no task is drawn twice. `home` is `homeGroups`.
+// (a finished parent kept above an open sub-task), so no task is drawn twice. `home` is `homeGroups`. Between To do and "Done: N" come Scheduled and
+// Recurring (`timed`, `timedSections`) when they have tasks: plain rows the soonest first, each with its schedule line; no drag and no drop there.
 const HEAD_SX = { px: 2, gap: 1, minHeight: 44, pt: 1, boxSizing: 'border-box', display: 'flex', alignItems: 'center', typography: 'overline', fontWeight: 500, lineHeight: 1.5, color: 'text.secondary' };
 const sizeOf = nodes => nodes.reduce((count, node) => count + 1 + sizeOf(node.children), 0);
-function HomeSections({ home, closed, items, movable, showClosed, setShowClosed, ctx }) {
+function HomeSections({ home, timed, closed, items, movable, showClosed, setShowClosed, ctx }) {
   const hintOf = key => (movable ? <Box component="span" className="h5-attention-drop-hint" aria-hidden="true" sx={{ ml: 'auto', pl: 1, textTransform: 'none' }}>{`→ ${t(STATUS_LABELS[statusOfGroup(key)])}`}</Box> : null);
   const drawn = new Set();
   const walk = nodes => nodes.forEach(node => { drawn.add(keyOf(node.item)); walk(node.children); });
@@ -709,6 +943,18 @@ function HomeSections({ home, closed, items, movable, showClosed, setShowClosed,
           ) : (
             <Box className="h5-attention-none" sx={{ px: 2, pb: 1.5, typography: 'body2', color: 'text.secondary', borderBottom: 1, borderColor: 'divider' }}>{t('None')}</Box>
           )}
+        </Box>
+      ))}
+      {timed.filter(section => section.items.length).map(section => (
+        <Box component="section" key={section.key} className="h5-attention-group" data-group={section.key} aria-label={t(section.label)}>
+          <Box className="h5-attention-group-title" data-group={section.key} sx={HEAD_SX}>
+            <Dot section={section.key} />
+            <Box component="span" className="h5-attention-group-label" sx={{ minWidth: 0, color: 'text.primary' }}>{t(section.label)}</Box>
+            <Box component="span" className="h5-attention-group-count" sx={{ fontVariantNumeric: 'tabular-nums' }}>{section.items.length}</Box>
+          </Box>
+          <Box className="h5-attention-level" data-level={`${section.key}:root`} role="list">
+            {section.items.map(item => <Node key={keyOf(item)} node={{ item, depth: 0, indent: 0, parent: null, children: [] }} group={section.key} ctx={ctx} />)}
+          </Box>
         </Box>
       ))}
       <Box component="section" className="h5-attention-group" data-group="closed" data-empty={count ? undefined : 'true'} aria-label={t('Done & failed')}>
@@ -741,7 +987,7 @@ function ListState({ id, icon, title, hint, children }) {
 }
 
 // The scrolling list of the sections. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there.
-function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, movableOf, tagOf, nameOf, dismiss, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open, sessionOf: sessionFor, shownOf, jump, hint }) {
+function GroupList({ ui, attention, groups, home, timed, lineOf, items, fieldsOf, movable, movableOf, tagOf, nameOf, dismiss, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open, sessionOf: sessionFor, shownOf, jump, hint }) {
   const listRef = useRef(null);
   const hostRef = useRef(null);
   const liveRef = useRef(null);
@@ -749,7 +995,7 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
   moveRef.current = move;
   const spec = useMemo(() => attentionDrag(moveRef), []);
   const drag = useListDrag(listRef, hostRef, liveRef, ui, spec);
-  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, nameOf, dismiss, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, sessionOf: sessionFor, shownOf, jump };
+  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, nameOf, dismiss, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, sessionOf: sessionFor, shownOf, jump, lineOf };
   const failed = attention.status === 'ready' && Array.isArray(attention.failed) ? attention.failed : [];
   const offline = attention.status === 'ready' && Array.isArray(attention.offline) ? attention.offline : [];
   return (
@@ -781,7 +1027,7 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
           <ListState id="h5-attention-empty" icon="attentionDone" title={t('No tasks yet')} hint={t('Tasks that agents report, and the ones you add above, show up here.')} />
         ) : null}
         {items.length ? (
-          <HomeSections home={home} closed={groups.find(group => group.key === 'closed')} items={items} movable={movable} showClosed={showClosed} setShowClosed={setShowClosed} ctx={ctx} />
+          <HomeSections home={home} timed={timed} closed={groups.find(group => group.key === 'closed')} items={items} movable={movable} showClosed={showClosed} setShowClosed={setShowClosed} ctx={ctx} />
         ) : null}
         {/* The side panel (mouse): how a row of a session works, since its Details button shows only on hover and focus. */}
         {hint ? (
@@ -873,6 +1119,11 @@ export function AttentionPanel({ state, ui }) {
   const groups = useMemo(() => groupItems(items, { keepEmpty: fields, engines: order }), [items, fields, order]);
   // Both layouts: the Home view of the t-attention skill (the same grouping as `t-attention list --tree`).
   const home = useMemo(() => homeGroups(items, { engines: order }), [items, order]);
+  // The tasks that wait for their time: Scheduled (once) and Recurring (repeat), after To do.
+  const timed = useMemo(() => timedSections(items, { engines: order }), [items, order]);
+  // The schedule line of a row; a prompt names its session and a script its task as the task list (or the edit view's read) knows them, on the
+  // item's own engine.
+  const lineOf = entry => scheduleLine(entry, { now: new Date(), targetName: then => targetName(then, (state.taskList || {}).tasks, engineOf(entry), readsOf(engineOf(entry))) });
   // The counts of the header: the tasks that need the person (Needs you and Review) and the open ones.
   const needCount = items.filter(entry => entry.status === 'waiting_user' || entry.status === 'review').length;
   const openCount = items.filter(entry => !['done', 'failed', 'cancelled'].includes(entry.status)).length;
@@ -959,6 +1210,38 @@ export function AttentionPanel({ state, ui }) {
     if (name === 'Confirm') void send(key, { status: 'done' });
     else if (name === 'Handled') void send(key, { status: 'working', attention_reason: null, activity: { kind: 'note', text: 'Handled' } });
     else if (name === 'Reject') setRejecting(key);
+    else if (name === 'Send now' || name === 'Run again') void runNow(entry);
+    else if (name === 'Open terminal') openScriptTerminal(entry);
+  };
+  // "Open terminal" of a failed script: the terminal of that run (`context.tagent`), on the item's own engine, as "Open terminal" of the edit view
+  // does (on a phone the T-Attention page closes first).
+  const openScriptTerminal = entry => {
+    const where = scriptTerminal(contextOf(entry), engineOf(entry), taskList.tasks);
+    if (!where) { ui.notify(t('The terminal of this run is not in the task list'), 'error'); return; }
+    if (!side) { setEditing(null); ui.actions.closeAttention(); }
+    ui.actions.openRow(where.taskId, { kind: 'terminal', id: where.terminalId });
+  };
+  // "Send now" of a prompt task whose session was busy at its time, "Run again" of a failed script: POST <engine>/:id/run-now on the item's own
+  // engine (409 SESSION_BUSY when the session is still busy; the server's message says so). The answer's item, when there is one, replaces the row;
+  // the stream brings it too.
+  const runNow = async entry => {
+    const key = keyOf(entry);
+    if (busyRef.current.has(key)) return;
+    busyRef.current.add(key);
+    setBusy(new Set(busyRef.current));
+    const engine = engineOf(entry);
+    try {
+      const data = await api('POST', `${baseOf(engine)}/${encodeURIComponent(entry.id)}/run-now`, {});
+      const raw = data && data.item ? data.item : data && data.id != null ? data : null;
+      if (raw) ui.actions.attentionShow(applyChange(now(), { kind: 'updated', item: tagItem(raw, engine) }));
+      const script = thenOf(entry).kind === 'script';
+      ui.notify(t(script ? 'The script runs again' : 'Prompt sent'), 'success');
+    } catch (error) {
+      ui.notify(`${t(thenOf(entry).kind === 'script' ? 'Could not run the script' : 'Could not send the prompt')}: ${errorText(error)}`, 'error');
+    } finally {
+      busyRef.current.delete(key);
+      setBusy(new Set(busyRef.current));
+    }
   };
   const reject = reason => {
     const key = rejecting;
@@ -988,7 +1271,7 @@ export function AttentionPanel({ state, ui }) {
       <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       <GroupList
-        ui={ui} attention={attention} groups={groups} home={home} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} nameOf={nameOf} dismiss={dismiss} showClosed={showClosed} setShowClosed={setShowClosed}
+        ui={ui} attention={attention} groups={groups} home={home} timed={timed} lineOf={lineOf} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} nameOf={nameOf} dismiss={dismiss} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
         sessionOf={sessionFor} shownOf={shownOf} jump={jump} hint={side && items.some(entry => !['done', 'failed', 'cancelled'].includes(entry.status) && sessionFor(entry))}
       />

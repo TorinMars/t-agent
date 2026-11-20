@@ -28,6 +28,10 @@
 | Hide setup guide (T-Attention first-run guide) | close | 4767096 | `close` |
 | Add task (T-Attention quick add) | plus | 7834345 | `add` |
 | Open link (T-Attention edit view and the link button of a row) | link | 4766965 | `link` |
+| Scheduled once (the row line of a T-Attention task scheduled once) | time-circle | 4765741 | `clockCircle`, 14px, decorative; Ant Design's clock-circle |
+| Recurring (the row line of a repeating T-Attention task) | sync | 4765811 | `sync`, 14px, decorative |
+| Sends a prompt (the row line of a scheduled T-Attention prompt) | send | 9230696 | `send`, the same icon as Send, 14px, decorative |
+| Runs a script (the row line of a scheduled T-Attention script) | code library | 4765970 | `terminalKeyboard`, the console glyph of the session chip, 14px, decorative |
 | Details (the info button at the end of a T-Attention row from a T-Agent session, `.h5-attention-details`) | info-circle | 4765727 | `infoCircle`, 20px |
 | Older version banner (the warning mark at the start of the task list's banner, `.h5-version-skew`; its close button uses `close`) | warning | not looked up | `warning`, 20px, decorative |
 | Session chip (the terminal glyph in the session chip of a T-Attention row) | code library | 4765970 | `terminalKeyboard`, 14px, decorative |

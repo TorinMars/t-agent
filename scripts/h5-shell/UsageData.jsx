@@ -12,12 +12,14 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { api, t } from './common.jsx';
 import { Feedback, Group, Hint, Section, SettingsNav, SubHeading, SwitchRow, failure, useFeedback } from './Form.jsx';
-import { LocalOnly } from './DeviceTarget.jsx';
+import { InTab } from './DeviceTarget.jsx';
+import { ScopeLabel } from './ScopeLabel.jsx';
 
-// The Settings group "Usage data" ("Usage data" in docs/design/usage-data.md): the switch "Record button use" of this server, the most pressed
-// controls of the last 30 days (all, computer or phone), the controls shown but not pressed in that time, and the store (count, size, Clear,
-// Export JSON). It reads GET /api/ui-events/settings and /summary each time it opens; the switch is saved at once (PUT) and tells this page's
-// recorder through `usageRecording` (usage-track.mjs). A linked device's tab shows the note to open that device's own page (LocalOnly).
+// The Settings group "Usage data" ("Usage data" in docs/design/usage-data.md): the switch "Record button use" (one choice for every linked engine:
+// the settings sync group usage-record, so it is in the Shared tab), the most pressed controls of the last 30 days (all, computer or phone), the
+// controls shown but not pressed in that time, and the store (count, size, where it is kept, Clear, Export JSON). The data is one set for the linked
+// normal engines ("Merged across linked devices"), so the cards are the same in every tab. It reads GET /api/ui-events/settings and /summary each
+// time it opens; the switch is saved at once (PUT) and tells this page's recorder through `usageRecording` (usage-track.mjs).
 
 // Readable names of the main controls (English; the page translates them). Any other key is shown as it is.
 const NAMES = {
@@ -58,6 +60,18 @@ export function surfaceName(surface) {
 }
 const LAYOUT_NAMES = { wide: 'computer', narrow: 'phone' };
 const FILTERS = [['', 'All'], ['wide', 'Computer'], ['narrow', 'Phone']];
+
+// Where the data is kept (`where` of the summary), as one sentence.
+export function whereText(where) {
+  const place = where && typeof where === 'object' ? where : {};
+  if (place.hands_over && place.home_name) {
+    if (place.home_online) return t(`Kept on ${place.home_name}. This company computer hands its presses over and keeps none.`);
+    return t(`Kept on ${place.home_name}, which can't be reached right now. ${place.waiting || 0} presses wait on this computer and move there when it is back.`);
+  }
+  const names = Array.isArray(place.shared_with) ? place.shared_with.filter(name => typeof name === 'string' && name) : [];
+  if (names.length) return t(`Kept on this machine and on ${names.join(', ')}, as one set.`);
+  return t('Kept on this machine only.');
+}
 
 const size = bytes => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 const day = at => new Date(at).toISOString().slice(0, 10);
@@ -101,7 +115,7 @@ export function UsageDataGroup({ ui, request }) {
   const [opened, setOpened] = useState(0);
   return (
     <Group id="usage-data" title="Usage data" onOpen={() => setOpened(count => count + 1)} request={request}>
-      <LocalOnly id="h5-usage-remote"><UsageParts ui={ui} opened={opened} /></LocalOnly>
+      <UsageParts ui={ui} opened={opened} />
     </Group>
   );
 }
@@ -154,12 +168,15 @@ function UsageParts({ ui, opened }) {
   ].join(' · ');
   return (
     <>
-      <Section id="usage-record">
-        <SwitchRow
-          inputId="h5-usage-enabled" label={t('Record button use')} checked={Boolean(enabled)} disabled={enabled === null || busy} onChange={on => void change(on)}
-          secondary={t('Records which button was pressed, where, and when. Never what you type, task names or terminal text. Nothing leaves this machine.')}
-        />
-      </Section>
+      <InTab part="usage-record">
+        <Section id="usage-record">
+          <SwitchRow
+            inputId="h5-usage-enabled" label={t('Record button use')} checked={Boolean(enabled)} disabled={enabled === null || busy} onChange={on => void change(on)}
+            secondary={t('Records which button was pressed, where, and when. Never what you type, task names or terminal text. Nothing is sent to any outside service.')}
+            aside={<ScopeLabel id="usage-record" scope="shared" />}
+          />
+        </Section>
+      </InTab>
       <Section id="usage-top">
         <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
           <Box sx={{ flex: '1 1 auto', minWidth: 0 }}><SubHeading id="h5-sec-usage-top-title">{t('Most used · last 30 days')}</SubHeading></Box>
@@ -186,6 +203,7 @@ function UsageParts({ ui, opened }) {
           <Box sx={{ flex: '1 1 16rem', minWidth: 0 }}>
             <SubHeading id="h5-sec-usage-store-title">{t('Data')}</SubHeading>
             <Typography id="h5-usage-data" variant="body2" color="text.secondary">{dataLine}</Typography>
+            {summary ? <Typography id="h5-usage-where" variant="body2" color="text.secondary">{whereText(summary.where)}</Typography> : null}
           </Box>
           <Box sx={{ display: 'flex', gap: 1, ml: 'auto' }}>
             <Button id="h5-usage-clear" color="error" disabled={busy || !data || !data.count} onClick={() => setConfirming(true)}>{t('Clear')}</Button>
@@ -197,7 +215,7 @@ function UsageParts({ ui, opened }) {
       <Dialog id="h5-usage-clear-dialog" open={confirming} onClose={() => setConfirming(false)} fullWidth maxWidth="xs" aria-labelledby="h5-usage-clear-title" aria-describedby="h5-usage-clear-text">
         <DialogTitle id="h5-usage-clear-title">{t('Clear usage data?')}</DialogTitle>
         <DialogContent>
-          <DialogContentText id="h5-usage-clear-text" variant="body2">{t('Every recorded button press and the list of controls seen on this server are deleted. This cannot be undone.')}</DialogContentText>
+          <DialogContentText id="h5-usage-clear-text" variant="body2">{t('Every recorded button press and the list of controls seen are deleted, here and on the linked machines that keep the same data. This cannot be undone.')}</DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button id="h5-usage-clear-cancel" onClick={() => setConfirming(false)}>{t('Cancel')}</Button>

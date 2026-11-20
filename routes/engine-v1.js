@@ -42,6 +42,8 @@ router.use('/task-order', require('./task-order').createEngineTaskOrderRouter())
 router.use('/settings-sync', require('./settings-sync').createEngineSettingsSyncRouter());
 // The English learning sync between linked services (routes/learn-sync.js), link tokens only; the rows travel sealed for the link.
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
+// The usage data sync between linked services (routes/ui-events-sync.js), link tokens only; the rows travel sealed for the link.
+router.use('/usage-sync', require('./ui-events-sync').createEngineUsageSyncRouter());
 // The shared page state between linked services (routes/page-state.js), link tokens only; the state travels sealed for the link.
 router.use('/page-state', require('./page-state').createEnginePageStateRouter());
 // "Updated to v…" (routes/updated-notice.js): this engine's notice about its own update, read and acknowledged by a linked service's page.
@@ -191,6 +193,9 @@ function infoHandler(req, res) {
       // learn:sync: GET|PUT /v1/learn-sync, POST /v1/learn-sync/pull and the home routes of a company computer (routes/learn-sync.js), the English
       // learning data linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or LEARN_SYNC_ENABLED=false.
       ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').CAPABILITY] : []),
+      // usage:sync: GET|PUT /v1/usage-sync, POST /v1/usage-sync/pull and GET /v1/usage-sync/summary (routes/ui-events-sync.js), the usage data linked
+      // services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or USAGE_SYNC_ENABLED=false.
+      ...(require('../services/ui-events-sync').syncEnabled() ? [require('../services/ui-events-sync').CAPABILITY] : []),
       // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
       // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
       ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),

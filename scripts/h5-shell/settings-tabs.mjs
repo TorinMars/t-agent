@@ -49,11 +49,12 @@ export const PARTS = {
   'cli-tokens': ['attention', 'device'],
   access: ['account', 'device'],
   authenticator: ['account', 'device'],
-  // Usage data (UsageData.jsx): stored on the server that serves the page, shared by its pages, so it belongs to this device's tab.
-  'usage-record': ['usage-data', 'device'],
-  'usage-top': ['usage-data', 'device'],
-  'usage-unused': ['usage-data', 'device'],
-  'usage-store': ['usage-data', 'device'],
+  // Usage data (UsageData.jsx): the switch is one choice for every linked engine (settings sync group usage-record); the data is one set for the
+  // linked normal engines, so its cards are the same in every tab.
+  'usage-record': ['usage-data', 'shared'],
+  'usage-top': ['usage-data', 'all'],
+  'usage-unused': ['usage-data', 'all'],
+  'usage-store': ['usage-data', 'all'],
 };
 
 // Whether the tabs are drawn, and whether one of them is Shared. `loaded`: the device list was read; `linked`: what the settings sync said (true: it

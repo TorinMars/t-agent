@@ -246,10 +246,12 @@ app.use('/api/rule-sync', require('./routes/rule-sync').createBrowserRouter());
 app.use('/api/file-sync', require('./routes/file-sync').browser);
 app.use('/api/remote-servers', require('./routes/remote-servers'));
 app.use('/api/task-list/hidden-devices', require('./routes/task-list-prefs').createTaskListPrefsRouter());
-// Usage data of the page (services/ui-events.js, docs/design/usage-data.md): button presses stored on this server only, old rows deleted at start and daily.
+// Usage data of the page (services/ui-events.js, docs/design/usage-data.md): button presses recorded here, one set with the linked normal engines
+// (services/ui-events-sync.js, off with USAGE_SYNC_ENABLED=false), old rows deleted at start and daily.
 const uiEvents = require('./services/ui-events').createUiEvents({ db });
 require('./services/ui-events').startRetention(uiEvents);
-app.use('/api/ui-events', require('./routes/ui-events').createUiEventsRouter({ service: uiEvents }));
+const usageSync = () => (config.usageSyncEnabled ? require('./services/ui-events-sync').getUsageSync({ service: uiEvents }) : null);
+app.use('/api/ui-events', require('./routes/ui-events').createUiEventsRouter({ service: uiEvents, sync: usageSync }));
 // English learning (services/learn.js, docs/design/learn-english.md): cards, spaced review and meanings of the person's own material, per owner.
 app.use('/api/learn', require('./routes/learn').createLearnRouter());
 app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
@@ -674,6 +676,8 @@ server.listen(config.port, config.host, () => {
   if (config.settingsSyncEnabled) require('./services/settings-sync').getSettingsSync().start();
   // The English learning data follows the links from here on (services/learn-sync.js).
   if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().start();
+  // The usage data follows the links from here on (services/ui-events-sync.js).
+  if (config.usageSyncEnabled) usageSync().start();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
   if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
@@ -725,5 +729,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

@@ -47,6 +47,9 @@ module.exports = {
   // The English learning sync across linked devices (services/learn-sync.js). 'false' turns it off on this service; it is off too when the settings
   // sync is (it uses the settings sync's link keys).
   learnSyncEnabled: process.env.LEARN_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
+  // The usage data sync across linked devices (services/ui-events-sync.js). 'false' turns it off on this service (each engine keeps its own presses);
+  // it is off too when the settings sync is (it uses the settings sync's link keys).
+  usageSyncEnabled: process.env.USAGE_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,
   updateAutoQuietMs: positiveInteger(process.env.UPDATE_AUTO_QUIET_SECONDS, 600) * 1000,

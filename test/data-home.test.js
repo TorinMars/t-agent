@@ -514,19 +514,52 @@ test('a schema 14 database gets learn_cards.phonetic (schema 15), with a copy ta
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
-test('a schema 15 database is refused by a version that knows schema 14 at most', t => {
-  // An older app: the same code with schema_version 14 in its VERSION.json (lib/data-home.js reads it from there).
+test('a schema 15 database gets the usage data sync columns (schema 16), with a copy taken first; presses and controls are kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: ui_events and ui_controls without the sync columns, user_version 15.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec(`DROP INDEX idx_ui_events_uid; DROP INDEX idx_ui_events_seq; DROP INDEX idx_ui_controls_seq;
+    ALTER TABLE ui_events DROP COLUMN uid; ALTER TABLE ui_events DROP COLUMN engine; ALTER TABLE ui_events DROP COLUMN client; ALTER TABLE ui_events DROP COLUMN sync_seq;
+    ALTER TABLE ui_controls DROP COLUMN sync_seq;`);
+  old.prepare("INSERT INTO ui_events (at, page, key, surface, view, layout, input, pane, device) VALUES (5, 'pageone', 'h5-cycle', 'header', 'sessions', 'narrow', 'touch', 0, 'local')").run();
+  old.prepare("INSERT INTO ui_controls (key, surface, layout, first_seen, last_seen) VALUES ('h5-cycle', 'header', 'narrow', 1, 5)").run();
+  old.pragma('user_version = 15');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 15 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const press = after.prepare('SELECT * FROM ui_events').get();
+  assert.deepEqual([press.key, press.at, press.engine, press.client, press.sync_seq], ['h5-cycle', 5, '', null, 1], 'kept, recorded here, client read from its layout');
+  assert.match(press.uid, /^[0-9a-f]{32}$/);
+  assert.equal(after.prepare('SELECT sync_seq FROM ui_controls').pluck().get(), 2);
+  for (const index of ['idx_ui_events_uid', 'idx_ui_events_seq', 'idx_ui_controls_seq']) assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?").get(index).n, 1, index);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-15-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
+test('a database of this schema is refused by a version that knows the one before at most', t => {
+  // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
   const older = spawnSync(process.execPath, ['-e', [
     "const dataHome = require('./lib/data-home');",
-    'dataHome.codeSchemaVersion = () => 14;',
+    `dataHome.codeSchemaVersion = () => ${CODE_SCHEMA - 1};`,
     "require('./db').close();",
   ].join(' ')], { cwd: ROOT, env: childEnv({ TAGENT_HOME: root }), encoding: 'utf8' });
   assert.notEqual(older.status, 0);
-  assert.match(older.stderr, /was written by a newer T-Agent \(database schema 15; this version supports up to 14\)/);
+  assert.match(older.stderr, new RegExp(`was written by a newer T-Agent \\(database schema ${CODE_SCHEMA}; this version supports up to ${CODE_SCHEMA - 1}\\)`));
   const after = new Database(path.join(root, 'db.sqlite'), { readonly: true });
-  assert.equal(after.pragma('user_version', { simple: true }), 15, 'the stored version is not changed');
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA, 'the stored version is not changed');
   after.close();
 });
 

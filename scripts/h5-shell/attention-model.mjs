@@ -166,9 +166,10 @@ export const HOME_SECTIONS = attentionHome.HOME_SECTIONS.map(section => ({ key: 
 // order of the shared rules, and `compareItems` decides between equals. Nodes have the shape of `buildTree` ({ item, depth, indent, parent: null,
 // children }), so they draw (and collapse) the same way. An older server (no `parent_id`) gives one row per task, in the section of its status.
 // -> { sections: [{ key, label, statuses, nodes }], done }
+// A task that waits for its scheduled time (`isWaiting`) is not in these sections: it is in Scheduled or Recurring (`timedSections`).
 export function homeGroups(items, { engines = null } = {}) {
   const rank = engineRank(engines);
-  const view = attentionHome.homeView(items, { keyOf, parentOf: parentKeyOf, compare: (a, b) => rank(a) - rank(b) || compareItems(a, b) });
+  const view = attentionHome.homeView((items || []).filter(item => !isWaiting(item)), { keyOf, parentOf: parentKeyOf, compare: (a, b) => rank(a) - rank(b) || compareItems(a, b) });
   const node = entry => ({ item: entry.item, depth: entry.depth, indent: Math.min(entry.depth, MAX_INDENT), parent: null, children: entry.children.map(node) });
   return { sections: view.sections.map(section => ({ key: section.key, label: section.label, statuses: section.statuses, nodes: section.nodes.map(node) })), done: view.done };
 }
@@ -337,6 +338,10 @@ export function applyChange(items, change) {
 export function reminderFor(change) {
   if (!change || change.kind === 'deleted' || !change.item) return null;
   const { item, previous } = change;
+  // A scheduled "Remind me" task whose time came (the owner engine published it with `scheduled_due: true`, once per firing): "Due now: <title>".
+  if (change.scheduled_due === true && !CLOSED_STATUSES.includes(item.status) && !REMIND_STATUSES.includes(item.status)) {
+    return { id: item.id, status: item.status, label: 'Due now', title: String(item.title || ''), reason: String(item.attention_reason || '') };
+  }
   if (!REMIND_STATUSES.includes(item.status)) return null;
   if (previous && previous.status === item.status) return null;
   // A move (POST /move publishes every task whose order or status changed with `reorder: true`; the renumbered neighbours with `event: null`) is a
@@ -634,3 +639,118 @@ export function contextFilePath(context, file) {
   const cwd = String((context && context.cwd) || '');
   return cwd.startsWith('/') ? `${cwd.replace(/\/+$/, '')}/${name.replace(/^\.\//, '')}` : null;
 }
+
+// ── Schedules: the Scheduled and Recurring sections and the row line ("Scheduled and recurring tasks" in docs/design/page-attention.md). The owner
+// engine keeps the schedule, computes `next_at` and fires it; the page only shows and edits it. The form of "When" and "Then" is in
+// attention-schedule.mjs, which only the T-Attention chunk loads (this file is part of the first screen, through attention-feed.mjs). ──
+// Item fields (from a server with schedules; an older one sends none of them): `schedule` ({ kind: 'once' | 'repeat', at, rule: { freq, days, day,
+// interval, time }, starts, ends: { kind, date, count }, tz }), `then_action` (null = remind, or { kind: 'remind' } | { kind: 'prompt', task_id,
+// terminal_id, text } | { kind: 'script', task_id, script, timeout_min }), `next_at` (ISO UTC), `schedule_state` ('waiting' | 'due' | null), `runs`,
+// `last_fired_at`, `last_done_at`, and for a script `last_exit` (the exit code of its last run, when the server sends it).
+
+// Monday = 1 (the contract's `days`). `short` and `long` are English words the page translates.
+export const WEEKDAYS = [
+  { n: 1, short: 'Mon', long: 'Monday', letter: 'M' }, { n: 2, short: 'Tue', long: 'Tuesday', letter: 'T' }, { n: 3, short: 'Wed', long: 'Wednesday', letter: 'W' },
+  { n: 4, short: 'Thu', long: 'Thursday', letter: 'T' }, { n: 5, short: 'Fri', long: 'Friday', letter: 'F' }, { n: 6, short: 'Sat', long: 'Saturday', letter: 'S' },
+  { n: 7, short: 'Sun', long: 'Sunday', letter: 'S' },
+];
+
+const parseJson = value => {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' ? parsed : null; } catch { return null; }
+};
+// `item.schedule` as an object (the API sends it parsed; a JSON string is read too), null when there is none or it is not one the page knows.
+export function scheduleOf(item) {
+  const schedule = parseJson(item && item.schedule);
+  return schedule && (schedule.kind === 'once' || schedule.kind === 'repeat') ? schedule : null;
+}
+// What happens at the time: `{ kind: 'remind' }` (also for null), `{ kind: 'prompt', task_id, terminal_id, text }` or `{ kind: 'script', task_id,
+// script, timeout_min }` (the script runs in a new terminal of that task of the owner engine).
+export function thenOf(item) {
+  const then = parseJson(item && item.then_action);
+  return then && (then.kind === 'prompt' || then.kind === 'script') ? then : { kind: 'remind' };
+}
+// A task that waits for its scheduled time: it is listed in Scheduled (once) or Recurring (repeat) instead of its status section. A due one (fired, not
+// done yet) is in its status section as before.
+export const isWaiting = item => Boolean(scheduleOf(item)) && item.schedule_state === 'waiting';
+export const isRecurring = item => (scheduleOf(item) || {}).kind === 'repeat';
+
+// The two sections after To do: Scheduled (once tasks waiting for their time) and Recurring (repeating tasks waiting for the next time), each the soonest
+// first (`next_at`; none last), then the engine order, then the list order. -> [{ key, label, items }]
+export const TIMED_SECTIONS = [{ key: 'scheduled', label: 'Scheduled' }, { key: 'recurring', label: 'Recurring' }];
+export function timedSections(items, { engines = null } = {}) {
+  const rank = engineRank(engines);
+  const next = item => { const at = Date.parse(item.next_at || ''); return Number.isFinite(at) ? at : Infinity; };
+  const compare = (a, b) => (next(a) - next(b)) || rank(a) - rank(b) || compareItems(a, b);
+  const waiting = (items || []).filter(item => item && item.id != null && isWaiting(item));
+  return TIMED_SECTIONS.map(section => ({
+    ...section, items: waiting.filter(item => (section.key === 'recurring') === isRecurring(item)).sort(compare),
+  }));
+}
+
+const pad2 = n => String(n).padStart(2, '0');
+const isoDay = date => (date.getDay() + 6) % 7 + 1; // Monday = 1
+const dayKey = date => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+// A moment as the words of a row line or of "Next:", in this device's time: `{ rel, day, date, time }` with `rel` 'today' | 'tomorrow' |
+// 'yesterday' (else null: then `day` is the short weekday and `date` MM-DD). null for no time.
+export function momentOf(value, now = new Date()) {
+  const at = Date.parse(value || '');
+  if (!Number.isFinite(at)) return null;
+  const date = new Date(at);
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const shift = days => dayKey(new Date(base.getFullYear(), base.getMonth(), base.getDate() + days));
+  const key = dayKey(date);
+  const rel = key === shift(0) ? 'today' : key === shift(1) ? 'tomorrow' : key === shift(-1) ? 'yesterday' : null;
+  return { rel, day: WEEKDAYS[isoDay(date) - 1].short, date: `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`, time: `${pad2(date.getHours())}:${pad2(date.getMinutes())}` };
+}
+// A moment as tokens (see `scheduleLine`): ['tomorrow', { raw: '09:30' }] or ['Mon', { raw: '12-01 10:00' }].
+export const momentTokens = moment => (!moment ? [] : moment.rel ? [moment.rel, { raw: moment.time }] : [moment.day, { raw: `${moment.date} ${moment.time}` }]);
+
+// The rule of a schedule in a few words, as tokens: 'Once'; 'Every day' / 'Weekdays' / 'Every Monday' / 'Every Mon, Thu' / 'Every 3 days' /
+// 'Monthly on day 15', then the time. Each English phrase has its Chinese (i18n-zh-ui.js; the weekday names are filled in by its templates).
+export function ruleTokens(schedule) {
+  if (!schedule) return [];
+  if (schedule.kind === 'once') return ['Once'];
+  const rule = schedule.rule || {};
+  const time = rule.time ? [{ raw: String(rule.time) }] : [];
+  const days = Array.isArray(rule.days) ? [...new Set(rule.days.map(Number).filter(day => day >= 1 && day <= 7))].sort((a, b) => a - b) : [];
+  let words = 'Every day';
+  if (rule.freq === 'weekdays' || (rule.freq === 'weekly' && days.join() === '1,2,3,4,5')) words = 'Weekdays';
+  else if (rule.freq === 'weekly' && days.length && days.length < 7) words = `Every ${days.length === 1 ? WEEKDAYS[days[0] - 1].long : days.map(day => WEEKDAYS[day - 1].short).join(', ')}`;
+  else if (rule.freq === 'monthly') words = `Monthly on day ${Number(rule.day) || 1}`;
+  else if (rule.freq === 'every' && Number(rule.interval) > 1) words = `Every ${Number(rule.interval)} days`;
+  return [words, ...time];
+}
+
+// The schedule line of a row (null for a task without a schedule): `{ icon, kind, parts }`, each part a list of tokens (a string is an English word to
+// translate, `{ raw }` is shown as it is, `{ name }` is a session name, never translated), the parts joined with " · ":
+// - once, waiting: Once · Mon 12-01 10:00; recurring, waiting: Weekdays 09:30 · next tomorrow 09:30 · done today 09:41 (after the first done);
+// - due (fired, not done yet): <rule> · due now (· done ... for a recurring one);
+// - a prompt task adds "sends a prompt to <session>", a script task "runs a script in <task>" (`targetName(then)`, '' when not known: "sends a
+//   prompt", "runs a script") and, once it ran, "last: exit <n>" (`last_exit`).
+// `icon`: 'send' for a prompt task, 'terminalKeyboard' (the console glyph) for a script, 'sync' for a recurring one, 'clockCircle' for a once one.
+const THEN_ICON = { prompt: 'send', script: 'terminalKeyboard' };
+export function scheduleLine(item, { now = new Date(), targetName = () => '' } = {}) {
+  const schedule = scheduleOf(item);
+  if (!schedule) return null;
+  const then = thenOf(item);
+  const recurring = schedule.kind === 'repeat';
+  const parts = [ruleTokens(schedule)];
+  const next = momentOf(item.next_at, now);
+  if (item.schedule_state === 'due') parts.push(['due now']);
+  else if (next) parts.push(recurring ? ['next', ...momentTokens(next)] : momentTokens(next));
+  else if (!CLOSED_STATUSES.includes(item.status) && item.schedule_state !== 'due') parts.push(['no next time']);
+  const done = recurring ? momentOf(item.last_done_at, now) : null;
+  if (done) parts.push(['done', ...momentTokens(done)]);
+  const name = then.kind === 'remind' ? '' : String(targetName(then) || '');
+  if (then.kind === 'prompt') parts.push(name ? ['sends a prompt to', { name }] : ['sends a prompt']);
+  if (then.kind === 'script') {
+    parts.push(name ? ['runs a script in', { name }] : ['runs a script']);
+    if (Number.isInteger(item.last_exit)) parts.push(['last: exit', { raw: String(item.last_exit) }]);
+  }
+  return { icon: THEN_ICON[then.kind] || (recurring ? 'sync' : 'clockCircle'), kind: recurring ? 'recurring' : 'once', parts };
+}
+// The English text of tokens or of a line (tests, titles): parts joined with " · ".
+export const tokensText = tokens => tokens.map(token => (typeof token === 'string' ? token : token.raw != null ? token.raw : token.name)).join(' ');
+export const lineText = line => (line ? line.parts.map(tokensText).join(' \u00b7 ') : '');

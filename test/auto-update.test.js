@@ -877,3 +877,49 @@ test('a frontend-only automatic update names no replaced process', async () => {
   assert.equal(box.saved().last_auto_action, 'update');
   assert.equal(box.saved().last_auto_boot, null, 'a manual restart later must not look automatic to the page');
 });
+
+test('"Update all": a request applies under the idle rule with the switch off, and ends when nothing is left', async () => {
+  const box = harness({ store: JSON.stringify({ enabled: false }) });
+  box.result = async () => ({ stage: 'completed', remote_version: '2.0.0' }); // no restart, so the scheduler is seen afterwards
+  await box.auto.tick();
+  assert.equal(box.state().state, 'off');
+  assert.equal(box.state().requested, false);
+  assert.equal(box.auto.request(), true);
+  assert.equal(box.state().requested, true);
+  await box.auto.tick();
+  assert.equal(box.state().state, 'waiting', 'the same quiet window as the switch');
+  box.snapshot = busySnapshot;
+  box.clock += QUIET;
+  await box.auto.tick();
+  assert.equal(box.calls.length, 0, 'a running chat still holds it back');
+  assert.deepEqual(box.state().waiting_for, [{ code: 'chat_running', count: 1 }]);
+  box.snapshot = quietSnapshot;
+  await box.auto.tick();
+  box.clock += QUIET;
+  await box.auto.tick();
+  assert.equal(box.calls.length, 1);
+  assert.equal(box.saved().enabled, false, 'the switch is not changed');
+  box.update = { status: 'current' };
+  await box.auto.tick();
+  assert.equal(box.state().requested, false);
+  assert.equal(box.state().state, 'off');
+});
+
+test('"Update all": nothing to update answers false, and an unsupported service refuses with its reason', () => {
+  const current = harness();
+  current.update = { status: 'current' };
+  assert.equal(current.auto.request(), false);
+  assert.equal(current.state().requested, false);
+  const bare = harness({ supervisor: null });
+  assert.throws(() => bare.auto.request(), error => error.message === 'AUTO_UPDATE_UNSUPPORTED' && error.reason === 'NO_PROCESS_MANAGER' && error.statusCode === 409);
+});
+
+test('"Update all": a restart for code already on disk counts too', async () => {
+  const box = harness({ store: JSON.stringify({ enabled: false }) });
+  box.update = { status: 'restart_pending', restart_target: 'abc', local_version: '2.0.0' };
+  assert.equal(box.auto.request(), true);
+  await box.auto.tick();
+  box.clock += QUIET;
+  await box.auto.tick();
+  assert.equal(box.restarts.length, 1);
+});

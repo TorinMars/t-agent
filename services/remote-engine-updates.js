@@ -25,6 +25,16 @@ async function apply(server, secret, requestFn = request) {
   });
 }
 
+// "Update all": the engine updates under its own idle rule. An engine older than the feature has no route: 501 UPDATE_WHEN_IDLE_UNSUPPORTED.
+async function updateWhenIdle(server, secret, requestFn = request) {
+  try {
+    return await requestFn(server.base_url, '/v1/update/when-idle', remoteCredential(server, secret), { method: 'POST', body: { confirm: true }, timeoutMs: 150_000 });
+  } catch (error) {
+    if (error.message === 'REMOTE_HTTP_404') throw Object.assign(new Error('UPDATE_WHEN_IDLE_UNSUPPORTED'), { statusCode: 501 });
+    throw error;
+  }
+}
+
 function localVersion(status) {
   return status && (status.local_version || (status.local_manifest && status.local_manifest.app_version)) || null;
 }
@@ -37,4 +47,4 @@ function syncServerVersion(database, serverId, status) {
     WHERE id = ?`).run(version, serverId);
 }
 
-module.exports = { apply, check, getStatus, localVersion, syncServerVersion };
+module.exports = { apply, check, getStatus, localVersion, syncServerVersion, updateWhenIdle };

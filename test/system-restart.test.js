@@ -115,7 +115,7 @@ test('both GET answers carry restart: { supported: true, reason: null } under a 
   assert.deepEqual(version.body, { app_version: '1.2.3', boot_id: 'boot-1', is_update_admin: true, engine_name: 'test-engine', instance_id: 'instance-1', restart: { supported: true, reason: null } });
   const status = await call('GET', '/api/system/update-status');
   // updated_notice: whether this person has an "Updated to v…" notice to see (services/updated-notice.js); none in this world.
-  assert.deepEqual(status.body, { status: 'current', boot_id: 'boot-1', is_update_admin: true, restart: { supported: true, reason: null }, updated_notice: false });
+  assert.deepEqual(status.body, { status: 'current', boot_id: 'boot-1', is_update_admin: true, restart: { supported: true, reason: null }, updated_notice: false, version_skew: null });
 });
 
 test('with no restart pending, POST /api/system/apply-update still starts the update', async () => {

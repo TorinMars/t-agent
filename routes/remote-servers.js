@@ -284,6 +284,18 @@ router.post('/:id/apply-update', async (req, res) => {
   }
 });
 
+router.post('/:id/update-when-idle', async (req, res) => {
+  const row = getServer(req);
+  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  try {
+    const status = await remoteUpdates.updateWhenIdle(row, config.sessionSecret);
+    remoteUpdates.syncServerVersion(db, row.id, status);
+    res.json(status);
+  } catch (error) {
+    res.status(error.statusCode || 502).json({ error: safeError(error), ...(error.peerBody && /^[A-Z0-9_]{1,64}$/.test(error.peerBody.reason || '') ? { reason: error.peerBody.reason } : {}) });
+  }
+});
+
 // ── PM2: manage processes on the machine of this Engine, passed through to the Engine's /v1/pm2 (owner Token only) ──
 async function proxyPm2(req, res, pathname, options) {
   const row = getServer(req);

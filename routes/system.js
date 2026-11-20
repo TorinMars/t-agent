@@ -45,14 +45,30 @@ router.put('/engine-name', (req, res) => {
 // docs/design/update-check-and-versions.md): the page's updater reads it here, so the first screen needs no request of its own for it.
 const updatedNotice = () => require('../services/updated-notice').getUpdatedNotice();
 const noticeDue = req => { try { return updatedNotice().shouldShow(req.session.user.login); } catch { return false; } };
+// `version_skew`: a linked engine (or this one) runs an older version that lacks something the engines share, as `<identity>@<version>,...`, or null
+// ("When engines run different versions" in docs/design/update-check-and-versions.md). From the cache only: the page's banner reads the details.
+const versionSkew = () => require('../services/version-skew').getVersionSkew();
+const skewDue = () => { try { return versionSkew().flag(); } catch { return null; } };
 router.get('/update-status', (req, res) => {
-  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req), restart: updates.restartSupport(), updated_notice: noticeDue(req) });
+  res.json({ ...updates.publicState(), is_update_admin: isAdmin(req), restart: updates.restartSupport(), updated_notice: noticeDue(req), version_skew: skewDue() });
+});
+router.get('/version-skew', async (req, res) => {
+  try { res.json(await versionSkew().view()); }
+  catch (error) { console.error('[version-skew]', error.message); res.status(500).json({ error: 'VERSION_SKEW_FAILED' }); }
 });
 router.use('/updated-notice', require('./updated-notice').createUpdatedNoticeRouter({ service: updatedNotice }));
 
 router.post('/check-update', async (req, res) => {
   try { res.json({ ...(await updates.check({ force: true })), is_update_admin: isAdmin(req) }); }
   catch (error) { res.status(502).json({ error: error.message || 'UPDATE_CHECK_FAILED', status: updates.publicState() }); }
+});
+
+// "Update all" (the Update dialog): check, then update under this machine's idle rule even with its automatic update off.
+router.post('/update-when-idle', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: 'UPDATE_ADMIN_REQUIRED' });
+  if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'UPDATE_CONFIRMATION_REQUIRED' });
+  try { res.json({ ...(await updates.updateWhenIdle()), is_update_admin: isAdmin(req) }); }
+  catch (error) { res.status(error.statusCode || 409).json({ error: error.message, ...(error.reason ? { reason: error.reason } : {}) }); }
 });
 
 router.post('/update-notified', (req, res) => {

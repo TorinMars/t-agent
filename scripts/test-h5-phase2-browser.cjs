@@ -238,6 +238,9 @@ async function checkEngines(page, label, touch) {
   const row = page.locator('.h5-engine-row[data-engine="7"]');
   assert.equal(await row.locator('.h5-engine-status').textContent(), 'Online');
   assert.match(await row.locator('.h5-engine-meta').textContent(), /http:\/\/10\.0\.0\.7:14002 · v2\.87\.0/);
+  // VPS (v2.87.0) is behind this machine (v2.87.12): the "Older version" pill, on its row only.
+  assert.equal(await row.locator('.h5-engine-older').textContent(), 'Older version');
+  assert.equal(await page.locator('.h5-engine-row[data-engine="local"] .h5-engine-older').count(), 0);
   await shot(page, `${label}-engines`);
 
   // Connect (in the folded "Advanced" part of Devices): the same errors as the desktop page; a wrong pairing code is refused, the right one adds the

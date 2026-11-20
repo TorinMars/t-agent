@@ -93,6 +93,8 @@ Every localStorage and sessionStorage key of the page and its chunks (`public/js
 | `h5-auto-reloaded-versions` | session | browser | the auto-reload guard of this tab |
 | `ta-lang-applied` | session | browser | a language from another device is applied once per tab |
 
+Kept on the server only, with no browser copy (read with `TAPageState.get`, written with `TAPageState.set`): `version-skew-closed:<instance id>` = the version for which the banner of an engine on an older version was closed ("When engines run different versions" in [update-check-and-versions.md](update-check-and-versions.md)).
+
 Not stored any more: `h5-agent:*`, `h5-attention-notify` (left by older versions, never read). The last opened mind map is not remembered at all (the Mind maps tab opens on its list), so there is nothing to share.
 
 ## Known limits

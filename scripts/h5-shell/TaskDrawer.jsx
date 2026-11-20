@@ -28,7 +28,7 @@ import { shortName, tagColor } from './task-order.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
-import { RecentScreen } from './lazy-screens.jsx';
+import { RecentScreen, VersionSkewBanner } from './lazy-screens.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
@@ -664,6 +664,7 @@ function Panel({ ui, wide }) {
   const [filter, setFilter] = useState('all');
   const tab = useShared(TAB_KEY) === 'recent' ? 'recent' : 'tasks';
   const pane = useStore(ui, DRAWER_NAV); // a pane of the multi-column view keeps no recent sessions (h5.js): no tabs there
+  const skew = useStore(ui, SKEW); // an engine runs an older version (Update.jsx): the banner below the title
   const recent = tab === 'recent' && !pane;
   const [recentCount, setRecentCount] = useState(null); // { running, pending } of the Recent tab's sessions, from RecentList
   const chooseTab = value => writeShared(TAB_KEY, value === 'recent' ? value : null);
@@ -684,6 +685,7 @@ function Panel({ ui, wide }) {
         <Button id="h5-add-task" color="primary" size="medium" startIcon={<Icon name="add" size={18} />} aria-haspopup="dialog" onClick={() => ui.actions.openNewTask()} sx={{ flex: '0 0 auto', px: 1.25 }}>{t('New task')}</Button>
         {wide ? null : <IconButton id="h5-close-tasks" aria-label={t('Close')} title={t('Close')} onClick={() => ui.actions.closeTasks()}><Icon name="close" size={20} /></IconButton>}
       </Box>
+      {pane || !skew ? null : <VersionSkewBanner ui={ui} skew={skew} />}
       {pane ? null : <ListTabs tab={recent ? 'recent' : 'tasks'} choose={chooseTab} />}
       <Box className="h5-task-search" sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
         <TextField
@@ -762,6 +764,7 @@ function Panel({ ui, wide }) {
 // Labelled MD2 list rows with an icon: Mind maps (the top page shows its Mind maps tab) and Settings (a pane has no T-Attention). Choosing one closes
 // the drawer first, as an MD2 modal navigation drawer does.
 const DRAWER_NAV = state => Boolean(state.pane);
+const SKEW = state => state.versionSkew || null;
 const NAV_ROW_SX = { minHeight: 48, [TOUCH]: { minHeight: 48 }, px: 2, gap: 0, '& .MuiListItemIcon-root': { minWidth: 40, color: 'text.secondary' } };
 function DrawerNav({ ui }) {
   const pane = useStore(ui, DRAWER_NAV);

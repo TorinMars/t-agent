@@ -27,6 +27,7 @@ const { createPm2Handlers } = require('./pm2');
 const { Pm2Error } = require('../services/pm2-manager');
 const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
 
+const versionSkew = require('../services/version-skew');
 const MINDMAPS = 'mindmaps';
 const ATTENTION_REMOTE = 'attention:remote';
 
@@ -148,6 +149,8 @@ function infoHandler(req, res) {
     role: req.engineAuth.role,
     // The "Company computer" flag of this machine (services/device-tier.js): its peers keep their English learning data on a normal machine.
     company_computer: require('../services/device-tier').getDeviceTier().isCompany(),
+    // The capabilities below that keep something the same between linked engines: an older engine names what it lacks ("When engines run different versions").
+    shared_capabilities: versionSkew.SHARED_CAPABILITIES,
     capabilities: [
       'tasks:read', 'tasks:write',
       'task-groups:read', 'task-groups:write',
@@ -217,6 +220,9 @@ function infoHandler(req, res) {
       require('../services/rule-sync').EDIT_CAPABILITY,
       // rule-sync:claude-settings: a bundle may carry `claude_settings` (shared Claude settings, injected at session start); older receivers get bundles without it.
       require('../services/rule-sync').SETTINGS_CAPABILITY,
+      // update:nudge: POST /v1/update/nudge, a linked engine on a newer version asks this one to check for updates now (link tokens only).
+      // update:when-idle: POST /v1/update/when-idle, "Update all" of the Update dialog: update under this engine's own idle rule (services/version-skew.js).
+      versionSkew.NUDGE_CAPABILITY, versionSkew.WHEN_IDLE_CAPABILITY,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -242,6 +248,22 @@ router.post('/update/check', requireEngineAuth('engine:admin'), async (req, res)
   catch (error) {
     res.status(502).json({ error: error.message || 'UPDATE_CHECK_FAILED', status: updates.publicState() });
   }
+});
+
+// A linked engine on a newer version asks this one to check for updates now (services/version-skew.js). Link tokens only. It only starts the check
+// (at most one a minute); the automatic update and its idle rule decide the rest.
+const receiveNudge = versionSkew.createNudgeReceiver({ check: () => updates.check({ force: true }) });
+router.post('/update/nudge', requireEngineAuth(), (req, res) => {
+  const link = getServiceLinks().linkForToken(req.engineAuth.tokenId);
+  if (!link || link.revoked) return res.status(403).json({ error: 'LINKED_ONLY' });
+  res.status(202).json(receiveNudge());
+});
+
+// "Update all" (the Update dialog): check, then update under this engine's own idle rule, even with its automatic update switched off.
+router.post('/update/when-idle', requireEngineAuth('engine:admin'), async (req, res) => {
+  if (!req.body || req.body.confirm !== true) return res.status(400).json({ error: 'UPDATE_CONFIRMATION_REQUIRED' });
+  try { res.json(await updates.updateWhenIdle()); }
+  catch (error) { res.status(error.statusCode || 409).json({ error: error.message, ...(error.reason ? { reason: error.reason } : {}) }); }
 });
 
 router.post('/update/apply', requireEngineAuth('engine:admin'), (req, res) => {
@@ -593,5 +615,12 @@ router.delete('/tokens/:id', requireEngineAuth('engine:admin'), async (req, res)
   if (!result.changes) return res.status(404).json({ error: 'TOKEN_NOT_FOUND' });
   res.json({ success: true });
 });
+
+// What this engine's /v1/info says about itself (identity, version, capabilities), for services/version-skew.js.
+router.localInfo = () => {
+  let body = null;
+  infoHandler({ engineAuth: { role: 'owner' } }, { json: value => { body = value; } });
+  return body;
+};
 
 module.exports = router;

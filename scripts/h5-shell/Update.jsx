@@ -119,6 +119,8 @@ export function UpdateButton({ ui }) {
         setStatus(next);
         setAuto(next.auto_update || null);
         observe(next);
+        // An engine on an older version that lacks something shared: the task list's banner ("When engines run different versions").
+        if ((ui.get().versionSkew || null) !== (next.version_skew || null)) ui.set({ versionSkew: next.version_skew || null });
         if (next.updated_notice) showUpdatedNotice(ui); // "Updated to v…" ("Notice after an update" in docs/design/update-check-and-versions.md)
         return next;
       } catch (error) {

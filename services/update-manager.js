@@ -574,10 +574,17 @@ const setAutoUpdateEnabled = enabled => {
 // the attempts, restarts and history of update_auto stay on this machine. It goes through the running scheduler, which keeps the row in memory.
 const exportForSync = () => autoUpdate.syncValue();
 const importFromSync = (deps, owner, value) => autoUpdate.applySync(value);
+// "Update all" of the Update dialog (POST /api/system/update-when-idle and /v1/update/when-idle): check now, then update under the idle rule of the
+// automatic update even when its switch is off. The state says what happens (`auto_update.requested`, `state`, `waiting_for`).
+async function updateWhenIdle() {
+  try { await check({ force: true }); } catch { /* a failed check leaves the last known state, which may still have an update */ }
+  const requested = autoUpdate.request();
+  return { ...publicState(), requested };
+}
 
 const restartSupport = () => serverRestart.support();
 const requestRestart = () => serverRestart.request();
 // True from an accepted restart until the exit, and while an automatic restart is being prepared: POST /api/system/apply-update answers 409 RESTART_PENDING.
 const restartPending = () => serverRestart.pending() || Boolean(restartPromise);
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, runningVersion, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending, exportForSync, importFromSync, AUTO_SYNC_GROUP };
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, runningVersion, setIdleProbe, setAutoUpdateEnabled, updateWhenIdle, restartSupport, requestRestart, restartPending, exportForSync, importFromSync, AUTO_SYNC_GROUP };

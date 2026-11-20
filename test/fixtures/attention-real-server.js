@@ -7,11 +7,12 @@ const Database = require('better-sqlite3');
 const { createAttentionService } = require('../../services/attention');
 const { createAttentionRoutes } = require('../../routes/attention');
 
-function realServer() {
+// options: passed to createAttentionService (now, timeZone: a fixed clock and zone for the schedule tests).
+function realServer(options = {}) {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   db.exec(fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'schema.sql'), 'utf8'));
-  const service = createAttentionService({ db });
+  const service = createAttentionService({ db, ...options });
   const routes = createAttentionRoutes({ service });
   const app = express();
   const requests = [];

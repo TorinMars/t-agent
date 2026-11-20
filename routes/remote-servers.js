@@ -908,6 +908,41 @@ router.delete('/:id/attention/:itemId', checkAttentionId, proxyAttention('DELETE
 router.post('/:id/attention/:itemId/move', checkAttentionId, proxyAttention('POST', req => `${attentionItemPath(req)}/move`, { sub: () => '/move' }));
 router.post('/:id/attention/:itemId/summarize', checkAttentionId, proxyAttention('POST', req => `${attentionItemPath(req)}/summarize`, { success: 202, sub: () => '/summarize' }));
 
+// Schedules (capability attention:schedule, "Scheduled and recurring tasks" in docs/design/attention-schedules.md). An engine without it answers 501
+// ATTENTION_SCHEDULE_UNSUPPORTED (it would ignore a schedule it is sent). Run now is refused while the owner is offline (the copies' rule: it acts on
+// the owner's session); the preview is worked out here then, in the schedule's own zone (or this engine's), and says `local: true`.
+const SCHEDULE_CAPABILITY = require('../services/attention-schedule').CAPABILITY;
+const scheduleUnsupported = res => res.status(501).json({ error: 'ATTENTION_SCHEDULE_UNSUPPORTED', message: 'This device runs an older version without scheduled tasks; update it first' });
+async function scheduleCapable(req, res, next) {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const copy = attentionCopy();
+  if (copy && copy.covers(target.row.id) && !copy.peerOnline(target.row.id)) return next();
+  try { await getRemoteAttention().supported(target.row, target.token); } catch { return next(); } // not reached: the proxy answers (from the copy)
+  if (!(await getRemoteAttention().has(target.row, SCHEDULE_CAPABILITY, target.token))) return scheduleUnsupported(res);
+  return next();
+}
+router.post('/:id/attention/:itemId/run-now', checkAttentionId, scheduleCapable, proxyAttention('POST', req => `${attentionItemPath(req)}/run-now`, { sub: () => '/run-now' }));
+router.post('/:id/attention/schedule/preview', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  res.set('Cache-Control', 'no-store');
+  const local = () => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    return res.json({ ...require('../services/attention').defaultService().preview(body.schedule), local: true });
+  };
+  const copy = attentionCopy();
+  if (copy && copy.covers(target.row.id) && !copy.peerOnline(target.row.id)) return local();
+  try {
+    await getRemoteAttention().supported(target.row, target.token);
+    if (!(await getRemoteAttention().has(target.row, SCHEDULE_CAPABILITY, target.token))) return scheduleUnsupported(res);
+    return res.json(await getRemoteAttention().call(target.row, { method: 'POST', path: '/schedule/preview', body: req.body, token: target.token }));
+  } catch (error) {
+    if (cannotReach(error)) return local();
+    return sendRemoteAttentionError(res, error);
+  }
+});
+
 router.put('/:id/tasks/:taskId/document/:kind', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });

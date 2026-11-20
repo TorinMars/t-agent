@@ -230,7 +230,17 @@ CREATE TABLE IF NOT EXISTS attention_items (
   -- this file runs before the columns exist on an older database):
   parent_id        INTEGER REFERENCES attention_items(id),  -- the parent item or NULL, an item with children cannot be deleted
   custom_status    TEXT,                             -- free one-line text beside the status (at most 100), e.g. 'Blocked'
-  result           TEXT                              -- one-line outcome (at most 500)
+  result           TEXT,                             -- one-line outcome (at most 500)
+  -- Schema 18, schedules (services/attention-schedule.js, docs/design/attention-schedules.md). db/index.js and services/attention.js
+  -- ensureScheduleColumns add them to an older database and make the index on next_at, which this file cannot: it runs before they exist there):
+  schedule         TEXT,                             -- JSON { kind: once | repeat, at | rule, starts, ends, tz } or NULL
+  then_action      TEXT,                             -- JSON { kind: prompt | script, ... } or NULL (remind me)
+  next_at          TEXT,                             -- the next fire time (ISO UTC), NULL when nothing is left to fire
+  schedule_state   TEXT,                             -- waiting | due | NULL
+  runs             INTEGER NOT NULL DEFAULT 0,       -- times fired since the schedule was saved
+  last_fired_at    TEXT,
+  last_done_at     TEXT,
+  script_runs      TEXT                              -- JSON: the last 5 script runs [{ terminal_id, task_id, at, ended_at, outcome, exit, duration_ms }]
 );
 CREATE INDEX IF NOT EXISTS idx_attention_items_status ON attention_items (status, sort_order);
 -- The items finished last (the list's recent_finished, which the desktop window reads): read from the newest end, never the whole table. An index

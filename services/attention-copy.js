@@ -88,8 +88,9 @@ const later = (a, b) => (Date.parse(a || '') || 0) > (Date.parse(b || '') || 0);
 // An error of a request to a peer that means "it cannot be reached now" (offline, a tunnel down, a timeout, a 5xx).
 const unreachable = error => !error || !error.statusCode || error.statusCode >= 500 || /OFFLINE|CONNECTION|TIMEOUT|UNREACHABLE/.test(String(error.message || ''));
 
-// An item row of attention_items in the shape services/attention.js lists it (meta and context parsed).
-const itemOfRow = row => ({ ...row, meta: parse(row.meta), context: parse(row.context) });
+// An item row of attention_items in the shape services/attention.js lists it (the JSON columns parsed, schedule_text), so the check at start finds
+// the journal the same as the change bus wrote it.
+const itemOfRow = row => require('./attention').rowToItem(row);
 
 function createAttentionCopy(options) {
   const {
@@ -345,6 +346,7 @@ function createAttentionCopy(options) {
     emit({
       kind, item, previous, event: event ? { ...event, item_id: row.id } : null, copy: true,
       ...(event && event.reorder ? { reorder: true } : {}), ...(event && event.plain_turn_end ? { plain_turn_end: true } : {}),
+      ...(event && event.scheduled_due ? { scheduled_due: true } : {}),
       ...(merge.isQuiet(row.at, now(), quietMs) ? { quiet: true } : {}),
     });
   }
@@ -434,7 +436,7 @@ function createAttentionCopy(options) {
     if (!copy) return { status: 404, body: { error: 'NOT_FOUND', message: 'Task not found' } };
     if (method === 'GET' && !sub) return { status: 200, body: { item: copy, events: [], copy: { owner: instanceId, as_of: info ? info.as_of : null } } };
     if (!linked) return { status: 409, body: { error: 'ATTENTION_OWNER_NOT_LINKED', message: 'This task belongs to a device that is not linked to this one; change it on a device that is' } };
-    const rule = merge.queueRule(method, sub, body);
+    const rule = merge.queueRule(method, sub, method === 'PATCH' && !sub ? merge.withoutSameSchedule(body, copy) : body);
     if (rule.refuse) return { status: rule.refuse.status, body: refusalBody(rule) };
     const item = enqueue(instanceId, itemId, rule.queue);
     return item ? { status: 202, body: item } : { status: 404, body: { error: 'NOT_FOUND', message: 'Task not found' } };

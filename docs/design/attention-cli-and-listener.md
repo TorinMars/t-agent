@@ -20,6 +20,8 @@ These subsections cover the client side of T-Attention: the `t-attention` comman
 - Exit codes: 0 ok; 1 usage, and the server's other 4xx (400 validation, 409 `EXTERNAL_REF_EXISTS`); 2 no URL or token, 401 / 403; 3 404 (also a ref with no task); 4 5xx, a non-JSON answer (a wrong URL that serves the login page), network error, timeout (`--timeout` seconds, default 10).
 - Test: `test/attention-cli.test.js` (fake server in `test/fixtures/attention-fake-server.js`, the tree, move and helper commands also against the real service in `test/fixtures/attention-real-server.js`, temporary HOME).
 
+- Schedules ([attention-schedules.md](attention-schedules.md)): `add` and `update` take `--at YYYY-MM-DDTHH:mm`, or `--every daily|weekdays|weekly:mon,thu|monthly:15|every:3d --time HH:MM` with `--starts` and `--ends YYYY-MM-DD|after:N|never`, and `--prompt T --session <task>:<terminal>`; `update --no-schedule` clears it and `--prompt ''` goes back to a reminder. Wrong combinations are usage errors (exit 1) before anything is sent; the server checks the rest (400, exit 1). `list` shows the rule and the next time on the row, `show` the schedule, the next time and the action.
+
 ## Claude listener plugin (`plugins/listeners/claude/`)
 
 - Format of a listener plugin: `plugins/README.md`. `manifest.json` `{name: 'claude', version, kind: 'listener', description, entry: 'hook.js', events}`.

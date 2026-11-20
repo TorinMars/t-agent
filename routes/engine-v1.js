@@ -201,6 +201,9 @@ function infoHandler(req, res) {
       // attention:remote: GET|POST /v1/attention, GET|PATCH|DELETE /v1/attention/:id, POST /v1/attention/:id/move and /summarize, GET /v1/attention/stream,
       // the item routes of /api/attention. A Client proxies another service's T-Attention items only when it has this.
       ATTENTION_REMOTE,
+      // attention:schedule: the schedule fields of items (schedule, then_action, next_at, schedule_state, runs, ...), POST /v1/attention/schedule/preview
+      // and POST /v1/attention/:id/run-now. An older engine ignores a schedule it is sent, so a page offers schedules only on an engine that lists this.
+      require('../services/attention-schedule').CAPABILITY,
       // notify:relay: GET /v1/attention/notify-relay/status, PUT /sender, POST / and /test, the one Telegram sender of linked devices (link tokens only).
       // A linked service without it keeps sending by itself and is never chosen as the sender.
       require('../services/attention-relay').CAPABILITY,

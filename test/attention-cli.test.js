@@ -597,3 +597,55 @@ test('move, confirm and rm against the real service: order, group mismatch and c
     await server.close();
   }
 });
+
+test('schedules: --at, --every with --time, --starts, --ends, --prompt with --session, --no-schedule; list shows the rule and the next time', async () => {
+  const server = await realServer({ now: () => new Date('2026-11-20T00:30:00Z'), timeZone: () => 'Asia/Taipei' });
+  const env = { TA_ATTENTION_URL: server.url, TA_ATTENTION_TOKEN: server.token, TZ: 'Asia/Taipei' };
+  try {
+    for (const [args, message] of [
+      [['add', 'x', '--at', '2026-12-01T10:00', '--every', 'daily', '--time', '09:00'], /--at \(once\) or --every/],
+      [['add', 'x', '--every', 'daily'], /--every needs --time/],
+      [['add', 'x', '--every', 'hourly', '--time', '09:00'], /--every must be daily, weekdays/],
+      [['add', 'x', '--every', 'weekly:mon,xyz', '--time', '09:00'], /weekly needs days/],
+      [['add', 'x', '--time', '09:00'], /--time is for a repeating task/],
+      [['add', 'x', '--at', 'tomorrow'], /--at needs a date and time/],
+      [['add', 'x', '--every', 'daily', '--time', '09:00', '--ends', 'soon'], /--ends must be a date/],
+      [['add', 'x', '--prompt', 'Run it'], /--prompt needs --session/],
+      [['update', '1', '--no-schedule', '--at', '2026-12-01T10:00'], /--no-schedule cannot be used/],
+    ]) {
+      const result = await run(args, { env });
+      assert.equal(result.code, 1, args.join(' '));
+      assert.match(result.stderr, message);
+    }
+    const once = await run(['add', 'Call the bank', '--at', '2026-12-01 10:00', '--json'], { env });
+    assert.equal(once.code, 0, once.stderr);
+    const onceItem = JSON.parse(once.stdout);
+    assert.deepEqual([onceItem.schedule, onceItem.next_at, onceItem.schedule_state], [{ kind: 'once', at: '2026-12-01T10:00', tz: 'Asia/Taipei' }, '2026-12-01T02:00:00.000Z', 'waiting']);
+    const weekly = await run(['add', 'Standup notes', '--every', 'weekly:mon,thu', '--time', '9:00', '--starts', '2026-11-23', '--ends', 'after:5', '--prompt', 'Write the standup notes', '--session', '3:abc-1'], { env });
+    assert.equal(weekly.code, 0, weekly.stderr);
+    assert.match(weekly.stdout, /^Added #2 Standup notes \(To do\)\n  Every Monday and Thursday at 09:00 \u00b7 starting 2026-11-23 \u00b7 ends after 5 times \u00b7 next 11-23 09:00 \u00b7 sends a prompt\n$/);
+    const stored = server.service.get(2);
+    assert.deepEqual(stored.schedule, { kind: 'repeat', rule: { freq: 'weekly', days: [1, 4], time: '09:00' }, starts: '2026-11-23', ends: { kind: 'after', count: 5 }, tz: 'Asia/Taipei' });
+    assert.deepEqual(stored.then_action, { kind: 'prompt', task_id: '3', terminal_id: 'abc-1', text: 'Write the standup notes' });
+    const listed = await run(['list'], { env });
+    assert.match(listed.stdout, / {5}Once on 2026-12-01 at 10:00 \u00b7 next 12-01 10:00\n/);
+    assert.match(listed.stdout, / {5}Every Monday and Thursday at 09:00 \u00b7 next 11-23 09:00 \u00b7 sends a prompt\n/);
+    const shown = await run(['show', '2'], { env });
+    assert.match(shown.stdout, /^Schedule: Every Monday and Thursday at 09:00/m);
+    assert.match(shown.stdout, /^Then: {5}prompt to session 3:abc-1$/m);
+
+    assert.equal((await run(['update', '2', '--every', 'monthly:15', '--time', '08:00', '--ends', '2027-03-31', '--prompt', ''], { env })).code, 0);
+    const monthly = server.service.get(2);
+    assert.deepEqual([monthly.schedule.rule, monthly.schedule.ends, monthly.then_action], [{ freq: 'monthly', day: 15, time: '08:00' }, { kind: 'on', date: '2027-03-31' }, null]);
+    assert.equal((await run(['update', '2', '--every', 'every:3d', '--time', '07:00'], { env })).code, 0);
+    assert.equal(server.service.get(2).schedule.rule.interval, 3);
+    const cleared = await run(['update', '1', '--no-schedule', '--json'], { env });
+    assert.equal(cleared.code, 0, cleared.stderr);
+    assert.deepEqual([JSON.parse(cleared.stdout).schedule, JSON.parse(cleared.stdout).next_at], [null, null]);
+    const refused = await run(['add', 'Bad', '--every', 'monthly:40', '--time', '09:00'], { env });
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /schedule.rule.day must be a day of the month from 1 to 31/);
+  } finally {
+    await server.close();
+  }
+});

@@ -22,8 +22,12 @@ const GROUPS = [
   { label: 'Done & failed', statuses: ['done', 'failed', 'cancelled'] },
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
-const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind', 'parent', 'custom-status', 'result', 'before', 'after', 'source']);
-const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge', 'top', 'bottom', 'tree', 'dry-run']);
+const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind', 'parent', 'custom-status', 'result', 'before', 'after', 'source',
+  'at', 'every', 'time', 'starts', 'ends', 'prompt', 'session']);
+const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge', 'top', 'bottom', 'tree', 'dry-run', 'no-schedule']);
+// Schedules ("Scheduled and recurring tasks" in docs/design/attention-schedules.md): add and update take these; update also --no-schedule.
+const SCHEDULE_FLAGS = ['at', 'every', 'time', 'starts', 'ends', 'prompt', 'session'];
+const WEEKDAYS = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7 };
 // Status spellings: the names above and SELF-ATTENTION's ("In Progress", "Completed — Awaiting Confirmation", ...), compared in lower case
 // without anything but letters.
 const STATUS_ALIASES = {
@@ -42,6 +46,73 @@ const MARKET_TIMEOUT_MS = 120000; // a download may take up to 60 s on the serve
 const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due: 'due_date', status: 'status', reason: 'attention_reason', link: 'link_url', label: 'link_label', 'custom-status': 'custom_status', result: 'result' };
 const ITEM_FLAGS = ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'parent', 'custom-status', 'result'];
 const LISTENER_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
+
+// --at, --every, --time, --starts, --ends, --prompt and --session -> the schedule and then_action of the body (the server checks them again and adds its
+// time zone). --no-schedule clears the schedule; --prompt '' goes back to a reminder.
+function scheduleFrom(flags, { update = false } = {}) {
+  const body = {};
+  const has = name => flags[name] !== undefined;
+  if (flags['no-schedule'] && SCHEDULE_FLAGS.filter(name => name !== 'prompt' && name !== 'session').some(has)) throw new UsageError('--no-schedule cannot be used with --at or --every');
+  if (has('at') && has('every')) throw new UsageError('Give --at (once) or --every (repeats), not both');
+  for (const name of ['time', 'starts', 'ends']) if (has(name) && !has('every')) throw new UsageError(`--${name} is for a repeating task: add --every`);
+  if (flags['no-schedule']) body.schedule = null;
+  if (has('at')) {
+    const at = String(flags.at).trim().replace(' ', 'T');
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(at)) throw new UsageError(`--at needs a date and time like 2026-12-01T10:00: ${flags.at}`);
+    body.schedule = { kind: 'once', at };
+  }
+  if (has('every')) {
+    const spec = String(flags.every).trim().toLowerCase();
+    if (!has('time')) throw new UsageError('--every needs --time HH:MM');
+    const time = String(flags.time).trim();
+    if (!/^\d{1,2}:\d{2}$/.test(time)) throw new UsageError(`--time needs a time like 09:00: ${flags.time}`);
+    const rule = { freq: null, time: time.padStart(5, '0') };
+    let match;
+    if (spec === 'daily' || spec === 'weekdays') rule.freq = spec;
+    else if ((match = /^weekly:([a-z,]+)$/.exec(spec))) {
+      const days = match[1].split(',').filter(Boolean).map(day => WEEKDAYS[day.slice(0, 3)]);
+      if (!days.length || days.some(day => !day)) throw new UsageError(`--every weekly needs days like weekly:mon,thu: ${flags.every}`);
+      Object.assign(rule, { freq: 'weekly', days });
+    } else if ((match = /^monthly:(\d{1,2})$/.exec(spec))) Object.assign(rule, { freq: 'monthly', day: Number(match[1]) });
+    else if ((match = /^every:(\d{1,3})d?$/.exec(spec))) Object.assign(rule, { freq: 'every', interval: Number(match[1]) });
+    else throw new UsageError(`--every must be daily, weekdays, weekly:mon,thu, monthly:15 or every:3d: ${flags.every}`);
+    const schedule = { kind: 'repeat', rule };
+    if (has('starts')) schedule.starts = String(flags.starts).trim();
+    if (has('ends')) {
+      const ends = String(flags.ends).trim().toLowerCase();
+      if (ends === 'never') schedule.ends = { kind: 'never' };
+      else if ((match = /^after:(\d{1,4})$/.exec(ends))) schedule.ends = { kind: 'after', count: Number(match[1]) };
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(ends)) schedule.ends = { kind: 'on', date: ends };
+      else throw new UsageError(`--ends must be a date (YYYY-MM-DD), after:N or never: ${flags.ends}`);
+    }
+    body.schedule = schedule;
+  }
+  if (has('prompt') || has('session')) {
+    const text = has('prompt') ? String(flags.prompt) : '';
+    if (!text.trim()) {
+      if (has('session')) throw new UsageError('--session needs --prompt "<text>"');
+      if (!update) throw new UsageError('--prompt cannot be empty');
+      body.then_action = { kind: 'remind' };
+    } else {
+      const session = has('session') ? /^(\d{1,15}):([A-Za-z0-9_-]{1,64})$/.exec(String(flags.session).trim()) : null;
+      if (!session) throw new UsageError('--prompt needs --session <task id>:<terminal id> (a session of the server)');
+      body.then_action = { kind: 'prompt', task_id: session[1], terminal_id: session[2], text };
+    }
+  }
+  return body;
+}
+
+// The schedule part of a row: "Every day at 09:00 · next 11-24 09:00 · sends a prompt". short (the list): the rule without its first and last day.
+function scheduleLine(item, { short = false } = {}) {
+  if (!item.schedule_text) return '';
+  const parts = [short ? item.schedule_text.split(' \u00b7 ')[0] : item.schedule_text];
+  if (item.next_at) parts.push(`next ${shortTime(item.next_at)}`);
+  if (item.schedule_state === 'due') parts.push('due');
+  if (item.last_done_at && item.schedule && item.schedule.kind === 'repeat') parts.push(`done ${shortTime(item.last_done_at)}`);
+  if (item.then_action && item.then_action.kind === 'prompt') parts.push('sends a prompt');
+  if (item.then_action && item.then_action.kind === 'script') parts.push('runs a script');
+  return parts.join(' \u00b7 ');
+}
 
 const HELP = `t-attention: tasks that need you (T-Attention)
 
@@ -102,6 +173,18 @@ Fields
   --parent <id|ref:R>  --custom-status T  --result T
   --note T                  update, upsert: add a note
                             to the task's timeline
+
+Schedule (add, update)
+  --at 2026-12-01T10:00     once, at that time on the
+                            server's clock
+  --every daily|weekdays|weekly:mon,thu|monthly:15
+    |every:3d --time 09:00  repeats (done puts it back
+                            for the next time)
+  --starts YYYY-MM-DD  --ends YYYY-MM-DD|after:N|never
+  --prompt T --session <task>:<terminal>
+                            then type T into that
+                            session (default: remind)
+  --no-schedule             update: clear the schedule
 
 Statuses: todo working waiting_user review
   done failed cancelled (also In Progress,
@@ -248,6 +331,8 @@ function itemLines(item, idWidth) {
   const head = `  ${id} `;
   const lines = [head + clip(oneLine(item.title), cols - head.length - extras(item).length) + extras(item)];
   if (item.attention_reason) lines.push(' '.repeat(head.length) + clip(oneLine(item.attention_reason), cols - head.length));
+  const schedule = scheduleLine(item, { short: true });
+  if (schedule) lines.push(' '.repeat(head.length) + clip(schedule, cols - head.length));
   return lines;
 }
 
@@ -391,6 +476,10 @@ function formatItem(item, events) {
   if (item.parent_id) fields.push(`Parent:   #${item.parent_id}`);
   if (item.priority && item.priority !== 'none') fields.push(`Priority: ${item.priority}`);
   if (item.due_date) fields.push(`Due:      ${item.due_date}`);
+  if (item.schedule_text) fields.push(`Schedule: ${item.schedule_text}`);
+  if (item.next_at) fields.push(`Next:     ${shortTime(item.next_at)}`);
+  if (item.then_action && item.then_action.kind === 'prompt') fields.push(`Then:     prompt to session ${item.then_action.task_id}:${item.then_action.terminal_id}`);
+  if (item.then_action && item.then_action.kind === 'script') fields.push(`Then:     script in task ${item.then_action.task_id}`);
   if (item.attention_reason && !needs.length) fields.push(`Reason:   ${item.attention_reason}`);
   if (item.link_url) fields.push(`Link:     ${item.link_label ? `${item.link_label} ` : ''}${item.link_url}`);
   if (item.external_ref) fields.push(`Ref:      ${item.external_ref}`);
@@ -437,13 +526,13 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
   }
 
   if (command === 'add') {
-    only(flags, ITEM_FLAGS.filter(flag => flag !== 'title'), 'add');
+    only(flags, [...ITEM_FLAGS.filter(flag => flag !== 'title'), ...SCHEDULE_FLAGS], 'add');
     const title = oneLine(args.join(' '));
     if (!title) throw new UsageError('add needs a title: t-attention add "Buy milk"');
-    const body = { ...fieldsFrom(flags), title, source: 'cli' };
+    const body = { ...fieldsFrom(flags), ...scheduleFrom(flags), title, source: 'cli' };
     if (flags.ref !== undefined) body.external_ref = flags.ref;
     const item = await connect(flags, env).create(body);
-    show(item, `Added #${item.id} ${oneLine(item.title)} (${STATUS_LABELS[item.status] || item.status})`);
+    show(item, `Added #${item.id} ${oneLine(item.title)} (${STATUS_LABELS[item.status] || item.status})${scheduleLine(item) ? `\n  ${scheduleLine(item)}` : ''}`);
     return EXIT.ok;
   }
 
@@ -498,9 +587,9 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
   }
 
   if (command === 'update') {
-    only(flags, [...ITEM_FLAGS, 'note'], 'update');
+    only(flags, [...ITEM_FLAGS, ...SCHEDULE_FLAGS, 'no-schedule', 'note'], 'update');
     const spec = target(args[0], 'update');
-    const body = fieldsFrom(flags);
+    const body = { ...fieldsFrom(flags), ...scheduleFrom(flags, { update: true }) };
     if (flags.ref !== undefined) body.external_ref = flags.ref === '' ? null : flags.ref;
     addNote(body, flags);
     if (!Object.keys(body).length) throw new UsageError('update needs at least one field, for example --status review');

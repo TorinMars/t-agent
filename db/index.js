@@ -110,6 +110,9 @@ if (!attentionColumns.includes('context')) db.exec('ALTER TABLE attention_items 
 // Schema 11: parent_id (the tree), custom_status and result of T-Attention items, and the index on parent_id. Nullable columns, so the items of
 // an older database simply have no parent, custom status or result.
 require('../services/attention').ensureTreeColumns(db);
+// Schema 18: the schedule columns of T-Attention items (schedule, then_action, next_at, schedule_state, runs, last_fired_at, last_done_at, script_runs)
+// and the index on next_at. Nullable columns and runs with a default 0, added when missing, so a database of any lower schema gets them.
+require('../services/attention').ensureScheduleColumns(db);
 // attention_tokens.scopes (extra token permissions, 'market' = "Can manage plugins"): a nullable column, so an older version that does not know
 // it still reads and writes the table (its new tokens simply have no scope); no schema bump.
 if (!db.prepare('PRAGMA table_info(attention_tokens)').all().some(column => column.name === 'scopes')) db.exec('ALTER TABLE attention_tokens ADD COLUMN scopes TEXT');

@@ -5,7 +5,7 @@ const path = require('path');
 const db = require('../db');
 const { TerminalSnapshot, createHistoryArchive } = require('../lib/terminal-snapshot');
 const { RESET_INPUT_MODES, watchShellReturn } = require('../lib/terminal-input-modes');
-const { createActivityTracker, foregroundCommand, baseName } = require('../lib/terminal-activity');
+const { createActivityTracker, foregroundCommand, isShellForeground, baseName } = require('../lib/terminal-activity');
 const { noteTerminalInput } = require('../lib/terminal-recent-input');
 const { createActivityStream } = require('../lib/terminal-activity-stream');
 const { repairSpawnHelperPermissions } = require('../lib/node-pty-runtime');
@@ -1191,6 +1191,144 @@ function sendToTerminal(taskId, requestedTerminalId, text, { enterDelayMs = REPL
   return true;
 }
 
+// T-Attention scheduled prompts ("Firing" in docs/design/attention-schedules.md): whether a session of this machine takes a prompt
+// now. 'gone': no such task or terminal; 'stopped': it has no running shell; 'busy': it works, waits for an answer, or something other than its
+// agent (an agent terminal) or its shell prompt (a shell terminal) has the foreground, so typed text would go elsewhere; 'idle': it takes it.
+function promptState(taskId, requestedTerminalId) {
+  const id = Number(taskId);
+  if (!Number.isSafeInteger(id) || id < 1 || typeof requestedTerminalId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(requestedTerminalId)) return 'gone';
+  if (!prepared('SELECT id FROM tasks WHERE id = ?').get(id)) return 'gone';
+  let agent = null;
+  if (requestedTerminalId !== 'default') {
+    const row = prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(id, requestedTerminalId);
+    if (!row) return 'gone';
+    agent = row.agent || null;
+  }
+  const s = liveSession(id, requestedTerminalId);
+  if (!s) return 'stopped';
+  if (s.activity && (s.activity.state() === 'running' || s.activity.awaitingAnswer())) return 'busy';
+  const names = foregroundCommand(s.pty);
+  if (agent ? !names.includes(agent) : !isShellForeground(names, s.shellName)) return 'busy';
+  return 'idle';
+}
+// Types a scheduled prompt into an idle session: an agent gets it as a paste with Enter on its own (sendToTerminal, the window's reply path); a plain
+// shell gets the text as typed keys and Enter (a shell without bracketed paste would show the paste markers). False when it has no running shell.
+function sendPrompt(taskId, requestedTerminalId, text) {
+  const agent = requestedTerminalId === 'default' ? null : (prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), requestedTerminalId) || {}).agent;
+  if (agent) return sendToTerminal(taskId, requestedTerminalId, text);
+  const s = liveSession(taskId, requestedTerminalId);
+  if (!s) return false;
+  const key = sessionKey(taskId, requestedTerminalId);
+  s.activity?.noteInput();
+  noteTerminalInput(`local:${key}`);
+  s.pty.write(`${String(text).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').replace(/\n/g, '\r')}\r`);
+  return true;
+}
+
+// T-Attention scheduled scripts ("Run a script" in docs/design/attention-schedules.md): each run is a NEW terminal of the task, made and started the way
+// a terminal the person opens is (createTerminal, getOrCreateSession: the task's folder, the user's shell, the same environment and tokens). The
+// server writes two files to a private folder: the person's script, and a wrapper that prints an invisible marker with its own process id, runs the
+// script with the terminal's shell and prints a second marker with the exit status (OSC 7771 with a random nonce; xterm ignores an unknown OSC). The
+// wrapper is typed into the new shell as its first line, so the script runs as the foreground job of an ordinary shell and the terminal stays open at
+// its prompt afterwards, with the output, until the person or the cleanup (the last 5 runs of an item are kept) closes it. The server reads the markers
+// from the terminal's output. The time limit sends SIGTERM to the script's process group (the wrapper's pid: an interactive shell puts each job in a
+// group of its own), SIGKILL 3 s later; a shell that ends first (closed, deleted) ends the run too. onEnd({ outcome: 'exit' | 'timeout' | 'ended',
+// exit, duration_ms, terminal_id }) is called once.
+const SCRIPT_MARK = /\x1b\]7771;([0-9a-f]{16});(start|exit);(\d{1,10})\x07/g;
+const SCRIPT_KILL_GRACE_MS = 3000;
+// The files live in the data folder (<data home>/attention-scripts, private to the service user), or, when the shells run as another user (a root
+// service dropping to TERMINAL_USER, who cannot enter the data folder), in a folder of the temporary directory owned by that user.
+function scriptFolder(runAs) {
+  const dropping = Boolean(runAs && process.getuid && process.getuid() === 0);
+  const dir = dropping ? path.join(os.tmpdir(), `t-agent-scripts-${runAs.uid}`) : path.join(require('../lib/data-home').paths().root, 'attention-scripts');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (runAs && process.getuid && process.getuid() === 0) { try { fs.chownSync(dir, runAs.uid, runAs.gid); } catch { /* the shell may not read it: the run fails */ } }
+  return dir;
+}
+function runScript(taskId, { title, script, timeoutMs = 30 * 60 * 1000, onEnd = () => {} } = {}) {
+  const id = Number(taskId);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  if (!task) throw Object.assign(new Error('TASK_NOT_FOUND'), { statusCode: 404 });
+  const created = createTerminal(id, { title });
+  const terminalId = created.terminal_id;
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const runAs = resolveTerminalUser().user;
+  const shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate)) || '/bin/sh';
+  const dir = scriptFolder(runAs);
+  const scriptFile = path.join(dir, `${nonce}-script`);
+  const wrapperFile = path.join(dir, `${nonce}-run`);
+  fs.writeFileSync(scriptFile, String(script).replace(/\r\n?/g, '\n'), { mode: 0o600 });
+  fs.writeFileSync(wrapperFile, [
+    `printf '\\033]7771;${nonce};start;%s\\007' "$$"`,
+    `${shellQuote(shell)} ${shellQuote(scriptFile)}`,
+    '__ta_status=$?',
+    `rm -f ${shellQuote(scriptFile)} ${shellQuote(wrapperFile)}`,
+    `printf '\\033]7771;${nonce};exit;%s\\007' "$__ta_status"`,
+    '',
+  ].join('\n'), { mode: 0o600 });
+  if (runAs && process.getuid && process.getuid() === 0) {
+    for (const file of [scriptFile, wrapperFile]) { try { fs.chownSync(file, runAs.uid, runAs.gid); } catch { /* see scriptFolder */ } }
+  }
+  const removeFiles = () => { for (const file of [scriptFile, wrapperFile]) { try { fs.rmSync(file, { force: true }); } catch { /* gone */ } } };
+  // The leading space keeps the line out of the shell's history (zsh HIST_IGNORE_SPACE, bash ignorespace).
+  pendingStartup.set(sessionKey(id, terminalId), { agent: null, command: ` ${shellQuote(shell)} ${shellQuote(wrapperFile)}` });
+  const workDir = terminalWorkDir(task, terminalId) || os.homedir();
+  const s = getOrCreateSession(id, fs.existsSync(workDir) ? workDir : os.homedir(), null, terminalId);
+  if (s.startupError) {
+    pendingStartup.delete(sessionKey(id, terminalId));
+    removeFiles();
+    throw Object.assign(new Error(`The terminal could not start: ${s.startupError.message}`), { statusCode: 500 });
+  }
+  const started = Date.now();
+  let pid = null;
+  let tail = '';
+  let done = false;
+  let killTimer = null;
+  const finish = (outcome, exit = null) => {
+    if (done) return;
+    done = true;
+    clearTimeout(limit);
+    try { dataListener.dispose(); } catch { /* ended */ }
+    try { exitListener.dispose(); } catch { /* ended */ }
+    if (outcome !== 'timeout') removeFiles();
+    try { onEnd({ outcome, exit, duration_ms: Date.now() - started, terminal_id: terminalId }); } catch (error) { console.warn(`[terminal] a script run could not be recorded: ${error.message}`); }
+  };
+  const dataListener = s.pty.onData(chunk => {
+    tail = (tail + chunk).slice(-512);
+    SCRIPT_MARK.lastIndex = 0;
+    let match;
+    while ((match = SCRIPT_MARK.exec(tail))) {
+      if (match[1] !== nonce) continue;
+      if (match[2] === 'start') pid = Number(match[3]);
+      else { tail = ''; return finish('exit', Number(match[3])); }
+    }
+    return undefined;
+  });
+  const exitListener = s.pty.onExit(() => finish('ended'));
+  const limit = setTimeout(() => {
+    const group = pid && pid !== s.pty.pid ? pid : null;
+    const signal = name => {
+      if (group) { try { process.kill(-group, name); } catch { /* already gone */ } } else if (name === 'SIGTERM') { try { s.pty.write('\x03'); } catch { /* ended */ } }
+    };
+    signal('SIGTERM');
+    killTimer = setTimeout(() => { signal('SIGKILL'); removeFiles(); }, SCRIPT_KILL_GRACE_MS);
+    killTimer.unref?.();
+    finish('timeout');
+  }, Math.max(1, timeoutMs));
+  limit.unref?.();
+  return { terminal_id: terminalId, title: created.title };
+}
+// The task a script runs in: 'ok', 'archived' or 'gone'.
+function scriptTaskState(taskId) {
+  const row = Number.isSafeInteger(Number(taskId)) ? prepared('SELECT archived_at FROM tasks WHERE id = ?').get(Number(taskId)) : null;
+  if (!row) return 'gone';
+  return row.archived_at ? 'archived' : 'ok';
+}
+// Removes an old script terminal (its shell ends and its row goes); nothing when it is gone already.
+function removeScriptTerminal(taskId, terminalId) {
+  try { controlSession(taskId, 'delete', terminalId); return true; } catch { return false; }
+}
+
 // The live terminals of every task that are not idle, for the window's activity list: [{ task_id, task_title, terminal_id, title, agent, state, since }],
 // state 'running' | 'waiting' (done at a permission prompt: awaitingAnswer) | 'done' (finished, not acknowledged yet); since: ms of the last state change.
 // The title and agent are the ones the task's terminal list shows (listTerminals: an agent terminal is named after its session). They are read
@@ -1289,4 +1427,4 @@ function shutdownTerminals() {
   } catch {}
 }
 
-module.exports = { offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity };
+module.exports = { offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

@@ -333,6 +333,80 @@ const CASES = {
     await context.close();
   },
 
+  async 'computer: a drag on empty space selects topics; scroll, Space and a drag, or a right drag move the map'(browser) {
+    const { context, page, server } = await openPage(browser, { touch: false });
+    server.make('Box', bothSidesMap(1));
+    await openView(page, false);
+    await page.locator('.mm-row-open', { hasText: 'Box' }).click();
+    await page.locator('.me-tpc').nth(6).waitFor();
+    await settled(page);
+    const total = await page.locator('.mm-canvas .me-tpc').count();
+    const rootBox = () => page.evaluate(() => { const r = document.querySelector('.mm-canvas .me-root .me-tpc').getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top) }; });
+    const canvas = await page.evaluate(() => { const r = document.querySelector('.mm-canvas').getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; });
+    // An empty point: the canvas corner, outside every topic.
+    const empty = await page.evaluate(({ left, top }) => !document.elementFromPoint(left + 6, top + 6).closest('.me-tpc'), canvas);
+    check(empty, 'the corner of the canvas is empty');
+    const before = await rootBox();
+    await page.mouse.move(canvas.left + 6, canvas.top + 6);
+    await page.mouse.down();
+    await page.mouse.move((canvas.left + canvas.right) / 2, (canvas.top + canvas.bottom) / 2, { steps: 6 });
+    await page.mouse.move(canvas.right - 6, canvas.bottom - 6, { steps: 6 });
+    const shown = await page.evaluate(() => { const a = [...document.querySelectorAll('.selection-area, [class*="selection-area"]')].find(el => el.getBoundingClientRect().width > 20); return a ? getComputedStyle(a).borderTopColor : null; });
+    await page.mouse.up();
+    const picked = (await selected(page)).length;
+    check(picked === total, `a drag across the whole canvas selects every topic (${picked} of ${total})`);
+    check(shown === 'rgb(144, 202, 249)', `the rectangle is drawn in the primary colour (${shown})`);
+    check(JSON.stringify(await rootBox()) === JSON.stringify(before), 'a left drag on empty space does not move the map');
+    // A click on empty space clears the selection.
+    await page.mouse.click(canvas.left + 6, canvas.top + 6);
+    await page.waitForTimeout(100);
+    check((await selected(page)).length === 0, `a click on empty space clears the selection (${(await selected(page)).length})`);
+    // A right drag moves the map and selects nothing.
+    let at = await rootBox();
+    await page.mouse.move(canvas.left + 6, canvas.top + 6);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(canvas.left + 106, canvas.top + 66, { steps: 6 });
+    await page.mouse.up({ button: 'right' });
+    let now = await rootBox();
+    check(now.x - at.x > 60 && now.y - at.y > 30, `a right drag moves the map (${JSON.stringify(at)} -> ${JSON.stringify(now)})`);
+    check((await selected(page)).length === 0, 'a right drag selects nothing');
+    // Space and a drag moves the map.
+    at = now;
+    await page.mouse.move(canvas.left + 6, canvas.top + 6);
+    await page.keyboard.down('Space');
+    await page.mouse.down();
+    await page.mouse.move(canvas.left + 86, canvas.top + 46, { steps: 6 });
+    await page.mouse.up();
+    await page.keyboard.up('Space');
+    now = await rootBox();
+    check(now.x - at.x > 40 && now.y - at.y > 20, `Space and a drag moves the map (${JSON.stringify(at)} -> ${JSON.stringify(now)})`);
+    check((await selected(page)).length === 0, 'Space and a drag selects nothing');
+    // With a topic selected, Space and a drag still moves the map and does not open the editor (Space alone edits, on its release).
+    await topicEl(page, 'Right one').click();
+    await page.waitForTimeout(450);
+    at = await rootBox();
+    await page.mouse.move(canvas.left + 6, canvas.top + 6);
+    await page.keyboard.down('Space');
+    await page.mouse.down();
+    await page.mouse.move(canvas.left + 66, canvas.top + 36, { steps: 6 });
+    await page.mouse.up();
+    await page.keyboard.up('Space');
+    now = await rootBox();
+    check(now.x - at.x > 30 && !(await editing(page)), `with a topic selected, Space and a drag moves the map and does not edit (${JSON.stringify(at)} -> ${JSON.stringify(now)})`);
+    await page.keyboard.press('Space');
+    check(await editing(page), 'Space alone still edits the selected topic');
+    await page.keyboard.press('Escape');
+    // A scroll (the wheel or two fingers on a trackpad) moves the map.
+    at = now;
+    await page.mouse.move((canvas.left + canvas.right) / 2, (canvas.top + canvas.bottom) / 2);
+    await page.mouse.wheel(0, 120);
+    await page.waitForTimeout(100);
+    now = await rootBox();
+    check(at.y - now.y > 40, `a scroll moves the map (${JSON.stringify(at)} -> ${JSON.stringify(now)})`);
+    check(puts(server) === 0, `selecting and moving the map save nothing (${puts(server)})`);
+    await context.close();
+  },
+
   async 'computer: every way of adding or moving a topic stays on the right'(browser) {
     const { context, page, server } = await openPage(browser, { touch: false });
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';

@@ -44,7 +44,7 @@ const STATE_TEXT = { saved: 'Saved', dirty: 'Saving...', saving: 'Saving...', re
 
 const SHORTCUTS = [
   ['Tab', 'Add subtopic'], ['Enter', 'Add topic after'], ['Shift+Enter', 'Add topic before'], ['Mod+Enter', 'Add parent topic'],
-  ['F2 / Space', 'Edit topic'], ['Delete', 'Delete topic'], ['Arrows', 'Move selection'], ['Mod+/', 'Collapse or expand'],
+  ['F2 / Space', 'Edit topic'], ['Delete', 'Delete topic'], ['Arrows', 'Move selection'], ['Drag on empty space', 'Select topics'], ['Scroll / Space+drag / Right-drag', 'Move the map'], ['Mod+/', 'Collapse or expand'],
   ['Mod+Z', 'Undo'], ['Mod+Shift+Z / Mod+Y', 'Redo'], ['Mod+C / X / V', 'Copy, cut, paste topics'],
   ['Mod+= / Mod+-', 'Zoom in / out'], ['Mod+0', 'Actual size'], ['Mod+9', 'Fit map'], ['F3', 'Label'], ['F4', 'Note'], ['Alt+Up / Down', 'Move topic'],
 ];
@@ -858,7 +858,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   }
   function openShortcuts() {
     const apple = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
-    const rowsList = SHORTCUTS.map(([keys, label]) => el('div', { class: 'mm-key-row' }, el('kbd', { text: keys.replace(/Mod/g, apple ? 'Cmd' : 'Ctrl') }), el('span', { text: tr(label) })));
+    const rowsList = SHORTCUTS.map(([keys, label]) => el('div', { class: 'mm-key-row' }, el('kbd', { text: tr(keys.replace(/Mod/g, apple ? 'Cmd' : 'Ctrl')) }), el('span', { text: tr(label) })));
     openDialog(tr('Keyboard shortcuts'), el('div', { class: 'mm-keys' }, ...rowsList), [{ label: tr('Close') }]);
   }
 

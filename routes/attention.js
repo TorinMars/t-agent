@@ -113,13 +113,15 @@ function createCounter({ windowMs, max, now = Date.now }) {
   };
 }
 
-function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, instanceId = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now, isLocal = fromThisMachine, pages = null } = {}) {
+function createAttentionRoutes({ service, summary = null, plugins = null, installer = null, market = null, instanceId = null, pairingClaims = { windowMs: 60 * 1000, max: 5, lockMs: 60 * 1000, requests: 30 }, heartbeatMs = 25000, failedAuth = { windowMs: 15 * 60 * 1000, max: 20 }, tokenRequests = { windowMs: 60 * 1000, max: 600 }, now = Date.now, isLocal = fromThisMachine, pages = null, copies = null } = {}) {
   if (!service) throw new Error('createAttentionRoutes needs the attention service');
   const failures = createCounter({ ...failedAuth, now });
   const perToken = createCounter({ ...tokenRequests, now });
   const streams = new Set();
   // The open pages of this machine that the desktop window can tell to show a terminal (services/page-channel.js).
   const pageChannel = () => pages || require('../services/page-channel').getPageChannel();
+  // The read copies of the linked engines' items (services/attention-copy.js), or null when they are off: asked for with `copies=1` by the page.
+  const copiesOf = req => (req.query.copies === '1' && typeof copies === 'function' ? copies() : null);
   const router = express.Router();
 
   // Who acts: 'user' for the browser; for a token the body's source when it sends one, else the token's name.
@@ -254,7 +256,11 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     const tokenId = req.attentionAuth.kind === 'token' ? req.attentionAuth.id : null;
     const isPage = tokenId === null && req.attentionAuth.kind === 'session' && req.query.tab === '1' && Boolean(isLocal(req)) && !fromPane(req);
     let pageId = null;
-    const stream = serveChangeStream(req, res, service, {
+    // `copies=1` (the page): the changes of the copies come on the same stream (their own bus, which no notifier follows), and `kind: 'owners'` when
+    // an owner goes offline or comes back.
+    const copy = copiesOf(req);
+    const source = copy ? { onChange: fn => { const own = service.onChange(fn); const copied = copy.onChange(fn); return () => { own(); copied(); }; } } : service;
+    const stream = serveChangeStream(req, res, source, {
       heartbeatMs,
       active: () => tokenId === null || service.tokenActive(tokenId),
       onClose: closing => {
@@ -279,8 +285,39 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     // `host`: this machine's name, as the Claude listener writes it into context.host (os.hostname()). The page opens the files of a context only
     // when they are on this machine. `instance_id`: this Engine's own identity (engine_identity, the first part of a shared task order key), so a
     // page that lists the items of several services can key them `<instance_id>:<id>`.
-    res.json({ ...listAnswer(service, req.query), host: os.hostname(), ...(instanceId ? { instance_id: instanceId() } : {}) });
+    // `copies=1` (the page): also `copies: { items, owners }`, the read copies of the linked engines' items under the same filters, and who owns them
+    // (services/attention-copy.js list). Without it the answer is this engine's own items, as before (the CLI and the listeners see no change).
+    const copy = copiesOf(req);
+    res.json({
+      ...listAnswer(service, req.query), host: os.hostname(), ...(instanceId ? { instance_id: instanceId() } : {}),
+      ...(copy ? { copies: copy.list({ includeDone: isTrue(req.query.include_done), limit: req.query.limit, status: typeof req.query.status === 'string' ? req.query.status : null }) } : {}),
+    });
   }));
+
+  // The copy of an item of a device this engine knows only through another one (a chain): read here, never changed here (it cannot reach that device).
+  // The items of a linked device are reached through /api/remote-servers/:id/attention, which falls back to the copies while it is offline.
+  // DELETE /copies/queue/:entry: the person read the note of a queued change that was dropped.
+  const copyCall = (method, sub = '') => (req, res) => {
+    const copy = typeof copies === 'function' ? copies() : null;
+    const itemId = req.params.itemId === undefined ? null : idOf(req.params.itemId);
+    if (!copy || (req.params.itemId !== undefined && itemId === null)) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    const answer = copy.offline({ owner: req.params.owner, method, itemId, sub, body: req.body });
+    if (!answer) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.status(answer.status).json(answer.body);
+  };
+  router.delete('/copies/queue/:entry', wrap((req, res) => {
+    const copy = typeof copies === 'function' ? copies() : null;
+    const entry = idOf(req.params.entry);
+    if (!copy || entry === null || !copy.dismiss(entry)) return sendError(res, 404, 'NOT_FOUND', 'Not found');
+    return res.status(204).end();
+  }));
+  router.get('/copies/:owner', copyCall('GET'));
+  router.post('/copies/:owner', copyCall('POST'));
+  router.get('/copies/:owner/:itemId', copyCall('GET'));
+  router.patch('/copies/:owner/:itemId', copyCall('PATCH'));
+  router.delete('/copies/:owner/:itemId', copyCall('DELETE'));
+  router.post('/copies/:owner/:itemId/move', copyCall('POST', '/move'));
+  router.post('/copies/:owner/:itemId/summarize', copyCall('POST', '/summarize'));
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req), tagent: tagentOf(req) }))));
 

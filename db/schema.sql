@@ -250,6 +250,38 @@ CREATE TABLE IF NOT EXISTS attention_events (
 );
 CREATE INDEX IF NOT EXISTS idx_attention_events_item ON attention_events (item_id, id);
 
+-- T-Attention read copies (services/attention-copy.js, docs/design/attention-copies.md): one row per item and owner engine, this engine's own items
+-- included (owner '': the journal its peers copy). item: the whole item as the owner lists it (JSON), NULL for a deleted one (a tombstone); event: the
+-- kind of its last change; rev: the owner's version (a hybrid clock, ms), the later one wins; sync_seq: this database's change number. No schema
+-- generation: an older version leaves these tables alone.
+CREATE TABLE IF NOT EXISTS attention_copies (
+  owner     TEXT    NOT NULL,
+  item_id   INTEGER NOT NULL,
+  rev       INTEGER NOT NULL,
+  deleted   INTEGER NOT NULL DEFAULT 0,
+  item      TEXT,
+  event     TEXT,
+  at        TEXT    NOT NULL,
+  sync_seq  INTEGER NOT NULL,
+  PRIMARY KEY (owner, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_attention_copies_seq ON attention_copies (sync_seq);
+-- Changes made here to the item of an owner that was offline, applied in order when it is back (pending), or kept for the page a while when the owner
+-- had a newer change of the same field (dropped). fields: the item fields to set (JSON); activity: a note; base: the values they started from.
+CREATE TABLE IF NOT EXISTS attention_copy_queue (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner      TEXT    NOT NULL,
+  item_id    INTEGER NOT NULL,
+  fields     TEXT    NOT NULL,
+  activity   TEXT,
+  base       TEXT    NOT NULL,
+  created_at TEXT    NOT NULL,
+  state      TEXT    NOT NULL DEFAULT 'pending',
+  reason     TEXT,
+  done_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_attention_copy_queue_item ON attention_copy_queue (owner, item_id, id);
+
 -- Bearer tokens ('tatt_...') for the CLI and listener plugins: only the sha256 hash is stored, the token is shown once. They reach /api/attention* only.
 CREATE TABLE IF NOT EXISTS attention_tokens (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,

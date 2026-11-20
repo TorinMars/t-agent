@@ -323,9 +323,9 @@ const editLayout = page => page.evaluate(() => {
       assert.ok(buttons.every(b => b.width >= 43.99 && b.height >= 43.99), `seven 44px buttons at 390px: ${JSON.stringify(buttons.map(b => [b.width, b.height]))}`);
       assert.equal(await page.locator('#h5-bnav #h5-attention').count(), 1, 'Attention is in the bottom navigation');
       assert.equal(await page.locator('#h5-attention-sheet').count(), 0, 'the panel is drawn only when it is opened');
-      assert.deepEqual(calls.map(call => `${call.method} ${call.path}`), ['GET /api/attention?include_done=1&limit=200'], 'the list is read once at start');
+      assert.deepEqual(calls.map(call => `${call.method} ${call.path}`), ['GET /api/attention?include_done=1&limit=200&copies=1'], 'the list is read once at start (with the read copies of other engines)');
       assert.equal(await page.evaluate(() => window.streams.length), 1, 'the live stream is open');
-      assert.equal(await page.evaluate(() => window.streams[0].url), '/api/attention/stream?tab=1', 'the top page opens this machine\'s stream as an open page (Open session of the desktop window)');
+      assert.equal(await page.evaluate(() => window.streams[0].url), '/api/attention/stream?tab=1&copies=1', 'the top page opens this machine\'s stream as an open page (Open session of the desktop window)');
 
       // Open: the Home view (an older server: no parent_id): Needs you (waiting_user, then review), Working, To do, then "Done: N" folded; the
       // order inside a section.

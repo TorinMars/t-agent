@@ -113,7 +113,7 @@ const attentionPluginsService = require('./services/attention-plugins');
 const attentionPlugins = attentionPluginsService.createPluginOverview({ service: attentionService, notify: attentionNotify, autoTerminal: () => Boolean(attentionLocalUrl), userListeners: () => attentionPluginStore.userFolders(attentionDataDir, 'listener') });
 const attentionInstaller = attentionPluginsService.createListenerInstaller({ service: attentionService, overview: attentionPlugins, localUrl: () => attentionLocalUrl });
 // `instance_id` in the list answer: this Engine's own identity, as the shared task order uses it (services/task-order.js).
-const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller, market: attentionMarket, instanceId: () => require('./services/engine-identity').getEngineIdentity().engine_id });
+const attentionRoutes = require('./routes/attention').createAttentionRoutes({ service: attentionService, summary: attentionSummary, plugins: attentionPlugins, installer: attentionInstaller, market: attentionMarket, instanceId: () => require('./services/engine-identity').getEngineIdentity().engine_id, copies: () => require('./services/attention-copy').sharedCopy() });
 // Pairing claims (`t-attention pair`) come from other machines without a session or token: answered here, before the Bearer path and the gates.
 app.use('/api/attention/pairing/claim', attentionRoutes.claim);
 // The T-Attention desktop window (macOS; services/attention-widget.js, routes/attention-widget.js): its API takes only the token of the window this
@@ -681,6 +681,9 @@ server.listen(config.port, config.host, () => {
   if (config.usageSyncEnabled) usageSync().start();
   // Mind maps follow the links from here on (services/mindmap-sync.js).
   if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().start();
+  // The read copies of the linked engines' T-Attention items follow the links from here on (services/attention-copy.js); this engine's own items are
+  // journaled for them from now on, and checked against the table once at this start.
+  if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().start();
   // The weekly mistake report of Learn (services/learn-analysis.js; never on a company computer, and on one normal engine of the links).
   require('./services/learn-analysis').getLearnAnalysis().start();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
@@ -736,5 +739,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

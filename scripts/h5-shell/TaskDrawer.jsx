@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
@@ -442,9 +443,21 @@ function TaskTag({ task, ui, drag }) {
 }
 export const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
 
+// One info line per offline service that still has rows in the list ("Tasks of an offline engine" in docs/design/failover-and-one-login.md).
+function OfflineNotes({ names }) {
+  if (!names || !names.length) return null;
+  return names.map(name => (
+    <Alert
+      key={name} severity="info" variant="standard" className="h5-offline-note" icon={<Icon name="infoCircle" size={18} />}
+      sx={{ mx: 0.5, mb: 1, typography: 'body2', overflowWrap: 'anywhere' }}
+    >{t(`${name} is offline. Its tasks are shown as they were and open again when it is back.`)}</Alert>
+  ));
+}
+
 function Tasks({ taskList, rename, ui, query, filter, drag, sessionDrag }) {
   const { note, tasks } = taskList;
   if (note) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t(note)}</Typography>;
+  const notes = <OfflineNotes key="offline-notes" names={taskList.offline} />;
   const needle = query.trim().toLowerCase();
   const filtering = Boolean(needle) || filter !== 'all';
   // A search keeps the tasks whose name matches, or that have a matching session in a list that is open. Running and Pending keep the tasks that have such a session, known from the feeds.
@@ -456,17 +469,17 @@ function Tasks({ taskList, rename, ui, query, filter, drag, sessionDrag }) {
   };
   // One flat list in the shared order (h5.js `renderTasks`): no section per device and no group titles; a search or a filter keeps that order.
   const shown = (tasks || []).filter(keep);
-  if (filtering && !shown.length) return <Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography>;
+  if (filtering && !shown.length) return <>{notes}<Typography className="h5-list-note" color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>{t('No matching sessions')}</Typography></>;
   // Every row with an engine tag (h5.js tags the rows whenever the order can be changed or more than one device is listed) starts with it: it opens and
   // closes the task, shows that it is open, and is the drag grip of a row that can be moved. Only an older server with this machine alone has no tags;
   // there the row keeps its chevron, so whether a task is open still shows.
-  return shown.map(task => (
+  return [notes, ...shown.map(task => (
     <TaskRow
       key={task.ref} task={task} ui={ui} drag={drag} sessionDrag={sessionDrag}
       // The rename field of a session row: only the task it is under gets the menu.
       menu={rename && rename.rename.task === task.ref ? rename : null}
     />
-  ));
+  ))];
 }
 
 // The name of a task as the person typed it (no capitals forced on it), medium weight, at most two lines with an ellipsis; the full name is its `title`.
@@ -504,15 +517,17 @@ const TaskRow = React.memo(function TaskRow({ task, ui, drag, sessionDrag, menu 
       >
         {task.device ? <TaskTag task={task} ui={ui} drag={drag} /> : null}
         <ListItemButton
-          component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.expanded}
+          component="button" className="h5-task-item" aria-current={task.selected ? 'true' : undefined} aria-expanded={task.stale ? undefined : task.expanded}
+          disabled={Boolean(task.stale)} data-offline={task.offline ? 'true' : undefined}
           onClick={() => ui.actions.toggleTask(task.ref)}
-          sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.5, px: 0.5, borderRadius: 2, textAlign: 'left', '&:hover': { bgcolor: 'transparent' } }}
+          sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 40, py: 0.5, px: 0.5, borderRadius: 2, textAlign: 'left', '&:hover': { bgcolor: 'transparent' }, '&.Mui-disabled': { opacity: 1 }, ...(task.offline ? { color: 'text.disabled' } : {}) }}
         >
           <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
             {task.device ? null : <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.secondary', transform: task.expanded ? 'rotate(90deg)' : 'none' }}><Icon name="treeChevron" size={14} /></Box>}
             <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Box component="span" className="h5-task-title" title={task.title} sx={TASK_TITLE_SX}>{task.title}</Box>
               {task.count != null ? <Box component="span" className="h5-task-count" sx={{ typography: 'caption', color: 'text.secondary' }}>{task.count} {t(task.count === 1 ? 'session' : 'sessions')}</Box> : null}
+              {task.offline && task.count == null ? <Box component="span" className="h5-task-offline" sx={{ typography: 'caption', color: 'text.disabled' }}>{t('offline')}</Box> : null}
             </Box>
           </Box>
         </ListItemButton>

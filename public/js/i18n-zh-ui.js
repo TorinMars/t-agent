@@ -13,6 +13,8 @@ I18n.add({
   "“Local access only” can only be chosen on the server itself: open http://127.0.0.1:PORT/ in a browser on that machine, then choose it.": "“仅本机访问”只能在服务器本机选择：请在这台机器的浏览器打开 http://127.0.0.1:端口/ 后再选。",
   "(Key saved)": "（已保存 Key）",
   "(offline)": "（离线）",
+  "offline": "离线",
+  "{1} is offline. Its tasks are shown as they were and open again when it is back.": "{1} 已离线。它的任务按离线前的样子显示，恢复后可再次打开。",
   "(or": "（或",
   "(required),": "（必填）、",
   "(the machine running the Client)": "（运行 Client 的这台机器）",

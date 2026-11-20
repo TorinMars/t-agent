@@ -503,6 +503,11 @@ for (const oldPage of ['/web', '/index.html', '/h5.html']) {
 app.get('/login.html', (req, res) => res.redirect(config.loginPath));
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.
+// The service worker carries the hash of the offline page's files (lib/service-worker.js). Behind the login gate like before; revalidated each time.
+const serviceWorkerSource = require('./lib/service-worker').createServiceWorkerSource({ publicDir: path.join(__dirname, 'public') });
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache').type('application/javascript').send(serviceWorkerSource());
+});
 app.use((req, res, next) => {
   let pathname;
   try { pathname = decodeURIComponent(req.path); } catch { return res.sendStatus(400); }

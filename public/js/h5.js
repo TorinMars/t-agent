@@ -4372,8 +4372,23 @@
     selectTask(from, item, { terminal: terminalId });
     return true;
   }
-  // The service worker makes the page installable as a Home Screen app (public/sw.js); it shows no notifications.
+  // The service worker makes the page installable as a Home Screen app and shows public/offline.html while this engine is down (public/sw.js); it
+  // shows no notifications. A hand-over this page was opened with when it was signed in already is taken off the address ("One login for linked engines").
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  if (/^#handover=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+  // The offline page's "Continue on <engine>" needs this engine's name and the linked engines' addresses while this one is down: kept from
+  // /api/sign-in-handover/peers in `ta-linked-engines`, a little after the start (the top page only). An engine the answer has no address for keeps
+  // the addresses known before. "The page while its engine is down" in docs/design/failover-and-one-login.md.
+  if (!PANE) setTimeout(() => api('GET', '/api/sign-in-handover/peers').then(answer => {
+    if (!answer || !Array.isArray(answer.peers)) return;
+    let before = [];
+    try { before = (JSON.parse(LocalKeys.get('ta-linked-engines') || '{}') || {}).peers || []; } catch { /* written again below */ }
+    const peers = answer.peers.filter(peer => peer && peer.instance_id).map(peer => {
+      const old = before.find(item => item && item.instance_id === peer.instance_id);
+      return { instance_id: peer.instance_id, name: peer.name, addresses: peer.addresses && peer.addresses.length ? peer.addresses : (old && old.addresses) || [] };
+    });
+    LocalKeys.set('ta-linked-engines', JSON.stringify({ self: { instance_id: answer.instance_id, name: answer.name }, peers }));
+  }, () => { /* an older server: no offline page offers */ }), 4000);
 
   // The input mode can change while the page is open (a mouse or a touch screen attached): the terminal font, the layout measurements and the wake lock follow.
   let lastInput = ui.get().input;

@@ -59,7 +59,7 @@ async function setup(context) {
       close() { this.readyState = 2; }
     };
     window.emitChange = change => {
-      const live = window.streams.filter(s => s.readyState === 1 && /\/api\/attention\/stream(\?tab=1)?$/.test(s.url)).at(-1);
+      const live = window.streams.filter(s => s.readyState === 1 && /\/api\/attention\/stream(\?tab=1)?(&?copies=1)?$/.test(s.url) || /\/api\/attention\/stream\?copies=1$/.test(s.url)).at(-1);
       if (!live) return false;
       live.dispatchEvent(new MessageEvent('change', { data: JSON.stringify(change) }));
       return true;
@@ -339,7 +339,7 @@ const socketClient = url => new URL(url).searchParams.get('clientId');
     await top.locator('#h5-update').waitFor();
     await top.locator('#h5-attention').waitFor({ state: 'attached' }); // in More tools on a computer
     await top.waitForFunction(() => window.activityStream.opens.includes('/api/tasks/terminal-activity/stream'));
-    await top.waitForFunction(() => window.streams.some(s => s.url.endsWith('/api/attention/stream?tab=1') && s.readyState === 1));
+    await top.waitForFunction(() => window.streams.some(s => s.url.endsWith('/api/attention/stream?tab=1&copies=1') && s.readyState === 1));
     assert.equal(await top.evaluate(() => window.emitChange({ kind: 'updated', item: { id: 5, title: 'Ping', status: 'waiting_user' }, previous: { id: 5, status: 'working' }, event: { actor: 'claude' } })), true);
     await top.waitForFunction(() => window.tones > 0); // the top page reminds: a sound and a notice
     await top.locator('.MuiSnackbar-root', { hasText: 'Ping' }).waitFor();

@@ -48,7 +48,7 @@ async function openPage(browser, wide, query) {
       close() { this.readyState = 2; }
     };
     window.push = (event, data) => {
-      const stream = window.streams.filter(s => s.readyState === 1 && s.url === '/api/attention/stream?tab=1').at(-1);
+      const stream = window.streams.filter(s => s.readyState === 1 && s.url === '/api/attention/stream?tab=1&copies=1').at(-1);
       if (!stream) return false;
       stream.dispatchEvent(new MessageEvent(event, { data: JSON.stringify(data) }));
       return true;
@@ -127,7 +127,7 @@ async function pushed(browser, wide) {
   const pushedLabel = `${label} pushed`;
   await waitShown(page, 'h1');
   await page.evaluate(() => { window.notReloaded = true; });
-  await page.waitForFunction(() => window.streams.some(s => s.readyState === 1 && s.url === '/api/attention/stream?tab=1'), null, { timeout: 8000 });
+  await page.waitForFunction(() => window.streams.some(s => s.readyState === 1 && s.url === '/api/attention/stream?tab=1&copies=1'), null, { timeout: 8000 });
   assert.equal(await page.evaluate(() => window.push('hello', { stream: 'page-1' })), true);
   for (let i = 0; i < 50 && !state.seen.length; i += 1) await page.waitForTimeout(50);
   assert.deepEqual(state.seen, [{ stream: 'page-1' }], `${pushedLabel}: a visible page says it is seen`);

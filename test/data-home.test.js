@@ -599,7 +599,7 @@ test('a schema 8 database gets the T-Attention tables (schema 9), with a copy ta
   // A database of the previous generation: no attention_* tables, user_version 8.
   const file = path.join(root, 'db.sqlite');
   const old = new Database(file);
-  old.exec('DROP TABLE attention_events; DROP TABLE attention_items; DROP TABLE attention_tokens;');
+  old.exec('DROP TABLE attention_events; DROP TABLE attention_items; DROP TABLE attention_tokens; DROP TABLE attention_copies; DROP TABLE attention_copy_queue;');
   old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
   old.pragma('user_version = 8');
   old.close();

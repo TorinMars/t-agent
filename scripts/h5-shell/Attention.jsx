@@ -148,7 +148,9 @@ const SHOWN_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.08), b
 // line and its time. An MD2 list item: the circle, the title in body1, the detail and result lines in body2, the meta line in caption, the row buttons.
 // `session` (`sessionOf`): the row came from a T-Agent session that is still there; it has the session chip, a tap opens that session (`onJump`) and
 // the Details button opens the edit view. `shown`: that session is the one the page shows (wide layout), and the row is marked.
-function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section, session, shown, onJump }) {
+// `ownerName`: the device of a read copy (docs/design/attention-copies.md), for the lines of a change queued for it ("Will be sent to K01") or dropped
+// there; `dismiss` reads the note of a dropped one.
+function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, section, session, shown, onJump, ownerName, dismiss }) {
   const done = item.status === 'done';
   const detail = homeDetail(item, section);
   const second = fields && ['review', 'done'].includes(item.status) && item.result ? { kind: 'result', text: String(item.result) } : null;
@@ -161,6 +163,8 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
   const mark = done ? 'Mark as not done' : 'Mark as done';
   const indent = node ? node.indent : 0;
   const actions = item.status === 'review' ? ['Confirm', 'Reject'] : item.status === 'waiting_user' ? ['Handled'] : [];
+  const pending = Array.isArray(item.pending) && item.pending.length > 0;
+  const dropped = Array.isArray(item.dropped) && item.dropped.length > 0;
   const linked = Boolean(safeLink(item.link_url));
   return (
     <Box
@@ -192,6 +196,9 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
             </Box>
           ) : null}
           {second ? <Box className="h5-attention-result" sx={{ mt: 0.25, typography: 'body2', color: 'text.secondary', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{second.text}</Box> : null}
+          {/* A change made here while the item's device was offline: shown at once, sent when it is back (or not sent, when it was changed there first). */}
+          {pending ? <Box className="h5-attention-pending" sx={{ mt: 0.25, typography: 'caption', color: 'info.light', overflowWrap: 'anywhere' }}>{t(`Will be sent to ${ownerName}`)}</Box> : null}
+          {dropped ? <Box className="h5-attention-dropped" sx={{ mt: 0.25, typography: 'caption', color: 'warning.light', overflowWrap: 'anywhere' }}>{t(`Not sent: it was changed on ${ownerName} first`)}</Box> : null}
           {/* The meta line: the status pill, the time of the last change, the source, the priority and the due date. */}
           <Box className="h5-attention-meta" sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 0.75, rowGap: 0.5, typography: 'caption', color: 'text.secondary' }}>
               <Pill className="h5-attention-status" data-status={item.status} label={t(STATUS_LABELS[item.status] || 'To do')} tone={STATUS_TONE[item.status] || 'default'} sx={PILL_SX} />
@@ -202,14 +209,15 @@ function Row({ item, node, ui, onOpen, fields, fold, act, busy, hold, tag, secti
               {item.due_date ? <Box component="span" className="h5-attention-due" data-late={late || undefined} sx={{ color: late ? 'error.light' : 'text.secondary' }}>{`${t('Due')} ${item.due_date}`}</Box> : null}
           </Box>
         </ListItemButton>
-        {actions.length && act ? (
+        {(actions.length && act) || (dropped && dismiss) ? (
           <Box className="h5-attention-actions" sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, pb: 1, mt: -0.5 }}>
-            {actions.map(name => (
+            {act ? actions.map(name => (
               <Button
                 key={name} className="h5-attention-action" data-action={name.toLowerCase()} size="small" variant="text" disabled={busy}
                 color={name === 'Reject' ? 'inherit' : 'primary'} onClick={() => act(item, name)} sx={ACTION_SX}
               >{t(name)}</Button>
-            ))}
+            )) : null}
+            {dropped && dismiss ? <Button className="h5-attention-action" data-action="dismiss" size="small" variant="text" color="inherit" onClick={() => dismiss(item)} sx={ACTION_SX}>{t('Dismiss')}</Button> : null}
           </Box>
         ) : null}
       </Box>
@@ -246,6 +254,7 @@ function Node({ node, group, ctx }) {
       <Row
         item={item} node={node} ui={ctx.ui} onOpen={ctx.onOpen} fields={ctx.fields(engine)} fold={fold} act={ctx.act} busy={ctx.busy.has(keyOf(item))} hold={movable ? ctx.hold() : null}
         tag={ctx.tagOf(engine)} section={group} session={session} shown={Boolean(session) && ctx.shownOf(item)} onJump={ctx.jump}
+        ownerName={ctx.nameOf(engine)} dismiss={ctx.dismiss}
       />
       {count && open ? (
         <Box
@@ -475,7 +484,8 @@ function Timeline({ events, titleOf }) {
 }
 
 // The edit view of one task. The form starts from the item; Save sends only the changed fields (PATCH). The history is read when it opens.
-function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClose, onLeave, onOpen, onMove }) {
+// `owner`: the engine entry of the item's engine; a read copy of an offline engine says since when it is as shown, and that its history is kept there.
+function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui, onClose, onLeave, onOpen, onMove }) {
   const key = keyOf(item);
   const [form, setForm] = useState(() => ({
     title: item.title || '', notes: item.notes || '', status: item.status, priority: item.priority || 'none', due_date: item.due_date || '',
@@ -483,12 +493,13 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
     ...(fields ? { custom_status: item.custom_status || '', result: item.result || '', parent_id: item.parent_id == null ? '' : String(item.parent_id) } : {}),
   }));
   const [events, setEvents] = useState(null); // null: loading
+  const [elsewhere, setElsewhere] = useState(false); // the answer is the copy here: the history is on the item's own engine
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     let live = true;
-    ui.actions.attentionDetail(key).then(data => { if (live) setEvents(Array.isArray(data && data.events) ? data.events : []); }).catch(() => { if (live) setEvents([]); });
+    ui.actions.attentionDetail(key).then(data => { if (live) { setEvents(Array.isArray(data && data.events) ? data.events : []); setElsewhere(Boolean(data && data.copy)); } }).catch(() => { if (live) setEvents([]); });
     return () => { live = false; };
   }, [key, item.updated_at]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
@@ -597,10 +608,11 @@ function EditDialog({ item, items, fields, movable, tag, state, wide, ui, onClos
         ) : null}
         <Typography variant="caption" color="text.secondary" component="div" id="h5-attention-edit-meta" sx={{ overflowWrap: 'anywhere' }}>
           {`${t('Source')}: `}<span translate="no">{item.source || 'user'}</span>{tag ? <>{' · '}<span translate="no">{deviceText(tag)}</span></> : null}{item.created_at ? ` · ${t('Created')} ${when(item.created_at)}` : ''}{item.updated_at ? ` · ${t('Updated')} ${when(item.updated_at)}` : ''}
+          {owner && owner.offline && owner.asOf ? <span className="h5-attention-edit-as-of">{` · ${t(`As of ${when(owner.asOf)}`)}`}</span> : null}
         </Typography>
         <Box component="section" aria-labelledby="h5-attention-history-title">
           <Typography id="h5-attention-history-title" variant="subtitle2" component="h3" sx={{ mb: 0.5 }}>{t('History')}</Typography>
-          <Timeline events={events} titleOf={titleOf} />
+          {elsewhere && owner ? <Typography id="h5-attention-history-elsewhere" variant="body2" color="text.secondary">{t(`The history is kept on ${deviceText(owner)}`)}</Typography> : <Timeline events={events} titleOf={titleOf} />}
         </Box>
         {error ? <DialogError id="h5-attention-edit-error" sx={{ mt: 0 }}>{error}</DialogError> : null}
       </DialogContent>
@@ -729,7 +741,7 @@ function ListState({ id, icon, title, hint, children }) {
 }
 
 // The scrolling list of the sections. It is drawn inside the sheet, so the drag (and its touchmove guard) is set up when the list is there.
-function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, movableOf, tagOf, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open, sessionOf: sessionFor, shownOf, jump, hint }) {
+function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, movableOf, tagOf, nameOf, dismiss, showClosed, setShowClosed, collapsed, toggleCollapsed, onOpen, act, busy, move, open, sessionOf: sessionFor, shownOf, jump, hint }) {
   const listRef = useRef(null);
   const hostRef = useRef(null);
   const liveRef = useRef(null);
@@ -737,8 +749,9 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
   moveRef.current = move;
   const spec = useMemo(() => attentionDrag(moveRef), []);
   const drag = useListDrag(listRef, hostRef, liveRef, ui, spec);
-  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, sessionOf: sessionFor, shownOf, jump };
+  const ctx = { ui, onOpen, fields: fieldsOf, movable: movableOf, tagOf, nameOf, dismiss, act, busy, collapsed, toggleCollapsed, hold: movable ? drag.hold : null, sessionOf: sessionFor, shownOf, jump };
   const failed = attention.status === 'ready' && Array.isArray(attention.failed) ? attention.failed : [];
+  const offline = attention.status === 'ready' && Array.isArray(attention.offline) ? attention.offline : [];
   return (
     <Box sx={theme => ({ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', ...DRAG_SX(theme), ...DROP_SX(theme) })}>
       <Box id="h5-attention-body" ref={listRef} sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', pb: 2 }}>
@@ -753,6 +766,15 @@ function GroupList({ ui, attention, groups, home, items, fieldsOf, movable, mova
         {failed.map(entry => (
           <Box key={entry.key} className="h5-attention-failed" data-engine={entry.key} role="status" sx={{ px: 2, py: 1, typography: 'caption', color: 'text.secondary', borderBottom: 1, borderColor: 'divider', overflowWrap: 'anywhere' }}>
             {t(`Could not load ${entry.name}`)}
+          </Box>
+        ))}
+        {/* An engine whose items are its read copies as of a time: it is offline (changes to them are sent when it is back), or known only through another
+            device (read only). */}
+        {offline.map(entry => (
+          <Box key={entry.key} className="h5-attention-offline" data-engine={entry.key} role="status" sx={{ px: 2, py: 1, typography: 'caption', color: 'text.secondary', borderBottom: 1, borderColor: 'divider', overflowWrap: 'anywhere' }}>
+            <Box component="span" sx={{ color: 'warning.light' }}>{t(entry.linked ? `${entry.name} is offline` : `${entry.name} is not linked to this device`)}</Box>
+            {entry.asOf ? <Box component="span" className="h5-attention-as-of" title={when(entry.asOf)}>{` · ${t(`Its tasks as of ${shortTime(entry.asOf)}`)}`}</Box> : null}
+            {entry.linked ? ` · ${t('Changes are sent when it is back')}` : ''}
           </Box>
         ))}
         {attention.status === 'ready' && !items.length ? (
@@ -838,7 +860,14 @@ export function AttentionPanel({ state, ui }) {
   const noMove = Array.isArray(attention.noMove) ? attention.noMove : [];
   const fields = treeEngines.size > 0;
   const fieldsOf = engine => treeEngines.has(engine);
-  const movableOf = engine => treeEngines.has(engine) && !noMove.includes(engine);
+  // The rows of an engine whose items are copies as of a time (offline, or not linked) are not dragged: the order is kept on that engine.
+  const movableOf = engine => treeEngines.has(engine) && !noMove.includes(engine) && !(tags.get(engine) && tags.get(engine).offline);
+  const nameOf = engine => deviceText(tags.get(engine) || { key: engine, label: engine });
+  const dismiss = entry => {
+    const ids = (Array.isArray(entry.dropped) ? entry.dropped : []).map(note => note.id);
+    ui.actions.attentionShow(now().map(row => (keyOf(row) === keyOf(entry) ? { ...row, dropped: [] } : row)));
+    for (const id of ids) void Promise.resolve(ui.actions.attentionDismiss && ui.actions.attentionDismiss(id)).catch(() => {});
+  };
   const movable = engines.some(engine => movableOf(engine.key));
   const order = useMemo(() => engines.map(engine => engine.key), [engines]);
   const groups = useMemo(() => groupItems(items, { keepEmpty: fields, engines: order }), [items, fields, order]);
@@ -959,7 +988,7 @@ export function AttentionPanel({ state, ui }) {
       <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
       <GroupList
-        ui={ui} attention={attention} groups={groups} home={home} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} showClosed={showClosed} setShowClosed={setShowClosed}
+        ui={ui} attention={attention} groups={groups} home={home} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} nameOf={nameOf} dismiss={dismiss} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
         sessionOf={sessionFor} shownOf={shownOf} jump={jump} hint={side && items.some(entry => !['done', 'failed', 'cancelled'].includes(entry.status) && sessionFor(entry))}
       />
@@ -967,7 +996,7 @@ export function AttentionPanel({ state, ui }) {
       {/* onLeave: the user goes to a terminal or a file from the context card; the edit view closes, and on a phone the sheet too. */}
       {item ? (
         <EditDialog
-          key={keyOf(item)} item={item} items={items} fields={fieldsOf(engineOf(item))} movable={movableOf(engineOf(item))} tag={tagOf(engineOf(item))} state={state} wide={side} ui={ui} onClose={() => setEditing(null)}
+          key={keyOf(item)} item={item} items={items} fields={fieldsOf(engineOf(item))} movable={movableOf(engineOf(item))} tag={tagOf(engineOf(item))} owner={tags.get(engineOf(item)) || null} state={state} wide={side} ui={ui} onClose={() => setEditing(null)}
           onLeave={() => { setEditing(null); if (!side) ui.actions.closeAttention(); }} onOpen={setEditing} onMove={move}
         />
       ) : null}

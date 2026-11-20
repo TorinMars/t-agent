@@ -12,7 +12,7 @@ const { createLearn, checkEnglish, codeLike } = require('../services/learn');
 // The audio settings with their defaults ("Audio" in docs/design/learn-english-page.md).
 const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true,
   // The mistake analysis settings ("Mistake reports" in docs/design/learn-english.md), kept with them.
-  analysis_auto: true, report_seen: '', report_lang: 'en' };
+  analysis_auto: true, report_seen: '', report_lang: 'en', pick_words: true };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');
@@ -102,7 +102,7 @@ test('a card is created once per owner, kind and text; adding it again returns i
   assert.equal(first.status, 200);
   assert.equal(first.body.created, true);
   const card = first.body.card;
-  assert.deepEqual(Object.keys(card).sort(), ['context', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'source', 'suspended', 'zh'].sort());
+  assert.deepEqual(Object.keys(card).sort(), ['context', 'context_zh', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'source', 'suspended', 'zh'].sort());
   assert.equal(card.en, 'Please fix the login page.');
   assert.equal(card.zh, '');
   assert.equal(card.context, 'Fix login');

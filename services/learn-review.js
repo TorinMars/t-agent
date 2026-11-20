@@ -91,4 +91,18 @@ function countToday(times, now, timeZone) {
   return count;
 }
 
-module.exports = { DAY, AGAIN_MS, EASE_START, EASE_FLOOR, MAX_INTERVAL, LADDER, GRADES, MISTAKE_DAYS, goodInterval, applyAnswer, isMistake, dayKey, previousDay, streak, countToday };
+// A word the person knows, so picking words from their translations skips it ("Picking words from translations" in docs/design/learn-english.md):
+// answered right at least KNOWN_RIGHT times with the last answer right, or a review interval of KNOWN_DAYS days or more. `right`: the number of right
+// answers in the history; `card`: its review state (last_correct, interval_days).
+const KNOWN_RIGHT = 2;
+const KNOWN_DAYS = 21;
+function isKnown(card, right) {
+  if (!card) return false;
+  if (Number.isFinite(card.interval_days) && card.interval_days >= KNOWN_DAYS) return true;
+  return Number(right) >= KNOWN_RIGHT && (card.last_correct === 1 || card.last_correct === true);
+}
+
+module.exports = {
+  DAY, AGAIN_MS, EASE_START, EASE_FLOOR, MAX_INTERVAL, LADDER, GRADES, MISTAKE_DAYS, KNOWN_RIGHT, KNOWN_DAYS,
+  goodInterval, applyAnswer, isMistake, isKnown, dayKey, previousDay, streak, countToday,
+};

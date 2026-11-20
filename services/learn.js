@@ -6,6 +6,9 @@
 // content clock for an edit, the review-state clock for an answer, a random id for an answer, and a move record when a card's text changes.
 // A word card's phonetic transcription (`phonetic`, schema 15) comes from the bundled dictionary (services/phonetics.js) and, for a word it does not
 // have, from the translator's answer; like a filled-in meaning it keeps the content clock ("Phonetic transcription" in docs/design/learn-english.md).
+// A word picked from a translated sentence (services/learn-pick.js) has that sentence as its context; every card JSON carries `context_zh`, the Chinese
+// of the sentence card whose English is the card's context ("Picking words from translations" in docs/design/learn-english.md). The estimated level
+// of the person is kept in `learn_level_v1:<owner>` and synced like the settings.
 const { readState, writeState, isPlainObject } = require('./settings-sync-store');
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
@@ -21,6 +24,12 @@ const MAX_SENTENCE = 300;
 const MAX_WORD = 40;
 const MAX_ZH = 500;
 const MAX_CONTEXT = 120;
+// A word picked from a translation has the whole sentence as its context: up to the sentence limit (other contexts keep MAX_CONTEXT).
+const MAX_PICK_CONTEXT = MAX_SENTENCE;
+// The levels an estimate can give (CEFR), lowest first ("Your level" in docs/design/learn-english.md).
+const LEVELS = ['A2', 'B1', 'B2', 'C1'];
+const MAX_LEVEL_LABEL = 40;
+const MAX_LEVEL_REASON = 200;
 const MAX_ANSWER = 500;
 const MAX_LIMIT = 100;
 const MEANING_CACHE_SIZE = 1000;
@@ -47,10 +56,16 @@ const REPORT_SETTINGS = {
   report_seen: { default: '', check: value => typeof value === 'string' && /^[A-Za-z0-9-]{0,64}$/.test(value) },
   report_lang: { default: 'en', check: value => value === 'en' || value === 'zh' },
 };
-const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS), ...Object.keys(REPORT_SETTINGS)]);
+// Words from the person's translations ("Picking words from translations" in docs/design/learn-english.md): on by default.
+const PICK_SETTINGS = {
+  pick_words: { default: true, check: value => typeof value === 'boolean' },
+};
+// The fields checked by a rule (REPORT_SETTINGS and PICK_SETTINGS), read, saved and merged the same way.
+const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS };
+const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS), ...Object.keys(CHECKED_SETTINGS)]);
 const DEFAULT_SETTINGS = {
   collect: true, daily_goal: 20, starter: 'dev', ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.default])),
-  ...Object.fromEntries(Object.entries(REPORT_SETTINGS).map(([key, field]) => [key, field.default])),
+  ...Object.fromEntries(Object.entries(CHECKED_SETTINGS).map(([key, field]) => [key, field.default])),
 };
 // The first tag of a wrong answer, from the page's checker (scripts/h5-shell/learn-grade.mjs MISTAKE_TAGS, the same list).
 const MISTAKE_TAGS = ['letter-order', 'double-letter', 'missing-letter', 'extra-letter', 'wrong-letter', 'spelling', 'article', 'plural', 'tense',
@@ -123,6 +138,9 @@ const checkId = value => {
   return id;
 };
 const iso = ms => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
+// SQL on a learn_cards row: a word asked inside one of the owner's translated sentences (its context is the English of a translation sentence card).
+const FROM_TRANSLATION = `(learn_cards.kind = 'word' AND learn_cards.context <> '' AND EXISTS (SELECT 1 FROM learn_cards s WHERE s.owner = learn_cards.owner
+  AND s.kind = 'sentence' AND s.source = 'translation' AND s.en = learn_cards.context))`;
 
 // The detail kept with an answer: for a wrong one what was asked for (the page sends the gap word of Fill the gap; else the card's text), the first tag
 // of the page's checker (a tag this version does not know is kept as none) and whether help was used; for a right one none.
@@ -152,16 +170,30 @@ function reportJson(row, { full = true } = {}) {
   return out;
 }
 
-// The JSON of a card for the page. Times are ISO 8601 strings.
-function cardJson(row) {
+// The JSON of a card for the page. Times are ISO 8601 strings. `contexts`: the Chinese of the sentence cards by their English (contextZh below), so a
+// word asked inside one of the person's sentences carries that sentence's Chinese as `context_zh` ('' for every other card).
+function cardJson(row, contexts = null) {
   return {
     id: row.id, kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context,
+    context_zh: row.kind === 'word' && row.context && contexts ? contexts.get(row.context) || '' : '',
     due_at: iso(row.due_at), interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: iso(row.last_at), suspended: Boolean(row.suspended), created_at: iso(row.created_at),
   };
 }
 
 const settingsKey = owner => `learn_v1:${owner}`;
+// The estimated English level of an owner with its sync version: { level, label, reason, answers, mistakes, report_at, updated_at, at, by, seq }
+// (times in ms; `at` the hybrid clock, `by` '' for this device, `seq` its change number). The newest estimate wins in the sync.
+const levelKey = owner => `learn_level_v1:${owner}`;
+// A stored level as the page gets it, or null.
+function levelJson(value) {
+  if (!isPlainObject(value) || !LEVELS.includes(value.level)) return null;
+  return {
+    level: value.level, label: typeof value.label === 'string' ? value.label : '', reason: typeof value.reason === 'string' ? value.reason : '',
+    answers: Number.isSafeInteger(value.answers) ? value.answers : 0, mistakes: Number.isSafeInteger(value.mistakes) ? value.mistakes : 0,
+    report_at: iso(value.report_at), updated_at: iso(value.updated_at),
+  };
+}
 // The version of an owner's learning settings for the sync: { at, by, seq } (hybrid clock, '' for this device, change number).
 const settingsVersionKey = owner => `learn_v1_sync:${owner}`;
 
@@ -189,7 +221,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       daily_goal: Number.isInteger(value.daily_goal) && value.daily_goal >= 1 && value.daily_goal <= 200 ? value.daily_goal : DEFAULT_SETTINGS.daily_goal,
       starter: value.starter === null || Object.hasOwn(STARTER_LISTS, value.starter) ? value.starter : DEFAULT_SETTINGS.starter,
       ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.values.includes(value[key]) ? value[key] : field.default])),
-      ...Object.fromEntries(Object.entries(REPORT_SETTINGS).map(([key, field]) => [key, field.check(value[key]) ? value[key] : field.default])),
+      ...Object.fromEntries(Object.entries(CHECKED_SETTINGS).map(([key, field]) => [key, field.check(value[key]) ? value[key] : field.default])),
     };
   }
   function saveSettings(owner, body) {
@@ -212,7 +244,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       if (!field.values.includes(body[key])) throw bad('Invalid audio setting');
       next[key] = body[key];
     }
-    for (const [key, field] of Object.entries(REPORT_SETTINGS)) {
+    for (const [key, field] of Object.entries(CHECKED_SETTINGS)) {
       if (body[key] === undefined) continue;
       if (!field.check(body[key])) throw bad('Invalid learning settings');
       next[key] = body[key];
@@ -231,6 +263,17 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     if (!row) throw new LearnError('Card not found', 404);
     return row;
   };
+
+  // The Chinese of the sentence cards whose English is the context of one of these word cards: Map en -> zh (a join at read time, so a meaning edited
+  // on the sentence shows at once and nothing more is stored or synced).
+  function contextZh(owner, rows) {
+    const wanted = [...new Set(rows.filter(row => row.kind === 'word' && row.context).map(row => row.context))];
+    if (!wanted.length) return new Map();
+    const found = db.prepare("SELECT en, zh FROM learn_cards WHERE owner = ? AND kind = 'sentence' AND en IN (SELECT value FROM json_each(?))").all(owner, JSON.stringify(wanted));
+    return new Map(found.map(row => [row.en, row.zh]));
+  }
+  const cardsJson = (owner, rows) => { const contexts = contextZh(owner, rows); return rows.map(row => cardJson(row, contexts)); };
+  const oneCard = (owner, row) => cardsJson(owner, [row])[0];
 
   // A card is created once per owner, kind and normalized text; adding it again returns the card there, with an empty meaning filled in.
   function addCard(owner, body) {
@@ -257,7 +300,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
         db.prepare('UPDATE learn_cards SET zh = ?, phonetic = ?, sync_seq = ? WHERE id = ?').run(existing.zh, existing.phonetic, seq(), existing.id);
         changed();
       }
-      return { card: cardJson(existing), created: false };
+      return { card: oneCard(owner, existing), created: false };
     }
     const at = now();
     const { lastInsertRowid } = db.transaction(() => {
@@ -267,7 +310,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, phonetic, source, context, at, at, review.EASE_START, stamp(), seq());
     })();
     changed();
-    return { card: cardJson(getCard(owner, lastInsertRowid)), created: true };
+    return { card: oneCard(owner, getCard(owner, lastInsertRowid)), created: true };
   }
 
   function updateCard(owner, id, body) {
@@ -282,6 +325,8 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       if (other) throw new LearnError('A card with this text already exists', 409);
       if (next.norm !== row.norm) next.phonetic = row.kind === 'word' ? lookupPhonetic(next.en) : ''; // another word: its own transcription
     }
+    // A sentence with another text is picked again (its words were those of the old text).
+    const repick = row.kind === 'sentence' && next.norm !== row.norm;
     if (body.suspended !== undefined) {
       if (typeof body.suspended !== 'boolean') throw bad('Invalid card change');
       next.suspended = body.suspended ? 1 : 0;
@@ -290,6 +335,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     db.transaction(() => {
       db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, phonetic = @phonetic, content_at = @at, content_by = '', sync_seq = @seq
         WHERE id = @id`).run({ ...next, at, seq: seq(), id: row.id });
+      if (repick) db.prepare("UPDATE learn_cards SET picked_level = '', picked_skipped = 0, picked_at = ? WHERE id = ?").run(at, row.id);
       if (next.norm !== row.norm) {
         // The card leaves its old text: a move record tells the linked devices that still have it there (services/learn-sync.js).
         db.prepare('DELETE FROM learn_card_moves WHERE owner = ? AND kind = ? AND norm = ?').run(owner, row.kind, next.norm);
@@ -299,7 +345,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       }
     })();
     changed();
-    return { card: cardJson(getCard(owner, row.id)) };
+    return { card: oneCard(owner, getCard(owner, row.id)) };
   }
 
   function answer(owner, id, body) {
@@ -323,7 +369,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
         .run(row.id, owner, at, body.mode, body.grade, body.correct ? 1 : 0, text, syncStore.reviewId(), seq(), detail.expected, detail.tag, detail.hinted);
     })();
     changed();
-    return { card: cardJson(getCard(owner, row.id)) };
+    return { card: oneCard(owner, getCard(owner, row.id)) };
   }
 
   // The mistake cards of an owner (see review.isMistake), most recently answered first.
@@ -467,24 +513,29 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     if (rest.length && !translatorDown) {
       background = background.then(async () => { await fillMeanings(owner, rest); await fillPhonetics(owner, rest, { ask: true }); }).catch(() => {});
     }
-    return { cards: rows.map(cardJson) };
+    return { cards: cardsJson(owner, rows) };
   }
 
+  // `source`: the cards of one source; `translation` also gives the words asked inside one of the person's translated sentences (their context is
+  // the English of a translation sentence card), so "View" in the Learn settings lists every word picked from a translation.
   async function list(owner, query = {}) {
     const kind = query.kind === undefined || query.kind === '' ? null : query.kind;
     if (kind !== null && !KINDS.includes(kind)) throw bad('The kind must be word or sentence');
     const limit = query.limit === undefined || query.limit === '' ? 50 : Number(query.limit);
     const offset = query.offset === undefined || query.offset === '' ? 0 : Number(query.offset);
     if (!Number.isInteger(limit) || limit < 1 || limit > 200 || !Number.isInteger(offset) || offset < 0) throw bad('Invalid list range');
+    const source = query.source === undefined || query.source === '' ? null : query.source;
+    if (source !== null && !SOURCES.includes(source)) throw bad('Unknown card source');
     const q = typeof query.q === 'string' ? collapse(query.q).slice(0, 100).toLowerCase() : '';
     const like = `%${q.replace(/[\\%_]/g, char => `\\${char}`)}%`;
     const where = `owner = @owner AND (@kind IS NULL OR kind = @kind) AND (@q = '' OR norm LIKE @like ESCAPE '\\' OR zh LIKE @like ESCAPE '\\')
+      AND (@source IS NULL OR source = @source OR (@source = 'translation' AND ${FROM_TRANSLATION}))
       AND NOT (source = 'starter' AND reps = 0 AND @starter IS NULL)`;
-    const params = { owner, kind, q, like, starter: settings(owner).starter, limit, offset };
+    const params = { owner, kind, source, q, like, starter: settings(owner).starter, limit, offset };
     const total = db.prepare(`SELECT COUNT(*) FROM learn_cards WHERE ${where}`).pluck().get(params);
     const rows = db.prepare(`SELECT * FROM learn_cards WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT @limit OFFSET @offset`).all(params);
     await fillPhonetics(owner, rows); // the dictionary only: a list never asks the translator
-    return { cards: rows.map(cardJson), total };
+    return { cards: cardsJson(owner, rows), total };
   }
 
   // Imports a starter list once: words already there (from the list or from the person) are kept as they are. The new words become due
@@ -590,7 +641,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       }
       if (row && !row.suspended && !seen.has(row.id)) { seen.add(row.id); out.push(row); }
     }
-    return { cards: out.map(cardJson) };
+    return { cards: cardsJson(owner, out) };
   }
   // The newest automatic report the person has not opened yet, for the one line on the Learn home; else null.
   function newReport(owner, current = settings(owner)) {
@@ -598,14 +649,33 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     return last && last.auto && last.uid !== current.report_seen ? { uid: last.uid, created_at: iso(last.created_at), mistakes: last.mistakes } : null;
   }
 
+  // ---- The estimated level ("Your level" in docs/design/learn-english.md; services/learn-pick.js estimates it) ----
+  // The stored level with its version, or null.
+  function storedLevel(owner) {
+    const value = readState(db, levelKey(owner));
+    return isPlainObject(value) && LEVELS.includes(value.level) ? value : null;
+  }
+  // Stores a new estimate made here: { level, label, reason, answers, mistakes, report_at, updated_at } (checked by services/learn-pick.js).
+  function saveLevel(owner, value) {
+    writeState(db, levelKey(owner), {
+      level: value.level, label: String(value.label).slice(0, MAX_LEVEL_LABEL), reason: String(value.reason).slice(0, MAX_LEVEL_REASON),
+      answers: value.answers, mistakes: value.mistakes, report_at: Number.isSafeInteger(value.report_at) ? value.report_at : null, updated_at: value.updated_at,
+      at: stamp(), by: '', seq: seq(),
+    });
+    changed();
+    return levelJson(storedLevel(owner));
+  }
+
   return {
-    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter,
+    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter, storedLevel, saveLevel,
+    level: owner => levelJson(storedLevel(owner)),
     settle: () => background, // the queue's background fill has ended (tests)
     mistakes, sinceReport, mistakesSince, reports, report, hasReport, saveReport, findCards, newReport, lastReport, lastAutoReport,
   };
 }
 
 module.exports = {
-  createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
+  createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
+  LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse,
 };

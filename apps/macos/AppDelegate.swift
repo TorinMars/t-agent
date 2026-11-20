@@ -55,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
     private var statusMenu: StatusMenuController?
     /// A page path from a t-agent://open link, loaded when the page shows.
     private(set) var pendingPath: String?
+    /// Another linked engine while this Mac's server is down (Failover.swift).
+    private(set) var failover = FailoverState()
+    /// The person stopped the server from the app: no linked engine is opened for that.
+    private var stoppedByPerson = false
 
     init(services: AppServices, preferences: AppPreferences) {
         self.services = services
@@ -74,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = MainWindowController(version: appVersion(), dataStore: .default(), autosave: true, inspectable: preferences.webInspector,
-                                          server: { [weak self] in self?.monitor.config.url ?? AppConfig.defaultURL },
+                                          server: { [weak self] in self?.failover.shown?.url ?? self?.monitor.config.url ?? AppConfig.defaultURL },
                                           openExternal: services.openURL)
         window.onLoadFailed = { [weak self] in self?.monitor.send(.checkNow) }
         window.placeholder.startButton.target = self
@@ -103,18 +107,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
     // MARK: Monitor
 
     private func stateChanged() {
-        window?.updatePlaceholder(placeholderContent(monitor.state, config: monitor.config))
+        if failover.shown == nil { window?.updatePlaceholder(placeholderContent(monitor.state, config: monitor.config)) }
         statusMenu?.setToolTip(statusLine(monitor.state, config: monitor.config))
+        // A server that stays down: the linked addresses are tried again now and then (stepFailover keeps the pace).
+        if monitor.state.phase == .notRunning && failover.shown == nil { failoverStep(.homeDown(byPerson: stoppedByPerson, now: services.now())) }
+    }
+
+    // MARK: Another engine while this one is down
+
+    private func failoverStep(_ event: FailoverEvent) {
+        let effects = stepFailover(&failover, event, hasLinked: !monitor.config.linked.isEmpty)
+        for effect in effects {
+            switch effect {
+            case .probe: probeLinked(failoverCandidates(monitor.config.linked))
+            case .showLinked:
+                window?.showPage(path: nil) // `server` names the linked engine now
+            case .showHome:
+                let path = pendingPath ?? window?.lastPath
+                pendingPath = nil
+                window?.showPage(path: path)
+            case .showPlaceholder:
+                window?.showPlaceholder(placeholderContent(monitor.state, config: monitor.config))
+                monitor.send(.checkNow)
+            case .stay: break
+            }
+        }
+        window?.titleNote = failoverTitleNote(failover)
+    }
+
+    /// Tries the addresses one after another (the same health check as this Mac's server); the first that answers wins.
+    private func probeLinked(_ candidates: [FailoverTarget]) {
+        guard let first = candidates.first else { failoverStep(.probed(nil)); return }
+        services.health(first.url) { [weak self] result in
+            guard let self = self else { return }
+            if case .up = result { self.failoverStep(.probed(first)) } else { self.probeLinked(Array(candidates.dropFirst())) }
+        }
     }
 
     private func handle(_ effect: MonitorEffect) {
         switch effect {
         case .showPage:
-            let path = pendingPath ?? window?.lastPath
-            pendingPath = nil
-            window?.showPage(path: path)
+            stoppedByPerson = false
+            failoverStep(.homeUp)
         case .showPlaceholder:
+            if failover.shown != nil { break } // the linked engine stays in the window
             window?.showPlaceholder(placeholderContent(monitor.state, config: monitor.config))
+            failoverStep(.homeDown(byPerson: stoppedByPerson, now: services.now()))
         case .explain(let action):
             if case .manual(let message) = services.command(action, config: monitor.config) { explain(message) }
         case .commandFailed(let action, let output):
@@ -175,6 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
             NSApp.activate(ignoringOtherApps: true)
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
+        if action == .stop { stoppedByPerson = true }
+        if action == .start { stoppedByPerson = false }
         monitor.send(.request(action))
     }
 
@@ -224,6 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
 
     @objc func reloadPage(_ sender: Any?) { window?.reload() }
 
+    @objc func returnToThisMac(_ sender: Any?) { failoverStep(.returnHome) }
+
     @objc func goBack(_ sender: Any?) { window?.webView.goBack() }
 
     @objc func goForward(_ sender: Any?) { window?.webView.goForward() }
@@ -240,6 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
         case #selector(goBack(_:)): return showing && (window?.webView.canGoBack ?? false)
         case #selector(goForward(_:)): return showing && (window?.webView.canGoForward ?? false)
         case #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(actualSize(_:)): return showing
+        case #selector(returnToThisMac(_:)): return failover.shown != nil
         case #selector(toggleAutoStart(_:)):
             menuItem.state = preferences.startServiceOnLaunch ? .on : .off
             return true

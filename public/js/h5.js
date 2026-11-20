@@ -414,6 +414,7 @@
       // A task that was in the list and is not any more: deleted, archived, or hidden from this machine by the machine that owns it (only a real list says so).
       const gone = Array.isArray(list) ? from.tasks.filter(row => !list.some(next => next.id === row.id)) : [];
       from.tasks = Array.isArray(list) ? list : [];
+      from.lastKnown = null;
       from.status = 'ready';
       from.failure = '';
       // This machine has no capability list, but every row of a server that can archive has the key `archived_at` (null while in use): an older process, serving
@@ -432,6 +433,10 @@
       if (stale()) return false;
       from.status = 'offline';
       from.failure = error.message;
+      // A linked engine that did not answer in this page load: its tasks as this engine last read them (`last_known`, services/linked-last-tasks.js),
+      // dimmed and not opened until it is back ("Tasks of an offline engine" in docs/design/failover-and-one-login.md).
+      const last = error.data && error.data.last_known;
+      if (!from.tasks.length && last && Array.isArray(last.tasks)) { from.tasks = last.tasks; from.lastKnown = last.at || true; }
       renderTasks();
       showActiveCount();
       publishSources();
@@ -517,8 +522,11 @@
     // The selected task: "+" on the right of its row adds a terminal.
     const ownList = hasSessions ? ownSessions() : terminalsState === 'error' ? { label: item.title, note: 'Could not load the sessions', rows: [] } : null;
     const peek = peeks.get(ref);
+    // An offline service's rows are dimmed; the ones only known from what this engine last read (`lastKnown`) cannot be opened or changed.
+    const offline = from.status === 'offline';
+    if (offline && from.lastKnown) return { id: item.id, ref, title: item.title, selected: false, expanded: false, add: false, offline, stale: true, count: null, sessions: null };
     return {
-      id: item.id, ref, title: item.title, selected, expanded: open, add: true, ...activeIn(from, item.id), sessionStates: sessionStates(from, item.id),
+      id: item.id, ref, title: item.title, selected, expanded: open, add: true, offline, ...activeIn(from, item.id), sessionStates: sessionStates(from, item.id),
       count: open ? (selected ? (hasSessions ? terminals.length : null) : (peek && peek.status === 'ready' ? peek.terminals.length : null)) : null,
       sessions: open ? (selected ? ownList : peekSessions(from, item)) : null,
     };
@@ -750,8 +758,10 @@
       note(listed.some(from => from.status === 'new') ? 'Loading…' : listed.includes(LOCAL) && LOCAL.status === 'offline' ? `Could not load tasks: ${LOCAL.failure}` : 'No tasks yet. Create one above');
       return;
     }
-    // `groups`: this machine's tasks by group, for T-Attention's way back.
-    setTaskList({ note: null, groups: listed.includes(LOCAL) ? sectionGroups(LOCAL) : [], tasks, sortable: canSort });
+    // `groups`: this machine's tasks by group, for T-Attention's way back. `offline`: the names of the listed services that are offline and still have
+    // rows in the list (one info line each above the list).
+    const offline = listed.filter(from => from !== LOCAL && from.status === 'offline' && from.tasks.length).map(sourceName);
+    setTaskList({ note: null, groups: listed.includes(LOCAL) ? sectionGroups(LOCAL) : [], tasks, sortable: canSort, offline });
   }
 
   // Keep the screen on while a task is open (a terminal or a chat), so the phone does not sleep in the middle of a session and drop the connection.
@@ -811,6 +821,7 @@
 
   // Opens or closes the list of sessions under a task, without going anywhere.
   function toggleTask(from, item) {
+    if (from.status === 'offline' && from.lastKnown) return; // only known from what this engine last read: nothing to open until it is back
     const ref = taskRef(from, item.id);
     if (expanded.has(ref)) { expanded.delete(ref); peeks.delete(ref); closeListMenu(ref); renderTasks(); return; }
     expanded.add(ref);
@@ -4372,8 +4383,23 @@
     selectTask(from, item, { terminal: terminalId });
     return true;
   }
-  // The service worker makes the page installable as a Home Screen app (public/sw.js); it shows no notifications.
+  // The service worker makes the page installable as a Home Screen app and shows public/offline.html while this engine is down (public/sw.js); it
+  // shows no notifications. A hand-over this page was opened with when it was signed in already is taken off the address ("One login for linked engines").
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  if (/^#handover=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+  // The offline page's "Continue on <engine>" needs this engine's name and the linked engines' addresses while this one is down: kept from
+  // /api/sign-in-handover/peers in `ta-linked-engines`, a little after the start (the top page only). An engine the answer has no address for keeps
+  // the addresses known before. "The page while its engine is down" in docs/design/failover-and-one-login.md.
+  if (!PANE) setTimeout(() => api('GET', '/api/sign-in-handover/peers').then(answer => {
+    if (!answer || !Array.isArray(answer.peers)) return;
+    let before = [];
+    try { before = (JSON.parse(LocalKeys.get('ta-linked-engines') || '{}') || {}).peers || []; } catch { /* written again below */ }
+    const peers = answer.peers.filter(peer => peer && peer.instance_id).map(peer => {
+      const old = before.find(item => item && item.instance_id === peer.instance_id);
+      return { instance_id: peer.instance_id, name: peer.name, addresses: peer.addresses && peer.addresses.length ? peer.addresses : (old && old.addresses) || [] };
+    });
+    LocalKeys.set('ta-linked-engines', JSON.stringify({ self: { instance_id: answer.instance_id, name: answer.name }, peers }));
+  }, () => { /* an older server: no offline page offers */ }), 4000);
 
   // The input mode can change while the page is open (a mouse or a touch screen attached): the terminal font, the layout measurements and the wake lock follow.
   let lastInput = ui.get().input;

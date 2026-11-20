@@ -263,6 +263,8 @@ app.use('/api/settings-sync', require('./routes/settings-sync').createSettingsSy
 app.use('/api/device-settings', require('./routes/device-settings').createDeviceSettingsRouter());
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
 app.use('/api/service-links', require('./routes/service-links'));
+// One login for linked engines (routes/sign-in-handover.js): the switch, the linked engines' addresses and the hand-over a page asks for.
+app.use('/api/sign-in-handover', require('./routes/sign-in-handover').createSignInHandoverRouter());
 app.use('/api/remote/v1', require('./routes/remote-api'));
 // Standard Engine API. The Client package bundles it by default and exposes the same protocol as a standalone Engine.
 app.use('/v1', require('./routes/engine-v1'));
@@ -502,6 +504,11 @@ for (const oldPage of ['/web', '/index.html', '/h5.html']) {
 app.get('/login.html', (req, res) => res.redirect(config.loginPath));
 // Static middleware decodes paths: encoded /index%2ehtml must not evade the
 // explicit page routes above. Do not allow implicit directory index documents.
+// The service worker carries the hash of the offline page's files (lib/service-worker.js). Behind the login gate like before; revalidated each time.
+const serviceWorkerSource = require('./lib/service-worker').createServiceWorkerSource({ publicDir: path.join(__dirname, 'public') });
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache').type('application/javascript').send(serviceWorkerSource());
+});
 app.use((req, res, next) => {
   let pathname;
   try { pathname = decodeURIComponent(req.path); } catch { return res.sendStatus(400); }
@@ -655,6 +662,8 @@ function startAppInfo(listeningPort) {
         host: config.host, port: listeningPort, interfaces: os.networkInterfaces(),
         remote: appInfo.remoteAddresses({ frp: tunnel(frpRouter.service), ssh: tunnel(sshTunnelRouter.service), publicUrl: publicUrl() }),
       }),
+      // The linked engines' web addresses, remembered while they were online (services/sign-in-handover.js): the app's way out while this one is down.
+      linked: (() => { try { return require('./services/sign-in-handover').getSignInHandover().linkedAddresses(); } catch { return []; } })(),
     }),
   });
   appInfo.setSharedPublisher(publisher);

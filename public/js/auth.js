@@ -28,7 +28,22 @@
     AUTH_REQUIRED: 'Log in with your current authenticator first.',
     LOCAL_ACCESS_REQUIRED: '“Local access only” can only be chosen on the server itself: open http://127.0.0.1:PORT/ in a browser on that machine, then choose it.',
     AUTH_RECENT_VERIFICATION_REQUIRED: 'Before replacing the authenticator, verify with the current code or a recovery code.',
+    HANDOVER_USED: 'The sign-in from your other device was already used. Log in with your code here.',
+    HANDOVER_EXPIRED: 'The sign-in from your other device took too long. Log in with your code here.',
+    HANDOVER_OFF: 'This device does not accept sign-in from linked devices. Log in with your code here.',
+    HANDOVER_CODE_REQUIRED: 'This device asks for its own code. Log in with your code here.',
   };
+  // A sign-in handed over by a linked device ("One login for linked engines" in docs/design/failover-and-one-login.md): the other device's page opened
+  // this one with `#handover=<token>&n=<nonce>`. The fragment is taken off the address at once (it never reaches a server, history or a Referer), and
+  // the token is used only when this browser is not signed in here already.
+  const handover = (() => {
+    const hash = typeof location.hash === 'string' ? location.hash : '';
+    const params = new URLSearchParams(hash.replace(/^#/, ''));
+    const token = params.get('handover');
+    const nonce = params.get('n');
+    if (hash && typeof history !== 'undefined') history.replaceState(null, '', location.pathname + location.search);
+    return token && nonce ? { token, nonce } : null;
+  })();
 
   async function request(url, body) {
     const response = await fetch(url, {
@@ -130,6 +145,19 @@
     document.getElementById('mode-local').addEventListener('click', () => choose('local'));
   }
 
+  async function redeemHandover() {
+    title.textContent = 'Signing in';
+    description.textContent = 'Signing in with your login on your other device…';
+    try {
+      const data = await request(base + '/handover', { token: handover.token, nonce: handover.nonce, return_to: returnTo });
+      location.replace(data.redirect);
+    } catch (error) {
+      showLogin(false);
+      errorNode.textContent = messages[error.message] || 'The sign-in from your other device was not accepted. Log in with your code here.';
+      errorNode.hidden = false;
+    }
+  }
+
   async function init() {
     try {
       const status = await request(base + '/status');
@@ -146,6 +174,7 @@
         document.getElementById('cancel-setup').href = returnTo;
         document.getElementById('replace-authenticator').addEventListener('click', () => run(content, () => startSetup()));
       } else if (status.authenticated) location.replace(returnTo);
+      else if (handover && !isSetupPage) await redeemHandover();
       else showLogin(isSetupPage);
     } catch (error) { errorNode.textContent = messages[error.message] || 'Could not check the binding status. Refresh and retry.'; errorNode.hidden = false; }
   }

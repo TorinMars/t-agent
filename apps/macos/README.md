@@ -10,6 +10,7 @@ A native window for the T-Agent web service: the page in a WKWebView, a menu bar
 | `DeepLink.swift` | Parsing `t-agent://show` and `t-agent://open?path=...` |
 | `ServiceControl.swift` | The exact pm2 / launchd commands, shell quoting, the process runner, the health check, the timer type |
 | `ServiceMonitor.swift` | The state machine (checking, running, not running, starting, restarting, stopping), the one automatic start, the check timing, the injected `AppServices` |
+| `Failover.swift` | Another linked engine while this Mac's server is down: `linked` of app.json, the order of the addresses, the pure decision and the title line |
 | `Placeholder.swift` | The not-running view and its text per state |
 | `StatusMenu.swift` | The menu bar item: entries per state, the web addresses, the icon drawn in code |
 | `MainMenu.swift` | The main menu; the Edit menu makes Cmd+C / V / X / A / Z work in the page |

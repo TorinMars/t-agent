@@ -65,6 +65,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     /// The page that was open when the server went away, to load again when it is back.
     var lastPath: String?
     private(set) var showingPage = false
+    /// One line after the page's title (Failover.swift: which linked engine is shown and the way back), or nil.
+    var titleNote: String? { didSet { refreshTitle() } }
     private var titleObservation: NSKeyValueObservation?
     private var themeColorObservation: NSKeyValueObservation?
     /// Where each running download goes.
@@ -113,10 +115,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
         window.contentView = container
         window.initialFirstResponder = webView
 
-        titleObservation = webView.observe(\.title, options: [.new]) { [weak self] view, _ in
-            guard let self = self, self.showingPage else { return }
-            let title = (view.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            self.window.title = title.isEmpty ? "T-Agent" : title
+        titleObservation = webView.observe(\.title, options: [.new]) { [weak self] _, _ in
+            self?.refreshTitle()
         }
         // The page's theme-color (macOS 12 and newer) paints the title bar; without one it keeps the fallback.
         if #available(macOS 12.0, *) {
@@ -125,6 +125,13 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
                 applyPageTitleBar(self.window, color: self.showingPage ? view.themeColor : nil)
             }
         }
+    }
+
+    /// The page's title (or T-Agent), then the note when there is one.
+    func refreshTitle() {
+        let page = showingPage ? (webView.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let base = page.isEmpty ? "T-Agent" : page
+        window.title = titleNote.map { "\(base) — \($0)" } ?? base
     }
 
     // MARK: Showing
@@ -164,7 +171,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
             container.addSubview(placeholder)
         }
         webView.isHidden = true
-        window.title = "T-Agent"
+        refreshTitle()
     }
 
     func updatePlaceholder(_ content: PlaceholderContent) {

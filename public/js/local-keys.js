@@ -42,6 +42,7 @@
     ['t-agent.settings-device', 'local', 'browser', 'the same choice as kept before the Settings tabs: read once, then removed', false],
     ['h5-mindmap-draft:*', 'local', 'browser', 'the unsaved edits of a map in this browser (the saved map is on its service)', false],
     ['h5-mindmap', 'local', 'browser', 'kept by mind map columns of v2.133 and v2.134: read only to drop them', true],
+    ['ta-linked-engines', 'local', 'cache-of-shared-state', 'this engine\'s name and the web addresses of its linked engines, for the offline page\'s "Continue on" while this engine is down (the server keeps them too)', false],
     ['ta-device-id', 'local', 'browser', 'a random id of this browser, so the "Continue" hint and the drafts never offer this device its own session or text', false],
     ['terminal-client-id', 'session', 'browser', 'names this tab as one terminal client', true],
     ['h5-auto-reloaded-versions', 'session', 'browser', 'the versions this tab reloaded for by itself, so it never reloads twice', false],

@@ -22,6 +22,7 @@ import { Icon } from './Icons.jsx';
 import { ServiceLinksSection, UnlinkDialog, linkEngineKey, readLinks } from './ServiceLinks.jsx';
 import { RestartButton, restartInfo } from './Restart.jsx';
 import { PeerFsSwitch } from './PeerFs.jsx';
+import { SignInOnButton, SignInSwitch } from './SignInHandover.jsx';
 import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
 import { MacAppSection, compareVersions } from './MacApp.jsx';
@@ -471,7 +472,8 @@ function DeviceRow({ engine, title, meta, show, tier, menu, children }) {
 // `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
 // `onRename`: null when this row cannot be renamed (an older server).
 // `tier`: the props of its "Company computer" switch, or null when it has none (a remote Engine that is not linked).
-function EngineRow({ server, link, busy, show, tier, older, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
+// `signIn`: { peer, pagePath, onDone } for "Sign in on <name> too" (SignInHandover.jsx), or null (not linked, or an older server).
+function EngineRow({ server, link, busy, show, tier, older, signIn = null, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
   const actions = [
     ...(onRename ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: onRename }] : []),
     { key: 'check', className: 'h5-engine-check', label: t('Check'), onClick: onCheck, disabled: busy },
@@ -494,6 +496,7 @@ function EngineRow({ server, link, busy, show, tier, older, onCheck, onUpdate, o
       </Typography>}
     >
       {server.last_error && server.status !== 'online' ? <Typography className="h5-engine-error" variant="body2" color="error">{t(errorLabel(server.last_error))}</Typography> : null}
+      {signIn ? <SignInOnButton peer={signIn.peer} name={server.name} pagePath={signIn.pagePath} onDone={signIn.onDone} /> : null}
       <Feedback feedback={feedback} />
     </DeviceRow>
   );
@@ -551,15 +554,18 @@ export function DevicesGroup({ state, ui, request = null }) {
   const [localTier, setLocalTier] = useState(null); // this machine's flag (GET /api/device-tier), or null on an older server (no switch)
   const [tierShown, setTierShown] = useState({}); // device key -> the value shown while a change is saved, and after it until the group opens again
   const [tierBusy, setTierBusy] = useState({}); // device key -> true while its change is saved
+  const [signInPeers, setSignInPeers] = useState([]); // GET /api/sign-in-handover/peers: the linked devices "Sign in on <name> too" can reach
   const load = async ({ keep = false } = {}) => {
     try {
-      const [list, version, linked, own, tier] = await Promise.all([
+      const [list, version, linked, own, tier, signIn] = await Promise.all([
         api('GET', '/api/remote-servers'),
         api('GET', '/api/system/version').catch(() => null),
         readLinks().catch(() => null),
         api('GET', '/api/system/engine-name').catch(() => null),
         api('GET', '/api/device-tier').catch(() => null),
+        api('GET', '/api/sign-in-handover/peers').catch(() => null),
       ]);
+      setSignInPeers(signIn && Array.isArray(signIn.peers) ? signIn.peers : []);
       setLocalTier(tier && typeof tier.company_computer === 'boolean' ? tier.company_computer : null);
       setServers(Array.isArray(list) ? list : []);
       setLocalVersion(version && version.app_version ? version.app_version : null);
@@ -670,9 +676,15 @@ export function DevicesGroup({ state, ui, request = null }) {
     ...servers.map(server => ({ key: `remote:${server.id}`, name: server.name, instanceId: server.instance_id || null, server })),
   ]);
   const localAt = placed.findIndex(entry => entry.key === 'local');
+  // "Sign in on <name> too": a linked row whose engine the peers answer names (by instance id); the page path of this page (/ or /h5) is kept there.
+  const signInProps = server => {
+    const peer = linkOf(server) && server.instance_id ? signInPeers.find(item => item.instance_id === server.instance_id) : null;
+    if (!peer) return null;
+    return { peer, pagePath: location.pathname === '/h5' ? '/h5' : '/', onDone: (message, error) => setRowFeedback(all => ({ ...all, [server.id]: { message, error } })) };
+  };
   const engineRow = server => (
     <EngineRow
-      key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} older={isOlder(server.remote_version, versions)} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
+      key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} older={isOlder(server.remote_version, versions)} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} signIn={signInProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
       onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
       onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
     />
@@ -719,6 +731,7 @@ export function DevicesGroup({ state, ui, request = null }) {
           <MacAppSection opened={opened} />
           <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
           <PeerFsSwitch opened={opened} />
+          <SignInSwitch opened={opened} />
           <RuleSyncSection state={state} opened={opened} />
           <Advanced open={advanced} onToggle={toggleAdvanced}>
             <LocalOnly id="h5-devices-advanced-remote">

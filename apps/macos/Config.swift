@@ -41,6 +41,8 @@ struct AppConfig: Equatable {
     var launchdLabel: String
     var addresses: [WebAddress]
     var source: ConfigSource
+    /// The web addresses of the engines linked to this one (`linked`, Failover.swift).
+    var linked: [LinkedEngine] = []
 
     static let defaultURL = URL(string: "http://127.0.0.1:3000")!
     static let defaultPm2Name = "t-agent"
@@ -167,6 +169,7 @@ func parseAppConfig(_ data: Data?) -> AppConfig {
     if let name = cleanPm2Name(object["pm2_name"]) { config.pm2Name = name }
     if let label = cleanLaunchdLabel(object["launchd_label"]) { config.launchdLabel = label }
     config.addresses = parseAddresses(object["addresses"], base: config.url)
+    config.linked = parseLinked(object["linked"])
     return config
 }
 

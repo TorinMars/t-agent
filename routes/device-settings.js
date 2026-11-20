@@ -44,6 +44,9 @@ const ALLOWLIST = Object.freeze([
   { method: 'PUT', path: /^\/device-tier$/, body: ['company_computer'] },
   // The tools agent sessions rely on, for Settings → Devices → Environment (routes/environment.js; capability `environment:tools`). Read only;
   // POST probes again. The probes take a few seconds (a login shell may be asked where a program is).
+  // Whether this device accepts sign-in hand-overs from its linked devices (routes/sign-in-handover.js).
+  { method: 'GET', path: /^\/sign-in-handover\/settings$/, body: null },
+  { method: 'PUT', path: /^\/sign-in-handover\/settings$/, body: ['accept'] },
   { method: 'GET', path: /^\/environment\/tools$/, body: null, timeoutMs: 30_000 },
   { method: 'POST', path: /^\/environment\/tools$/, body: [], timeoutMs: 30_000 },
 ]);
@@ -82,6 +85,7 @@ function createEngineDeviceSettingsRouter(options = {}) {
     widget = () => widgetRouter,
     deviceTier = () => require('./device-tier').createDeviceTierRouter(),
     environment = () => require('./environment').createEnvironmentToolsRouter(),
+    signIn = () => require('./sign-in-handover').createSettingsRouter(),
   } = options;
   const { effectiveWorkDir, saveWorkDir } = require('../services/work-dir');
   const router = express.Router();
@@ -110,6 +114,7 @@ function createEngineDeviceSettingsRouter(options = {}) {
   router.use('/rule-sync', ruleSync());
   router.use('/device-tier', deviceTier());
   router.use('/environment', environment());
+  router.use('/sign-in-handover', signIn());
   router.use('/attention/widget/settings', (req, res, next) => {
     const target = widget();
     if (!target) return res.status(404).json({ error: 'WIDGET_UNAVAILABLE' });

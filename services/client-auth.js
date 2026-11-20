@@ -180,6 +180,13 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, in
     database.prepare('DELETE FROM client_auth_attempts WHERE attempt_key = ?').run(hash(`ip:${ip}`));
     return { ...sessionGrant(row.version), recovery };
   }
+  // A login handed over by a linked engine (services/sign-in-handover.js): the same session as a code login, but `authenticatedAt` 0, so it is never
+  // a recent verification (replacing the authenticator asks for this engine's own code). Only in authenticator mode with an authenticator bound.
+  function handoverGrant(from) {
+    const row = read();
+    if (accessMode() !== 'remote' || !row.secret_cipher) fail('HANDOVER_NOT_AVAILABLE', 409);
+    return { ...sessionGrant(row.version), authenticatedAt: 0, handover: { from: String(from || '').slice(0, 64) } };
+  }
   function beginSetup(session, ip) {
     secureConfiguration();
     const row = read();
@@ -219,7 +226,7 @@ function createClientAuth(database, { sessionSecret, ownerId, now = Date.now, in
     return { auth: sessionGrant(version), recoveryCodes };
   }
   return {
-    authenticated, authenticate, renew, beginSetup, confirmSetup,
+    authenticated, authenticate, renew, beginSetup, confirmSetup, handoverGrant,
     sessionActive(sid) {
       const row = database.prepare('SELECT sess, expired FROM sessions WHERE sid = ?').get(sid);
       try { return Boolean(row && row.expired > now() && authenticated(JSON.parse(row.sess))); } catch { return false; }

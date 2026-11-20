@@ -38,7 +38,7 @@ function makeApp(assets, publicDir, page, seen) {
     const { write, end } = res;
     res.write = function counted(chunk, ...rest) { if (chunk) bytes += Buffer.byteLength(chunk); return write.call(this, chunk, ...rest); };
     res.end = function counted(chunk, ...rest) { if (chunk && typeof chunk !== 'function') bytes += Buffer.byteLength(chunk); return end.call(this, chunk, ...rest); };
-    res.on('finish', () => seen.push({ url: req.originalUrl, status: res.statusCode, cacheControl: res.getHeader('cache-control'), encoding: res.getHeader('content-encoding') || null, bytes }));
+    res.on('finish', () => seen.push({ url: req.originalUrl, dest: req.get('sec-fetch-dest') || null, status: res.statusCode, cacheControl: res.getHeader('cache-control'), encoding: res.getHeader('content-encoding') || null, bytes }));
     next();
   });
   app.get('/h5', (req, res) => {
@@ -119,7 +119,11 @@ async function waitFor(condition, what) {
       await page.goto(`${origin}/h5`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.sockets.length > 0 && window.sockets[0].readyState === 1);
       await page.locator('.h5-header').waitFor();
-      const loaded = seen.filter(isAsset);
+      // The service worker caches the offline page's few files once after it installs ("failover-and-one-login": public/sw.js OFFLINE_FILES):
+      // fetches of the worker (Sec-Fetch-Dest: empty), not on the page's own loading path, and only those files.
+      const OFFLINE_FILES = ['/offline.html', '/css/offline.css', '/js/offline.js', '/js/local-keys.js', '/js/i18n.js', '/js/i18n-zh-ui.js', '/favicon.svg'];
+      for (const entry of seen.filter(item => item.dest === 'empty' && isAsset(item))) assert.ok(OFFLINE_FILES.includes(plain(entry.url)), `only the offline files are fetched by the worker: ${entry.url}`);
+      const loaded = seen.filter(item => isAsset(item) && item.dest !== 'empty');
       const chunks = assets.modulePreloads('/js/h5-shell.js');
       assert.ok(chunks.length >= 1 && chunks.length <= 4, `the shell imports a few chunks: ${chunks}`);
       const expected = ['/vendor/xterm/xterm-5.5.0.css', '/css/h5.css', '/js/combined.js',

@@ -16,6 +16,7 @@ The per-device parts of the settings sheet ("This device only") can be read and 
 | `GET`, `PUT /attention/widget/settings` | `/api/attention/widget/settings` | `enabled` only: the window language is shared |
 | `GET`, `PUT /device-tier` | `/api/device-tier` (see "Device tier" below) | `company_computer` |
 | `GET`, `POST /environment/tools` | `/api/environment/tools` (the tools list only, never the full check; see [environment-compare.md](environment-compare.md)) | none |
+| `GET`, `PUT /sign-in-handover/settings` | `/api/sign-in-handover/settings` (whether that device accepts sign-in hand-overs, [failover-and-one-login.md](failover-and-one-login.md)) | `accept` |
 
 The window's router for a peer is `peerSettings` of `routes/attention-widget.js` (registered from `server.js`, where the launcher is made): the same answers, but it never notes the page language, which belongs to that machine's own page. Without it the two paths are 404 `WIDGET_UNAVAILABLE`. No route on the list holds a secret: OSS, translator and speech keys, Telegram, CLI and remote tokens, the account and access mode, restart and PM2 are not reachable, and the answers are the masked ones a page gets anyway. The tunnel carries `/v1/device-settings` without any change to its rules; the mount is in the reviewed list of `test/task-visibility.test.js` (no task in it).
 

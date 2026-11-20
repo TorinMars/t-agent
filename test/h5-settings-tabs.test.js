@@ -18,7 +18,7 @@ test('each tab holds exactly its parts: Shared the shared ones and Telegram, a d
   const { PARTS, partShown } = await load('settings-tabs.mjs');
   const inTab = scope => Object.keys(PARTS).filter(id => partShown(id, scope));
   assert.deepEqual(inTab('shared'), ['oss', 'browser-sites', 'voice', 'translate', 'settings-sync', 'task-list-devices', 'environment', 'notifier-plugins', 'telegram', 'notify-rules', 'widget-language', 'attention-summary', 'usage-record', 'usage-top', 'usage-unused', 'usage-store']);
-  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'engine-name', 'link', 'peer-fs', 'rule-sync', 'advanced', 'environment', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'usage-top', 'usage-unused', 'usage-store']);
+  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'engine-name', 'link', 'peer-fs', 'sign-in', 'rule-sync', 'advanced', 'environment', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'usage-top', 'usage-unused', 'usage-store']);
   assert.equal(inTab(null).length, Object.keys(PARTS).length, 'without tabs every part is drawn');
   assert.equal(partShown('something-new', 'shared'), true, 'an unknown part is never lost');
 });
@@ -35,7 +35,7 @@ test('opening a part from code moves to the tab that holds it; a group stays on 
   const { tabForTarget, PARTS } = await load('settings-tabs.mjs');
   const { settingsTarget } = await load('settings-target.mjs');
   // Every part id and alias of settings-target.mjs has a tab.
-  for (const id of ['workdir', 'oss', 'agent-skills', 'browser-ext', 'voice', 'translate', 'link', 'peer-fs', 'rule-sync', 'advanced', 'connect', 'remote', 'access', 'authenticator', 'service-links', 'attention-skill']) {
+  for (const id of ['workdir', 'oss', 'agent-skills', 'browser-ext', 'voice', 'translate', 'link', 'peer-fs', 'sign-in', 'rule-sync', 'advanced', 'connect', 'remote', 'access', 'authenticator', 'service-links', 'attention-skill']) {
     const target = settingsTarget(id);
     assert.ok(Object.hasOwn(PARTS, target.section), `${id} has a part`);
   }

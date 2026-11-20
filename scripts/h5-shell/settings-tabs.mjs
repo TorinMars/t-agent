@@ -32,6 +32,7 @@ export const PARTS = {
   'engine-name': ['devices', 'device'], // the device list, where each row renames its own device
   link: ['devices', 'device'],
   'peer-fs': ['devices', 'device'],
+  'sign-in': ['devices', 'device'], // whether this device accepts sign-in hand-overs from its linked devices (SignInHandover.jsx)
   'rule-sync': ['devices', 'device'],
   advanced: ['devices', 'device'],
   environment: ['devices', 'all'], // a table of every machine (EnvironmentCompare.jsx): the same whichever tab is chosen

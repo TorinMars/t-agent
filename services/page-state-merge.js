@@ -4,6 +4,9 @@
 // - A recent entry names a terminal session by its engine-neutral identity: `instance` (the engine's instance id), `task` and `terminal`; with the
 //   session's `title` and `agent` as last shown, `used` (when it was last used, ms of the page's clock, the sort key) and its version `at` / `by` (the
 //   hybrid clock of the engine that took the change, and that engine's instance id). A removed entry is a tombstone (`gone: true`), so a delete travels.
+//   Optional: `client` (the kind of client that noted it: phone, computer, mac, home) and `device` (a random id of that browser), so another device
+//   can offer "Continue <session>, last viewed on your <client>" ("The continue hint" in docs/design/continue-and-drafts.md). Left out when unknown,
+//   so an entry noted by an older page keeps the same JSON (and digest) as before.
 // - A key is one remembered page choice (the old localStorage key names: 'h5-task-list-tab', 'h5-columns', ...), a JSON value of at most VALUE_MAX
 //   characters, null for a cleared one (a tombstone too), with its version.
 // Merging two states keeps, for every entry and key, the later version (a greater `at`, then a greater `by`, then the greater stable JSON, so every
@@ -20,6 +23,8 @@ const TASK = /^[1-9]\d{0,11}$/;
 const TERMINAL = /^[A-Za-z0-9_-]{1,64}$/;
 const KEY_NAME = /^[a-z][a-z0-9._:-]{0,95}$/;
 const AGENTS = new Set(['claude', 'codex']);
+const CLIENTS = new Set(['phone', 'computer', 'mac', 'home']);
+const DEVICE = /^[a-z0-9]{8,32}$/;
 // Keys whose value is a map of times ({ <kind>: { <name>: ms } }, the recency of saved commands): two versions are merged by the later time of each
 // name, so two devices that used different commands at the same time keep both.
 const TIME_MAPS = new Set(['ta-saved-commands-used']);
@@ -50,8 +55,15 @@ function cleanRecentChange(raw) {
   const used = time(raw.used);
   return {
     ...id, title: typeof raw.title === 'string' ? raw.title.slice(0, TITLE_MAX) : '', agent: AGENTS.has(raw.agent) ? raw.agent : null,
-    used: used === null ? 0 : used, gone: false,
+    used: used === null ? 0 : used, gone: false, ...seenOn(raw),
   };
+}
+// Where an entry was noted ({ client, device }, each only when well-formed).
+function seenOn(raw) {
+  const out = {};
+  if (CLIENTS.has(raw.client)) out.client = raw.client;
+  if (typeof raw.device === 'string' && DEVICE.test(raw.device)) out.device = raw.device;
+  return out;
 }
 // A stored or peer entry with its version, or null.
 function cleanRecent(raw) {
@@ -190,7 +202,7 @@ function changeState(body, { at, by }) {
 function pageView(state) {
   const clean = cleanState(state);
   const recent = Object.values(clean.recent).filter(entry => !entry.gone).sort((x, y) => (y.used - x.used) || (recentId(x) < recentId(y) ? -1 : 1))
-    .map(({ instance, task, terminal, title, agent, used }) => ({ instance, task, terminal, title, agent, used }));
+    .map(({ instance, task, terminal, title, agent, used, ...rest }) => ({ instance, task, terminal, title, agent, used, ...seenOn(rest) }));
   const keys = {};
   for (const name of Object.keys(clean.keys).sort()) keys[name] = clean.keys[name].value;
   return { recent, keys };

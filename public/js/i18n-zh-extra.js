@@ -118,6 +118,10 @@ I18n.add({
   'used {1} min ago': '{1} 分钟前用过',
   'used {1} h ago': '{1} 小时前用过',
   'used {1} days ago': '{1} 天前用过',
+  // When a draft or a session was last touched on another device (continue-drafts.js `ago`)
+  '{1} min ago': '{1} 分钟前',
+  '{1} h ago': '{1} 小时前',
+  '{1} days ago': '{1} 天前',
 
   // ---- Task status words and misc ----
   'Done': '已完成',

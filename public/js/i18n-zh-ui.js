@@ -1013,6 +1013,17 @@ I18n.add({
   // The compact bottom area of a column of the multi-column view
   "More tools": "更多工具",
   "Draft": "草稿",
+  // Drafts that follow their session (continue-drafts.js, the caption above the draft box)
+  "Draft from your phone": "来自你手机的草稿",
+  "Draft from your computer": "来自你电脑的草稿",
+  "Draft from your Mac app": "来自你 Mac 应用的草稿",
+  "Draft from your Home Screen app": "来自你主屏幕应用的草稿",
+  "Draft from another device": "来自另一台设备的草稿",
+  "Use the draft from your phone": "使用来自你手机的草稿",
+  "Use the draft from your computer": "使用来自你电脑的草稿",
+  "Use the draft from your Mac app": "使用来自你 Mac 应用的草稿",
+  "Use the draft from your Home Screen app": "使用来自你主屏幕应用的草稿",
+  "Use the draft from another device": "使用来自另一台设备的草稿",
   // Design document sheet (phone)
   "Design document": "设计文档",
   "Outline": "大纲",
@@ -1071,6 +1082,12 @@ I18n.add({
   "Current": "当前",
   "No preview yet": "暂无预览",
   "No other recent sessions": "没有其他最近的会话",
+  // The "Continue <session>" hint on entry (h5.js, continue-drafts.js)
+  "Continue": "继续",
+  "Last viewed on your phone": "上次在你的手机上查看",
+  "Last viewed on your computer": "上次在你的电脑上查看",
+  "Last viewed on your Mac app": "上次在你的 Mac 应用上查看",
+  "Last viewed on your Home Screen app": "上次在你的主屏幕应用上查看",
   "Press \u21cb again to switch to it": "再按 \u21cb 切换到它",
   "Swipe to move \u00b7 tap a card or press \u21cb to switch": "滑动移动 · 点卡片或按 \u21cb 切换",
   "Press \u21cb again or click a card to switch": "再按 \u21cb 或点击卡片切换",

@@ -6,7 +6,9 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Snackbar from '@mui/material/Snackbar';
 import SnackbarContent from '@mui/material/SnackbarContent';
+import IconButton from '@mui/material/IconButton';
 import { t } from './common.jsx';
+import { Icon } from './Icons.jsx';
 import { TOUCH } from './theme.mjs';
 
 const DURATIONS = { info: 3500, success: 2500, error: 6000 };
@@ -42,11 +44,17 @@ function InfoNotice({ message, expanded, onToggle, onClose, ref, ...transition }
 
 // A notice with one action (`ui.notify(message, type, { action: { label, run } })`): an MD2 snackbar, the message in body2 and the action as a text
 // button in the primary colour at its end. The action closes the notice and runs; the notice goes by itself after ACTION_MS like the others.
-function ActionNotice({ message, action, onClose, ref, ...transition }) {
+// With `lead` the message is a name, in bold after those words (`translate="no"`); `detail` is a second line; `close` adds a close button.
+function ActionNotice({ message, action, lead = '', detail = '', close = false, onClose, ref, ...transition }) {
+  const text = lead ? <>{t(lead)} <Box component="strong" translate="no" sx={{ fontWeight: 'fontWeightBold' }}>{message}</Box></> : message;
+  const body = detail ? <><Box className="h5-notice-title">{text}</Box><Box className="h5-notice-detail" sx={{ typography: 'caption', color: 'text.secondary' }}>{t(detail)}</Box></> : text;
   return (
     <SnackbarContent
-      ref={ref} {...transition} className="h5-notice-action" role="status" message={message}
-      action={<Button className="h5-notice-action-button" color="primary" size="small" onClick={() => { onClose(); action.run(); }}>{t(action.label)}</Button>}
+      ref={ref} {...transition} className="h5-notice-action" role="status" message={body}
+      action={<>
+        <Button className="h5-notice-action-button" color="primary" size="small" onClick={() => { onClose(); action.run(); }}>{t(action.label)}</Button>
+        {close ? <IconButton className="h5-notice-close" size="small" color="inherit" aria-label={t('Close')} title={t('Close')} onClick={onClose} sx={{ ml: 0.5, [TOUCH]: { width: 44, height: 44 } }}><Icon name="close" size={18} /></IconButton> : null}
+      </>}
       sx={{ pointerEvents: 'auto', width: '100%', maxWidth: 672, minHeight: 48, flexWrap: 'nowrap', bgcolor: 'grey.800', color: 'text.primary', typography: 'body2', overflowWrap: 'anywhere', '& .MuiSnackbarContent-message': { flex: '1 1 auto', minWidth: 0 }, '& .MuiSnackbarContent-action': { flex: '0 0 auto', mr: -1 } }}
     />
   );
@@ -66,10 +74,10 @@ export function Notice({ state }) {
   const action = shown && shown.action ? shown.action : null;
   return (
     <Snackbar
-      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : action ? ACTION_MS : DURATIONS[type]}
+      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : action ? shown.ms || ACTION_MS : DURATIONS[type]}
       anchorOrigin={{ vertical: 'top', horizontal: 'center' }} sx={{ top: 'max(12px, env(safe-area-inset-top))', ...(type === 'info' && !action ? { pointerEvents: 'none' } : null) }}
     >
-      {action ? <ActionNotice message={shown.message} action={action} onClose={() => setShown(null)} />
+      {action ? <ActionNotice message={shown.message} action={action} lead={shown.lead} detail={shown.detail} close={shown.close} onClose={() => setShown(null)} />
         : type === 'info'
         ? <InfoNotice message={shown ? shown.message : ''} expanded={expanded} onToggle={() => setExpandedId(expanded ? null : shown.id)} onClose={() => setShown(null)} />
         : <Alert severity={type} variant="filled" onClose={() => setShown(null)} role="status" sx={{ width: '100%', maxWidth: 672, alignItems: 'center', overflowWrap: 'anywhere' }}>{shown ? shown.message : ''}</Alert>}

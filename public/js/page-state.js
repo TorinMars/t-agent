@@ -51,18 +51,21 @@
     return hit ? hit.key : null;
   }
   const isLocalOnly = instance => typeof instance === 'string' && instance.startsWith('~');
+  // Where an entry was noted, `client` (phone, computer, mac, home) and `device` (that browser's random id), carried both ways when present: another
+  // device offers "Continue <session>" from them (docs/design/continue-and-drafts.md).
+  const seenOn = entry => ({ ...(entry.client ? { client: entry.client } : {}), ...(entry.device ? { device: entry.device } : {}) });
   // A page entry { sourceKey, taskId, terminalId, title, agent, lastUsed } as a shared one { instance, task, terminal, title, agent, used }.
   function toShared(entry, sources, now = Date.now()) {
     if (!entry) return null;
     const from = (Array.isArray(sources) ? sources : []).find(item => item.key === entry.sourceKey);
     if (!from) return null;
-    return { instance: idOf(from), task: String(entry.taskId), terminal: String(entry.terminalId), title: entry.title || '', agent: entry.agent || null, used: Number(entry.lastUsed) > 0 ? Number(entry.lastUsed) : now };
+    return { instance: idOf(from), task: String(entry.taskId), terminal: String(entry.terminalId), title: entry.title || '', agent: entry.agent || null, used: Number(entry.lastUsed) > 0 ? Number(entry.lastUsed) : now, ...seenOn(entry) };
   }
   // A shared entry as this page's, or null for a device this page does not list.
   function toPage(entry, sources) {
     const sourceKey = entry && sourceOf(entry.instance, sources);
     if (!sourceKey) return null;
-    const out = { sourceKey, taskId: String(entry.task), terminalId: String(entry.terminal), title: entry.title || '', agent: entry.agent || null };
+    const out = { sourceKey, taskId: String(entry.task), terminalId: String(entry.terminal), title: entry.title || '', agent: entry.agent || null, ...seenOn(entry) };
     if (Number(entry.used) > 0) out.lastUsed = Number(entry.used);
     return out;
   }
@@ -211,11 +214,13 @@
   // ---- Talking to the server ----
   const headers = { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' };
   let version = 0; // the newest `version` of the server's state this page took
+  let answered = false; // the server's state was read or pushed since this page started (not only the cache)
   function take(answer) {
     if (!answer || !Array.isArray(answer.recent) || !answer.keys || typeof answer.keys !== 'object') return false;
     const given = Number(answer.version);
     if (Number.isSafeInteger(given) && given < version) return true; // taken (a change sent is in it), but older than what this page shows
     if (Number.isSafeInteger(given)) version = given;
+    answered = true;
     state = { recent: answer.recent, keys: answer.keys };
     peers = Array.isArray(answer.peers) ? answer.peers : [];
     supported = true;
@@ -421,6 +426,7 @@
     ...pure, store, get: value, set, importKey, recent, noteRecent, importRecent, setSources, load, send, pushed,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     supported: () => supported,
+    answered: () => answered,
     peers: () => peers,
     keys: () => [...new Set([...Object.keys(state.keys), ...Object.keys(pending.keys)])],
   };

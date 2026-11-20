@@ -13,7 +13,7 @@ running or pending session" in [page-terminal-and-bottom-bar.md](page-terminal-a
 - **Recent sessions** (`scripts/h5-shell/recent-sessions.mjs`, pure; h5.js "Recent sessions", through `ui.recent` from `entry.jsx`): the terminal sessions
   this page showed, most recently shown first, at most 12 (`RECENT_MAX`). An entry is `{ sourceKey, taskId, terminalId, title, agent, lastUsed? }`: the device,
   the task and the terminal, plus the session's name and agent kind as they were when last shown (a task that is not selected has no terminal list in
-  the page), and when it was last used (ms, 2026-11-19): `noteRecent(..., { now, leave })` stamps an entry when it is shown, and the entry it replaces at
+  the page), and when it was last used (ms, 2026-11-19), and optionally where it was looked at (`client`, `device`; "Where a session was looked at" in [continue-and-drafts.md](continue-and-drafts.md)): `noteRecent(..., { now, leave })` stamps an entry when it is shown, and the entry it replaces at
   the top when this page had shown that one itself (h5.js `recentShownHere`), so a list from an earlier visit keeps its times; older stored lists have no
   time and stay readable. A rename or a delete from a session menu updates the entry (`editRecent`, h5.js `changeRecent`). The task list's Recent tab
   draws the same list as rows ("Recent tab" in [page-task-list.md](page-task-list.md)). `noteShown` notes it whenever the shown terminal changes by any path (it runs in `renderSessionName`, where `state.shownTarget` is set: the

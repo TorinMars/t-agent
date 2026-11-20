@@ -99,8 +99,11 @@ async function makeEngine(t, name, { company = false, limit = 64 * 1024 * 1024 }
     return body;
   };
   side.service = makeService(side);
-  side.restart = () => { side.service.stop(); side.service = makeService(side); return side.service; };
+  side.restart = () => { side.service.stop(); side.service = makeService(side); side.down = false; return side.service; };
   const app = express();
+  // A crashed engine answers nothing until it starts again (a real crash ends the process; without this the old service kept serving the peer's
+  // requests between the crash and the restart, so a target could still commit through it).
+  app.use((req, res, next) => (side.down ? res.socket.destroy() : next()));
   app.use(express.json());
   const engineAuth = (req, res, next) => {
     const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -457,7 +460,7 @@ for (const [who, point, ends] of CRASHES) {
     const seed = seedTask(A);
     const before = snapshot(seed.dir);
     let crashed = false;
-    engines[who].at = name => { if (name === point && !crashed) { crashed = true; throw crash(); } };
+    engines[who].at = name => { if (name === point && !crashed) { crashed = true; engines[who].down = true; throw crash(); } };
     await A.page('POST', `/${seed.taskId}/move`, { target: B.instanceId });
     await until(() => crashed, `the crash at ${point}`);
     await settle(150);

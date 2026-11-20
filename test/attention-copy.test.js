@@ -242,7 +242,9 @@ test('two linked engines: each keeps a copy of the other\'s items, marked with i
   assert.equal((await B.copies()).items[0].title, 'Fix the login page now');
   A.requests.length = 0;
   assert.equal(await A.copy.syncPeer(A.peers[0]), 0);
-  assert.deepEqual(A.requests, ['GET B /v1/info', 'GET B /v1/attention-copy']);
+  // A background push round of the change above may run at the same time and read too; what matters is that nothing is sent: no page (PUT).
+  assert.ok(A.requests.includes('GET B /v1/attention-copy'), A.requests.join(', '));
+  assert.ok(!A.requests.some(entry => entry.startsWith('PUT ')), `a second round sends no page: ${A.requests.join(', ')}`);
   // An activity note alone changes nothing a copy shows: no new row is made for it.
   const seq = A.db.prepare("SELECT sync_seq FROM attention_copies WHERE owner = ''").pluck().all();
   A.service.update(mine.id, { activity: { kind: 'prompt', text: 'go on' } }, { actor: 'claude' });

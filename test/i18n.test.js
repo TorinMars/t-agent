@@ -178,3 +178,19 @@ test('errorOf names the provider of a linked service that is offline, and leaves
   assert.equal(I18n.errorOf(null), null);
   assert.equal(I18n.t('Provided by Studio (offline)'), '由 Studio 提供（当前离线）', 'the longer template wins');
 });
+
+// Two branches that add the same English key give an object literal with the key twice, and the later Chinese silently wins: no duplicates.
+test('no Chinese dictionary has the same English key twice', () => {
+  for (const file of ['public/js/i18n-zh-ui.js', 'public/js/i18n-zh-extra.js', 'public/js/i18n-zh-server.js']) {
+    const text = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    const seen = new Map();
+    const duplicates = [];
+    const line = /^\s*(["'])((?:\\.|(?!\1).)+)\1\s*:/gm;
+    for (let match = line.exec(text); match; match = line.exec(text)) {
+      const key = match[2];
+      if (seen.has(key)) duplicates.push(key);
+      else seen.set(key, true);
+    }
+    assert.deepEqual(duplicates, [], `${file} has keys twice (keep one: the later one wins without a warning)`);
+  }
+});

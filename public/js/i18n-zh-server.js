@@ -690,7 +690,6 @@ I18n.add({
   "Linked devices are not available": "关联设备功能不可用",
   "This plugin has no test": "这个插件没有测试功能",
   "Invalid settings": "设置无效",
-  "enabled must be true or false": "enabled 必须是 true 或 false",
   "Unknown field: {1}": "未知字段：{1}",
   "An attention token cannot change plugin settings; use the browser": "T-Attention 令牌不能修改插件设置，请使用浏览器",
   "The plugin settings failed": "插件设置失败",
@@ -917,7 +916,6 @@ I18n.add({
   "This task has no agent terminal": "这个任务没有智能体终端",
   "Replies go only to terminals on this machine": "回复只能发到这台机器上的终端",
   "The agent's terminal is not running": "智能体的终端没有在运行",
-  "enabled must be true or false": "enabled 必须是 true 或 false",
   "language must be one of: {1}": "language 必须是以下之一：{1}",
   // ---- Automatic rebuild of T-Agent.app (services/mac-app-autobuild.js, scripts/build-mac-app.js) ----
   "swiftc was not found. Install the Xcode command line tools: xcode-select --install": "未找到 swiftc。请安装 Xcode 命令行工具：xcode-select --install",

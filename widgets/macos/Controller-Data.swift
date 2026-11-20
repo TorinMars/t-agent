@@ -78,6 +78,7 @@ extension WidgetController {
     var refreshPaused: Bool { pressedRow != nil || moveInFlight || buttonHeld || actionsRunning > 0 }
 
     func apply(_ newList: ItemList?, problem newProblem: String?) {
+        if let newList = newList { noteScheduleFirings(newList) }  // Part G: "It is time", "Prompt sent", ... bubbles
         let result = newList.map(summarize)
         let same = hasResult && result == summary && newProblem == problem
         list = newList  // always: a new sort_order alone changes no row but matters to the next move
@@ -105,11 +106,13 @@ extension WidgetController {
     }
 
     func enqueue(_ notices: [WidgetNotice]) {
+        let notices = withoutScheduleTwins(notices)  // Part G: the server's notice of a firing the window already shows
+        guard !notices.isEmpty else { return }
         noticeQueue.add(notices)
         if noticeQueue.current == nil { showNextNotice() }
     }
 
-    private func showNextNotice() {
+    func showNextNotice() {
         endBubbleReply()
         guard let notice = noticeQueue.advance() else {
             hideBubble()

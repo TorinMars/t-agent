@@ -30,6 +30,7 @@ extension WidgetController {
 
     func rowDragBegan(_ key: String) {
         guard pressedRow == key, partD.query.isEmpty else { return }  // Part D: no reordering in a filtered list
+        if let item = items.first(where: { $0.key == key }), item.timing.waiting { return }  // Part G: Scheduled and Recurring keep their order
         rowDragActive = true
         dragging = true
         cancelHide()
@@ -153,6 +154,7 @@ extension WidgetController {
             guard let frame = frameInDocument(over.key) else { return nil }
             return (over, y > frame.midY)
         }
+        if target.timed { return .noChange }  // Part G: nothing is dropped into Scheduled or Recurring
         if target != sectionOf(item.status) {  // another section: a status change, placed where the pointer is
             let shown = rows(in: target)
             guard let first = shown.first, let top = frameInDocument(first.key), y >= top.minY - 2,
@@ -268,7 +270,8 @@ extension WidgetController {
             return item
         }
         let hasLink = items.contains { $0.key == key && !$0.link.isEmpty }
-        let hasSession = items.contains { $0.key == key && !($0.session?.openPath ?? "").isEmpty }
+        let hasSession = items.contains { $0.key == key && !$0.openPath.isEmpty }
+        let sessionTitle = items.first { $0.key == key }?.timing.then.kind == "script" ? L("Open terminal") : L("Open session")
         // The row's own actions (Confirm and Reject, or Handled and Reply), so they never need the icons: the icons of
         // a row outside Needs you show only under the pointer.
         let actions = (summaryRow(key).map(rowButtons) ?? []).filter { !$0.opensOnly }.map { action -> NSMenuItem in
@@ -277,7 +280,7 @@ extension WidgetController {
             return entry
         }
         return makeMenu((hasLink ? [item(L("Open link"), #selector(openLinkItemClicked(_:)))] : [])
-                        + (hasSession ? [item(L("Open session"), #selector(openSessionItemClicked(_:)))] : [])
+                        + (hasSession ? [item(sessionTitle, #selector(openSessionItemClicked(_:)))] : [])
                         + actions
                         + [item(L("Edit"), #selector(editItemClicked(_:))), item(L("Delete"), #selector(deleteItemClicked(_:)))])
     }
@@ -285,7 +288,7 @@ extension WidgetController {
     /// The row of a key as the panel shows it now.
     private func summaryRow(_ key: String) -> Row? {
         guard let summary = summary else { return nil }
-        return (summary.needs + summary.working + summary.todo + summary.finished).first { $0.key == key }
+        return (summary.needs + summary.working + summary.todo + summary.scheduled + summary.recurring + summary.finished).first { $0.key == key }
     }
 
     @objc private func rowActionItemClicked(_ sender: NSMenuItem) {
@@ -298,7 +301,7 @@ extension WidgetController {
     func performRowAction(_ key: String, _ action: RowAction) {
         switch action {
         case .link: openLink(key)
-        case .session: openSession(key)
+        case .session, .terminal: openSession(key)
         case .reply: openReplyForm(key)
         default: runAction(key, action)
         }
@@ -320,7 +323,7 @@ extension WidgetController {
     // MARK: Form and confirmation
 
     @objc func plusClicked() {
-        openForm(TaskFormView(mode: .create, draft: TaskDraft(), heading: L("New task")))
+        openForm(TaskFormView(mode: .create, draft: TaskDraft(), heading: L("New task"), schedule: makeScheduleEditor(engine: "local", item: nil)))
     }
 
     @objc private func editItemClicked(_ sender: NSMenuItem) {
@@ -331,7 +334,7 @@ extension WidgetController {
         }
         let draft = TaskDraft(item)
         openForm(TaskFormView(mode: .edit(key: key, original: draft), draft: draft, heading: L("Edit task"),
-                              showsNotes: item.notes != nil))
+                              showsNotes: item.notes != nil, schedule: makeScheduleEditor(engine: item.engine, item: item)))
     }
 
     @objc private func deleteItemClicked(_ sender: NSMenuItem) {
@@ -350,6 +353,10 @@ extension WidgetController {
         guard let root = detail.contentView else { return }
         overlay = view
         cancelHide()
+        // The top row's search parts lie above the overlay in the view order (they were added after the red message), so the
+        // form's heading and a scrolled form would show through them: hidden while an overlay shows (Part G).
+        partG.coveredTopRow = [partD.searchButton, partD.heading, partD.searchField].filter { !$0.isHidden }
+        partG.coveredTopRow.forEach { $0.isHidden = true }
         view.frame = root.bounds
         view.autoresizingMask = [.width, .height]
         root.addSubview(view, positioned: .below, relativeTo: toast)  // the red message stays on top
@@ -360,6 +367,7 @@ extension WidgetController {
         guard overlay == nil else { return }
         form.onSubmit = { [weak self] in self?.submitForm() }
         form.onCancel = { [weak self] in self?.cancelForm() }
+        form.onResize = { [weak self, weak form] in if let form = form, self?.overlay === form { self?.positionDetail() } }
         detail.onCancel = form.onCancel
         detail.onReturn = form.onSubmit
         if !options.offscreen { previousApp = NSWorkspace.shared.frontmostApplication }
@@ -377,6 +385,8 @@ extension WidgetController {
     func closeOverlay() {
         guard let view = overlay else { return }
         overlay = nil
+        partG.coveredTopRow.forEach { $0.isHidden = false }
+        partG.coveredTopRow = []
         let wasKey = detail.isKeyWindow
         detail.makeFirstResponder(nil)
         detail.acceptsKey = false
@@ -400,12 +410,21 @@ extension WidgetController {
         form.commitComposition()
         guard form.nameIsValid else { return }
         let draft = form.draft
+        // Part G: a When or Then that cannot be saved says why in the form.
+        if let editor = form.scheduleEditor, let problem = editor.problem {
+            form.showError(problem)
+            return
+        }
+        form.showError(nil)
         let request: URLRequest
         switch form.mode {
         case .create:
-            request = api.createRequest(draft)
+            request = api.createRequest(draft, extra: form.scheduleEditor?.fields(changedFrom: nil) ?? [:])
         case .edit(let key, let original):
-            let fields = changedFields(original: original, edited: draft, includeNotes: form.showsNotes)
+            var fields = changedFields(original: original, edited: draft, includeNotes: form.showsNotes)
+            if let editor = form.scheduleEditor {
+                fields.merge(editor.fields(changedFrom: items.first { $0.key == key }?.timing ?? ItemTiming())) { _, new in new }
+            }
             if fields.isEmpty {
                 closeOverlay()
                 return
@@ -432,8 +451,9 @@ extension WidgetController {
         view.busy = false
         refreshGeneration += 1  // drop a list that was fetched before this finished
         if let failure = failure {
-            if view is TaskFormView {
+            if let form = view as? TaskFormView {
                 showDetail()
+                form.showError(L("Save failed: {1}", failure))  // in the form too, e.g. 403 SCRIPT_NEEDS_PERSON
                 showToast(L("Save failed: {1}", failure))
             } else {
                 closeOverlay()
@@ -485,13 +505,13 @@ extension WidgetController {
     func runAction(_ key: String, _ action: RowAction) {
         // The last check is for a button pressed just as a refresh changed the task under it.
         guard !actionRows.contains(key), !moveInFlight, pressedRow == nil,
-              let item = items.first(where: { $0.key == key }), rowActions(for: item).contains(action) else { return }
+              let item = items.first(where: { $0.key == key }), actionAllowed(action, item) else { return }
         cancelHide()
         actionRows.insert(key)
         actionsRunning += 1
         refreshGeneration += 1  // drop a list that was fetched before this action
         syncActionButtons()
-        perform(api.actionRequest(key: key, action: action)) { [weak self] data, code, error in
+        perform(scheduleActionRequest(key: key, action: action) ?? api.actionRequest(key: key, action: action)) { [weak self] data, code, error in
             self?.actionFinished(key, failure: (200..<300).contains(code) ? nil : failureText(data, error))
         }
     }

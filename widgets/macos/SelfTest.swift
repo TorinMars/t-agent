@@ -933,6 +933,7 @@ func runSelfTest() -> Never {
     partDSelfTest(check)
     runTickSelfTest(check)  // Part E
     runLookSelfTest(check)  // Part F
+    runScheduleSelfTest(check)  // Part G
     check("no window was put on screen", !mouse.testOnScreen && !crud.testOnScreen && !empty.testOnScreen && !links.testOnScreen
           && !bubbles.testOnScreen)
     print("\(passes) passed, \(failures) failed")

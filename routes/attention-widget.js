@@ -20,6 +20,11 @@
 //
 // POST /open-terminal (Open session): tells the open T-Agent page of this machine seen last to show a terminal in place and asks the browser extension
 // to bring its tab to the front, instead of opening a new tab (see the route; services/page-channel.js).
+//
+// Scheduled and recurring tasks ("Scheduled and recurring tasks (window side)" in docs/design/attention-desktop-window.md): an item of an engine with
+// schedules carries `schedule`, `then_action`, `next_at`, `schedule_state`, `runs`, `last_fired_at`, `last_done_at`, `schedule_text` as its owner
+// sends them, and `then_target` (the session of a prompt, the task of a script, with a name read here for this machine). POST /items/:key/run-now
+// (Send now, Run again), POST /schedule/preview ("Next: ...") and GET /targets (the sessions and tasks of an engine for the form) go to the owner.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -53,6 +58,8 @@ const ACTIVITY_LIMIT = 50;
 const BRIDGE_WAIT_MS = 1500; // how long POST /open-terminal waits for the browser extension to bring the tab to the front
 const BRIDGE_TIMEOUT_MS = 1000; // the time the extension is given for tabs.reveal
 const ACTIVITY_ORDER = { running: 0, waiting: 1, done: 2 };
+const TARGETS_LIMIT = 300; // sessions or tasks GET /targets lists
+const TARGET_TASKS_READ = 40; // tasks of a connected service whose terminals GET /targets reads
 const REPLY_NOTE = 'Replied from the desktop window';
 const ROOT = path.join(__dirname, '..');
 const STRINGS_FILE = path.join(ROOT, 'widgets', 'macos', 'strings.json');
@@ -138,6 +145,55 @@ function sessionOf(engine, item, info) {
   return { engine, task_id: taskId, terminal_id: terminalId, agent, live, open_path: openTerminalPath(engine, taskId, terminalId) };
 }
 
+const hasOwn = (object, key) => Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
+// A JSON column as an object (the owner sends it parsed; a JSON string is read too), null for anything else.
+function jsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value) return null;
+  try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null; } catch { return null; }
+}
+const textOrNull = value => (typeof value === 'string' && value ? value : null);
+// What happens at the time: null (remind me), { kind: 'prompt', task_id, terminal_id, text } or { kind: 'script', task_id, script, timeout_min }.
+function thenActionOf(value) {
+  const then = jsonObject(value);
+  if (!then) return null;
+  const taskId = String(then.task_id ?? '');
+  if (then.kind === 'prompt' && TAGENT_TASK.test(taskId) && TAGENT_TERMINAL.test(String(then.terminal_id ?? ''))) {
+    return { kind: 'prompt', task_id: taskId, terminal_id: String(then.terminal_id), text: typeof then.text === 'string' ? then.text : '' };
+  }
+  if (then.kind === 'script' && TAGENT_TASK.test(taskId)) {
+    const timeout = Number(then.timeout_min);
+    return { kind: 'script', task_id: taskId, script: typeof then.script === 'string' ? then.script : '', timeout_min: Number.isInteger(timeout) && timeout > 0 ? timeout : 30 };
+  }
+  return null;
+}
+// The schedule fields of an item whose owner has schedules (its items carry `schedule`); none for an older owner, so the window shows no "When" for it.
+// `then_target`: where a prompt goes ({ engine, task_id, terminal_id, open_path }) or the task a script runs in ({ engine, task_id }), with `name`
+// filled in for this machine when the list is put together (null otherwise: not known here).
+function scheduleFields(engine, item) {
+  if (!hasOwn(item, 'schedule')) return {};
+  const schedule = jsonObject(item.schedule);
+  const then = thenActionOf(item.then_action);
+  const runs = Number(item.runs);
+  const exit = Number(item.last_exit);
+  let target = null;
+  if (then && then.kind === 'prompt') target = { engine, task_id: then.task_id, terminal_id: then.terminal_id, name: null, open_path: openTerminalPath(engine, then.task_id, then.terminal_id) };
+  if (then && then.kind === 'script') target = { engine, task_id: then.task_id, name: null };
+  return {
+    schedule: schedule && (schedule.kind === 'once' || schedule.kind === 'repeat') ? schedule : null,
+    then_action: then,
+    next_at: textOrNull(item.next_at),
+    schedule_state: item.schedule_state === 'waiting' || item.schedule_state === 'due' ? item.schedule_state : null,
+    runs: Number.isInteger(runs) && runs > 0 ? runs : 0,
+    last_fired_at: textOrNull(item.last_fired_at),
+    last_done_at: textOrNull(item.last_done_at),
+    schedule_text: textOrNull(item.schedule_text),
+    // The exit code of the last script run, when the owner sends it (not part of the first contract; the window falls back to the reason).
+    ...(Number.isInteger(exit) && hasOwn(item, 'last_exit') ? { last_exit: exit } : {}),
+    then_target: target,
+  };
+}
+
 // An item as the window reads it. `info`: see sessionOf.
 function widgetItem(engine, item, info = null) {
   const pending = item.context && item.context.pending && typeof item.context.pending.text === 'string' && item.context.pending.text ? item.context.pending.text : null;
@@ -162,11 +218,15 @@ function widgetItem(engine, item, info = null) {
     updated_at: item.updated_at ?? null,
     created_at: item.created_at ?? null,
     session: sessionOf(engine, item, info),
+    ...scheduleFields(engine, item),
   };
 }
 
+const notSupported = () => { throw new WidgetError('SCHEDULES_UNSUPPORTED', 'This T-Agent has no scheduled tasks', 501); };
 // This machine's T-Attention as an engine adapter: the same calls as the page's, as the person ('user').
-function localEngine(service) {
+// `runNow(id, options)` and `previewSchedule(schedule)`: the schedule calls of this machine (POST /api/attention/:id/run-now and
+// /api/attention/schedule/preview, see createAttentionWidgetRoutes).
+function localEngine(service, { runNow = notSupported, previewSchedule = notSupported } = {}) {
   const actor = { actor: 'user' };
   return {
     // The open items and the FINISHED_KEEP items finished last: only what the window keeps (services/attention.js list, recentFinished).
@@ -176,6 +236,8 @@ function localEngine(service) {
     async update(id, body) { return service.update(id, body, actor); },
     async move(id, body) { service.move(id, body, actor); },
     async remove(id) { service.remove(id, actor); },
+    async runNow(id) { return runNow(id, actor); },
+    async preview(schedule) { return previewSchedule(schedule); },
   };
 }
 
@@ -213,6 +275,8 @@ function remoteEngine(remote, row, { readTimeoutMs, kinds = new Map() }) {
     async update(id, body) { return call('PATCH', `/${id}`, body); },
     async move(id, body) { await call('POST', `/${id}/move`, body); },
     async remove(id) { await call('DELETE', `/${id}`); },
+    async runNow(id) { return call('POST', `/${id}/run-now`, {}); },
+    async preview(schedule) { return call('POST', '/schedule/preview', { schedule }); },
   };
 }
 
@@ -249,6 +313,10 @@ function copyEngine(engine, serverId, copy) {
     async update(id, body) { return live('PATCH', id, '', body, () => engine.update(id, body)); },
     async move(id, body) { await live('POST', id, '/move', body, () => engine.move(id, body)); },
     async remove(id) { await live('DELETE', id, '', undefined, () => engine.remove(id)); },
+    // Not safe while the owner is offline: the copies refuse it there (409), as on the page.
+    async runNow(id) { return live('POST', id, '/run-now', {}, () => engine.runNow(id)); },
+    // A question, not a change: only the owner answers it (never queued).
+    async preview(schedule) { return engine.preview(schedule); },
   };
 }
 
@@ -282,9 +350,55 @@ function keptPart(engine, list) {
     else finished.push({ ...entry, at: String(item.completed_at || item.updated_at || '') });
   }
   finished.sort((a, b) => b.at.localeCompare(a.at));
-  return { open, finished: finished.slice(0, FINISHED_KEEP) };
+  // Whether the owner has schedules: its items carry the field (an older one sends none).
+  const schedules = (Array.isArray(list) ? list : []).some(item => hasOwn(item, 'schedule'));
+  return { open, finished: finished.slice(0, FINISHED_KEEP), schedules };
 }
 const sessionKey = session => `${session.task_id}:${session.terminal_id}`;
+
+// GET /targets as the window reads it: at most TARGETS_LIMIT of each, every field checked.
+function cleanTargets(answer) {
+  const text = value => (typeof value === 'string' ? value.trim().slice(0, 200) : '');
+  const sessions = (answer && Array.isArray(answer.sessions) ? answer.sessions : [])
+    .filter(entry => entry && TAGENT_TASK.test(String(entry.task_id ?? '')) && TAGENT_TERMINAL.test(String(entry.terminal_id ?? '')))
+    .slice(0, TARGETS_LIMIT)
+    .map(entry => ({ task_id: String(entry.task_id), terminal_id: String(entry.terminal_id), name: text(entry.name), task_title: text(entry.task_title), agent: entry.agent === 'claude' || entry.agent === 'codex' ? entry.agent : null }));
+  const tasks = (answer && Array.isArray(answer.tasks) ? answer.tasks : [])
+    .filter(entry => entry && TAGENT_TASK.test(String(entry.id ?? '')))
+    .slice(0, TARGETS_LIMIT)
+    .map(entry => ({ id: String(entry.id), title: text(entry.title) }));
+  return { sessions, tasks };
+}
+
+// One task's terminals as the window lists them: the agent terminals (Claude, Codex), named as the task's terminal list names them.
+const agentTerminals = (task, terminals) => (Array.isArray(terminals) ? terminals : [])
+  .filter(row => row && (row.agent === 'claude' || row.agent === 'codex'))
+  .map(row => ({ task_id: String(task.id), terminal_id: String(row.terminal_id), name: row.title || '', task_title: task.title || '', agent: row.agent }));
+
+// This machine's tasks in use and their agent terminals (routes/terminal.js listTerminals, which names a terminal after its session).
+function localTargetList(db) {
+  const tasks = db.prepare('SELECT id, title FROM tasks WHERE archived_at IS NULL ORDER BY id DESC LIMIT ?').all(TARGETS_LIMIT);
+  const withAgents = new Set(db.prepare("SELECT DISTINCT task_id FROM task_terminals WHERE agent IN ('claude', 'codex')").all().map(row => row.task_id));
+  const { listTerminals } = require('./terminal');
+  const sessions = [];
+  for (const task of tasks) {
+    if (!withAgents.has(task.id)) continue;
+    try { sessions.push(...agentTerminals(task, listTerminals(task.id))); } catch { /* a task removed meanwhile */ }
+  }
+  return { sessions, tasks: tasks.map(task => ({ id: task.id, title: task.title })) };
+}
+
+// A connected service's tasks (GET /v1/tasks) and the agent terminals of its first TARGET_TASKS_READ tasks (GET /v1/tasks/:id/terminals, in parallel).
+async function remoteTargetList(row, { timeoutMs }) {
+  const { request } = require('../services/remote-client');
+  const { decryptToken } = require('../lib/token-crypto');
+  const token = decryptToken(row.token_cipher, require('../config').sessionSecret);
+  const listed = await request(row.base_url, '/v1/tasks', token, { timeoutMs });
+  const tasks = (Array.isArray(listed) ? listed : Array.isArray(listed && listed.tasks) ? listed.tasks : []).filter(task => task && Number.isSafeInteger(Number(task.id)) && !task.archived_at);
+  const lists = await Promise.all(tasks.slice(0, TARGET_TASKS_READ).map(task => request(row.base_url, `/v1/tasks/${Number(task.id)}/terminals`, token, { timeoutMs })
+    .then(terminals => agentTerminals(task, terminals), () => [])));
+  return { sessions: lists.flat(), tasks: tasks.map(task => ({ id: task.id, title: task.title })) };
+}
 
 function createAttentionWidgetRoutes({
   service,
@@ -324,18 +438,36 @@ function createAttentionWidgetRoutes({
   agentsTtlMs = AGENTS_TTL_MS,
   prefsTtlMs = PREFS_TTL_MS,
   tickWaitMs = TICK_WAIT_MS,
+  // Scheduled tasks on this machine (the server's part, services/attention-schedule.js and services/attention.js): run one now (Send now, Run
+  // again) and preview a schedule ({ next, text, error? }). Before that part exists they answer 501 SCHEDULES_UNSUPPORTED.
+  runNow = (id, options) => {
+    if (typeof service.runNow !== 'function') notSupported();
+    return service.runNow(id, options);
+  },
+  previewSchedule = schedule => {
+    let schedules;
+    try { schedules = require('../services/attention-schedule'); } catch { notSupported(); }
+    return schedules.preview(schedule, Date.now(), { tz: schedules.systemZone() });
+  },
+  // Whether this machine has schedules (its "+" form shows "When" and "Then").
+  localSchedules = () => { try { require.resolve('../services/attention-schedule'); return true; } catch { return false; } },
+  // The sessions (agent terminals) and tasks of this machine, and of a connected service (its /v1/tasks and the terminals of its first tasks), for the
+  // form's pop-ups: -> { sessions: [{ task_id, terminal_id, name, task_title, agent }], tasks: [{ id, title }] }.
+  localTargets = () => localTargetList(db),
+  remoteTargets = row => remoteTargetList(row, { timeoutMs: readTimeoutMs }),
 } = {}) {
   if (!service) throw new Error('createAttentionWidgetRoutes needs the attention service');
   if (!launcher || !settings) throw new Error('createAttentionWidgetRoutes needs the launcher and the settings');
 
   const nowMs = () => now().getTime();
+  const scheduleCalls = { runNow, previewSchedule };
   // An action's answer: one item, its terminal read with routes/terminal.js terminalInfo.
   const itemOut = (engine, item) => widgetItem(engine, item, engine === 'local' ? terminalInfo : null);
   const remoteKinds = new Map(); // see remoteEngine
   const rowsOf = login => db.prepare('SELECT * FROM remote_servers WHERE owner_id = ? AND enabled = 1 ORDER BY created_at ASC, id ASC').all(login);
   // The engine of a key: this machine, or an enabled row of this owner (hidden ones too: an item the window already has stays reachable).
   function engineOf(key) {
-    if (key === 'local') return localEngine(service);
+    if (key === 'local') return localEngine(service, scheduleCalls);
     const id = Number(String(key).slice('remote:'.length));
     const row = db.prepare('SELECT * FROM remote_servers WHERE id = ? AND owner_id = ? AND enabled = 1').get(id, owner());
     if (!row) throw new WidgetError('ENGINE_NOT_FOUND', 'This device is not connected', 404);
@@ -347,7 +479,7 @@ function createAttentionWidgetRoutes({
     const copy = copies();
     return copy && copy.covers(row.id) ? copyEngine(engine, Number(row.id), copy) : engine;
   }
-  const localEntry = () => ({ key: 'local', name: localName(), local: true, color_index: tagColorIndex(localInstanceId()), engine: localEngine(service) });
+  const localEntry = () => ({ key: 'local', name: localName(), local: true, color_index: tagColorIndex(localInstanceId()), engine: localEngine(service, scheduleCalls) });
   // The engines of the merged list, in the page's order (this machine first): { key, name, local, color_index, engine }.
   function listedEngines() {
     const login = owner();
@@ -433,35 +565,61 @@ function createAttentionWidgetRoutes({
 
   // The agents of terminals: `${task_id}:${terminal_id}` -> 'claude' | 'codex', one query for all task ids (in chunks of AGENT_CHUNK), as
   // routes/terminal.js terminalInfo reads them one by one (none for the 'default' terminal).
+  // The names come with them: the terminal's title, else its task's (`then_target.name` of a prompt).
   function readAgents(sessions) {
     const agents = new Map();
+    const names = new Map();
     const tasks = [...new Set(sessions.filter(session => session.terminal_id !== 'default').map(session => Number(session.task_id)))];
     for (let start = 0; start < tasks.length; start += AGENT_CHUNK) {
       const chunk = tasks.slice(start, start + AGENT_CHUNK);
       try {
-        const rows = db.prepare(`SELECT task_id, terminal_id, agent FROM task_terminals WHERE task_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk);
-        for (const row of rows) if (row.agent === 'claude' || row.agent === 'codex') agents.set(`${row.task_id}:${row.terminal_id}`, row.agent);
+        const rows = db.prepare(`SELECT task_id, terminal_id, agent, title, (SELECT title FROM tasks WHERE tasks.id = task_terminals.task_id) AS task_title FROM task_terminals WHERE task_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk);
+        for (const row of rows) {
+          if (row.agent === 'claude' || row.agent === 'codex') agents.set(`${row.task_id}:${row.terminal_id}`, row.agent);
+          const name = (typeof row.title === 'string' && row.title.trim()) || (typeof row.task_title === 'string' && row.task_title.trim()) || '';
+          if (name) names.set(`${row.task_id}:${row.terminal_id}`, name);
+        }
       } catch { /* no agents: none shown */ }
     }
-    return agents;
+    return { agents, names };
   }
-  let agentsKept = { at: -Infinity, keys: null, live: null, agents: new Map() };
+  let agentsKept = { at: -Infinity, keys: null, live: null, agents: new Map(), names: new Map(), tasks: new Map() };
+  // The titles of tasks (the tasks scripts run in), one query; none when no item has a script.
+  function readTaskTitles(ids) {
+    const titles = new Map();
+    for (let start = 0; start < ids.length; start += AGENT_CHUNK) {
+      const chunk = ids.slice(start, start + AGENT_CHUNK);
+      try {
+        for (const row of db.prepare(`SELECT id, title FROM tasks WHERE id IN (${chunk.map(() => '?').join(',')})`).all(...chunk)) titles.set(String(row.id), row.title || null);
+      } catch { /* no names */ }
+    }
+    return titles;
+  }
   // { live: Set of session keys whose shell runs, agents, stamp } for this machine's sessions among the items.
   function localSessions(outs, force) {
     const sessions = new Map();
-    for (const out of outs) if (out.engine === 'local' && out.session) sessions.set(sessionKey(out.session), out.session);
+    const targets = new Map(); // the sessions prompts go to, for their names
+    const scriptTasks = new Set(); // the tasks scripts run in, for their names
+    for (const out of outs) {
+      if (out.engine !== 'local') continue;
+      if (out.session) sessions.set(sessionKey(out.session), out.session);
+      const target = out.then_target;
+      if (target && target.terminal_id) targets.set(sessionKey(target), target);
+      else if (target) scriptTasks.add(Number(target.task_id));
+    }
     const live = new Set();
     for (const taskId of new Set([...sessions.values()].map(session => session.task_id))) {
       let ids = [];
       try { ids = liveTerminals(taskId) || []; } catch { ids = []; }
       for (const id of ids) if (sessions.has(`${taskId}:${id}`)) live.add(`${taskId}:${id}`);
     }
-    const keys = [...sessions.keys()].sort().join(',');
+    const keys = [...new Set([...sessions.keys(), ...targets.keys()])].sort().join(',') + `|${[...scriptTasks].sort().join(',')}`;
     const running = [...live].sort().join(',');
     if (force || keys !== agentsKept.keys || running !== agentsKept.live || nowMs() - agentsKept.at >= agentsTtlMs) {
-      agentsKept = { at: nowMs(), keys, live: running, agents: readAgents([...sessions.values()]) };
+      const read = readAgents([...sessions.values(), ...targets.values()]);
+      agentsKept = { at: nowMs(), keys, live: running, agents: read.agents, names: read.names, tasks: readTaskTitles([...scriptTasks]) };
     }
-    return { live, agents: agentsKept.agents, stamp: `${agentsKept.at}|${running}` };
+    return { live, agents: agentsKept.agents, names: agentsKept.names, tasks: agentsKept.tasks, stamp: `${agentsKept.at}|${running}` };
   }
 
   const unsupported = error => error instanceof RemoteAttentionError && error.statusCode === 501;
@@ -492,13 +650,24 @@ function createAttentionWidgetRoutes({
     finished = finished.sort((a, b) => b.at.localeCompare(a.at)).slice(0, FINISHED_KEEP);
     const outs = [...open, ...finished].sort((a, b) => b.order - a.order || b.id - a.id).map(entry => entry.out);
     const sessions = localSessions(outs, force);
-    const engineList = shown.map(({ key, name, local, color_index: color, offline, as_of: asOf }) => ({ key, name, local, color_index: color, ...(offline ? { offline: true, as_of: asOf || null } : {}) }));
+    // `schedules: true` for an engine with scheduled tasks (its form shows "When" and "Then"): this machine when it has them, a connected service when
+    // its items carry them.
+    const withSchedules = new Set(answers.filter(({ entry, result }) => (entry.local && localSchedules()) || (result.part && result.part.schedules)).map(({ entry }) => entry.key));
+    const engineList = shown.map(({ key, name, local, color_index: color, offline, as_of: asOf }) => ({ key, name, local, color_index: color, ...(withSchedules.has(key) ? { schedules: true } : {}), ...(offline ? { offline: true, as_of: asOf || null } : {}) }));
     const key = JSON.stringify([engineList, failed, answers.map(({ entry }) => `${entry.key}:${partOf(entry.key).version}`), sessions.stamp]);
     if (!force && memo && memo.key === key) return memo;
     const items = outs.map(out => {
-      if (out.engine !== 'local' || !out.session) return out;
-      const at = sessionKey(out.session);
-      return { ...out, session: { ...out.session, agent: sessions.agents.get(at) || null, live: sessions.live.has(at) } };
+      if (out.engine !== 'local' || (!out.session && !out.then_target)) return out;
+      const next = { ...out };
+      if (out.session) {
+        const at = sessionKey(out.session);
+        next.session = { ...out.session, agent: sessions.agents.get(at) || null, live: sessions.live.has(at) };
+      }
+      if (out.then_target) {
+        const name = out.then_target.terminal_id ? sessions.names.get(sessionKey(out.then_target)) : sessions.tasks.get(String(out.then_target.task_id));
+        next.then_target = { ...out.then_target, name: name || null };
+      }
+      return next;
     });
     const list = { items, engines: engineList, failed };
     const etag = crypto.createHash('sha1').update(JSON.stringify(list)).digest('base64url').slice(0, 22);
@@ -541,7 +710,7 @@ function createAttentionWidgetRoutes({
     if (typeof body.engine !== 'string' || !ENGINE_KEY.test(body.engine)) throw invalid("engine must be 'local' or 'remote:<id>'");
     const engine = engineOf(body.engine);
     const create = { title: body.title };
-    for (const field of ['status', 'notes']) if (body[field] !== undefined) create[field] = body[field];
+    for (const field of ['status', 'notes', 'schedule', 'then_action']) if (body[field] !== undefined) create[field] = body[field];
     const parent = parentIdOf(body, body.engine);
     if (parent !== undefined) create.parent_id = parent;
     res.status(201).json(itemOut(body.engine, await changing(body.engine, engine.create(create))));
@@ -620,6 +789,39 @@ function createAttentionWidgetRoutes({
     if (!sendToTerminal(session.task_id, session.terminal_id, text)) throw new WidgetError('TERMINAL_NOT_RUNNING', "The agent's terminal is not running", 409);
     service.update(key.id, { activity: { kind: 'note', text: REPLY_NOTE } }, { actor: 'user' });
     res.json({ ok: true });
+  }));
+
+  // Send now (a prompt the busy session did not take) and Run again (a script that failed), or a reminder fired now: the owner's POST
+  // /api/attention/:id/run-now (409 SESSION_BUSY while the session is busy; refused while a copied owner is offline). -> { ok: true }
+  api.post('/items/:key/run-now', parseJson, handle(async (req, res) => {
+    const key = keyOf(req);
+    await changing(key.engine, engineOf(key.engine).runNow(key.id));
+    res.json({ ok: true });
+  }));
+
+  // "Next: ..." of the form: the owner's POST /api/attention/schedule/preview (its time zone and rules). { engine, schedule } -> { next, text, error? }.
+  api.post('/schedule/preview', parseJson, handle(async (req, res) => {
+    const body = objectBody(req);
+    if (typeof body.engine !== 'string' || !ENGINE_KEY.test(body.engine)) throw invalid("engine must be 'local' or 'remote:<id>'");
+    if (!body.schedule || typeof body.schedule !== 'object' || Array.isArray(body.schedule)) throw invalid('schedule must be a JSON object');
+    const answer = await within(Promise.resolve().then(() => engineOf(body.engine).preview(body.schedule)), readTimeoutMs);
+    const next = answer && Array.isArray(answer.next) ? answer.next.filter(value => typeof value === 'string').slice(0, 3) : [];
+    res.json({ next, text: answer && typeof answer.text === 'string' ? answer.text : null, ...(answer && typeof answer.error === 'string' ? { error: answer.error } : {}) });
+  }));
+
+  // The pop-ups of the form: the sessions a prompt can go to and the tasks a script can run in, of the item's engine. ?engine=<key>.
+  api.get('/targets', handle(async (req, res) => {
+    const key = typeof req.query.engine === 'string' ? req.query.engine : 'local';
+    if (!ENGINE_KEY.test(key)) throw invalid("engine must be 'local' or 'remote:<id>'");
+    let answer;
+    if (key === 'local') answer = localTargets();
+    else {
+      const row = db.prepare('SELECT * FROM remote_servers WHERE id = ? AND owner_id = ? AND enabled = 1').get(Number(key.slice('remote:'.length)), owner());
+      if (!row) throw new WidgetError('ENGINE_NOT_FOUND', 'This device is not connected', 404);
+      try { answer = await within(Promise.resolve().then(() => remoteTargets(row)), readTimeoutMs); }
+      catch (error) { if (error instanceof WidgetError || error instanceof RemoteAttentionError) throw error; throw new WidgetError('REMOTE_CONNECTION_FAILED', 'Could not reach this device', 502); }
+    }
+    res.json(cleanTargets(answer));
   }));
 
   // Open session without a new tab: tells the open T-Agent page of this machine seen last (services/page-channel.js; only top-level pages of this machine

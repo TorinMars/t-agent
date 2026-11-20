@@ -320,6 +320,8 @@ func sectionColor(_ section: Section) -> NSColor {
     case .needs: return .systemRed
     case .working: return .systemGreen
     case .todo: return .systemYellow
+    case .scheduled: return .systemBlue
+    case .recurring: return .systemPurple
     case .done: return .systemGray
     }
 }

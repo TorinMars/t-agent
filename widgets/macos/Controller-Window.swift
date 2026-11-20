@@ -225,7 +225,7 @@ extension WidgetController {
         titleField.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         titleField.setContentHuggingPriority(.init(1), for: .horizontal)
         titleField.setAccessibilityElement(false)
-        var lineViews: [NSView] = [titleField]
+        var lineViews: [NSView] = rowMarkView(row).map { [$0, titleField] } ?? [titleField]  // Part G: the symbol of a scheduled task
         lineViews += buttons
         if let tag = row.tag { lineViews.append(EnginePill(tag)) }
         let line = NSStackView(views: lineViews)
@@ -233,6 +233,7 @@ extension WidgetController {
         line.alignment = .centerY
         line.spacing = 1
         line.setCustomSpacing(6, after: titleField)
+        if lineViews.first !== titleField, let mark = lineViews.first { line.setCustomSpacing(3, after: mark) }
         if let last = buttons.last, row.tag != nil { line.setCustomSpacing(5, after: last) }
         line.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(line)
@@ -331,14 +332,17 @@ extension WidgetController {
     private func rowTitleText(_ row: Row) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if let prefix = childPrefix(row) { out.append(prefix) }
+        if row.mark != .none, rowMarkImage(row.mark) == nil { out.append(plain(row.mark.glyph + " ", color: .secondaryLabelColor)) }  // no symbols
         out.append(plain(row.title.isEmpty ? "\u{2013}" : row.title))
         out.addAttribute(.paragraphStyle, value: truncating, range: NSRange(location: 0, length: out.length))
         return out
     }
 
-    /// The second line: the custom status, then what is pending, else why it needs you, else its result.
+    /// The second line: the custom status, then what is pending, else why it needs you, else its result. A scheduled task
+    /// shows its schedule line instead (Part G), except in Needs you, where why it needs you comes first.
     private func rowSecondLine(_ row: Row) -> String {
-        [row.custom, row.detail].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+        let needsYou = !row.actions.isEmpty && !row.detail.isEmpty
+        return [row.custom, row.schedule.isEmpty || needsYou ? row.detail : row.schedule].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
     }
 
     private func addSection(_ title: String, _ rows: [Row], _ section: Section, empty: String) {
@@ -368,6 +372,9 @@ extension WidgetController {
             addSection(L("Needs you"), shown.needs, .needs, empty: shown.empty ?? L("Nothing needs you"))
             addSection(L("Working"), shown.working, .working, empty: shown.empty ?? L("None"))
             addSection(L("To do"), shown.todo, .todo, empty: shown.empty ?? L("None"))
+            // Part G: the tasks that wait for their time, only when there are some.
+            if !shown.scheduled.isEmpty { addSection(L("Scheduled"), shown.scheduled, .scheduled, empty: "") }
+            if !shown.recurring.isEmpty { addSection(L("Recurring"), shown.recurring, .recurring, empty: "") }
             addFinishedGroup(shown, after: summary.failed.isEmpty ? 5 : 8)  // Part D: the Finished group
             for name in summary.failed {
                 addLine(plain(L("Could not load {1}", name), size: 11, color: .tertiaryLabelColor), after: 3)

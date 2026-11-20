@@ -32,12 +32,13 @@ enum DropDecision: Equatable {
 
 /// The status a drop into `target` gives, or nil when that is the item's own section (a plain reorder).
 func statusForDrop(_ item: WidgetItem, into target: Section) -> String? {
-    if sectionOf(item.status) == target { return nil }
+    if sectionOf(item) == target { return nil }
     switch target {
     case .needs: return "waiting_user"
     case .working: return "working"
     case .todo: return "todo"
     case .done: return "done"
+    case .scheduled, .recurring: return nil  // nothing is dropped there (Part G)
     }
 }
 

@@ -176,7 +176,9 @@ test('items: this machine and the connected services in one list, a failing engi
   assert.equal(host, os.hostname());
   assert.ok(Date.parse(updatedAt));
   assert.deepEqual(engines.map(engine => engine.key), ['local', `remote:${laptopId}`, `remote:${laptopId + 1}`, `remote:${laptopId + 4}`]);
-  assert.deepEqual(engines[0], { key: 'local', name: 'Studio Mac', local: true, color_index: tagColorIndex('local-instance') });
+  // `schedules` (true once this machine has scheduled tasks) is checked in test/attention-widget-schedule.test.js.
+  const { schedules: _localSchedules, ...localEngine } = engines[0];
+  assert.deepEqual(localEngine, { key: 'local', name: 'Studio Mac', local: true, color_index: tagColorIndex('local-instance') });
   assert.deepEqual(engines[1], { key: `remote:${laptopId}`, name: 'Laptop', local: false, color_index: tagColorIndex('instance-Laptop') });
   assert.deepEqual(failed.sort(), ['Broken', 'Slow'], 'a failing and a slow engine are named; the one without T-Attention is left out quietly');
   assert.equal(fake.engines.get('Hidden').calls.length, 0, 'a hidden device is not read');

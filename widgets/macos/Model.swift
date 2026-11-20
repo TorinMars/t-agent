@@ -31,6 +31,7 @@ struct WidgetItem: Equatable {
     var link: String = ""  // link_url when taskLink accepts it, else empty
     var linkLabel: String = ""  // link_label on one line
     var session: ItemSession?  // the agent's terminal (Part B); nil from an older server or a task without one
+    var timing = ItemTiming()  // the schedule fields (Part G); empty from an owner without schedules
 }
 
 struct EngineInfo: Equatable {
@@ -38,6 +39,7 @@ struct EngineInfo: Equatable {
     let name: String
     let local: Bool
     let colorIndex: Int  // into tagColors; -1 is the neutral colour
+    var schedules = false  // the engine has scheduled tasks: its form shows "When" and "Then" (Part G)
 }
 
 struct ItemList: Equatable {
@@ -63,7 +65,7 @@ func decodeItem(_ object: [String: Any]) -> WidgetItem? {
                       sortOrder: looseNumber(object["sort_order"]) ?? 0,
                       link: (object["link_url"] as? String).flatMap(taskLink) ?? "",
                       linkLabel: ((object["link_label"] as? String) ?? "").oneLine,
-                      session: decodeSession(object["session"]))
+                      session: decodeSession(object["session"]), timing: decodeTiming(object))
 }
 
 /// The link of a task when the window may open it, trimmed: an http(s) address with a host and without a user name or
@@ -97,7 +99,8 @@ func decodeEngine(_ object: [String: Any]) -> EngineInfo? {
     let name = looseText(object["name"])?.trimmed ?? ""
     let local = (object["local"] as? Bool) ?? (key == "local")
     let index = looseNumber(object["color_index"]).map { Int($0) } ?? -1
-    return EngineInfo(key: key, name: name.isEmpty ? key : name, local: local, colorIndex: index)
+    return EngineInfo(key: key, name: name.isEmpty ? key : name, local: local, colorIndex: index,
+                      schedules: jsonBool(object["schedules"]) == true)
 }
 
 /// The answer of GET /api/attention/widget/items; nil when it is not one. An item that cannot be read is left out.

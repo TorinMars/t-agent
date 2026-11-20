@@ -160,7 +160,7 @@ extension WidgetController {
     func testRowTooltip(_ key: String) -> String { rowViews[key]?.toolTip ?? "" }
     /// The title field of a row: the first text field of its title line.
     func testTitleField(_ key: String) -> NSTextField? {
-        (rowViews[key]?.subviews.first { $0 is NSStackView } as? NSStackView)?.arrangedSubviews.first as? NSTextField
+        (rowViews[key]?.subviews.first { $0 is NSStackView } as? NSStackView)?.arrangedSubviews.first { $0 is NSTextField } as? NSTextField
     }
     /// The second line of a row, or nil.
     func testSecondLine(_ key: String) -> NSTextField? { rowViews[key]?.subviews.first { $0 is NSTextField } as? NSTextField }

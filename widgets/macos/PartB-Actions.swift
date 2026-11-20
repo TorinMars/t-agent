@@ -42,13 +42,13 @@ func decodeSession(_ value: Any?) -> ItemSession? {
 
 extension RowAction {
     /// Opens something in the browser and never touches the task: stays on while the row's request is out.
-    var opensOnly: Bool { self == .link || self == .session }
+    var opensOnly: Bool { self == .link || self == .session || self == .terminal || self == .open }
 }
 
 /// The buttons of a row, left to right: Open link, Open session, the row's actions, and Reply after Handled when the
 /// agent's terminal can take one.
 func rowButtons(_ row: Row) -> [RowAction] {
-    (row.link.isEmpty ? [] : [.link]) + (row.openPath.isEmpty ? [] : [.session]) + row.actions
+    (row.link.isEmpty ? [] : [.link]) + (row.openPath.isEmpty ? [] : [row.script ? .terminal : .session]) + row.actions
         + (row.canReply && row.actions.contains(.handled) ? [.reply] : [])
 }
 
@@ -56,6 +56,7 @@ func rowButtons(_ row: Row) -> [RowAction] {
 /// the user, by the status the list has now), and Reply after Handled when the agent's terminal can take one. None for
 /// a direct or test message, or a task the list does not have.
 func bubbleActions(_ notice: WidgetNotice, item: WidgetItem?) -> [RowAction] {
+    if scheduleNoticeKinds.contains(notice.kind) { return scheduleBubbleActions(notice, item: item) }  // Part G
     guard notice.kind == "item", !notice.key.isEmpty, let item = item, item.key == notice.key else { return [] }
     let actions = rowActions(for: item)
     return actions.contains(.handled) && item.session?.canReply == true ? actions + [.reply] : actions
@@ -65,13 +66,14 @@ func bubbleActions(_ notice: WidgetNotice, item: WidgetItem?) -> [RowAction] {
 /// it), else the task's session, else the notice's target, else the T-Agent page. `session` is the session's page path
 /// when that is what it opens (it then goes through openTerminalPage, like Open session).
 func bubbleOpen(_ notice: WidgetNotice, item: WidgetItem?, base: String) -> (url: URL?, tooltip: String, session: String?) {
-    if notice.kind == "item", !notice.key.isEmpty, let item = item, item.key == notice.key {
+    let ownTask = notice.kind == "item" || scheduleNoticeKinds.contains(notice.kind)  // Part G: the window's own notices of a task
+    if ownTask, !notice.key.isEmpty, let item = item, item.key == notice.key {
         if !item.link.isEmpty {
             if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil) }
             if let url = linkTarget(item.link, base: base) { return (url, url.absoluteString, nil) }
         }
-        if let path = item.session?.openPath, !path.isEmpty, let url = linkTarget(path, base: base) {
-            return (url, L("Open session"), path)
+        if !item.openPath.isEmpty, let url = linkTarget(item.openPath, base: base) {
+            return (url, L("Open session"), item.openPath)
         }
     }
     if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil) }
@@ -480,7 +482,13 @@ extension WidgetController {
             return
         }
         dismissNotice()
-        runAction(notice.key, action)
+        switch action {
+        case .open:  // Part G: what a click on the bubble opens
+            let target = bubbleOpen(notice, item: bubbleItem(notice), base: api.base)
+            if let session = target.session { openTerminalPage(session) } else if let url = target.url { openPage(url) }
+        case .session, .terminal: openSession(notice.key)
+        default: runAction(notice.key, action)
+        }
     }
 
     /// Opens the reply field. The bubble may take the keyboard only while it is open; the timer waits meanwhile.
@@ -576,7 +584,7 @@ extension WidgetController {
 
     /// Opens the agent's terminal of a task on this T-Agent's page (openTerminalPage).
     func openSession(_ key: String) {
-        guard let path = items.first(where: { $0.key == key })?.session?.openPath, !path.isEmpty else { return }
+        guard let path = items.first(where: { $0.key == key })?.openPath, !path.isEmpty else { return }
         openTerminalPage(path)
     }
 

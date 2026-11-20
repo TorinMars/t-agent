@@ -282,6 +282,8 @@ struct SearchResult {
     let finished: [Row]
     let finishedTotal: Int
     let searching: Bool
+    var scheduled: [Row] = []  // Part G
+    var recurring: [Row] = []
     var empty: String? { searching ? L("No matches") : nil }
 }
 
@@ -524,14 +526,14 @@ extension WidgetController {
         let query = partD.query
         guard !query.isEmpty else {
             return SearchResult(needs: summary.needs, working: summary.working, todo: summary.todo, finished: summary.finished,
-                                finishedTotal: summary.done, searching: false)
+                                finishedTotal: summary.done, searching: false, scheduled: summary.scheduled, recurring: summary.recurring)
         }
         var notes: [String: String] = [:]
         for item in items where notes[item.key] == nil { notes[item.key] = item.notes ?? "" }
         func keep(_ rows: [Row]) -> [Row] { rows.filter { searchMatches(query, [$0.title, $0.custom, notes[$0.key] ?? ""]) } }
         let finished = keep(summary.finished)
         return SearchResult(needs: keep(summary.needs), working: keep(summary.working), todo: keep(summary.todo), finished: finished,
-                            finishedTotal: finished.count, searching: true)
+                            finishedTotal: finished.count, searching: true, scheduled: keep(summary.scheduled), recurring: keep(summary.recurring))
     }
 
     var finishedExpanded: Bool {

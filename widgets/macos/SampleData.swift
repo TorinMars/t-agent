@@ -39,6 +39,59 @@ func sampleList() -> ItemList {
     ], failed: ["K02"])
 }
 
+/// Part G: the list of the mockup with scheduled and recurring tasks, as an owner with schedules sends it (the clock of the
+/// renders and the self-test is scheduleSampleNow in Asia/Taipei). Two engines: this machine (T01) and K01.
+let scheduleSampleNow = Date(timeIntervalSince1970: 1_795_161_600)  // 2026-11-20T08:00:00Z, 16:00 in Taipei
+func sampleScheduleList() -> ItemList {
+    func item(_ key: String, _ status: String, _ title: String, order: Double, custom: String = "", reason: String = "", pending: String = "",
+              session: [String: Any]? = nil, timing: [String: Any]? = nil) -> WidgetItem {
+        var object: [String: Any] = ["key": key, "status": status, "title": title, "sort_order": order, "custom_status": custom,
+                                     "attention_reason": reason, "pending": pending, "notes": "", "session": session ?? NSNull()]
+        if let timing = timing { object.merge(timing) { _, new in new } }
+        return decodeItem(object)!
+    }
+    func repeating(_ freq: String, _ time: String, days: [Int] = [], state: String, next: String?, fired: String? = nil, done: String? = nil,
+                   then: [String: Any]? = nil, target: [String: Any]? = nil, exit: Int? = nil) -> [String: Any] {
+        var rule: [String: Any] = ["freq": freq, "time": time]
+        if !days.isEmpty { rule["days"] = days }
+        var out: [String: Any] = ["schedule": ["kind": "repeat", "rule": rule, "tz": "Asia/Taipei"], "then_action": then ?? NSNull(),
+                                  "schedule_state": state, "next_at": next ?? NSNull(), "runs": 4, "last_fired_at": fired ?? NSNull(),
+                                  "last_done_at": done ?? NSNull(), "then_target": target ?? NSNull()]
+        if let exit = exit { out["last_exit"] = exit }
+        return out
+    }
+    let prompt: [String: Any] = ["kind": "prompt", "task_id": "12", "terminal_id": "t1", "text": "Run the nightly tests and report failures"]
+    let promptTarget: [String: Any] = ["engine": "remote:7", "task_id": "12", "terminal_id": "t1", "name": "ONCALL-CC", "open_path": "/?openTerminal=remote:7:12:t1"]
+    let script: [String: Any] = ["kind": "script", "task_id": "5", "script": "./scripts/backup.sh && git push", "timeout_min": 30]
+    let scriptTarget: [String: Any] = ["engine": "local", "task_id": "5", "name": "Notes"]
+    return ItemList(items: [
+        item("local:40", "waiting_user", "Allow Bash", order: 90, pending: "Claude needs your permission",
+             session: ["engine": "local", "task_id": "3", "terminal_id": "t2", "agent": "claude", "live": true, "open_path": "/?openTerminal=local:3:t2"]),
+        item("remote:7:41", "waiting_user", "Nightly test run", order: 80, reason: "The session was busy at 02:00; the prompt was not sent",
+             timing: repeating("daily", "02:00", state: "due", next: "2026-11-20T18:00:00.000Z", fired: "2026-11-19T18:00:00.000Z", then: prompt, target: promptTarget)),
+        item("local:49", "waiting_user", "Sync the archive", order: 70, reason: "Script failed (exit 2) at 03:00",
+             session: ["engine": "local", "task_id": "5", "terminal_id": "s-49-3", "agent": NSNull(), "live": false, "open_path": "/?openTerminal=local:5:s-49-3"],
+             timing: repeating("daily", "03:00", state: "due", next: "2026-11-20T19:00:00.000Z", fired: "2026-11-19T19:00:00.000Z", then: script, target: scriptTarget)),
+        item("local:42", "working", "Fix the login page", order: 60, custom: "In testing"),
+        item("local:43", "todo", "Weekly review", order: 50,
+             timing: repeating("weekly", "09:00", days: [1], state: "due", next: "2026-11-23T01:00:00.000Z", fired: "2026-11-16T01:00:00.000Z")),
+        item("local:44", "todo", "Release 2.0", order: 40),
+        item("local:45", "todo", "Renew the TLS certificate", order: 30,
+             timing: ["schedule": ["kind": "once", "at": "2026-12-01T10:00", "tz": "Asia/Taipei"], "then_action": NSNull(), "schedule_state": "waiting",
+                      "next_at": "2026-12-01T02:00:00.000Z", "runs": 0, "last_fired_at": NSNull(), "last_done_at": NSNull()]),
+        item("local:46", "todo", "Daily standup notes", order: 20,
+             timing: repeating("weekdays", "09:30", state: "waiting", next: "2026-11-21T01:30:00.000Z", fired: "2026-11-20T01:30:00.000Z", done: "2026-11-20T01:41:00.000Z")),
+        item("remote:7:47", "todo", "Nightly build check", order: 10,
+             timing: repeating("daily", "02:00", state: "waiting", next: "2026-11-20T18:00:00.000Z", fired: "2026-11-19T18:00:00.000Z", then: prompt, target: promptTarget)),
+        item("local:48", "todo", "Back up notes", order: 5,
+             timing: repeating("daily", "03:00", state: "waiting", next: "2026-11-20T19:00:00.000Z", fired: "2026-11-19T19:00:00.000Z", then: script, target: scriptTarget, exit: 0)),
+        item("local:2", "done", "Old task", order: 1),
+    ], engines: [
+        EngineInfo(key: "local", name: "T01", local: true, colorIndex: 0, schedules: true),
+        EngineInfo(key: "remote:7", name: "K01", local: false, colorIndex: 3, schedules: true),
+    ], failed: [])
+}
+
 /// The notices of the bubble renders: (name, window in the right half, notices).
 func sampleNotices() -> [(String, Bool, [WidgetNotice])] {
     func notice(_ seq: Int, _ object: [String: Any]) -> WidgetNotice {
@@ -133,5 +186,6 @@ func renderSample(_ dir: String) -> Never {
     save("unreachable-widget.png", controller.renderWidget((dir as NSString).appendingPathComponent("unreachable-widget.png"), dark: dark))
     renderActivitySample(controller, dir: dir, save: save)  // Part C
     renderLookSamples(controller, dir: dir, save: save)  // Part F
+    renderScheduleSamples(controller, dir: dir, save: save)  // Part G
     exit(controller.testOnScreen || written.isEmpty ? 1 : 0)
 }

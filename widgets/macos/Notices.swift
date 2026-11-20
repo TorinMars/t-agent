@@ -65,8 +65,15 @@ func decodeNotices(_ data: Data) -> (seq: Int?, notices: [WidgetNotice])? {
     return (seq, notices.compactMap { ($0 as? [String: Any]).flatMap(decodeNotice) })
 }
 
-/// The colour of a notice's dot by its status; a direct or test message without a status is neutral.
+/// The colour of a notice's dot by its status; a direct or test message without a status is neutral. The notices the
+/// window makes of a scheduled task's firing (Part G) by their kind.
 func noticeTone(_ notice: WidgetNotice) -> String {
+    switch notice.kind {
+    case "scheduled", "prompt_sent": return "blue"
+    case "prompt_failed": return "orange"
+    case "script_failed": return "red"
+    default: break
+    }
     switch notice.status {
     case "waiting_user": return "orange"
     case "review": return "blue"
@@ -178,9 +185,18 @@ func bubbleStartFrame(_ frame: NSRect, toLeft: Bool, reduceMotion: Bool) -> NSRe
     reduceMotion ? frame : frame.offsetBy(dx: toLeft ? bubbleSlide : -bubbleSlide, dy: 0)
 }
 
-/// The sections of the panel, top to bottom; done is only a count line.
+/// The sections of the panel, top to bottom; done is only a count line. Scheduled and Recurring (Part G) hold the tasks
+/// that wait for their time; nothing is dropped there.
 enum Section: Int, CaseIterable {
-    case needs, working, todo, done
+    case needs, working, todo, scheduled, recurring, done
+
+    var timed: Bool { self == .scheduled || self == .recurring }
+}
+
+/// The section a task is listed in: Scheduled or Recurring while it waits for its time, else the section of its status.
+func sectionOf(_ item: WidgetItem) -> Section {
+    if item.timing.waiting { return item.timing.schedule?.kind == "repeat" ? .recurring : .scheduled }
+    return sectionOf(item.status)
 }
 
 func sectionOf(_ status: String) -> Section {
@@ -256,7 +272,8 @@ func displayOrder(_ items: [WidgetItem], _ section: Section, engines: [EngineInf
     let ranks = engineRanks(engines)
     let byKey = indexByKey(items)
     var blocks: [String: [WidgetItem]] = [:]
-    for item in items where sectionOf(item.status) == section {
+    if section.timed { return timedOrder(items, section, engines: engines) }
+    for item in items where sectionOf(item) == section {
         blocks[blockOf(item), default: []].append(item)
     }
     let blockKeys = blocks.keys.sorted { a, b in
@@ -294,8 +311,10 @@ func displayOrder(_ items: [WidgetItem], _ section: Section, engines: [EngineInf
 /// A button on a row of the Needs you section. The raw value is the last part of its request path.
 /// `link` opens the task's link in the browser and sends no request; rowActions never lists it. So are `session` (opens
 /// the agent's terminal) and `reply` (opens the reply field), see Part B.
+/// `sendNow` (a prompt the busy session did not take) and `runAgain` (a script that failed) post run-now (Part G);
+/// `terminal` is Open session named "Open terminal" for a script's terminal; `open` and `done` are bubble buttons.
 enum RowAction: String {
-    case confirm, reject, handled, link, session, reply
+    case confirm, reject, handled, link, session, reply, sendNow, runAgain, terminal, open, done
 
     var label: String {
         switch self {
@@ -305,10 +324,15 @@ enum RowAction: String {
         case .link: return L("Open link")
         case .session: return L("Open session")
         case .reply: return L("Reply")
+        case .sendNow: return L("Send now")
+        case .runAgain: return L("Run again")
+        case .terminal: return L("Open terminal")
+        case .open: return L("Open")
+        case .done: return L("Done")
         }
     }
 
-    var isPrimary: Bool { self == .confirm }
+    var isPrimary: Bool { self == .confirm || self == .sendNow || self == .runAgain || self == .done }
 
     /// The SF Symbol of its icon button in a row.
     var symbolName: String {
@@ -319,6 +343,11 @@ enum RowAction: String {
         case .link: return "link"
         case .session: return "terminal"
         case .reply: return "arrowshape.turn.up.left"
+        case .sendNow: return "paperplane"
+        case .runAgain: return "arrow.clockwise"
+        case .terminal: return "terminal"
+        case .open: return "arrow.up.right.square"
+        case .done: return "checkmark"
         }
     }
 }
@@ -327,10 +356,14 @@ enum RowAction: String {
 let rowIconSize: CGFloat = 18
 
 /// Review rows are confirmed or rejected; a row waiting for the user is marked handled.
+/// A prompt the busy session did not take adds Send now, a failed script Run again (Part G).
 func rowActions(for item: WidgetItem) -> [RowAction] {
     switch item.status {
     case "review": return [.confirm, .reject]
-    case "waiting_user": return [.handled]
+    case "waiting_user":
+        if item.timing.due && item.timing.then.kind == "prompt" { return [.sendNow, .handled] }
+        if item.timing.due && item.timing.then.kind == "script" { return [.runAgain, .handled] }
+        return [.handled]
     default: return []
     }
 }
@@ -356,6 +389,9 @@ struct Row: Equatable {
     var linkLabel: String = ""
     var openPath: String = ""  // the session's page path (sessionOpenPath), shown as an Open session button
     var canReply = false  // the agent's terminal is live on this machine: a waiting_user row gets Reply
+    var mark: RowMark = .none  // the symbol before the title of a scheduled task (Part G)
+    var schedule = ""  // the schedule line (Part G): the rule, the next time, the last done, where the prompt or script goes
+    var script = false  // the action is a script: its Open session is "Open terminal"
 
     var isChild: Bool { depth > 0 }
     /// The tooltip of the link button: the label, else the address.
@@ -370,12 +406,16 @@ struct Summary: Equatable {
     let done: Int
     let failed: [String]
     var finished: [Row] = []  // done, failed and cancelled rows, for the Finished group (Part D)
+    var scheduled: [Row] = []  // once tasks waiting for their time (Part G)
+    var recurring: [Row] = []  // repeating tasks waiting for their next time (Part G)
 
     func rows(_ section: Section) -> [Row] {
         switch section {
         case .needs: return needs
         case .working: return working
         case .todo: return todo
+        case .scheduled: return scheduled
+        case .recurring: return recurring
         case .done: return []
         }
     }
@@ -407,11 +447,14 @@ func summarize(_ list: ItemList) -> Summary {
                        ancestors: ancestorKeys(item, items, byKey), block: blockOf(item),
                        actions: section == .needs ? rowActions(for: item) : [],
                        tag: showTags ? EngineTag(name: shortName(engine?.name ?? item.engine), colorIndex: engine?.colorIndex ?? -1) : nil,
-                       link: item.link, linkLabel: item.linkLabel, openPath: item.session?.openPath ?? "",
-                       canReply: item.session?.canReply ?? false)
+                       link: item.link, linkLabel: item.linkLabel, openPath: item.openPath,
+                       canReply: item.session?.canReply ?? false, mark: rowMark(item),
+                       schedule: scheduleLine(item, now: scheduleClock()), script: item.timing.then.kind == "script")
         }
     }
-    return Summary(unfinished: items.filter { !finishedStatuses.contains($0.status) }.count,
+    // A task waiting for its time is not counted (the capsule and the heading stay as they were without schedules).
+    return Summary(unfinished: items.filter { !finishedStatuses.contains($0.status) && !$0.timing.waiting }.count,
                    needs: rows(.needs), working: rows(.working), todo: rows(.todo),
-                   done: items.filter { sectionOf($0.status) == .done }.count, failed: list.failed, finished: rows(.done))
+                   done: items.filter { sectionOf($0.status) == .done }.count, failed: list.failed, finished: rows(.done),
+                   scheduled: rows(.scheduled), recurring: rows(.recurring))
 }

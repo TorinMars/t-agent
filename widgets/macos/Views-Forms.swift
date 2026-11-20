@@ -29,7 +29,9 @@ func makeButtonRow(_ buttons: [PanelButton], width: CGFloat) -> NSStackView {
     return row
 }
 
-/// The create and edit form. A field editor's text is read directly so an input-method composition survives.
+/// The create and edit form. A field editor's text is read directly so an input-method composition survives. With
+/// `schedule` (an engine with scheduled tasks, Part G) it has "When" and "Then" after Notes; the form scrolls when the
+/// panel is shorter than it, and a refused save shows its message in red under the fields.
 final class TaskFormView: OverlayView, NSTextFieldDelegate {
     enum Mode {
         case create
@@ -46,6 +48,11 @@ final class TaskFormView: OverlayView, NSTextFieldDelegate {
     let cancelButton = PanelButton(label: L("Cancel"))
     var onSubmit: () -> Void = {}
     var onCancel: () -> Void = {}
+    var onResize: () -> Void = {}  // the form's height changed (When or Then switched parts)
+    let scheduleEditor: ScheduleEditorView?
+    let errorField = NSTextField(wrappingLabelWithString: "")
+    let formScroll = NSScrollView()
+    private let formStack = NSStackView()
 
     override var busy: Bool { didSet { updateSaveButton() } }
 
@@ -54,9 +61,10 @@ final class TaskFormView: OverlayView, NSTextFieldDelegate {
         return false
     }
 
-    init(mode: Mode, draft: TaskDraft, heading: String, showsNotes: Bool = true) {
+    init(mode: Mode, draft: TaskDraft, heading: String, showsNotes: Bool = true, schedule: ScheduleEditorView? = nil) {
         self.mode = mode
         self.showsNotes = showsNotes
+        self.scheduleEditor = schedule
         super.init(frame: NSRect(x: 0, y: 0, width: detailWidth, height: 120))
         let background = makeBackground(radius: 12)
         background.frame = bounds
@@ -107,21 +115,41 @@ final class TaskFormView: OverlayView, NSTextFieldDelegate {
         var views: [NSView] = [title, makeCaption(L("Name")), nameField, makeCaption(L("Status")), statusPopup]
         if isEdit { views += [makeCaption(L("Custom status")), customField] }
         if showsNotes { views += [makeCaption(L("Notes")), notesField] }
-        views.append(buttons)
-        let stack = NSStackView(views: views)
+        if let schedule = schedule { views.append(schedule) }
+        errorField.font = .systemFont(ofSize: 11, weight: .medium)
+        errorField.textColor = .systemRed
+        errorField.maximumNumberOfLines = 3
+        errorField.preferredMaxLayoutWidth = fieldWidth
+        errorField.translatesAutoresizingMaskIntoConstraints = false
+        errorField.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+        errorField.isHidden = true
+        views += [errorField, buttons]
+        let stack = formStack
+        views.forEach { stack.addArrangedSubview($0) }
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
         stack.edgeInsets = NSEdgeInsets(top: detailPadding, left: detailPadding, bottom: detailPadding, right: detailPadding)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        // The fields scroll when the panel is shorter than the form (its height is at most detailMaxHeight).
+        let document = FlippedView(frame: NSRect(x: 0, y: 0, width: detailWidth, height: 120))
+        document.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.topAnchor.constraint(equalTo: document.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
             stack.widthAnchor.constraint(equalToConstant: detailWidth),
         ])
-        stack.layoutSubtreeIfNeeded()
-        preferredHeight = ceil(stack.fittingSize.height) + 34  // room for the red message under the buttons
+        formScroll.frame = bounds
+        formScroll.autoresizingMask = [.width, .height]
+        formScroll.drawsBackground = false
+        formScroll.borderType = .noBorder
+        formScroll.hasVerticalScroller = true
+        formScroll.autohidesScrollers = true
+        formScroll.scrollerStyle = .overlay
+        formScroll.documentView = document
+        addSubview(formScroll)
+        schedule?.onResize = { [weak self] in self?.relayout() }
+        relayout(notify: false)
 
         saveButton.target = self
         saveButton.action = #selector(savePressed)
@@ -131,6 +159,23 @@ final class TaskFormView: OverlayView, NSTextFieldDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// Measures the fields again (When or Then showed or hid a part, a message came) and tells the panel.
+    func relayout(notify: Bool = true) {
+        formStack.layoutSubtreeIfNeeded()
+        let height = ceil(formStack.fittingSize.height)
+        formScroll.documentView?.setFrameSize(NSSize(width: detailWidth, height: height))
+        preferredHeight = height + 34  // room for the red message under the buttons
+        if notify { onResize() }
+    }
+
+    /// A refused save (for example 403 SCRIPT_NEEDS_PERSON from the owner) or a form that cannot be saved, in red under the
+    /// fields; nil hides it.
+    func showError(_ message: String?) {
+        errorField.stringValue = message ?? ""
+        errorField.isHidden = message == nil
+        relayout()
+    }
 
     var selectedStatus: String { (statusPopup.selectedItem?.representedObject as? String) ?? "todo" }
 

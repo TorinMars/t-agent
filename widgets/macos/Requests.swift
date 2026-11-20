@@ -82,9 +82,11 @@ struct WidgetAPI {
     }
 
     /// A new task is always made on this machine.
-    func createRequest(_ draft: TaskDraft) -> URLRequest {
+    /// `extra`: the schedule and its action of the form (Part G).
+    func createRequest(_ draft: TaskDraft, extra: [String: Any] = [:]) -> URLRequest {
         var body: [String: Any] = ["engine": "local", "title": draft.title, "status": draft.status]
         if !draft.notes.isEmpty { body["notes"] = draft.notes }
+        body.merge(extra) { _, new in new }
         return request("POST", "/api/attention/widget/items", body: body)
     }
 

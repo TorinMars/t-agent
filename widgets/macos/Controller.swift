@@ -92,6 +92,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var stringsLoading = false
     let partD = PartDState()  // shortcuts, idle fade, search, Finished group, per-display position (Part D)
     let ticks = TickState()  // one request per tick (Part E)
+    let partG = PartGState()  // scheduled tasks: the firings seen, the form's preview and pop-ups (Part G)
     var moveHook: ((String, MoveSpec, String?) -> Void)?  // for --self-test: takes a drop instead of the server
     /// For --self-test and --render-sample: takes every request instead of the network, with the function that
     /// answers it (body, status), now or later.

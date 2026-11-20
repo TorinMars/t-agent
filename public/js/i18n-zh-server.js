@@ -816,6 +816,8 @@ I18n.add({
   "Contains the workspace or this program": "包含工作目录或本程序",
   "The folder is a Git worktree or submodule; renaming would break its link to the repository": "这个文件夹是 Git 工作树或子模块，重命名会断开它和仓库的关联",
   "The folder is a Git repository with linked worktrees; renaming would break them": "这个文件夹是带有关联工作树的 Git 仓库，重命名会让这些工作树失效",
+  "The folder is a Git worktree or submodule; moving would break its link to the repository": "这个文件夹是 Git 工作树或子模块，移动会断开它和仓库的关联",
+  "The folder is a Git repository with linked worktrees; moving would break them": "这个文件夹是带有关联工作树的 Git 仓库，移动会让这些工作树失效",
   "A Git worktree or submodule inside the folder would break:": "文件夹里的 Git 工作树或子模块会失效：",
   "A Git worktree or submodule inside the folder would break: {1}": "文件夹里的 Git 工作树或子模块会失效：{1}",
   "A Git repository with linked worktrees inside the folder would break:": "文件夹里带有关联工作树的 Git 仓库会失效：",

@@ -50,6 +50,8 @@ module.exports = {
   // The usage data sync across linked devices (services/ui-events-sync.js). 'false' turns it off on this service (each engine keeps its own presses);
   // it is off too when the settings sync is (it uses the settings sync's link keys).
   usageSyncEnabled: process.env.USAGE_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
+  // The largest task (its folder and agent session files) "Move to another machine…" moves (services/task-move.js), in bytes; default 2 GiB.
+  taskMoveMaxBytes: positiveInteger(process.env.TASK_MOVE_MAX_BYTES, 2 * 1024 * 1024 * 1024),
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,
   updateAutoQuietMs: positiveInteger(process.env.UPDATE_AUTO_QUIET_SECONDS, 600) * 1000,

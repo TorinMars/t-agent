@@ -12,6 +12,7 @@ import TextField from './TextField.jsx';
 import Typography from '@mui/material/Typography';
 import { DialogError, t } from './common.jsx';
 import { folderFollowsTitle, folderNameProblem, folderParts, joinFolder, titleToSlug } from './task-rename.mjs';
+import { MoveTaskDialog } from './MoveTask.jsx';
 
 // The Rename dialog of the task "⋯" menu (h5.js `askTaskRename`): the title and, where the task's service can (`folderSupported`), "Also rename the folder"
 // (off by default) with the old path, the new name (the slug of the new title, as a new task gets, until the person edits it) and the new path. The checkbox is
@@ -103,6 +104,7 @@ export function TaskDialog({ state, ui }) {
   useEffect(() => { setAlsoDir(false); setDir(dialog ? dialog.workDir : ''); }, [key]);
   const close = () => ui.actions.taskDialogClose();
   const open = Boolean(dialog);
+  if (dialog && dialog.kind === 'move') return <MoveTaskDialog key={key} dialog={dialog} ui={ui} close={close} />;
   if (dialog && dialog.kind === 'rename') return <RenameTaskDialog key={key} dialog={dialog} ui={ui} service={service} close={close} />;
   if (dialog && dialog.kind === 'workdir') {
     return (

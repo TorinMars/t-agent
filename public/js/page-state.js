@@ -218,6 +218,7 @@
   // ---- Talking to the server ----
   const headers = { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' };
   let version = 0; // the newest `version` of the server's state this page took
+  let moves = []; // [{ from: { instance, task }, to: { instance, task }, title, at }]: the server re-points the shared state itself; this is for what a page keeps alone
   let answered = false; // the server's state was read or pushed since this page started (not only the cache)
   function take(answer) {
     if (!answer || !Array.isArray(answer.recent) || !answer.keys || typeof answer.keys !== 'object') return false;
@@ -226,6 +227,7 @@
     if (Number.isSafeInteger(given)) version = given;
     answered = true;
     state = { recent: answer.recent, keys: answer.keys };
+    moves = Array.isArray(answer.moves) ? answer.moves : []; // tasks moved to another engine (services/task-move.js), newest first
     peers = Array.isArray(answer.peers) ? answer.peers : [];
     supported = true;
     return true;
@@ -432,6 +434,7 @@
     supported: () => supported,
     answered: () => answered,
     peers: () => peers,
+    moves: () => moves,
     keys: () => [...new Set([...Object.keys(state.keys), ...Object.keys(pending.keys)])],
   };
 }(typeof window !== 'undefined' ? window : globalThis));

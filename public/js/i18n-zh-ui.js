@@ -2129,7 +2129,7 @@ I18n.add({
   "Linked devices use one set of settings. Each part below says whether a change is copied to the other devices or stays on this one.": "关联的设备共用一套设置。下面每一部分都标明了修改会复制到其他设备，还是只留在本机。",
   "Voice input on or off": "语音输入开关",
   "Device names": "设备名称",
-  "Setup guide": "设置向导",
+  "Setup guide shown or hidden": "设置向导的显示或隐藏",
   "On or off": "开关",
   // ---- Settings: Browser extension ----
   "Browser extension": "浏览器扩展",

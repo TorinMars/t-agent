@@ -392,7 +392,7 @@ test('the global save hook reaches a started service; a value written by the syn
 
 test('only the shared groups are in the registry; per-device settings and Telegram never are', () => {
   const keys = defaultRegistry({ db, sessionSecret: SECRET }).map(entry => entry.key);
-  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'attention-summary', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'browser-sites']);
+  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'agent-config', 'attention-summary', 'attention-guide', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'update-auto', 'browser-sites']);
   assert.deepEqual(Object.entries(SCOPES).filter(([, scope]) => scope === 'shared').map(([key]) => key), keys);
   for (const key of ['workdir', 'access', 'authenticator', 'engine-name', 'widget-enabled', 'peer-fs', 'restart', 'rule-sync']) {
     assert.equal(SCOPES[key], 'device', key);
@@ -431,8 +431,15 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     browserSites.save('github.com', { title: 'GitHub', summary: 'Code hosting' });
     db.prepare("INSERT OR REPLACE INTO engine_identity (key, value) VALUES ('instance_id', ?)").run(ID_A);
     require('../routes/task-list-prefs').importFromSync({ db }, owner, [ID_B]);
+    const agentConfig = require('../services/agent-config').createAgentConfigStore(db);
+    agentConfig.setDefaults(owner, 'claude', { model: 'opus', permission: 'plan' });
+    agentConfig.setOverride(owner, '7', 'claude', { model: 'sonnet' });
+    const guide = require('../services/attention-guide').createAttentionGuide({ db });
+    guide.save(owner, { dismissed: true, paired: true });
+    const updates = require('../services/update-manager');
+    updates.setAutoUpdateEnabled(false);
 
-    assert.deepEqual([...new Set(changed)].sort(), ['attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'voice', 'widget-language'].sort(), 'every save path calls the hook');
+    assert.deepEqual([...new Set(changed)].sort(), ['agent-config', 'attention-guide', 'attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'update-auto', 'voice', 'widget-language'].sort(), 'every save path calls the hook');
 
     const registry = defaultRegistry({ db, sessionSecret: SECRET });
     const saved = Object.fromEntries(registry.map(entry => [entry.key, entry.read(owner)]));
@@ -447,6 +454,9 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.equal(saved['notifier-plugins'].webhook.values.token, 'hook-REGISTRY-4');
     assert.equal(saved['widget-language'], 'zh');
     assert.deepEqual(saved['task-list-devices'], [ID_B]);
+    assert.deepEqual(saved['agent-config'], { claude: { model: 'opus', permission: 'plan' }, codex: {} }, 'the defaults only, never the overrides');
+    assert.deepEqual(saved['attention-guide'], { dismissed: true, pageOnly: false }, 'paired stays on this machine');
+    assert.deepEqual(saved['update-auto'], { enabled: false });
 
     changed.length = 0;
     // browser-sites has merge (CRDT) semantics, not replace: write(null) is a no-op (deletions travel as per-site tombstones inside the value), so it
@@ -458,6 +468,9 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.equal(notify.getPluginConfig('telegram', owner).values.token.set, true, 'clearing the plugins leaves Telegram alone');
     assert.equal(widget.read().enabled, false, 'the window switch stays');
     assert.equal(widget.read().language, 'auto');
+    assert.deepEqual(agentConfig.get(owner).servers, { 7: { claude: { model: 'sonnet' } } }, 'clearing the defaults keeps the overrides of this machine');
+    assert.equal(guide.get(owner).paired, true, 'clearing the guide flags keeps paired');
+    assert.equal(updates.publicState().auto_update.enabled, false, 'no shared value any more: the switch itself stays as it was');
     for (const entry of replaceEntries) entry.write(owner, saved[entry.key]);
     for (const entry of replaceEntries) assert.deepEqual(entry.read(owner), saved[entry.key], `${entry.key} round-trips`);
     // browser-sites: an incoming set merges per site; a newer peer entry wins, and the whole value round-trips.
@@ -477,7 +490,9 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.equal(widget.read().language, 'zh');
 
     // A malformed value is refused before anything is written.
-    for (const [key, bad] of [['translate', 'text'], ['oss-agent-access', { enabled: 'yes' }], ['widget-language', 'fr'], ['notifier-plugins', { webhook: { enabled: true } }], ['task-list-devices', ['not an id!']]]) {
+    for (const [key, bad] of [['translate', 'text'], ['oss-agent-access', { enabled: 'yes' }], ['widget-language', 'fr'], ['notifier-plugins', { webhook: { enabled: true } }], ['task-list-devices', ['not an id!']],
+      ['agent-config', { claude: { bogus: '1' } }], ['agent-config', { zsh: {} }], ['attention-guide', { dismissed: 'yes', pageOnly: false }], ['attention-guide', { dismissed: true, pageOnly: false, paired: true }],
+      ['update-auto', { enabled: 'no' }], ['update-auto', { enabled: true, attempts: {} }]]) {
       assert.throws(() => registry.find(entry => entry.key === key).write(owner, bad), /INVALID_SYNC_VALUE/, key);
     }
     assert.deepEqual(registry.find(entry => entry.key === 'translate').read(owner), saved.translate);

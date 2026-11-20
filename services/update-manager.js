@@ -29,6 +29,7 @@ const versionPath = path.join(projectRoot, 'VERSION.json');
 const stateKey = 'update_state';
 // The automatic update has its own row: its setting and history must not be touched by anything that resets or rewrites update_state.
 const autoKey = 'update_auto';
+const AUTO_SYNC_GROUP = 'update-auto';
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const HTTP_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 3;
@@ -564,11 +565,19 @@ function start() {
 }
 
 const setIdleProbe = fn => autoUpdate.setIdleProbe(fn);
-const setAutoUpdateEnabled = enabled => autoUpdate.setEnabled(enabled);
+// The switch from the page (POST /api/system/auto-update): one choice for every linked engine, so the settings sync is told (group update-auto).
+const setAutoUpdateEnabled = enabled => {
+  autoUpdate.setEnabled(enabled);
+  require('./settings-sync-store').settingChanged(AUTO_SYNC_GROUP);
+};
+// The settings sync's adapter (services/settings-sync.js): only the `enabled` switch travels, and only once it was set with this version or later;
+// the attempts, restarts and history of update_auto stay on this machine. It goes through the running scheduler, which keeps the row in memory.
+const exportForSync = () => autoUpdate.syncValue();
+const importFromSync = (deps, owner, value) => autoUpdate.applySync(value);
 
 const restartSupport = () => serverRestart.support();
 const requestRestart = () => serverRestart.request();
 // True from an accepted restart until the exit, and while an automatic restart is being prepared: POST /api/system/apply-update answers 409 RESTART_PENDING.
 const restartPending = () => serverRestart.pending() || Boolean(restartPromise);
 
-module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, runningVersion, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending };
+module.exports = { apply, check, markNotified, publicState, readLocalManifest, start, npmEnv, bootId, runningVersion, setIdleProbe, setAutoUpdateEnabled, restartSupport, requestRestart, restartPending, exportForSync, importFromSync, AUTO_SYNC_GROUP };

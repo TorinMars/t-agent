@@ -283,6 +283,22 @@ test('the switch is on by default, is saved, and stops the wait', async () => {
   assert.equal(again.state().state, 'off');
 });
 
+test('the switch is shared once it is set with this version: a value from before is not; one from a linked engine is applied at once', async () => {
+  const before = harness({ store: JSON.stringify({ enabled: false, attempts: { '2.0.0': { count: 1, last_at: 1, gave_up: false } } }) });
+  assert.equal(before.auto.syncValue(), null, 'a value from before stays on this machine');
+  assert.equal(harness().auto.syncValue(), null, 'so does the default');
+  before.auto.start();
+  before.auto.applySync({ enabled: true });
+  assert.equal(before.state().enabled, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(before.state().state, 'waiting', 'the scheduler looks at once, not at the next minute');
+  assert.deepEqual(before.auto.syncValue(), { enabled: true });
+  assert.deepEqual(before.saved().attempts, { '2.0.0': { count: 1, last_at: 1, gave_up: false } }, 'the attempts stay as they were');
+  const own = harness();
+  own.auto.setEnabled(true);
+  assert.deepEqual(own.auto.syncValue(), { enabled: true }, 'a choice made here, even the default value, is shared');
+});
+
 test('detectSupervisor believes the environment only with proof of how the process started', () => {
   const facts = { hasIpc: false, ppid: 500, platform: 'linux', readFile: () => { throw new Error('no such file'); } };
   assert.equal(detectSupervisor({ ...facts, env: {} }), null);

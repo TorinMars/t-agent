@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const syncStore = require('./settings-sync-store');
 
 // ── Configurable items ──────────────────────────────────────────────
 // Values are always strings in the API; empty string = leave alone (do not change the existing value on that machine).
@@ -242,24 +243,32 @@ function createAgentConfig({ env = process.env, home = os.homedir() } = {}) {
 }
 
 // ── Client-side saving: global defaults + per-server overrides ───────────────
+// One row per owner: { defaults, servers, status }. The defaults are the person's one choice for every linked engine (settings sync group
+// agent-config, exportForSync below). The per-server overrides and the push results stay on this machine: they are keyed by "local" and this
+// machine's remote_servers row ids, which name other machines (or nothing) on another engine, and each engine pushes only to its own targets.
+const SYNC_GROUP = 'agent-config';
+const configKey = owner => `agent-config:${owner}`;
+const emptyConfig = () => ({ defaults: { claude: {}, codex: {} }, servers: {}, status: {} });
+function readConfig(database, owner) {
+  const row = database.prepare('SELECT value FROM system_state WHERE key = ?').get(configKey(owner));
+  if (!row) return emptyConfig();
+  try { return { ...emptyConfig(), ...JSON.parse(row.value) }; } catch { return emptyConfig(); }
+}
+function writeConfig(database, owner, state) {
+  database.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(configKey(owner), JSON.stringify(state));
+}
+
 function createAgentConfigStore(database) {
-  const key = owner => `agent-config:${owner}`;
-  const empty = () => ({ defaults: { claude: {}, codex: {} }, servers: {}, status: {} });
-  function read(owner) {
-    const row = database.prepare('SELECT value FROM system_state WHERE key = ?').get(key(owner));
-    if (!row) return empty();
-    try { return { ...empty(), ...JSON.parse(row.value) }; } catch { return empty(); }
-  }
-  function write(owner, state) {
-    database.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`).run(key(owner), JSON.stringify(state));
-  }
+  const read = owner => readConfig(database, owner);
+  const write = (owner, state) => writeConfig(database, owner, state);
   return {
     get: read,
     setDefaults(owner, tool, values) {
       const state = read(owner);
       state.defaults[tool] = cleanValues(tool, values);
       write(owner, state);
+      syncStore.settingChanged(SYNC_GROUP);
       return state;
     },
     setOverride(owner, serverKey, tool, values) {
@@ -285,4 +294,33 @@ function createAgentConfigStore(database) {
   };
 }
 
-module.exports = { SCHEMA, TOOLS, AgentConfigError, cleanValues, createAgentConfig, createAgentConfigStore, locations, setTomlKey, getTomlKey };
+// ── Settings sync (services/settings-sync.js) ───────────────
+// The shared value: the defaults with a value ({ claude: {...}, codex: {...} }, empty strings left out, since they mean "leave alone" as a missing
+// key does), or null when neither tool has one, so an engine that was never configured never wipes one that was.
+function exportForSync({ db }, owner) {
+  const { defaults } = readConfig(db, owner);
+  const value = {};
+  for (const tool of TOOLS) {
+    const given = defaults && defaults[tool] && typeof defaults[tool] === 'object' && !Array.isArray(defaults[tool]) ? defaults[tool] : {};
+    value[tool] = Object.fromEntries(Object.entries(given).filter(([, item]) => typeof item === 'string' && item !== ''));
+  }
+  return TOOLS.some(tool => Object.keys(value[tool]).length) ? value : null;
+}
+// Writes the defaults of a linked engine (null: cleared there), keeping this machine's overrides and push results. Each tool's values are checked as
+// a save from the page is; anything else throws INVALID_SYNC_VALUE before something is written. Pushing them to the agents stays a step of its own.
+function importFromSync({ db }, owner, value) {
+  const invalid = () => Object.assign(new Error('INVALID_SYNC_VALUE'), { statusCode: 400 });
+  const defaults = { claude: {}, codex: {} };
+  if (value !== null) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(tool => !TOOLS.includes(tool))) throw invalid();
+    for (const tool of TOOLS) {
+      if (value[tool] === undefined) continue;
+      try { defaults[tool] = cleanValues(tool, value[tool]); } catch { throw invalid(); }
+    }
+  }
+  // A clear for an owner without a row leaves no row behind.
+  if (value === null && !db.prepare('SELECT 1 FROM system_state WHERE key = ?').get(configKey(owner))) return;
+  writeConfig(db, owner, { ...readConfig(db, owner), defaults });
+}
+
+module.exports = { SCHEMA, TOOLS, SYNC_GROUP, AgentConfigError, cleanValues, createAgentConfig, createAgentConfigStore, exportForSync, importFromSync, locations, setTomlKey, getTomlKey };

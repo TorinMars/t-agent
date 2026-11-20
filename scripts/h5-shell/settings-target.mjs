@@ -11,7 +11,7 @@ export const GROUPS = [
   { id: 'devices', title: 'Devices', description: 'Linked devices, how they connect, and what they share.', summary: 'Device list, linking, file access, rules sync' },
   { id: 'attention', title: 'T-Attention', description: 'Reminders, plugins and notifiers, the desktop window and CLI tokens.', summary: 'Reminders, plugins, desktop window, tokens' },
   { id: 'account', title: 'Account and access', description: 'Who can reach this service and how they sign in.', summary: 'Access mode, authenticator' },
-  { id: 'usage-data', title: 'Usage data', description: 'Which buttons are used, to improve the layout. Kept on this machine only.', summary: 'Record button use, most used, not used' },
+  { id: 'usage-data', title: 'Usage data', description: 'Which buttons are used, to improve the layout. Kept on your own machines only.', summary: 'Record button use, most used, not used' },
 ];
 export const SETTINGS_GROUPS = GROUPS.map(group => group.id);
 export const groupInfo = id => GROUPS.find(group => group.id === id) || null;

@@ -14,11 +14,11 @@ const DEVICES = [
   { id: 12, name: 'Sleeping', online: false, supported: true },
 ];
 
-test('each tab holds exactly its parts: Shared the shared ones and Telegram, a device tab the per-device ones, every tab the Environment table', async () => {
+test('each tab holds exactly its parts: Shared the shared ones and Telegram, a device tab the per-device ones, every tab the Environment table and the usage data', async () => {
   const { PARTS, partShown } = await load('settings-tabs.mjs');
   const inTab = scope => Object.keys(PARTS).filter(id => partShown(id, scope));
-  assert.deepEqual(inTab('shared'), ['oss', 'browser-sites', 'voice', 'translate', 'settings-sync', 'task-list-devices', 'environment', 'notifier-plugins', 'telegram', 'notify-rules', 'widget-language', 'attention-summary']);
-  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'engine-name', 'link', 'peer-fs', 'rule-sync', 'advanced', 'environment', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'usage-record', 'usage-top', 'usage-unused', 'usage-store']);
+  assert.deepEqual(inTab('shared'), ['oss', 'browser-sites', 'voice', 'translate', 'settings-sync', 'task-list-devices', 'environment', 'notifier-plugins', 'telegram', 'notify-rules', 'widget-language', 'attention-summary', 'usage-record', 'usage-top', 'usage-unused', 'usage-store']);
+  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'engine-name', 'link', 'peer-fs', 'rule-sync', 'advanced', 'environment', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'usage-top', 'usage-unused', 'usage-store']);
   assert.equal(inTab(null).length, Object.keys(PARTS).length, 'without tabs every part is drawn');
   assert.equal(partShown('something-new', 'shared'), true, 'an unknown part is never lost');
 });
@@ -26,7 +26,7 @@ test('each tab holds exactly its parts: Shared the shared ones and Telegram, a d
 test('a group with nothing in a tab is hidden there', async () => {
   const { groupShown } = await load('settings-tabs.mjs');
   const { SETTINGS_GROUPS } = await load('settings-target.mjs');
-  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'shared')), ['tasks-files', 'voice-translate', 'devices', 'attention']);
+  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'shared')), ['tasks-files', 'voice-translate', 'devices', 'attention', 'usage-data']);
   assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'device')), ['tasks-files', 'devices', 'attention', 'account', 'usage-data']);
   assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, null)), SETTINGS_GROUPS);
 });

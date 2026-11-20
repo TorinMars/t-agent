@@ -392,7 +392,7 @@ test('the global save hook reaches a started service; a value written by the syn
 
 test('only the shared groups are in the registry; per-device settings and Telegram never are', () => {
   const keys = defaultRegistry({ db, sessionSecret: SECRET }).map(entry => entry.key);
-  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'agent-config', 'attention-summary', 'attention-guide', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'update-auto', 'browser-sites']);
+  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'agent-config', 'attention-summary', 'attention-guide', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'update-auto', 'browser-sites', 'usage-record']);
   assert.deepEqual(Object.entries(SCOPES).filter(([, scope]) => scope === 'shared').map(([key]) => key), keys);
   for (const key of ['workdir', 'access', 'authenticator', 'engine-name', 'widget-enabled', 'peer-fs', 'restart', 'rule-sync']) {
     assert.equal(SCOPES[key], 'device', key);
@@ -438,8 +438,9 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     guide.save(owner, { dismissed: true, paired: true });
     const updates = require('../services/update-manager');
     updates.setAutoUpdateEnabled(false);
+    require('../services/ui-events').createUiEvents({ db, now: () => 0 }).setEnabled(false);
 
-    assert.deepEqual([...new Set(changed)].sort(), ['agent-config', 'attention-guide', 'attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'update-auto', 'voice', 'widget-language'].sort(), 'every save path calls the hook');
+    assert.deepEqual([...new Set(changed)].sort(), ['agent-config', 'attention-guide', 'attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'update-auto', 'usage-record', 'voice', 'widget-language'].sort(), 'every save path calls the hook');
 
     const registry = defaultRegistry({ db, sessionSecret: SECRET });
     const saved = Object.fromEntries(registry.map(entry => [entry.key, entry.read(owner)]));
@@ -457,6 +458,7 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.deepEqual(saved['agent-config'], { claude: { model: 'opus', permission: 'plan' }, codex: {} }, 'the defaults only, never the overrides');
     assert.deepEqual(saved['attention-guide'], { dismissed: true, pageOnly: false }, 'paired stays on this machine');
     assert.deepEqual(saved['update-auto'], { enabled: false });
+    assert.deepEqual(saved['usage-record'], { enabled: false });
 
     changed.length = 0;
     // browser-sites has merge (CRDT) semantics, not replace: write(null) is a no-op (deletions travel as per-site tombstones inside the value), so it

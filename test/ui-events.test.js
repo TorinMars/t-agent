@@ -168,16 +168,25 @@ test('summary query, export and clear through the route', async () => {
     assert.equal(summary.status, 200);
     assert.equal(summary.body.total, 2);
     assert.equal(summary.body.layout, 'wide');
+    assert.deepEqual(summary.body.where, { company_computer: false, hands_over: false, home_name: null, home_online: null, waiting: 0, shared_with: [] }, 'without the sync: kept here only');
+    assert.deepEqual(summary.body.engines.map(engine => [engine.count, engine.self]), [[2, true]]);
     const exported = await call('GET', '/export');
     assert.equal(exported.status, 200);
     assert.match(exported.headers.get('content-disposition'), /attachment; filename="t-agent-usage-\d{4}-\d{2}-\d{2}\.json"/);
     assert.equal(exported.body.retention_days, 90);
     assert.deepEqual(exported.body.events.map(row => [row.key, row.pane, row.state]), [['h5-cycle', false, null], ['h5-more', false, 'on']]);
     assert.equal(exported.body.events[0].time, new Date(NOW).toISOString());
+    assert.equal(exported.body.events[0].client, 'computer');
     assert.deepEqual(exported.body.controls.map(row => row.key), ['h5-cycle']);
     assert.deepEqual((await call('DELETE', '')).body, { cleared: 2 });
     assert.equal((await call('GET', '/summary')).body.data.count, 0);
     assert.deepEqual((await call('GET', '/export')).body.events, []);
     assert.deepEqual((await call('GET', '/export')).body.controls, []);
+    // A press older than the clear is refused; a batch is recorded with the client kind it came from (the route reads it from the User-Agent).
+    assert.equal(service.record(batch([event('h5-cycle', { at: NOW - 1000 })]), { client: 'phone' }).accepted, 0, 'at or before the clear');
+    const later = NOW + 1000;
+    const after = createUiEvents({ db, now: () => later });
+    assert.equal(after.record({ page: 'abc123', sent: later, events: [event('h5-cycle', { at: later })] }, { client: 'phone' }).accepted, 1);
+    assert.deepEqual(after.summary({ days: 1 }).clients, { phone: 1, computer: 0, 'mac-app': 0 });
   } finally { await close(); }
 });

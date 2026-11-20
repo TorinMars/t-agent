@@ -44,6 +44,9 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 // schema.sql runs, because schema.sql makes indexes on them (services/learn-sync-store.js; a database without learn_cards gets it all from schema.sql).
 // Schema 15: learn_cards.phonetic, added there too.
 require('../services/learn-sync-store').ensureSyncSchema(db);
+// Schema 16: the sync columns of ui_events and ui_controls (the usage data of every linked engine as one set), added the same way
+// (services/ui-events.js ensureSchema; a database without the usage data tables gets them from schema.sql).
+require('../services/ui-events').ensureSchema(db);
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 // Every key of system_state and engine_identity is declared with its scope (lib/server-state-keys.js); a row with any other key is refused.

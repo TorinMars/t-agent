@@ -9,6 +9,9 @@ I18n.add({
   '{1} key': '{1} 键',
   '{1} events since {2}': '自 {2} 起 {1} 次操作',
   'kept for {1} days': '保留 {1} 天',
+  'Kept on this machine and on {1}, as one set.': '保存在这台机器和 {1} 上，是同一份数据。',
+  'Kept on {1}. This company computer hands its presses over and keeps none.': '保存在 {1} 上。这台公司电脑会把按钮操作交过去，自己不保留。',
+  "Kept on {1}, which can't be reached right now. {2} presses wait on this computer and move there when it is back.": '保存在 {1} 上，但现在连不上。{2} 次按钮操作暂存在这台电脑上，连上后会移过去。',
 
   // ---- Agent config ----
   'Common:': '常用：',

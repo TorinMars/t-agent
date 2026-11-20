@@ -154,7 +154,7 @@ const groupsReady = {
   devices: () => document.getElementById('h5-engine-list') ? document.getElementById('h5-rule-sync-role') && document.getElementById('h5-peer-fs-enabled') : document.querySelectorAll('.h5-shown-device').length === 5,
   attention: () => document.querySelector('#h5-plugins-listeners, #h5-plugins-notifiers') && document.querySelector('#h5-attention-widget-enabled, #h5-attention-widget-language'),
   account: () => document.getElementById('h5-access-title') || document.getElementById('h5-access-remote'),
-  'usage-data': () => document.getElementById('h5-usage-enabled') || document.getElementById('h5-usage-remote'),
+  'usage-data': () => document.getElementById('h5-usage-enabled') || document.getElementById('h5-usage-data'),
 };
 async function partsOfTab(page) {
   const result = {};
@@ -172,6 +172,8 @@ const EXPECTED = {
     'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
     devices: { headings: ['Settings sync', 'Show in task list', 'Environment'], marks: ['#h5-shown-devices', '#h5-settings-sync'] },
     attention: { headings: ['Plugins', 'Desktop window (macOS)', 'AI summary'], marks: ['#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-attention-widget-language'] },
+    // The switch is shared; the data is one set for the linked machines, so its cards are in every tab.
+    'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
   },
   local: {
     'tasks-files': { headings: ['Working directory', 'Agent skills', 'Browser extension'], marks: [] },
@@ -185,7 +187,6 @@ const EXPECTED = {
 EXPECTED['2'] = {
   ...EXPECTED.local,
   attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-attention-widget-enabled', '#h5-skill-pointer', '#h5-attention-sound'] },
-  'usage-data': { headings: [], marks: [] }, // usage data lives on each server: K01's own page shows it
 };
 
 // Nothing in the sheet is wider than the screen (a tab scrolled out of the tab row is clipped by its scroller), and every visible button, tab and

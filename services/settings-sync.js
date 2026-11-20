@@ -43,7 +43,7 @@ const NEVER = Object.freeze({ updated_at: 0, updated_by: '', hash: null });
 const SCOPES = Object.freeze({
   translate: 'shared', voice: 'shared', oss: 'shared', 'oss-agent-access': 'shared', 'agent-config': 'shared',
   'attention-summary': 'shared', 'attention-guide': 'shared', 'notify-rules': 'shared',
-  'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'update-auto': 'shared', 'browser-sites': 'shared',
+  'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'update-auto': 'shared', 'browser-sites': 'shared', 'usage-record': 'shared',
   workdir: 'device', access: 'device', authenticator: 'device', 'engine-name': 'device', 'widget-enabled': 'device', 'peer-fs': 'device',
   restart: 'device', 'rule-sync': 'device',
   telegram: 'telegram',
@@ -584,6 +584,8 @@ function defaultRegistry({ db, sessionSecret }) {
     // tombstones), so two devices that each edit a different site keep both. It holds no raw secrets, so syncing it is safe. Merge semantics, not
     // replace: a null from a peer is a no-op (deletions travel as per-site tombstones inside the value), so it is not cleared by write(null).
     entry('browser-sites', () => require('./browser-sites')),
+    // The switch "Record button use" of the usage data (services/ui-events.js): one choice for every linked engine.
+    entry('usage-record', () => require('./ui-events')),
   ];
 }
 

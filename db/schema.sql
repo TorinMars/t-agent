@@ -277,9 +277,17 @@ CREATE TABLE IF NOT EXISTS ui_events (
   pane    INTEGER NOT NULL DEFAULT 0,  -- 1: pressed inside a column of the multi-column view
   device  TEXT    NOT NULL,            -- local | remote: where the shown session runs (never its name)
   state   TEXT,                        -- on | off: the new state of a switch, or NULL
-  version TEXT                         -- the app version that recorded it
+  version TEXT,                        -- the app version that recorded it
+  -- Schema 16, the usage data of every linked engine as one set (services/ui-events-sync.js); added to an older database by
+  -- services/ui-events.js ensureSchema before this file runs.
+  uid      TEXT,                       -- a random id: the identity of the press on every engine
+  engine   TEXT    NOT NULL DEFAULT '', -- the instance id of the engine that recorded it; '' is this engine
+  client   TEXT,                       -- phone | computer | mac-app (from the User-Agent); NULL before schema 16 (read from the layout)
+  sync_seq INTEGER NOT NULL DEFAULT 0  -- its change number on this database
 );
 CREATE INDEX IF NOT EXISTS idx_ui_events_at ON ui_events (at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ui_events_uid ON ui_events (uid);
+CREATE INDEX IF NOT EXISTS idx_ui_events_seq ON ui_events (sync_seq);
 
 -- The controls the pages have shown (so "Not used in 30 days" can be computed), per surface and layout, with the first and last time seen.
 CREATE TABLE IF NOT EXISTS ui_controls (
@@ -288,8 +296,10 @@ CREATE TABLE IF NOT EXISTS ui_controls (
   layout     TEXT    NOT NULL,
   first_seen INTEGER NOT NULL,
   last_seen  INTEGER NOT NULL,
+  sync_seq   INTEGER NOT NULL DEFAULT 0, -- schema 16: its change number on this database (the list is one set for every linked engine)
   PRIMARY KEY (key, surface, layout)
 );
+CREATE INDEX IF NOT EXISTS idx_ui_controls_seq ON ui_controls (sync_seq);
 
 -- English learning (schema 13, sync columns schema 14; "Learn English" in docs/design/learn-english.md, services/learn.js). One card per English word or sentence of an owner:
 -- the person's own translated sentences, the words they looked up, and the starter list. Times are milliseconds since 1970 on the server's clock.

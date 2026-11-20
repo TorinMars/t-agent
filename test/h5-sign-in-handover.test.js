@@ -14,7 +14,7 @@ const load = () => import(pathToFileURL(path.join(__dirname, '..', 'scripts', 'h
 
 test('the SHA-256 matches Node\'s for short, block-sized and long texts, and Chinese text', async () => {
   const { sha256Base64url } = await load();
-  for (const text of ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'x'.repeat(1000), '登录', crypto.randomBytes(32).toString('base64url')]) {
+  for (const text of ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'x'.repeat(1000), String.fromCharCode(0x767b, 0x5f55), crypto.randomBytes(32).toString('base64url')]) {
     assert.equal(sha256Base64url(text), crypto.createHash('sha256').update(text, 'utf8').digest('base64url'), `length ${text.length}`);
   }
 });

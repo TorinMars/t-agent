@@ -45,6 +45,7 @@
 | [peer-file-access.md](docs/design/peer-file-access.md) | Read-only file access of agent sessions to linked Engines (MCP tools, scope, the switch). | 8 KB |
 | [engine-names.md](docs/design/engine-names.md) | One name per Engine, kept by that Engine and shown everywhere. | 3 KB |
 | [entry-symmetry.md](docs/design/entry-symmetry.md) | The same page from any engine: devices in one order by name, "Create on" and the T-Attention engine from the last choice, labels without "This machine", mind maps in one list, and the audit of what still treats this machine specially. | 7 KB |
+| [failover-and-one-login.md](docs/design/failover-and-one-login.md) | One login for linked engines (a signed single-use hand-over through the service link), the offline view of the service worker with "Continue on <engine>", an offline engine's tasks kept dimmed, and the Mac app moving to a linked engine. | 10 KB |
 
 ### The page (`/` and `/h5`)
 

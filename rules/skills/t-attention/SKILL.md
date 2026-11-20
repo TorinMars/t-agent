@@ -190,6 +190,7 @@ A deadline goes in the notes; the custom status may repeat it in short.
 - Move a task under another one: `update <id> --parent <other id>`; make it top-level again with `--parent ''`.
 - Reorder among its siblings: `move <id> --before <other id>`, `--after <other id>`, `--top` or `--bottom`. Add `--status <status>` to change the status in the same step.
 - Do not delete tasks; the user decides what to remove.
+- Only when the user asks for a reminder or a repeating task: `add "<title>" --at 2026-12-01T10:00` (once) or `--every daily|weekdays|weekly:mon,thu|monthly:15|every:3d --time 09:00` (repeats), optionally `--prompt "<text>" --session <task>:<terminal>` to type a prompt into a session then; `update <id> --no-schedule` removes it. Scripts are set by the user only.
 
 ## Home view
 

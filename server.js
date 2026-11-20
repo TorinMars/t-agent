@@ -713,6 +713,10 @@ server.listen(config.port, config.host, () => {
     issue: (taskId, terminalId) => attentionService.issueTerminalToken({ taskId, terminalId }).token,
     revoke: (taskId, terminalId) => attentionService.revokeTerminalToken({ taskId, terminalId }),
   });
+  // T-Attention schedules (services/attention-scheduler.js): the timer fires this engine's own items from now on; a prompt goes to a session of this
+  // machine (routes/terminal.js promptState / sendPrompt). Missed times fire once now.
+  attentionService.setSessions({ check: terminal.promptState, send: terminal.sendPrompt, scriptTask: terminal.scriptTaskState, runScript: terminal.runScript, removeTerminal: terminal.removeScriptTerminal });
+  require('./services/attention-scheduler').sharedScheduler().start();
   console.log(`Server running at http://localhost:${listeningPort}`);
   // The T-Attention desktop window (macOS): found, built when needed and started in the background; never delays or stops the server.
   void attentionWidget.start({ url: attentionLocalUrl });
@@ -750,5 +754,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

@@ -34,9 +34,16 @@ function createRemoteAttention({ request = defaultRequest, readInfo = (row, toke
     let info;
     try { info = await readInfo(row, token, timeoutMs ? { timeoutMs } : undefined); }
     catch (error) { throw new RemoteAttentionError(error.statusCode || 502, { error: safeError(error) }); }
-    const value = Boolean(info && Array.isArray(info.capabilities) && info.capabilities.includes(CAPABILITY));
-    support.set(Number(row.id), { at: now(), supported: value, baseUrl: row.base_url });
+    const capabilities = info && Array.isArray(info.capabilities) ? info.capabilities.filter(name => typeof name === 'string') : [];
+    const value = capabilities.includes(CAPABILITY);
+    support.set(Number(row.id), { at: now(), supported: value, baseUrl: row.base_url, capabilities });
     return value;
+  }
+  // Whether the row's Engine lists another capability too (read with the same cached /v1/info answer); false when it cannot be read.
+  async function has(row, name, token = tokenOf(row)) {
+    try { await supported(row, token); } catch { return false; }
+    const cached = support.get(Number(row.id));
+    return Boolean(cached && cached.capabilities && cached.capabilities.includes(name));
   }
 
   // One request to the row's /v1/attention<path>. DELETE answers 204 with no body (null here).
@@ -61,7 +68,7 @@ function createRemoteAttention({ request = defaultRequest, readInfo = (row, toke
     }
   }
 
-  return { supported, call, forget: id => support.delete(Number(id)) };
+  return { supported, has, call, forget: id => support.delete(Number(id)) };
 }
 
 let singleton = null;

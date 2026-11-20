@@ -88,6 +88,12 @@ function serveChangeStream(req, res, service, { heartbeatMs, active = () => true
   return stream;
 }
 
+// POST /schedule/preview of /api/attention and /v1/attention: { schedule } -> the service's preview.
+function previewOf(service, body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AttentionError('VALIDATION_FAILED', 'The request body must be a JSON object');
+  return service.preview(body.schedule);
+}
+
 // The JSON parser of the token paths (here and /v1/attention): 400 INVALID_JSON, 413 BODY_TOO_LARGE. A body an earlier parser read is left as it is.
 function createJsonParser() {
   const parse = express.json({ limit: '256kb' });
@@ -321,6 +327,10 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
 
   router.post('/', wrap((req, res) => res.status(201).json(service.create(req.body, { actor: actor(req), defaultSource: defaultSource(req), tagent: tagentOf(req) }))));
 
+  // Schedules ("Scheduled and recurring tasks" in docs/design/attention-schedules.md), the session and tokens. { schedule } -> { next: [ISO x3], text,
+  // error? } (200 also for a schedule that is not valid: `error` says why, for the edit view's "Next" line while the person types).
+  router.post('/schedule/preview', wrap((req, res) => res.json(previewOf(service, req.body))));
+
   router.get('/by-ref/:ref', wrap((req, res) => {
     const found = service.detailByRef(req.params.ref);
     if (!found) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
@@ -357,6 +367,14 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
     service.remove(id, { actor: actor(req) });
     return res.status(204).end();
+  }));
+
+  // -> { item } (the item after the run). A prompt item: sent now when its session is idle (409 SESSION_BUSY, SESSION_NOT_RUNNING or SESSION_NOT_FOUND otherwise); a script runs again
+  // (409 SCRIPT_RUNNING while it runs; 403 SCRIPT_NEEDS_PERSON with a terminal's token); a reminder fires now.
+  router.post('/:id/run-now', wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json({ item: service.runNow(id, { actor: actor(req), tagent: tagentOf(req) }) });
   }));
 
   router.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found'));
@@ -473,6 +491,13 @@ function createEngineAttentionRouter({ service = null, getService = null, summar
   });
   router.get('/', read, wrap((req, res) => res.json({ ...listAnswer(items(), req.query), host: os.hostname(), instance_id: instanceId() })));
   router.post('/', write, parseJson, wrap((req, res) => res.status(201).json(items().create(req.body, { ...actor, defaultSource: 'user' }))));
+  // Schedules (capability attention:schedule): the preview in this engine's zone, and run now.
+  router.post('/schedule/preview', read, parseJson, wrap((req, res) => res.json(previewOf(items(), req.body))));
+  router.post('/:id/run-now', write, wrap((req, res) => {
+    const id = idOf(req.params.id);
+    if (id === null) return sendError(res, 404, 'NOT_FOUND', 'Task not found');
+    return res.json({ item: items().runNow(id, actor) });
+  }));
   router.get('/:id', read, wrap((req, res) => {
     const id = idOf(req.params.id);
     const found = id === null ? null : items().detail(id);

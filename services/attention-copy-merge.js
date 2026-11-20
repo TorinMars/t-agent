@@ -11,8 +11,11 @@ const INSTANCE_ID = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_ITEM_BYTES = 64 * 1024;
 // The fields a queued change may set: what the row buttons, the circle and the edit view send, and nothing that needs the owner's tree or order.
 const SAFE_FIELDS = Object.freeze(['title', 'notes', 'status', 'priority', 'due_date', 'attention_reason', 'link_url', 'link_label', 'custom_status', 'result']);
-// Body keys of a PATCH that are never queued (the tree, the order, the identity and the agent's own data): the change is refused while the owner is offline.
-const UNSAFE_FIELDS = Object.freeze(['parent_id', 'parent_ref', 'sort_order', 'external_ref', 'source', 'meta', 'context', 'excerpt']);
+// Body keys of a PATCH that are never queued (the tree, the order, the identity, the agent's own data, and the schedule, whose times the owner works
+// out in its own zone): the change is refused while the owner is offline.
+const UNSAFE_FIELDS = Object.freeze(['parent_id', 'parent_ref', 'sort_order', 'external_ref', 'source', 'meta', 'context', 'excerpt', 'schedule', 'then_action']);
+// The schedule keys a page may send back unchanged with an edit (the whole form): left out of a queued change when they equal the copy's (sameValue).
+const SCHEDULE_FIELDS = Object.freeze(['schedule', 'then_action']);
 const EVENT_KEYS = Object.freeze(['type', 'actor', 'at', 'from_status', 'to_status']);
 // A copy change older than this when it arrives is history, not news: it is shown, but the page gives no reminder for it.
 const QUIET_MS = 60 * 1000;
@@ -30,6 +33,7 @@ function slimEvent(event, extra = {}) {
   if (isPlainObject(event)) for (const key of EVENT_KEYS) if (typeof event[key] === 'string' && event[key].length <= 200) out[key] = event[key];
   if (extra.reorder === true) out.reorder = true;
   if (extra.plain_turn_end === true) out.plain_turn_end = true;
+  if (extra.scheduled_due === true) out.scheduled_due = true;
   return Object.keys(out).length ? out : null;
 }
 
@@ -70,6 +74,7 @@ function queueRule(method, sub, body, { hasItem = true } = {}) {
   if (method === 'DELETE') return refusal('A task can only be deleted while the device it belongs to is online');
   if (method === 'POST' && sub === '/move') return refusal('The order can only be changed while the device the task belongs to is online');
   if (method === 'POST' && sub === '/summarize') return refusal('A summary can only be made while the device the task belongs to is online');
+  if (method === 'POST' && sub === '/run-now') return refusal('A scheduled task can only be run while the device it belongs to is online');
   if (method !== 'PATCH' || sub) return refusal('This can only be done while the device the task belongs to is online');
   if (!isPlainObject(body)) return { refuse: { status: 400, error: 'VALIDATION_FAILED', message: 'The request body must be a JSON object' } };
   if (UNSAFE_FIELDS.some(key => Object.prototype.hasOwnProperty.call(body, key))) return refusal('This change can only be made while the device the task belongs to is online');
@@ -121,7 +126,26 @@ function resolveQueued(entry, current) {
   return Object.keys(body).length ? { apply: { body } } : { noop: true };
 }
 
+// Two JSON values that are the same (key order aside); a remind action and none are the same.
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (isPlainObject(value)) return `{${Object.keys(value).filter(key => value[key] !== undefined && value[key] !== null).sort().map(key => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
+  return JSON.stringify(value === undefined ? null : value);
+}
+const remindAsNone = (key, value) => (key === 'then_action' && isPlainObject(value) && value.kind === 'remind' ? null : value);
+// A PATCH body without the schedule keys that equal the item's (the page sends its whole form): only a real schedule change is refused offline.
+function withoutSameSchedule(body, item) {
+  if (!isPlainObject(body) || !item) return body;
+  const out = { ...body };
+  for (const key of SCHEDULE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(out, key)) continue;
+    if (stable(remindAsNone(key, out[key] === '' ? null : out[key])) === stable(remindAsNone(key, item[key] ?? null))) delete out[key];
+  }
+  return out;
+}
+
 module.exports = {
+  withoutSameSchedule,
   STATUSES, INSTANCE_ID, SAFE_FIELDS, UNSAFE_FIELDS, QUIET_MS, OFFLINE, MAX_ITEM_BYTES,
   nextRev, slimEvent, rowFromPeer, wins, changeKind, isQuiet, queueRule, project, baseOf, resolveQueued, isPlainObject,
 };

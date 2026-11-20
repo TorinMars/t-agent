@@ -24,7 +24,12 @@
 //   shells end with it, so a server start never finds one left over).
 // - Pairing codes (6 digits, 10 minutes, one at a time, single use) let another machine get a normal token: createPairing on the page,
 //   claimPairing from `t-attention pair`. They live in memory only, as sha256 hashes; too many wrong codes end the active one.
+// - Schedules (schema 18, "Scheduled and recurring tasks" in docs/design/attention-schedules.md): schedule, then_action, next_at, schedule_state, runs,
+//   last_fired_at and last_done_at. Saving a schedule computes next_at (services/attention-schedule.js); fireDue() (the timer of
+//   services/attention-scheduler.js, on this engine only) and runNow() fire an item: the firing is written in one transaction before it is published,
+//   so a firing is never notified twice, also across a restart. A recurring item that is done goes back to To do for its next time (one row).
 const crypto = require('crypto');
+const scheduling = require('./attention-schedule');
 
 const STATUSES = Object.freeze(['todo', 'working', 'waiting_user', 'review', 'done', 'failed', 'cancelled']);
 const FINISHED = new Set(['done', 'failed', 'cancelled']);
@@ -33,7 +38,28 @@ const ACTIVITY_KINDS = Object.freeze(['prompt', 'permission', 'question', 'resum
 const PENDING_KINDS = Object.freeze(['permission', 'question', 'error']);
 const LIMITS = Object.freeze({ customStatus: 100, result: 500, contextBytes: 32768, excerptBytes: 8192, activityText: 500, contextFiles: 50, summaryText: 600, title: 300, notes: 20000, externalRef: 200, attentionReason: 500, linkUrl: 2000, linkLabel: 200, source: 64, metaBytes: 8192, tokenName: 80, listDefault: 200, listMax: 1000, events: 100 });
 // The fields a create / update body may carry. Anything else in a body is ignored (newer callers may send more).
-const FIELDS = ['title', 'notes', 'status', 'priority', 'due_date', 'source', 'external_ref', 'attention_reason', 'link_url', 'link_label', 'meta', 'sort_order', 'parent_id', 'custom_status', 'result'];
+const FIELDS = ['title', 'notes', 'status', 'priority', 'due_date', 'source', 'external_ref', 'attention_reason', 'link_url', 'link_label', 'meta', 'sort_order', 'parent_id', 'custom_status', 'result', 'schedule', 'then_action'];
+// The JSON columns of an item (returned parsed).
+const JSON_FIELDS = new Set(['meta', 'schedule', 'then_action']);
+// The schedule columns the server keeps (not settable by a body): the next fire time, waiting | due, and the history of the runs.
+const SCHEDULE_COLUMNS = ['next_at', 'schedule_state', 'runs', 'last_fired_at', 'last_done_at'];
+// The note a prompt firing leaves when it could not send (English; Chinese in public/js/i18n-zh-server.js). {1} is HH:mm on the owner engine.
+const PROMPT_NOTES = {
+  busy: time => `The session was busy at ${time}; the prompt was not sent`,
+  stopped: time => `The session was not running at ${time}; the prompt was not sent`,
+  gone: time => `The session was not found at ${time}; the prompt was not sent`,
+};
+// The notes a script run leaves when it did not end well ({1}: its exit status or minutes, then HH:mm).
+const SCRIPT_NOTES = {
+  exit: (exit, time) => `Script failed (exit ${exit}) at ${time}`,
+  timeout: (minutes, time) => `Script stopped after ${minutes} min at ${time}`,
+  ended: (_, time) => `Script stopped at ${time}`,
+  start: (_, time) => `Script could not start at ${time}`,
+};
+// A note of a firing (cleared again when a later run goes well or the run is done).
+const PROMPT_NOTE = /^(The session was (busy|not running|not found) at \d\d:\d\d; the prompt was not sent|Script (failed \(exit \d+\)|stopped after \d+ min|stopped|could not start) at \d\d:\d\d)$/;
+// The script terminals one item keeps (older ones are removed when a run starts).
+const SCRIPT_RUNS_KEPT = 5;
 // The groups an item is shown and ordered in (the page's sections; "Needs you" shows waiting_user and review). A move stays inside one group.
 const GROUPS = Object.freeze(['waiting_user', 'review', 'working', 'todo', 'finished']);
 const groupOf = status => (FINISHED.has(status) ? 'finished' : status);
@@ -152,7 +178,17 @@ const VALIDATORS = {
   parent_id: parentId,
   custom_status: text('custom_status', LIMITS.customStatus, { singleLine: true }),
   result: text('result', LIMITS.result, { singleLine: true }),
+  // Checked here, made canonical in the transaction (resolveSchedule: the zone and the first day of an older value are kept when they are not sent).
+  schedule: value => ({ raw: value, checked: scheduleCheck(value) }),
+  then_action: value => { const action = scheduleCall(() => scheduling.normalizeThenAction(value)); return action ? JSON.stringify(action) : null; },
 };
+// A schedule error as the service's 400.
+function scheduleCall(fn) {
+  try { return fn(); } catch (error) { if (error instanceof scheduling.ScheduleError) throw invalid(error.message); throw error; }
+}
+function scheduleCheck(value) {
+  return scheduleCall(() => scheduling.normalizeSchedule(value, { tz: 'UTC', starts: '2000-01-01' }));
+}
 
 // The fields present in a body, validated. Unknown fields are ignored; a body that is not an object is refused.
 function readFields(body) {
@@ -288,9 +324,22 @@ const parseJson = value => { if (!value) return null; try { return JSON.parse(va
 const contextKeysChanged = (before, after) => [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
   .filter(key => JSON.stringify((before || {})[key]) !== JSON.stringify((after || {})[key])).sort();
 
+// An item as every answer, stream and copy carries it: the JSON columns parsed, and schedule_text (the schedule in one English sentence).
 function rowToItem(row) {
   if (!row) return null;
-  return { ...row, meta: parseJson(row.meta), context: parseJson(row.context) };
+  const schedule = parseJson(row.schedule);
+  const item = { ...row, meta: parseJson(row.meta), context: parseJson(row.context) };
+  if (Object.prototype.hasOwnProperty.call(row, 'schedule')) {
+    item.schedule = schedule;
+    item.then_action = parseJson(row.then_action);
+    item.schedule_text = schedule ? scheduling.describe(schedule) : null;
+    // The script runs of the item, oldest first, at most SCRIPT_RUNS_KEPT: { terminal_id, at, ended_at?, outcome?, exit?, duration_ms? }.
+    item.script_runs = Array.isArray(parseJson(row.script_runs)) ? parseJson(row.script_runs) : [];
+    // The exit status of the last script run that ended (null: none yet, or it was stopped: the time limit, a terminal that ended first).
+    const ended = item.script_runs.filter(run => run && run.ended_at);
+    item.last_exit = ended.length && Number.isInteger(ended[ended.length - 1].exit) && ended[ended.length - 1].outcome === 'exit' ? ended[ended.length - 1].exit : null;
+  }
+  return item;
 }
 
 // The statuses a list is asked for ('a,b' or an array), [] for none.
@@ -345,8 +394,26 @@ function ensureTreeColumns(db) {
   db.exec('CREATE INDEX IF NOT EXISTS idx_attention_items_completed ON attention_items (completed_at)');
 }
 
-function createAttentionService({ db, now = () => new Date() } = {}) {
+// Schema 18: the schedule columns of attention_items (db/index.js runs this at start, the service too). Nullable columns and runs with a default, so the
+// items of an older database simply have no schedule; any lower schema works. The index on next_at is made here, not in schema.sql (which runs before
+// the column exists on an older database): the timer reads the items due from it.
+function ensureScheduleColumns(db) {
+  const columns = db.prepare('PRAGMA table_info(attention_items)').all().map(column => column.name);
+  for (const column of ['schedule', 'then_action', 'next_at', 'schedule_state', 'last_fired_at', 'last_done_at', 'script_runs']) {
+    if (!columns.includes(column)) db.exec(`ALTER TABLE attention_items ADD COLUMN ${column} TEXT`);
+  }
+  if (!columns.includes('runs')) db.exec('ALTER TABLE attention_items ADD COLUMN runs INTEGER NOT NULL DEFAULT 0');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_attention_items_next ON attention_items (next_at)');
+}
+
+// timeZone(): the IANA zone of this engine (a new schedule is kept in it). sessions: the terminals of this engine (routes/terminal.js; set later
+// with setSessions): { check(taskId, terminalId) -> 'idle' | 'busy' | 'stopped' | 'gone', send(taskId, terminalId, text) -> boolean (a prompt),
+// scriptTask(taskId) -> 'ok' | 'archived' | 'gone', runScript(taskId, { title, script, timeoutMs, onEnd }) -> { terminal_id } (a script run),
+// removeTerminal(taskId, terminalId) }.
+function createAttentionService({ db, now = () => new Date(), timeZone = scheduling.systemZone, sessions = null } = {}) {
   if (!db) throw new Error('createAttentionService needs a database');
+  ensureScheduleColumns(db);
+  let promptSessions = sessions;
   // attention_tokens.scopes was added after schema 9 shipped (db/index.js adds it at start; a database made from an older schema.sql gets it here).
   if (!db.prepare('PRAGMA table_info(attention_tokens)').all().some(column => column.name === 'scopes')) db.exec('ALTER TABLE attention_tokens ADD COLUMN scopes TEXT');
   ensureTreeColumns(db);
@@ -487,9 +554,78 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     }
   }
 
+  // ---- Schedules ----
+  const iso = ms => new Date(ms).toISOString();
+  const zone = () => { const tz = timeZone(); return scheduling.validZone(tz) ? tz : 'UTC'; };
+  // The canonical schedule of a body value (JSON text, or null), against the item's current one: a value that names no zone or no first day keeps
+  // those of the current schedule when it is the same schedule then (so the page sending it back changes nothing); else it gets this engine's
+  // zone and today as its first day.
+  function resolveSchedule(raw, beforeText) {
+    const previous = parseJson(beforeText);
+    if (previous) {
+      let kept = null;
+      try { kept = scheduling.normalizeSchedule(raw, { tz: previous.tz, starts: previous.starts }); } catch { kept = null; } // checked again below
+      if (kept && JSON.stringify(kept) === beforeText) return beforeText;
+    }
+    const tz = zone();
+    const fresh = scheduleCall(() => scheduling.normalizeSchedule(raw, { tz, starts: scheduling.dateText(scheduling.localDateOf(now().getTime(), tz)) }));
+    return fresh ? JSON.stringify(fresh) : null;
+  }
+  // A prompt must name a session of this engine, a script a task of it that is in use (when the sessions are known here).
+  function checkPrompt(text) {
+    const action = parseJson(text);
+    if (action && action.kind === 'script' && promptSessions && typeof promptSessions.scriptTask === 'function') {
+      const state = promptSessions.scriptTask(Number(action.task_id));
+      if (state === 'archived') throw invalid('The script names a task that is archived; restore it first');
+      if (state !== 'ok') throw invalid('The script names a task that does not exist on this device');
+      return;
+    }
+    if (!action || action.kind !== 'prompt' || !promptSessions || typeof promptSessions.check !== 'function') return;
+    let state = 'gone';
+    try { state = promptSessions.check(Number(action.task_id), action.terminal_id); } catch { state = 'gone'; }
+    if (state === 'gone') throw invalid('The prompt names a session that does not exist on this device');
+  }
+  // The columns a new or changed schedule sets: { next_at, schedule_state, runs } and the status To do for a closed item.
+  function scheduleStart(scheduleText, status, atMs) {
+    const schedule = parseJson(scheduleText);
+    if (!schedule) return { next_at: null, schedule_state: null };
+    const next = scheduling.nextOccurrence(schedule, atMs, { runs: 0 });
+    if (next === null) throw invalid('The schedule ends before its next time');
+    return { next_at: iso(next), schedule_state: 'waiting', runs: 0, ...(FINISHED.has(status) ? { status: 'todo' } : {}) };
+  }
+  // A status change of a scheduled item: done of a recurring item puts it back for its next time (one row); done, failed or cancelled otherwise end
+  // what is left to fire; an item opened again picks up its next time. Returns the extra columns, and recurringDone.
+  function scheduleStatus(before, status, at, atMs) {
+    const schedule = parseJson(before.schedule);
+    if (!schedule || status === before.status) return {};
+    if (status === 'done' && schedule.kind === 'repeat') {
+      // Done while it waits (before its time): this time is skipped; done while it is due: the next time after now.
+      const from = before.schedule_state === 'waiting' && before.next_at ? Math.max(atMs, Date.parse(before.next_at)) : atMs;
+      const next = scheduling.nextOccurrence(schedule, from, { runs: before.runs || 0 });
+      if (next === null) return { last_done_at: at, next_at: null, schedule_state: null };
+      return {
+        last_done_at: at, next_at: iso(next), schedule_state: 'waiting', status: 'todo', recurringDone: true,
+        ...(before.attention_reason && PROMPT_NOTE.test(before.attention_reason) ? { attention_reason: null } : {}),
+      };
+    }
+    if (FINISHED.has(status)) return { next_at: null, schedule_state: null, ...(status === 'done' ? { last_done_at: at } : {}) };
+    if (FINISHED.has(before.status) && !before.next_at) {
+      const next = scheduling.nextOccurrence(schedule, atMs, { runs: before.runs || 0 });
+      if (next !== null) return { next_at: iso(next), schedule_state: 'waiting' };
+    }
+    return {};
+  }
+  const isScript = text => { const action = parseJson(text); return Boolean(action && action.kind === 'script'); };
+  const scriptNeedsPerson = () => new AttentionError('SCRIPT_NEEDS_PERSON', 'Only you can set or change a script: use the page or a CLI token made in Settings', 403);
+  // The event data of a changed field (the JSON ones parsed).
+  const dataOf = (field, value) => (JSON_FIELDS.has(field) ? parseJson(value) : value);
+
   // Inside a transaction. fields: validated (readFields).
   function insertItem({ fields: given, context, activity: entry, tagent }, actor, defaultSource) {
     const fields = resolveParent(given);
+    if (fields.schedule !== undefined) fields.schedule = resolveSchedule(fields.schedule.raw, null);
+    if (tagent && isScript(fields.then_action)) throw scriptNeedsPerson();
+    if (fields.then_action) checkPrompt(fields.then_action);
     if (!fields.title) throw invalid('title cannot be empty');
     checkParent(null, fields.parent_id);
     if (fields.external_ref && selectByRef.get(fields.external_ref)) {
@@ -514,28 +650,36 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       parent_id: fields.parent_id ?? null,
       custom_status: fields.custom_status ?? null,
       result: fields.result ?? null,
+      schedule: fields.schedule ?? null,
+      then_action: fields.then_action ?? null,
       context: null,
       sort_order: order,
       created_at: at,
       updated_at: at,
       completed_at: FINISHED.has(status) ? at : null,
     };
+    if (row.schedule) {
+      Object.assign(row, scheduleStart(row.schedule, status, now().getTime()));
+      row.completed_at = FINISHED.has(row.status) ? at : null;
+    }
     const mergedContext = mergeContext(null, tieToTerminal(context, null, tagent));
     row.context = mergedContext ? JSON.stringify(mergedContext) : null;
     const columns = Object.keys(row);
     const id = db.prepare(`INSERT INTO attention_items (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).run(...columns.map(column => row[column])).lastInsertRowid;
     const item = get(id);
     const data = {};
-    for (const field of FIELDS) if (fields[field] !== undefined && fields[field] !== null) data[field] = field === 'meta' ? item.meta : fields[field];
+    for (const field of FIELDS) if (fields[field] !== undefined && fields[field] !== null) data[field] = dataOf(field, fields[field]);
+    if (row.next_at) data.next_at = row.next_at;
     if (mergedContext) data.context = Object.keys(mergedContext).sort();
-    const event = writeEvent(item.id, at, actorOf(actor), 'created', null, status, data);
-    const activityEvent = entry ? writeEvent(item.id, at, actorOf(actor), 'activity', status, status, entry) : null;
+    const event = writeEvent(item.id, at, actorOf(actor), 'created', null, item.status, data);
+    const activityEvent = entry ? writeEvent(item.id, at, actorOf(actor), 'activity', item.status, item.status, entry) : null;
     return { kind: 'created', item, previous: null, event, activity: activityEvent };
   }
 
   // Inside a transaction. Returns null when nothing changed. extra: more keys for the event's data (a move's placement and reason).
   function updateRow(before, { fields: given, context, activity: entry, tagent }, actor, extra = null) {
     const fields = resolveParent(given);
+    if (fields.schedule !== undefined) fields.schedule = resolveSchedule(fields.schedule.raw, before.schedule);
     const changes = {};
     for (const [field, value] of Object.entries(fields)) {
       if (field === 'title' && value === null) throw invalid('title cannot be empty');
@@ -547,11 +691,28 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
       const other = selectByRef.get(changes.external_ref);
       if (other && other.id !== before.id) throw new AttentionError('EXTERNAL_REF_EXISTS', 'A task with this external_ref already exists', 409, { id: other.id });
     }
+    // A script is set or changed only by the person (the page, a linked engine, a CLI token made in Settings), never with a terminal's own token,
+    // which is what agents use: also not its schedule.
+    if (tagent && (isScript(before.then_action) || isScript(changes.then_action)) && (changes.then_action !== undefined || changes.schedule !== undefined)) throw scriptNeedsPerson();
+    if (changes.then_action) checkPrompt(changes.then_action);
     const beforeContext = parseJson(before.context);
     const afterContext = mergeContext(beforeContext, tieToTerminal(context, beforeContext, tagent));
     const changedKeys = contextKeysChanged(beforeContext, afterContext);
     if (changedKeys.length) changes.context = afterContext ? JSON.stringify(afterContext) : null;
-    const at = stamp();
+    const atMs = now().getTime();
+    const at = iso(atMs);
+    // Schedules: a new or cleared schedule, or a status change of a scheduled item (scheduleStart, scheduleStatus).
+    let recurringDone = false;
+    if (changes.schedule !== undefined) {
+      Object.assign(changes, scheduleStart(changes.schedule, changes.status !== undefined ? changes.status : before.status, atMs));
+    } else if (changes.status !== undefined) {
+      const { recurringDone: done = false, ...more } = scheduleStatus(before, changes.status, at, atMs);
+      recurringDone = done;
+      Object.assign(changes, more);
+    }
+    for (const column of [...SCHEDULE_COLUMNS, 'status', 'attention_reason']) {
+      if (changes[column] !== undefined && changes[column] === before[column] && !(column === 'status' && recurringDone)) delete changes[column];
+    }
     if (!Object.keys(changes).length) {
       if (!entry) return null;
       // Only an activity: the item is unchanged, the timeline gets its row and the change is published.
@@ -561,15 +722,19 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     }
     const statusChanged = changes.status !== undefined && changes.status !== before.status;
     if (statusChanged) changes.completed_at = FINISHED.has(changes.status) ? at : null;
+    if (recurringDone && changes.status === before.status) delete changes.status;
     changes.updated_at = at;
     const columns = Object.keys(changes);
     db.prepare(`UPDATE attention_items SET ${columns.map(column => `${column} = ?`).join(', ')} WHERE id = ?`).run(...columns.map(column => changes[column]), before.id);
     const item = get(before.id);
     const data = {};
-    for (const field of Object.keys(changes)) if (FIELDS.includes(field)) data[field] = field === 'meta' ? item.meta : changes[field];
+    for (const field of Object.keys(changes)) if (FIELDS.includes(field)) data[field] = dataOf(field, changes[field]);
+    for (const column of ['next_at', 'schedule_state']) if (changes[column] !== undefined) data[column] = changes[column];
     if (changedKeys.length) data.context = changedKeys;
     if (extra) Object.assign(data, extra);
-    const event = writeEvent(before.id, at, actorOf(actor), statusChanged ? 'status' : 'updated', before.status, item.status, data);
+    // The done of a recurring item is on the timeline as a status change to done (the run is done), while the item itself is back in To do.
+    if (recurringDone) Object.assign(data, { status: 'done', recurring: true });
+    const event = writeEvent(before.id, at, actorOf(actor), statusChanged || recurringDone ? 'status' : 'updated', before.status, recurringDone ? 'done' : item.status, data);
     const activityEvent = entry ? writeEvent(before.id, at, actorOf(actor), 'activity', item.status, item.status, entry) : null;
     return { kind: 'updated', item, previous: rowToItem(before), event, activity: activityEvent };
   }
@@ -733,6 +898,256 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return { item: result.item, items: result.moved };
   }
 
+  // ---- Firing (the timer of services/attention-scheduler.js and POST /:id/run-now) ----
+  // The action of a row: { kind: 'prompt' | 'script', ... } or null (remind me).
+  const actionOf = row => { const action = parseJson(row.then_action); return action && (action.kind === 'prompt' || action.kind === 'script') ? action : null; };
+  function promptState(action) {
+    if (!promptSessions || typeof promptSessions.check !== 'function') return 'gone';
+    try { return promptSessions.check(Number(action.task_id), action.terminal_id) || 'gone'; } catch { return 'gone'; }
+  }
+  const runsOf = row => { const runs = parseJson(row.script_runs); return Array.isArray(runs) ? runs : []; };
+  const openRun = row => runsOf(row).find(run => !run.ended_at) || null;
+  const topOrder = () => db.prepare('SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM attention_items').get().next;
+  const zoneOf = row => (parseJson(row.schedule) || {}).tz || zone();
+  const writeFields = (id, fields) => {
+    const columns = Object.keys(fields);
+    db.prepare(`UPDATE attention_items SET ${columns.map(column => `${column} = ?`).join(', ')} WHERE id = ?`).run(...columns.map(column => fields[column]), id);
+  };
+  const withTerminal = (row, taskId, terminalId) => JSON.stringify({ ...(parseJson(row.context) || {}), tagent: { task_id: String(taskId), terminal_id: String(terminalId) } });
+  // A run that went well: a recurring item waits for its next time (To do), anything else is done.
+  function runDone(before, fields, at) {
+    fields.last_done_at = at;
+    let status = before.status;
+    const schedule = parseJson(before.schedule);
+    const nextAt = fields.next_at !== undefined ? fields.next_at : before.next_at;
+    if (schedule && schedule.kind === 'repeat' && nextAt) {
+      if (FINISHED.has(status) || status === 'waiting_user' || status === 'working') status = 'todo';
+      fields.schedule_state = 'waiting';
+    } else {
+      status = 'done';
+      fields.schedule_state = null;
+      fields.next_at = null;
+    }
+    if (before.attention_reason && PROMPT_NOTE.test(before.attention_reason)) fields.attention_reason = null;
+    return status;
+  }
+
+  // Inside a transaction: one firing of `before`. outcome: 'remind', 'sent' (the prompt is typed after the commit), why a prompt was not sent
+  // ('busy', 'stopped', 'gone'), 'script' (the script starts after the commit) or 'skipped' (its last script run still runs: only the next time moves
+  // on). manual: run now (a recurring item keeps its next time). Returns the change to publish.
+  function applyFiring(before, { outcome, manual, actor, atMs }) {
+    const at = iso(atMs);
+    const schedule = parseJson(before.schedule);
+    const missed = !manual && schedule && before.next_at ? scheduling.occurrencesBetween(schedule, Date.parse(before.next_at), atMs) : 1;
+    const runs = (before.runs || 0) + (outcome === 'skipped' ? 0 : 1);
+    let next = null;
+    if (schedule && schedule.kind === 'repeat') {
+      next = manual && before.next_at && Date.parse(before.next_at) > atMs ? Date.parse(before.next_at) : scheduling.nextOccurrence(schedule, atMs, { runs });
+    }
+    const fields = { next_at: next === null ? null : iso(next) };
+    let status = before.status;
+    if (outcome === 'skipped') {
+      if (next === null && before.schedule_state === 'waiting') fields.schedule_state = null;
+    } else {
+      fields.runs = runs;
+      fields.last_fired_at = at;
+      if (outcome === 'remind') {
+        if (FINISHED.has(status)) status = 'todo';
+        fields.schedule_state = schedule ? 'due' : null;
+      } else if (outcome === 'sent') {
+        status = runDone(before, fields, at);
+      } else if (outcome === 'script') {
+        status = 'working';
+        fields.schedule_state = schedule ? 'due' : null;
+        if (before.attention_reason && PROMPT_NOTE.test(before.attention_reason)) fields.attention_reason = null;
+      } else {
+        status = 'waiting_user';
+        fields.schedule_state = schedule ? 'due' : null;
+        fields.attention_reason = PROMPT_NOTES[outcome](scheduling.clockIn(atMs, zoneOf(before)));
+      }
+    }
+    fields.status = status;
+    if (status !== before.status) fields.completed_at = FINISHED.has(status) ? at : null;
+    // A firing that brings the item to the person puts it at the top of its group.
+    if (['remind', 'busy', 'stopped', 'gone'].includes(outcome) && (groupOf(status) !== groupOf(before.status) || before.schedule_state !== 'due')) fields.sort_order = topOrder();
+    fields.updated_at = at;
+    writeFields(before.id, fields);
+    const item = get(before.id);
+    const action = actionOf(before);
+    const data = {
+      runs, next_at: fields.next_at, action: action ? action.kind : 'remind', ...(outcome === 'remind' ? {} : { outcome: outcome === 'script' ? 'started' : outcome }),
+      ...(missed > 1 ? { missed } : {}), ...(manual ? { manual: true } : {}),
+    };
+    const event = writeEvent(before.id, at, actorOf(actor), 'scheduled', before.status, item.status, data);
+    if (outcome === 'sent') writeEvent(before.id, at, actorOf(actor), 'prompt_sent', item.status, item.status, { task_id: action.task_id, terminal_id: action.terminal_id });
+    return { kind: 'updated', item, previous: rowToItem(before), event, ...(outcome === 'remind' ? { scheduled_due: true } : {}) };
+  }
+
+  // Inside a transaction: a change that ends a firing which did not go as planned (a prompt the session no longer took, a script that could not
+  // start): Needs you with the note, due again.
+  function failFiring(id, note, { actor, atMs, eventType = 'status', data = {} }) {
+    const row = selectItem.get(Number(id));
+    if (!row) return null;
+    const at = iso(atMs);
+    const fields = { status: 'waiting_user', attention_reason: note, updated_at: at, sort_order: topOrder(), ...(row.schedule ? { schedule_state: 'due' } : {}) };
+    if (row.status !== 'waiting_user') fields.completed_at = null;
+    writeFields(row.id, fields);
+    const item = get(row.id);
+    const event = writeEvent(row.id, at, actorOf(actor), eventType, row.status, item.status, { ...data, status: item.status, attention_reason: note });
+    return { kind: 'updated', item, previous: rowToItem(row), event };
+  }
+
+  // One firing of an item; null when it is no longer due (another firing or a change came first). The firing is stored first; then the prompt is
+  // typed or the script started, and then the change is published: a firing is never sent, run or notified twice.
+  function fireItem(id, { manual = false, actor = 'schedule', atMs = now().getTime(), expectNextAt } = {}) {
+    const first = selectItem.get(Number(id));
+    if (!first) return null;
+    const action = actionOf(first);
+    let outcome = 'remind';
+    if (action && action.kind === 'prompt') { const state = promptState(action); outcome = state === 'idle' ? 'sent' : state; }
+    if (action && action.kind === 'script') outcome = openRun(first) ? 'skipped' : 'script';
+    const change = db.transaction(() => {
+      const before = selectItem.get(Number(id));
+      if (!before) return null;
+      if (!manual && (!before.next_at || before.next_at > iso(atMs) || before.next_at !== expectNextAt)) return null;
+      if (JSON.stringify(actionOf(before)) !== JSON.stringify(action)) return null; // changed in between: the next round decides
+      return applyFiring(before, { outcome, manual, actor, atMs });
+    })();
+    if (!change) return null;
+    const after = [];
+    if (outcome === 'sent') {
+      let typed = false;
+      try { typed = promptSessions.send(Number(action.task_id), action.terminal_id, action.text) === true; } catch { typed = false; }
+      if (!typed) after.push(db.transaction(() => failFiring(id, PROMPT_NOTES.stopped(scheduling.clockIn(atMs, zoneOf(first))), { actor, atMs }))());
+    }
+    if (outcome === 'script') after.push(...startScript(id, action, { actor, atMs }));
+    emit(change);
+    for (const extra of after) if (extra) emit(extra);
+    const last = after.filter(Boolean).at(-1);
+    return (last || change).item;
+  }
+
+  // A script run: a new terminal of the task (sessions.runScript), recorded on the item (script_runs, context.tagent: "Open terminal" opens it);
+  // the runs beyond the last SCRIPT_RUNS_KEPT lose their terminal. Returns the changes to publish.
+  function startScript(id, action, { actor, atMs }) {
+    const row = selectItem.get(Number(id));
+    const time = scheduling.clockIn(atMs, zoneOf(row));
+    let started = null;
+    let failure = null;
+    try {
+      if (!promptSessions || typeof promptSessions.runScript !== 'function') throw new Error('Scripts cannot run on this device');
+      started = promptSessions.runScript(Number(action.task_id), {
+        title: `${row.title.slice(0, 30)} · ${time}`,
+        script: action.script,
+        timeoutMs: action.timeout_min * 60 * 1000,
+        onEnd: result => { try { finishScript(id, result, { timeoutMin: action.timeout_min }); } catch (error) { console.warn(`T-Attention: a script run of item ${id} could not be recorded: ${error.message}`); } },
+      });
+    } catch (error) { failure = error; }
+    if (!started || !started.terminal_id) {
+      const note = SCRIPT_NOTES.start(null, time);
+      return [db.transaction(() => failFiring(id, note, { actor, atMs, eventType: 'script_failed', data: { error: String((failure && failure.message) || 'not started').slice(0, 200) } }))()];
+    }
+    const removed = [];
+    const change = db.transaction(() => {
+      const current = selectItem.get(Number(id));
+      if (!current) return null;
+      const runs = [...runsOf(current), { terminal_id: started.terminal_id, task_id: String(action.task_id), at: iso(atMs) }];
+      while (runs.length > SCRIPT_RUNS_KEPT) removed.push(runs.shift());
+      writeFields(current.id, { script_runs: JSON.stringify(runs), context: withTerminal(current, action.task_id, started.terminal_id), updated_at: iso(atMs) });
+      const item = get(current.id);
+      const event = writeEvent(current.id, iso(atMs), actorOf(actor), 'updated', current.status, item.status, { context: ['tagent'], script_terminal: started.terminal_id });
+      return { kind: 'updated', item, previous: rowToItem(current), event };
+    })();
+    for (const run of removed) { try { promptSessions.removeTerminal(Number(run.task_id || action.task_id), run.terminal_id); } catch { /* gone already */ } }
+    return [change];
+  }
+
+  // The end of a script run (sessions.runScript's onEnd): exit 0 counts the run as done; another status, the time limit or a terminal that ended
+  // first is Needs you with the note, due again, its terminal on the item. Only the open run of that terminal is ended, once.
+  function finishScript(id, { outcome, exit = null, duration_ms: duration = null, terminal_id: terminalId } = {}, { timeoutMin = null, actor = 'schedule' } = {}) {
+    const atMs = now().getTime();
+    const at = iso(atMs);
+    const change = db.transaction(() => {
+      const before = selectItem.get(Number(id));
+      if (!before) return null;
+      const runs = runsOf(before);
+      const run = runs.find(entry => entry.terminal_id === terminalId);
+      if (!run || run.ended_at) return null;
+      Object.assign(run, { ended_at: at, outcome, exit: Number.isInteger(exit) ? exit : null, duration_ms: Number.isFinite(duration) ? duration : null });
+      const fields = { script_runs: JSON.stringify(runs), updated_at: at };
+      const ok = outcome === 'exit' && exit === 0;
+      let status;
+      if (ok) {
+        status = runDone(before, fields, at);
+      } else {
+        const time = scheduling.clockIn(atMs, zoneOf(before));
+        status = 'waiting_user';
+        fields.attention_reason = outcome === 'exit' ? SCRIPT_NOTES.exit(exit, time) : outcome === 'timeout' ? SCRIPT_NOTES.timeout(timeoutMin || (actionOf(before) || {}).timeout_min || 0, time) : SCRIPT_NOTES.ended(null, time);
+        if (before.schedule) fields.schedule_state = 'due';
+        fields.context = withTerminal(before, run.task_id || (actionOf(before) || {}).task_id, terminalId);
+        fields.sort_order = topOrder();
+      }
+      fields.status = status;
+      if (status !== before.status) fields.completed_at = FINISHED.has(status) ? at : null;
+      writeFields(before.id, fields);
+      const item = get(before.id);
+      const data = { terminal_id: terminalId, outcome, exit: run.exit, duration_ms: run.duration_ms };
+      const event = writeEvent(before.id, at, actorOf(actor), ok ? 'script_done' : 'script_failed', before.status, item.status, data);
+      return { kind: 'updated', item, previous: rowToItem(before), event };
+    })();
+    if (change) emit(change);
+    return change ? change.item : null;
+  }
+
+  // At start: a script run that was open when the server stopped (its shell ended with it) is ended as stopped.
+  function recoverScripts() {
+    const ended = [];
+    for (const row of db.prepare("SELECT id, script_runs FROM attention_items WHERE script_runs IS NOT NULL AND script_runs LIKE '%terminal_id%'").all()) {
+      const run = openRun(row);
+      if (!run) continue;
+      const item = finishScript(row.id, { outcome: 'ended', terminal_id: run.terminal_id });
+      if (item) ended.push(item);
+    }
+    return ended;
+  }
+
+  // Every item whose time has come (next_at <= now), the oldest first. Times missed while the engine was off fire once (the event says how many).
+  function fireDue(atMs = now().getTime()) {
+    const due = db.prepare('SELECT id, next_at FROM attention_items WHERE next_at IS NOT NULL AND next_at <= ? ORDER BY next_at, id LIMIT 500').all(iso(atMs));
+    const fired = [];
+    for (const row of due) {
+      try {
+        const item = fireItem(row.id, { atMs, expectNextAt: row.next_at });
+        if (item) fired.push(item);
+      } catch (error) { console.warn(`T-Attention: item ${row.id} could not fire: ${error.message}`); }
+    }
+    return fired;
+  }
+  // The earliest next_at (ISO) or null: when the timer must look again.
+  const nextDueAt = () => db.prepare('SELECT MIN(next_at) AS at FROM attention_items WHERE next_at IS NOT NULL').get().at || null;
+
+  // POST /:id/run-now: a prompt is sent now when its session is idle (else 409 and nothing changes); a script runs again ("Run again"; only for the
+  // person, and not while it still runs); a reminder fires now.
+  function runNow(id, { actor, tagent = null } = {}) {
+    const before = selectItem.get(Number(id));
+    if (!before) throw new AttentionError('NOT_FOUND', 'Task not found', 404);
+    const action = actionOf(before);
+    if (!action && !before.schedule) throw invalid('This task has no schedule or prompt');
+    if (action && action.kind === 'prompt') {
+      const state = promptState(action);
+      if (state === 'busy') throw new AttentionError('SESSION_BUSY', 'The session is busy; the prompt was not sent', 409);
+      if (state === 'stopped') throw new AttentionError('SESSION_NOT_RUNNING', 'The session is not running; the prompt was not sent', 409);
+      if (state !== 'idle') throw new AttentionError('SESSION_NOT_FOUND', 'The session was not found; the prompt was not sent', 409);
+    }
+    if (action && action.kind === 'script') {
+      if (tagent) throw scriptNeedsPerson();
+      if (openRun(before)) throw new AttentionError('SCRIPT_RUNNING', 'The script is still running', 409);
+    }
+    const item = fireItem(before.id, { manual: true, actor: actorOf(actor) });
+    if (!item) throw new AttentionError('NOT_FOUND', 'Task not found', 404);
+    return item;
+  }
+
   // Tokens
 
   function listTokens() {
@@ -853,7 +1268,12 @@ function createAttentionService({ db, now = () => new Date() } = {}) {
     return { url: active.url, token: created.token, name: created.name, id: created.id };
   }
 
+  // POST /schedule/preview: the next three times and the sentence of a schedule, in this engine's zone unless it names one.
+  const preview = schedule => scheduling.preview(schedule, now().getTime(), { tz: zone() });
+  const setSessions = adapter => { promptSessions = adapter || null; };
+
   return { list, get, sourceStats, getByRef, events, detail, detailByRef, create, update, upsertByRef, remove, move, onChange, onChangeInternal, listTokens, createToken, revokeToken, verifyToken, tokenActive,
+    fireDue, nextDueAt, runNow, finishScript, recoverScripts, preview, setSessions, timeZone: zone,
     issueTerminalToken, revokeTerminalToken, terminalTokenCount, createPairing, pairingStatus, cancelPairing, claimPairing, getGuide: guide.get, saveGuide: guide.save };
 }
 
@@ -865,7 +1285,7 @@ function defaultService() {
 }
 
 module.exports = {
-  createAttentionService, defaultService, ensureTreeColumns, groupOf, GROUPS, AttentionError, PAIRING, TOKEN_SCOPES, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
+  createAttentionService, defaultService, ensureTreeColumns, ensureScheduleColumns, rowToItem, groupOf, GROUPS, AttentionError, PAIRING, TOKEN_SCOPES, ACTIVITY_KINDS, PENDING_KINDS, STATUSES, PRIORITIES, FINISHED, LIMITS, TOKEN_PATTERN, hashToken,
   recentFinishedOf,
   // In-process subscribers (notifiers) of this server's list.
   onChange: fn => defaultService().onChange(fn),

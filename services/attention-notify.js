@@ -791,6 +791,7 @@ function createAttentionNotify(options) {
     if (kind === 'deleted') cancel(item.id, 'the item was deleted');
     else if (statusChanged) cancel(item.id, 'the status changed');
     else if (event && event.actor === 'user') cancel(item.id, 'you changed the item');
+    if (kind !== 'deleted' && change.scheduled_due === true) return remindScheduled(item, previous);
     if (kind === 'deleted' || !statusChanged) return tasks;
     const owner = getOwner();
     const rules = getRules(owner);
@@ -812,6 +813,30 @@ function createAttentionNotify(options) {
       if (quiet) { remember({ ...base, outcome: 'quiet_hours' }); continue; }
       const minutes = mode === 'call' ? rules.callDelayMinutes : rules.messageDelayMinutes;
       if (minutes > 0) { sendLater({ plugin, owner, item, previous, mode, minutes, base, key }); continue; }
+      sentAt.set(key, now());
+      tasks.push(deliver({ plugin, owner, rules, item, previous, mode, reason: 'status' }));
+    }
+    return tasks;
+  }
+
+  // A scheduled reminder came due ("Firing" in docs/design/attention-schedules.md: a change with scheduled_due: true, published once per firing after
+  // the firing was stored). The channels are those of Needs you: the rules for waiting_user (on or off, the mode of each notifier, quiet hours). It is
+  // sent at once (the person chose the time, so no message delay) and whatever is on screen (a reminder is not about a session's output). Once per
+  // firing: the key names the firing's time, so the same firing published again is a duplicate.
+  function remindScheduled(item, previous) {
+    const tasks = [];
+    const owner = getOwner();
+    const rules = getRules(owner);
+    if (!rules.statuses.includes('waiting_user')) return tasks;
+    const quiet = inQuietHours(rules.quietHours, new Date(now()));
+    for (const plugin of notifiers) {
+      const mode = modeOf(rules, plugin.name, 'waiting_user');
+      if (mode === 'off' || !isEnabled(plugin.name, owner)) continue;
+      if (!(relay && relay.handles(plugin.name)) && !safeReady(plugin.name)) continue;
+      const base = { notifier: plugin.name, item_id: item.id, status: item.status, mode, detail: 'scheduled' };
+      const key = `${plugin.name}:${item.id}:scheduled:${item.last_fired_at || ''}`;
+      if (sentAt.has(key)) { remember({ ...base, outcome: 'duplicate' }); continue; }
+      if (quiet) { remember({ ...base, outcome: 'quiet_hours' }); continue; }
       sentAt.set(key, now());
       tasks.push(deliver({ plugin, owner, rules, item, previous, mode, reason: 'status' }));
     }

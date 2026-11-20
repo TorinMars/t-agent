@@ -205,6 +205,12 @@ test('browser session: CRUD, 409, events, upsert by ref, same-origin rule, token
   assert.equal(last.status, 429);
   assert.equal((await last.json()).error, 'TOO_MANY_ATTEMPTS');
   assert.ok(Number(last.headers.get('retry-after')) > 0);
+  // A valid token from the same address still gets in: only wrong tokens are limited (one client with a dead token must not lock out the others).
+  const second = await call('/api/attention/tokens', { method: 'POST', headers: XHR, body: { name: 'second' } });
+  assert.equal(second.status, 201);
+  const fresh = (await second.json()).token;
+  assert.equal((await call('/api/attention', { headers: { ...attacker, ...bearer(fresh) } })).status, 200, 'a valid token passes while the address is limited');
+  assert.equal((await call('/api/attention', { headers: { ...attacker, ...bearer(`tatt_${'z'.repeat(43)}`) } })).status, 429, 'a wrong one is still refused');
 });
 
 test('login gate: a logged-out request reaches /api/attention only with a token, and the token opens nothing else', { timeout: 30000 }, async t => {

@@ -209,7 +209,10 @@ test('auth, server and network failures map to exit codes 2 and 4', async () => 
   try {
     const denied = await run(['list'], { env: { TA_ATTENTION_URL: fake.url, TA_ATTENTION_TOKEN: 'tatt_bad' } });
     assert.equal(denied.code, 2);
-    assert.match(denied.stderr, /Invalid token \(check the token: t-attention login\)/);
+    assert.match(denied.stderr, /Invalid token \(this terminal's token ends with its terminal and with a T-Agent restart: open a new terminal, or give a background job a CLI token/, 'a terminal token (TA_ATTENTION_TOKEN) names why it may be dead');
+    const flagged = await run(['list', '--url', fake.url, '--token', 'tatt_bad']);
+    assert.equal(flagged.code, 2);
+    assert.match(flagged.stderr, /Invalid token \(check the token: t-attention login\)/, 'a token given with --token');
     const failed = await run(['list'], { env: auth(broken) });
     assert.equal(failed.code, 4);
     assert.match(failed.stderr, /Database is locked/);

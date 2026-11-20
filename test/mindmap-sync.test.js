@@ -97,6 +97,37 @@ test('a folder at the map limit with unversioned files written behind the server
   assert.equal((await service.exportPage(0, { maxRows: 1000 })).maps.length, 300, 'and every one travels');
 });
 
+// A change number is taken before its file is written. A page made while that write is on its way must not say it reaches that number, or the
+// peer records it as had and the entry never travels (the A-B-C chain lost C's edit this way in CI: B applied C's push while A pulled from B).
+test('a page made while a numbered write is on its way stops before that number, and the next page has the entry', async t => {
+  const dataDir = folder(t, 't-agent-mindmap-inflight-');
+  let hold = null;
+  let held = null;
+  const service = createMindmapService({
+    dataDir, identity: () => ({ instance_id: 'engine-b', name: 'B' }), now: () => new Date(NOW), log: () => {},
+    hooks: { beforeWrite: entry => (hold ? new Promise(resolve => { held = { entry, resolve }; }) : null) },
+  });
+  const made = await service.create({ title: 'Plan', data: topic('a') });
+  const first = await service.exportPage(0);
+  assert.deepEqual(first.maps.map(map => map.id), [made.id]);
+  // An edit arrives from a peer (C) and its write is held after it took its number.
+  hold = true;
+  const raw = (await service.exportIds([made.id])).maps[0];
+  const edit = { ...raw, data: topic('c'), revision: 2, updated_at: new Date(NOW + 1000).toISOString(), sync: { ...raw.sync, vv: { ...raw.sync.vv, 'engine-c': 1 }, at: NOW + 1000, by: 'engine-c', by_name: 'C' } };
+  const applying = service.applyEntries([edit]);
+  while (!held) await settle(5);
+  assert.ok(held.entry.sync.seq > first.next, 'the held write has a newer number');
+  const during = await service.exportPage(first.next);
+  assert.deepEqual(during.maps, [], 'not on disk yet: not in the page');
+  assert.ok(during.next < held.entry.sync.seq, `the page stops before the number on its way (next ${during.next}, held ${held.entry.sync.seq})`);
+  assert.ok(service.maxSeq() < held.entry.sync.seq, 'the newest number a peer is told is one that is written');
+  hold = false;
+  held.resolve();
+  await applying;
+  const after = await service.exportPage(during.next);
+  assert.deepEqual(after.maps.map(map => map.data), [topic('c')], 'the next page has the edit');
+});
+
 test('a map put back from the trash by hand wins over its tombstone and travels again', async t => {
   const dataDir = folder(t, 't-agent-mindmap-restore-');
   const service = createMindmapService({ dataDir, identity: () => ({ instance_id: 'engine-a', name: 'A' }), now: () => new Date(NOW), log: () => {} });
@@ -115,7 +146,7 @@ test('a map put back from the trash by hand wins over its tombstone and travels 
 // ---- Engines in this process, joined by links ----
 const pass = (req, res, next) => next();
 
-async function makeNetwork(t, names, { links: pairs, pageBytes = 2 * 1024 * 1024, capabilities = {}, company = [], cacheDays = 14 } = {}) {
+async function makeNetwork(t, names, { links: pairs, pageBytes = 2 * 1024 * 1024, capabilities = {}, company = [], cacheDays = 14, hooks = {} } = {}) {
   const sides = {};
   for (const name of names) {
     const dir = folder(t, `t-agent-mindmap-sync-${name}-`);
@@ -134,7 +165,7 @@ async function makeNetwork(t, names, { links: pairs, pageBytes = 2 * 1024 * 1024
       issuedTokenHash: peer => { const token = side.issued.get(peer.id); return token ? sha(token) : null; },
       request: null, log: { warn() {}, info() {} }, intervalMs: 0,
     });
-    side.maps = createMindmapService({ dataDir: dir, identity, now: () => new Date(side.clock), log: () => {} });
+    side.maps = createMindmapService({ dataDir: dir, identity, now: () => new Date(side.clock), log: () => {}, hooks: hooks[name] || {} });
     side.sync = createMindmapSync({
       db, service: side.maps, serviceLinks: side.links, identity, now,
       linkKeys: { publicKey: () => side.settingsSync.publicKey(), linkKey: (peer, key) => side.settingsSync.linkKey(peer, key) },
@@ -303,6 +334,35 @@ test('a large first merge goes in pages cut by bytes; an 8 MB map travels alone'
   await B.sync.syncAll();
   assert.ok(B.requests.filter(line => line.startsWith('PUT')).length >= 2, 'several pushes');
   assert.equal((await A.maps.list()).length, 11);
+});
+
+test('a chain A-B-C, forced order: A pulls from B while B is still writing C\'s pushed edit; the edit still reaches A', async t => {
+  let hold = false;
+  let held = null;
+  const { A, B, C } = await makeNetwork(t, ['A', 'B', 'C'], {
+    links: [['A', 'B'], ['B', 'C']],
+    hooks: { B: { beforeWrite: entry => (hold && entry.sync && entry.sync.by === C.instanceId ? new Promise(resolve => { held = resolve; }) : null) } },
+  });
+  const made = await A.page('POST', '', { title: 'Shared', data: topic('a') });
+  await A.sync.syncAll();
+  await B.sync.syncAll();
+  await A.sync.syncAll();
+  assert.equal((await C.page('GET', `/${made.body.id}`)).status, 200);
+  C.clock = NOW + 1000;
+  await C.page('PUT', `/${made.body.id}`, { revision: (await C.page('GET', `/${made.body.id}`)).body.revision, data: topic('c') });
+  // C pushes its edit to B, and B's write of it is held after it took its change number.
+  hold = true;
+  const cRound = C.sync.syncPeer(C.peers.find(peer => peer.name === 'B'));
+  while (!held) await settle(5);
+  // Meanwhile A pulls from B (A's own round): B's page must not claim the number on its way.
+  await A.sync.syncPeer(A.peers.find(peer => peer.name === 'B'));
+  hold = false;
+  held();
+  await cRound;
+  // B's fan-out round (what its debounce runs) sends the edit to A.
+  await B.sync.syncAll();
+  assert.deepEqual((await A.page('GET', `/${made.body.id}`)).body.data, topic('c'));
+  assert.deepEqual(await A.titles(), ['Shared'], 'no conflict copy: C\'s edit descends from A\'s map');
 });
 
 test('a chain A-B-C: a map made on A reaches C through B, and C\'s edit comes back; an older peer is skipped', async t => {

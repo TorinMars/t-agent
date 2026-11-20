@@ -14,6 +14,7 @@ const { startWithoutDefaultTerminal } = require('../lib/task-default-terminal');
 const taskArchive = require('../services/task-archive');
 const { getTaskVisibility } = require('../services/task-visibility');
 const taskRename = require('../services/task-rename');
+const taskMove = require('../services/task-move');
 
 const router = express.Router();
 
@@ -289,10 +290,14 @@ for (const [action, run] of [['archive', taskArchive.archiveTask], ['restore', t
   });
 }
 
+// Move to another machine (services/task-move.js, routes/task-move.js): preview, start, progress, cancel.
+require('./task-move').addPageRoutes(router, { service: taskMove.getTaskMove, owner: ownerFilter });
+
 router.delete('/:id', (req, res) => {
   const uid = ownerFilter(req);
   const task = documents.resolveTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid));
   if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (taskMove.isMoving(task.id)) return res.status(409).json({ error: 'TASK_MOVING' });
   const deleteDirectory = req.query.delete_directory === '1';
   if (deleteDirectory) {
     const reason = workspaceTools.taskDirectoryGuard(db, uid, task, toolWorkDir(req));

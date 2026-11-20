@@ -478,6 +478,27 @@ for (const action of ['archive', 'restore']) {
   router.post(`/:id/tasks/:taskId/${action}`, (req, res) => proxyArchive(req, res, `${taskPath(req)}/${action}`, { method: 'POST', body: {} }));
 }
 
+// Move a task of an Engine to another machine (routes/task-move.js) on an Engine that advertises 'tasks:move' (an older one: 501 MOVE_UNSUPPORTED,
+// nothing sent). The Engine checks that this token is its link's. A refusal keeps its status, code and reason.
+async function proxyMove(req, res, suffix, method) {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'tasks:move');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'MOVE_UNSUPPORTED' });
+  const body = req.body || {};
+  const forwarded = method === 'POST' && !suffix ? { target: typeof body.target === 'string' ? body.target : '', tier_ack: body.tier_ack === true } : {};
+  try { res.status(method === 'POST' && !suffix ? 202 : 200).json(await request(target.row.base_url, `${taskPath(req)}/move${suffix}`, target.token, { method, ...(method === 'POST' ? { body: forwarded } : {}), timeoutMs: 30_000 })); }
+  catch (error) {
+    const peer = error.peerBody || {};
+    res.status(error.statusCode || 502).json({ error: safeError(error), ...(typeof peer.reason === 'string' ? { reason: peer.reason } : {}) });
+  }
+}
+router.get('/:id/tasks/:taskId/move', (req, res) => proxyMove(req, res, '', 'GET'));
+router.post('/:id/tasks/:taskId/move', (req, res) => proxyMove(req, res, '', 'POST'));
+router.get('/:id/tasks/:taskId/move/progress', (req, res) => proxyMove(req, res, '/progress', 'GET'));
+router.post('/:id/tasks/:taskId/move/cancel', (req, res) => proxyMove(req, res, '/cancel', 'POST'));
+
 // Rename a task's folder on an Engine that advertises 'tasks:rename-folder' (an older one answers 501 RENAME_FOLDER_UNSUPPORTED before anything is sent).
 // A refusal keeps its status and code, and the reason, the live terminal ids and the clashing path that the Engine gave, so the page can offer to close them.
 router.post('/:id/tasks/:taskId/rename-folder', async (req, res) => {

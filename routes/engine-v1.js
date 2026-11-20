@@ -75,6 +75,15 @@ const engineAttention = require('./attention').createEngineAttentionRouter({
 // only; before /attention so that its item routes never see these paths.
 router.use('/attention/notify-relay', require('../services/attention-relay').createEngineRouter());
 router.use('/attention', engineAttention);
+// Moving a task between linked services (routes/task-move.js): the manifest, the files and the commit, link tokens only; the service checks that the
+// move's task is visible to the asking link. The page routes of a move are under /tasks/:id/move (below), where the visibility guard covers them.
+router.use('/task-move', require('./task-move').createPeerRouter({ service: () => require('../services/task-move').getTaskMove(), authenticate: requireEngineAuth() }));
+require('./task-move').addEngineTaskRoutes(router, {
+  service: () => require('../services/task-move').getTaskMove(),
+  authenticate: requireEngineAuth('tasks:write'),
+  linkForToken: tokenId => getServiceLinks().linkForToken(tokenId),
+  owner: () => require('../services/single-user').ensureSingleUser().login,
+});
 const pairingAttempts = new Map();
 
 function errorResponse(res, error) {
@@ -167,6 +176,8 @@ function infoHandler(req, res) {
       'tasks:archive',
       // tasks:rename-folder: POST /v1/tasks/:id/rename-folder renames the task's folder and moves its Claude Code and Codex sessions with it.
       'tasks:rename-folder',
+      // tasks:move: GET|POST /v1/tasks/:id/move, /move/progress, /move/cancel and /v1/task-move/* (routes/task-move.js): "Move to another machine…".
+      require('../services/task-move').CAPABILITY,
       'tasks:reorder', 'documents:create', 'documents:watch', 'files:assets', 'files:image', 'paths:validate', 'terminal:activity', 'terminal:activity-stream',
       'todos:read', 'todos:write',
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
@@ -582,6 +593,7 @@ router.post('/terminal-sessions', requireEngineAuth('terminal:execute'), (req, r
   const task = tasks.ownedTask(principal(req), req.body.task_id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   if (task.archived_at) return res.status(409).json({ error: 'TASK_ARCHIVED' });
+  if (require('../services/task-move').isMoving(task.id)) return res.status(409).json({ error: 'TASK_MOVING' });
   let terminalId;
   try { terminalId = terminal.assertTerminal(task.id, req.body.terminal_id); }
   catch (error) { return errorResponse(res, error); }

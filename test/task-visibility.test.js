@@ -217,9 +217,12 @@ const REVIEWED_ROUTES = new Set([
 // /device-settings: the allowlisted per-device settings of the page (routes/device-settings.js), never a task, and link tokens only.
 // /attention/notify-relay: takes a notification card a linked device sends to this Telegram sender (services/attention-relay.js); it gives out
 // nothing about this service's tasks, and link tokens only.
+// /task-move: moving a task between linked services (routes/task-move.js), link tokens only, and a move answers only the link it is with; the
+// routes that give out the task's content (manifest, files) and the commit check that its task is visible to that link (services/task-move.js
+// `assertVisible`); /capacity gives only free space and limits.
 // /updated-notice: this service's "Updated to v…" notice (versions, a time and release notes from DESIGN.md; routes/updated-notice.js), never a task,
 // and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/attention-copy', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/sign-in-handover', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/attention-copy', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/task-move', '/sign-in-handover', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

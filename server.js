@@ -697,6 +697,8 @@ server.listen(config.port, config.host, () => {
   require('./services/learn-analysis').getLearnAnalysis().start();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
   if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
+  // Moves of tasks to other engines stopped by a crash are finished or undone, and the trash of moved folders is swept (services/task-move.js).
+  require('./services/task-move').getTaskMove().startService().catch(error => console.warn('[task-move] start:', error.message));
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
   require('./services/rule-sync').getRuleSync().start();
   // The Telegram sender choice follows the links from here on (services/attention-relay.js).

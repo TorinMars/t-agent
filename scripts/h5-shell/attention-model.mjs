@@ -562,8 +562,16 @@ export function jumpBack(context, { sourceKey, groups, tasks, localHost } = {}) 
 
 // The row of the one task list that holds the T-Agent task of a context (`context.tagent`): this machine's (`groups`) or another engine's (`tasks`).
 // `{ row, taskId, terminalId }` (`taskId` as `ui.actions.openRow` takes it), or null when the session ran on another machine or the task is not listed.
+// A task moved to another engine since (services/task-move.js) has `tagent.moved_to` { instance, task_id, terminal_id }: it is looked for by that
+// engine's instance id among the rows of the one list (their device tag), whatever machine the session first ran on.
 function listedTask(context, { sourceKey, groups, tasks, localHost } = {}) {
   const tagent = context && context.tagent;
+  const moved = tagent && tagent.moved_to;
+  if (moved && moved.instance && moved.task_id != null) {
+    const task = (tasks || []).find(row => row && row.ref && row.device && row.device.instanceId === moved.instance && String(row.id) === String(moved.task_id));
+    const terminalId = String(moved.terminal_id || tagent.terminal_id || '');
+    return task && terminalId ? { row: task, taskId: task.ref, terminalId } : null;
+  }
   if (!tagent || tagent.task_id == null || !tagent.terminal_id || !onThisMachine(context, localHost)) return null;
   const terminalId = String(tagent.terminal_id);
   if (sourceKey === 'local') {

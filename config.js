@@ -55,6 +55,8 @@ module.exports = {
   mindmapSyncEnabled: process.env.MINDMAP_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
   // The read copies of the linked engines' T-Attention items (services/attention-copy.js); off: every engine is read live, as before.
   attentionCopyEnabled: process.env.ATTENTION_COPY_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
+  // The largest task (its folder and agent session files) "Move to another machine…" moves (services/task-move.js), in bytes; default 2 GiB.
+  taskMoveMaxBytes: positiveInteger(process.env.TASK_MOVE_MAX_BYTES, 2 * 1024 * 1024 * 1024),
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,
   updateCheckStartupDelayMs: positiveInteger(process.env.UPDATE_CHECK_STARTUP_DELAY_SECONDS, 30) * 1000,
   updateAutoQuietMs: positiveInteger(process.env.UPDATE_AUTO_QUIET_SECONDS, 600) * 1000,

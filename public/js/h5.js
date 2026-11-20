@@ -1303,6 +1303,7 @@
       ['Rename', () => void askTaskRename(from, item)],
       ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('workdir', from, item) }); }],
       ...(choosesVisibility(from) ? [['Visible to', () => void askVisibility(from, item)]] : []),
+      ...(movesTasks(from) ? [['Move to another machine\u2026', () => void askTaskMove(from, item)]] : []),
       ...(archives(from) ? [['Archive', () => void askArchive(from, item)]] : []),
       ['Delete', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('delete', from, item) }); }, 'danger'],
     ];
@@ -1598,6 +1599,81 @@
     }
     tell('Saved', 'success');
   };
+  // ── Moving a task to another machine (the "Move to another machine…" of its "⋯"; services/task-move.js, docs/design/task-move.md). The task's own engine
+  // does the move: `GET {tasksBase}/:id/move` says what it would do (size, terminals, the machines it can go to), `POST` starts it, `/move/progress` is read
+  // every 700 ms while a move started or seen here runs (the dialog can be closed: the move goes on, and the same menu item shows its progress again),
+  // `/move/cancel` stops it until the target has verified the copy. The dialog is MoveTaskDialog in TaskDialogs.jsx (the task dialogs chunk). Offered
+  // for a task of this machine when it has a service link, and of an online Engine that lists 'tasks:move'.
+  const movesTasks = from => from.status !== 'offline' && (from === LOCAL ? hasLinks : Boolean(Array.isArray(from.capabilities) && from.capabilities.includes('tasks:move')));
+  const moveDialog = (from, id) => { const dialog = ui.get().taskDialog; return dialog && dialog.kind === 'move' && (!from || (dialog.sourceKey === from.key && String(dialog.id) === String(id))) ? dialog : null; };
+  const movePolls = new Map(); // task ref -> timer of the progress read
+  async function askTaskMove(from, item) {
+    closeTerminalMenu();
+    ui.set({ taskDialog: dialogFor('move', from, item, { stage: 'loading', preview: null, progress: null, from: serviceOf(from) || sourceName(from) }) });
+    let preview;
+    try { preview = await api('GET', `${from.tasksBase}/${item.id}/move`); } catch (error) {
+      if (moveDialog(from, item.id)) patchDialog({ stage: 'error', error: (error.data && error.data.error) || error.message });
+      return;
+    }
+    if (!moveDialog(from, item.id)) return;
+    const named = preview && preview.self && preview.self.name ? { from: preview.self.name } : {}; // the engine's own name, the same on every page
+    if (preview && preview.active) { patchDialog({ stage: 'progress', preview, progress: preview.active, ...named }); pollMove(from, item.id); return; }
+    patchDialog({ stage: 'ready', preview, ...named });
+  }
+  ui.actions.taskMoveStart = async ({ target, tierAck = false } = {}) => {
+    const dialog = moveDialog();
+    const from = dialogSource(dialog);
+    if (!dialog || !from || dialog.busy) return;
+    patchDialog({ busy: true, error: '' });
+    try {
+      const progress = await api('POST', `${from.tasksBase}/${dialog.id}/move`, { target, tier_ack: tierAck === true });
+      if (moveDialog(from, dialog.id)) patchDialog({ busy: false, stage: 'progress', progress });
+      pollMove(from, dialog.id);
+    } catch (error) {
+      const data = error.data || {};
+      if (moveDialog(from, dialog.id)) patchDialog({ busy: false, error: data.error || error.message, reason: data.reason || null });
+    }
+  };
+  ui.actions.taskMoveCancel = async () => {
+    const dialog = moveDialog();
+    const from = dialogSource(dialog);
+    if (!dialog || !from || dialog.busy) return;
+    patchDialog({ busy: true });
+    try {
+      const answer = await api('POST', `${from.tasksBase}/${dialog.id}/move/cancel`);
+      if (moveDialog(from, dialog.id)) patchDialog({ busy: false, progress: answer && answer.move ? answer.move : dialog.progress });
+    } catch (error) {
+      if (moveDialog(from, dialog.id)) patchDialog({ busy: false, error: (error.data && error.data.error) || error.message });
+    }
+  };
+  function pollMove(from, taskId) {
+    const ref = taskRef(from, taskId);
+    if (movePolls.has(ref)) return;
+    const step = async () => {
+      let move = null;
+      try { move = (await api('GET', `${from.tasksBase}/${taskId}/move/progress`) || {}).move; } catch { /* asked again */ }
+      const open = moveDialog(from, taskId);
+      if (open && move) patchDialog({ progress: move });
+      if (!move || !['done', 'failed', 'cancelled'].includes(move.phase)) { movePolls.set(ref, setTimeout(step, 700)); return; }
+      movePolls.delete(ref);
+      await moveEnded(from, taskId, move, Boolean(open));
+    };
+    movePolls.set(ref, setTimeout(step, 700));
+  }
+  async function moveEnded(from, taskId, move, open) {
+    const name = move.target ? move.target.name : '';
+    if (move.phase !== 'done') {
+      if (!open) tell(move.phase === 'cancelled' ? 'Move cancelled' : `The task was not moved; nothing was changed: ${move.error || ''}`, move.phase === 'cancelled' ? 'info' : 'error');
+      return;
+    }
+    const shown = isShown(from, taskId);
+    if (open) ui.set({ taskDialog: null });
+    tell(`Moved \u201C${move.title}\u201D to ${name}`, 'success');
+    const to = move.target && sources.find(item => item.instanceId && item.instanceId === move.target.instance_id);
+    await Promise.all([loadSource(from), to ? loadSource(to) : null]);
+    const item = to && findTask(to, move.new_task_id);
+    if (shown && item) selectTask(to, item); // the task that was open opens at its new place (its terminals resume their carried sessions)
+  }
   // ── Renaming a task (the "Rename" of its "⋯"): the title through `PUT {tasksBase}/:id`, or the title and the folder through `POST {tasksBase}/:id/rename-folder`
   // (services/task-rename.js), which moves the folder's Claude Code and Codex sessions with it. The folder part is offered on this machine and on an Engine with
   // 'tasks:rename-folder' (asked for when not known yet: `folderSupported` is null until then). A task with open terminals is refused (TASK_BUSY with their ids):

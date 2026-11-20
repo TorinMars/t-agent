@@ -180,7 +180,8 @@ async function run(browser, wide) {
 
   // ── The item: on a task of this machine, above Archive; the menu did not wait for the answer about the links, and the answer is at hand ──
   await h.menu('Beta');
-  assert.deepEqual((await h.menuItems.allTextContents()).slice(-3), ['Visible to', 'Archive', 'Delete'], `${label}: above Archive`);
+  // "Move to another machine…" (docs/design/task-move.md) follows it on a task of this machine with a link.
+  assert.deepEqual((await h.menuItems.allTextContents()).slice(-4), ['Visible to', 'Move to another machine\u2026', 'Archive', 'Delete'], `${label}: above Archive`);
   if (!wide) assert.ok((await h.menuItems.filter({ hasText: /^Visible to$/ }).boundingBox()).height >= 44, `${label}: a 44px item`);
   await shot('task-visibility-menu-390.png');
   await h.closeMenu();

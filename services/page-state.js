@@ -75,7 +75,7 @@ function createPageState(options) {
       try { denied = entry.instance === self && rules.isDenied(Number(entry.task), linkId); } catch { denied = false; }
       if (!denied) recent[id] = entry;
     }
-    return { recent, keys: state.keys };
+    return { ...state, recent };
   }
   const digestOf = (key, state) => crypto.createHmac('sha256', key).update(merge.stableJson(state)).digest('hex').slice(0, 32);
 
@@ -95,6 +95,17 @@ function createPageState(options) {
     save(name, result.state, at);
     schedule();
     return viewOf({ state: result.state, clock: Math.max(at, merge.newestAt(result.state)) });
+  }
+  // A task of this engine moved to another (services/task-move.js): the moved record, stamped now. Every engine and page that merges it re-points
+  // what named the task (page-state-merge.js `repoint`). True when it changed the state.
+  function recordMove(name, move) {
+    const { state, clock } = load(name);
+    const at = Math.max(now(), clock + 1);
+    const result = merge.merge(state, merge.moveState(move, { at, by: me() }), now());
+    if (!result.changed) return false;
+    save(name, result.state, at);
+    schedule();
+    return true;
   }
   // Merges a state from a peer; true when something changed here.
   function absorb(incoming) {
@@ -313,7 +324,7 @@ function createPageState(options) {
   }
   const onChange = listener => { listeners.add(listener); return () => listeners.delete(listener); };
 
-  return { start, stop, read, change, follow, peers, syncAll, syncPeer, engineDescribe, enginePull, enginePush, peerStates: readPeers, onChange };
+  return { start, stop, read, change, recordMove, follow, peers, syncAll, syncPeer, engineDescribe, enginePull, enginePush, peerStates: readPeers, onChange };
 }
 
 // Off with SETTINGS_SYNC_ENABLED=false (it uses the settings sync's link keys): then the page state stays on this engine.

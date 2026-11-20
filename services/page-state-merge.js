@@ -12,6 +12,11 @@
 // Merging two states keeps, for every entry and key, the later version (a greater `at`, then a greater `by`, then the greater stable JSON, so every
 // engine picks the same one). Then the live entries are cut to RECENT_KEEP by `used` and old tombstones go (trim), so the result is the same on every
 // side and merging it again changes nothing.
+// - `moves` (only when there is one): a task moved to another engine (services/task-move.js), by its old identity `<instance>|<task>`:
+//   { to_instance, to_task, title, at, by }, kept MOVES_KEEP_MS. Every merge re-points what names the old identity (`repoint`): recent entries,
+//   the session of a column (`h5-column:<pane>`) and drafts (`ta-draft:<hash>`, whose name is the hash of the identity), so links, columns and
+//   "Continue" follow the task on every engine and page. A tombstone of an old identity is dropped (the source's page forgets the sessions of a task
+//   that left its list; that must not hide them at their new place). The result is the same on every side, so the merge stays commutative.
 const RECENT_KEEP = 24; // the page shows RECENT_MAX (12) of the entries it can name; twice that here, so one side's cap never drops the other's latest
 const GONE_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 const GONE_MAX = 200;
@@ -28,6 +33,10 @@ const DEVICE = /^[a-z0-9]{8,32}$/;
 // Keys whose value is a map of times ({ <kind>: { <name>: ms } }, the recency of saved commands): two versions are merged by the later time of each
 // name, so two devices that used different commands at the same time keep both.
 const TIME_MAPS = new Set(['ta-saved-commands-used']);
+const MOVES_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+const MOVES_MAX = 500;
+const COLUMN_PREFIX = 'h5-column:';
+const DRAFT_PREFIX = 'ta-draft:';
 
 const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const time = value => (Number.isSafeInteger(value) && value >= 0 ? value : null);
@@ -74,6 +83,74 @@ function cleanRecent(raw) {
   return { ...change, at, by };
 }
 
+// A moved record (a peer's, stored, or one made here), checked: { to_instance, to_task, title, at, by } or null.
+function cleanMove(raw) {
+  if (!isObject(raw)) return null;
+  const at = time(raw.at);
+  const toInstance = typeof raw.to_instance === 'string' ? raw.to_instance : '';
+  const toTask = raw.to_task === undefined || raw.to_task === null ? '' : String(raw.to_task);
+  if (at === null || !INSTANCE.test(toInstance) || !TASK.test(toTask)) return null;
+  return { to_instance: toInstance, to_task: toTask, title: typeof raw.title === 'string' ? raw.title.slice(0, TITLE_MAX) : '', at, by: typeof raw.by === 'string' && INSTANCE.test(raw.by) ? raw.by : '' };
+}
+const MOVE_ID = /^[A-Za-z0-9-]{1,64}\|[1-9]\d{0,11}$/;
+// A state with its moves, the key left out when there are none (so a state without moves reads, and digests, as before moves existed).
+const withMoves = (state, moves) => (moves && Object.keys(moves).length ? { ...state, moves } : state);
+
+// The same FNV-1a pair as public/js/continue-drafts.js `draftKey`: the key name of the draft of a session identity.
+function hash32(text, seed) {
+  let h = seed >>> 0;
+  for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+}
+const draftKey = id => `${DRAFT_PREFIX}${hash32(id, 0x811c9dc5)}${hash32(id, 0x01234567)}`;
+
+// Where an identity is now: the moves followed (a task moved twice goes to its last place), or null when it did not move.
+function movedTo(moves, instance, task) {
+  let current = null;
+  let key = `${instance}|${task}`;
+  for (let hops = 0; hops < 8 && moves[key]; hops += 1) {
+    current = { instance: moves[key].to_instance, task: moves[key].to_task };
+    key = `${current.instance}|${current.task}`;
+  }
+  return current;
+}
+
+// What names a moved task re-pointed to its new place (see the head of this file). Pure and deterministic: the same on every side.
+function repoint(state) {
+  const moves = state.moves || {};
+  if (!Object.keys(moves).length) return state;
+  const recent = {};
+  for (const id of Object.keys(state.recent).sort()) {
+    const entry = state.recent[id];
+    const to = movedTo(moves, entry.instance, entry.task);
+    if (to && entry.gone) continue;
+    const next = to ? { ...entry, instance: to.instance, task: to.task } : entry;
+    const nextId = recentId(next);
+    if (!recent[nextId] || later(next, recent[nextId])) recent[nextId] = next;
+  }
+  const keys = {};
+  for (const name of Object.keys(state.keys).sort()) {
+    const entry = state.keys[name];
+    let nextName = name;
+    let next = entry;
+    if (name.startsWith(COLUMN_PREFIX) && typeof entry.value === 'string') {
+      let shown = null;
+      try { shown = JSON.parse(entry.value); } catch { shown = null; }
+      const to = shown && isObject(shown) && movedTo(moves, shown.instance, shown.task);
+      if (to) next = { ...entry, value: JSON.stringify({ instance: to.instance, task: to.task, terminal: shown.terminal }) };
+    } else if (name.startsWith(DRAFT_PREFIX) && isObject(entry.value)) {
+      const to = movedTo(moves, entry.value.instance, entry.value.task);
+      if (to) {
+        const value = { ...entry.value, instance: to.instance, task: to.task };
+        next = { ...entry, value };
+        nextName = draftKey(`${to.instance}|${to.task}|${value.terminal}`);
+      }
+    }
+    if (!keys[nextName] || later(next, keys[nextName])) keys[nextName] = next;
+  }
+  return withMoves({ recent, keys }, moves);
+}
+
 // A key's value, checked: any JSON of at most VALUE_MAX characters (null clears it). Throws for a value that is too large or not JSON.
 function cleanValue(value) {
   if (value === undefined || value === null) return null;
@@ -96,6 +173,11 @@ function cleanKey(raw) {
 function cleanState(raw) {
   const state = { recent: {}, keys: {} };
   if (!isObject(raw)) return state;
+  const moves = {};
+  for (const [id, value] of Object.entries(isObject(raw.moves) ? raw.moves : {}).slice(0, MOVES_MAX * 4)) {
+    const move = MOVE_ID.test(id) ? cleanMove(value) : null;
+    if (move && (!moves[id] || later(move, moves[id]))) moves[id] = move;
+  }
   for (const value of Object.values(isObject(raw.recent) ? raw.recent : {}).slice(0, (RECENT_KEEP + GONE_MAX) * 4)) {
     const entry = cleanRecent(value);
     if (entry && (!state.recent[recentId(entry)] || later(entry, state.recent[recentId(entry)]))) state.recent[recentId(entry)] = entry;
@@ -104,7 +186,7 @@ function cleanState(raw) {
     const entry = validKeyName(name) ? cleanKey(value) : null;
     if (entry) state.keys[name] = entry;
   }
-  return state;
+  return withMoves(state, moves);
 }
 
 // Whether version `a` beats `b` (both { at, by, ... }).
@@ -120,6 +202,7 @@ function newestAt(state) {
   let newest = 0;
   for (const entry of Object.values(state.recent)) newest = Math.max(newest, entry.at);
   for (const entry of Object.values(state.keys)) newest = Math.max(newest, entry.at);
+  for (const entry of Object.values(state.moves || {})) newest = Math.max(newest, entry.at);
   return newest;
 }
 
@@ -135,7 +218,10 @@ function trim(state, now) {
   const keys = Object.entries(state.keys).filter(([, entry]) => entry.value !== null || entry.at >= now - GONE_KEEP_MS);
   keys.sort(([a, x], [b, y]) => ((x.value === null) - (y.value === null)) || (y.at - x.at) || (a < b ? -1 : 1));
   for (const [name, entry] of keys.slice(0, KEYS_MAX)) out.keys[name] = entry;
-  return out;
+  const moves = {};
+  Object.entries(state.moves || {}).filter(([, move]) => move.at >= now - MOVES_KEEP_MS).sort(([a, x], [b, y]) => (y.at - x.at) || (a < b ? -1 : 1)).slice(0, MOVES_MAX)
+    .forEach(([id, move]) => { moves[id] = move; });
+  return withMoves(out, moves);
 }
 
 // Two maps of times merged: every name with its later time (anything that is not such a map gives way to the other value).
@@ -157,14 +243,15 @@ function mergeTimes(a, b) {
 function merge(local, incoming, now) {
   const mine = cleanState(local);
   const theirs = cleanState(incoming);
-  const next = { recent: { ...mine.recent }, keys: { ...mine.keys } };
+  const next = { recent: { ...mine.recent }, keys: { ...mine.keys }, moves: { ...(mine.moves || {}) } };
+  for (const [id, move] of Object.entries(theirs.moves || {})) if (later(move, next.moves[id])) next.moves[id] = move;
   for (const [id, entry] of Object.entries(theirs.recent)) if (later(entry, next.recent[id])) next.recent[id] = entry;
   for (const [name, entry] of Object.entries(theirs.keys)) {
     const mineNow = next.keys[name];
     const winner = later(entry, mineNow) ? entry : mineNow;
     next.keys[name] = TIME_MAPS.has(name) && mineNow ? { ...winner, value: mergeTimes(mineNow.value, entry.value) } : winner;
   }
-  const state = trim(next, now);
+  const state = trim(repoint(withMoves({ recent: next.recent, keys: next.keys }, next.moves)), now);
   return { state, changed: stableJson(state) !== stableJson(mine) };
 }
 
@@ -197,6 +284,16 @@ function changeState(body, { at, by }) {
   return state;
 }
 
+// A task moved to another engine as a state of its own (services/page-state.js `recordMove`): { from: { instance, task }, to: { instance, task },
+// title }. Throws 400 INVALID_PAGE_STATE when malformed.
+function moveState(move, { at, by }) {
+  const from = isObject(move) && isObject(move.from) ? move.from : {};
+  const id = `${from.instance}|${from.task}`;
+  const value = cleanMove({ to_instance: move && move.to && move.to.instance, to_task: move && move.to && move.to.task, title: move && move.title, at, by });
+  if (!MOVE_ID.test(id) || !value || id === `${value.to_instance}|${value.to_task}`) throw Object.assign(new Error('INVALID_PAGE_STATE'), { statusCode: 400 });
+  return { recent: {}, keys: {}, moves: { [id]: value } };
+}
+
 // What the page reads: the live entries, used last first ({ instance, task, terminal, title, agent, used }), and every key with its value (null:
 // cleared, so the page knows it was cleared and does not fall back to what the browser kept).
 function pageView(state) {
@@ -205,10 +302,15 @@ function pageView(state) {
     .map(({ instance, task, terminal, title, agent, used, ...rest }) => ({ instance, task, terminal, title, agent, used, ...seenOn(rest) }));
   const keys = {};
   for (const name of Object.keys(clean.keys).sort()) keys[name] = clean.keys[name].value;
-  return { recent, keys };
+  // The moves, newest first, so the page can re-point what it keeps in this browser only (the session this device opens at start).
+  const moves = Object.entries(clean.moves || {}).sort(([a, x], [b, y]) => (y.at - x.at) || (a < b ? -1 : 1)).map(([id, move]) => {
+    const cut = id.lastIndexOf('|');
+    return { from: { instance: id.slice(0, cut), task: id.slice(cut + 1) }, to: { instance: move.to_instance, task: move.to_task }, title: move.title, at: move.at };
+  });
+  return { recent, keys, moves };
 }
 
 module.exports = {
-  RECENT_KEEP, GONE_KEEP_MS, GONE_MAX, KEYS_MAX, VALUE_MAX, INSTANCE,
-  stableJson, recentId, cleanState, cleanRecent, later, newestAt, trim, merge, changeState, pageView,
+  RECENT_KEEP, GONE_KEEP_MS, GONE_MAX, KEYS_MAX, VALUE_MAX, INSTANCE, MOVES_KEEP_MS, MOVES_MAX,
+  stableJson, recentId, cleanState, cleanRecent, later, newestAt, trim, merge, changeState, moveState, pageView, repoint, movedTo, draftKey,
 };

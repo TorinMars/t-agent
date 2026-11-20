@@ -15,7 +15,8 @@ function owned(database, owner, id) {
 
 // Rows of one owner: the tasks in use in their list order, or (`archived`) only the archived ones, the most recently archived first.
 function listTasks(database, owner, { status, archived = false } = {}) {
-  const filters = ['user_id = ?', archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL'];
+  // A task that is arriving from another engine is held with archived_at = 'moving:<move id>' (services/task-move.js): listed nowhere.
+  const filters = ['user_id = ?', archived ? "archived_at IS NOT NULL AND archived_at NOT LIKE 'moving:%'" : 'archived_at IS NULL'];
   const values = [owner];
   if (status) { filters.push('status = ?'); values.push(status); }
   const order = archived ? 'archived_at DESC, id DESC' : 'sort_order ASC, created_at DESC';
@@ -45,6 +46,7 @@ function archiveTask(database, owner, id) {
 function restoreTask(database, owner, id) {
   const task = owned(database, owner, id);
   if (!task) throw fail('TASK_NOT_FOUND', 404);
+  if (typeof task.archived_at === 'string' && task.archived_at.startsWith('moving:')) throw fail('TASK_MOVING', 409); // only its move releases it
   if (task.archived_at) {
     database.prepare('UPDATE tasks SET archived_at = NULL, sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
       .run(NEW_TASK_SORT_ORDER, task.id, owner);

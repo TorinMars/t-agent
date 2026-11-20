@@ -7,7 +7,8 @@
 // columns turned on on T01, with a session in its first column, are the same columns on a computer of K01, whose first column shows that session.
 // Then the page push ("The page push" in docs/design/shared-page-state.md): each page's stream of its own engine (`?state=1`, the activity stream
 // mock) gets `event: page-state` after every change, as the server sends it; the columns turned off on T01, the task list tab chosen on the phone
-// and a session shown there follow on the other pages within 2 s, without the focus, a read or a reload.
+// and a session shown there follow on the other pages within 2 s, without the focus, a read or a reload. Remove from Recent on the phone of K01 leaves
+// the list of T01 and its Undo puts the entry back there; Clear list on T01 empties the phone's list but T01's shown session, and Undo refills it.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -213,6 +214,29 @@ async function refocus(page) {
     console.log(`  a session shown on K01 (phone) -> first in T01's Recent list: ${Date.now() - since} ms`);
     assert.equal(getsFrom('http://t01.test'), tReads, 'T01 followed by the push alone: no read of its own');
 
+    // Remove from Recent on the phone of K01 (its key for T01's session): gone from T01's list; Undo puts it back in its place.
+    const keysOf = page => page.evaluate(() => window.H5UI.get().recent.map(entry => `${entry.sourceKey}|${entry.taskId}|${entry.terminalId}`).join());
+    const tBefore = await keysOf(t01.page);
+    assert.ok(tBefore.includes('local|1|c1'), tBefore);
+    since = Date.now();
+    assert.equal(await k01.page.evaluate(() => window.H5UI.actions.removeRecent(['remote:3|1|c1'])), true);
+    await t01.page.waitForFunction(() => !window.H5UI.get().recent.some(entry => entry.terminalId === 'c1'), null, { timeout: 2000 });
+    console.log(`  Remove from Recent on K01 (phone) -> T01: ${Date.now() - since} ms`);
+    const phoneUndo = k01.page.locator('.h5-notice-action', { hasText: 'Removed from Recent' }).locator('.h5-notice-action-button');
+    await phoneUndo.waitFor();
+    await phoneUndo.tap();
+    await t01.page.waitForFunction(want => window.H5UI.get().recent.map(entry => `${entry.sourceKey}|${entry.taskId}|${entry.terminalId}`).join() === want, tBefore, { timeout: 2000 });
+    // Clear list on T01 (the button of its Recent tab): only T01's shown session is left in the shared list; the phone follows; Undo refills both.
+    await t01.page.locator('#h5-tab-recent').click();
+    await t01.page.locator('#h5-recent-clear').click();
+    const tShown = await t01.page.evaluate(() => { const s = window.H5UI.get().shownTarget; return `${s.sourceKey}|${s.taskId}|${s.terminalId}`; });
+    await until(() => sharedIds().join() === `T|${tShown.split('|').slice(1).join('|')}`, 'only the shown session of T01 in the shared state');
+    await k01.page.waitForFunction(() => !window.H5UI.get().recent.some(entry => entry.sourceKey === 'local' && entry.terminalId === 'k1'), null, { timeout: 2000 });
+    const deskUndo = t01.page.locator('.h5-notice-action', { hasText: 'Recent list cleared' }).locator('.h5-notice-action-button');
+    await deskUndo.click();
+    await t01.page.waitForFunction(want => window.H5UI.get().recent.map(entry => `${entry.sourceKey}|${entry.taskId}|${entry.terminalId}`).join() === want, tBefore, { timeout: 2000 });
+    await k01.page.waitForFunction(() => window.H5UI.get().recent.some(entry => entry.sourceKey === 'local' && entry.terminalId === 'k1'), null, { timeout: 2000 });
+
     // Every key the pages kept went through the registry and was declared there (public/js/local-keys.js).
     for (const [name, page] of [['T01', t01.page], ['K01', k01.page]]) {
       for (const frame of page.frames()) assert.deepEqual(await frame.evaluate(() => (window.TALocalKeys ? window.TALocalKeys.refused() : [])), [], `${name} ${frame.url()}: no undeclared key`);
@@ -221,7 +245,7 @@ async function refocus(page) {
     assert.deepEqual(k01.errors, [], 'no page errors on K01');
     await t01.context.close();
     await k01.context.close();
-    console.log('Shared page state: the old list imported once, the same Recent list on two engines under their own source keys, the chosen tab and tap to translate followed on focus, a delete travels, the columns and the session of a column on a computer of the other engine, and the page push (columns, the tab and the Recent list followed live within 2 s): passed.');
+    console.log('Shared page state: the old list imported once, the same Recent list on two engines under their own source keys, the chosen tab and tap to translate followed on focus, a delete travels, the columns and the session of a column on a computer of the other engine, and the page push (columns, the tab and the Recent list followed live within 2 s), Remove from Recent and Clear list with Undo across engines: passed.');
   } finally {
     await browser.close();
   }

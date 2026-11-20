@@ -17,6 +17,11 @@
 //   the session of a column (`h5-column:<pane>`) and drafts (`ta-draft:<hash>`, whose name is the hash of the identity), so links, columns and
 //   "Continue" follow the task on every engine and page. A tombstone of an old identity is dropped (the source's page forgets the sessions of a task
 //   that left its list; that must not hide them at their new place). The result is the same on every side, so the merge stays commutative.
+// - `cleared` (only when the Recent list was ever cleared): { at, by }, the version of the last "Clear list". The later clear wins, and every merge
+//   turns each live entry whose version is older than it into a tombstone of the clear's version (`applyClear`), so a list cleared on one device
+//   stays cleared when another engine sends its older copy, also an entry this side never had (a task it may not see, an engine that was away
+//   longer than a tombstone lives); an entry noted after the clear (a newer version) stays. The tombstones also clear the list of an older engine
+//   that drops the unknown `cleared`. "Remove from Recent and Clear list" in docs/design/shared-page-state.md.
 const RECENT_KEEP = 24; // the page shows RECENT_MAX (12) of the entries it can name; twice that here, so one side's cap never drops the other's latest
 const GONE_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 const GONE_MAX = 200;
@@ -95,6 +100,26 @@ function cleanMove(raw) {
 const MOVE_ID = /^[A-Za-z0-9-]{1,64}\|[1-9]\d{0,11}$/;
 // A state with its moves, the key left out when there are none (so a state without moves reads, and digests, as before moves existed).
 const withMoves = (state, moves) => (moves && Object.keys(moves).length ? { ...state, moves } : state);
+// The same for the clear mark: carried along only when there is one.
+const withCleared = (state, cleared) => (cleared ? { ...state, cleared } : state);
+// A clear mark { at, by } (stored, a peer's or made here), or null.
+function cleanCleared(raw) {
+  if (!isObject(raw)) return null;
+  const at = time(raw.at);
+  return at === null ? null : { at, by: typeof raw.by === 'string' && INSTANCE.test(raw.by) ? raw.by : '' };
+}
+// The live entries older than the clear become tombstones of the clear's version (see the head of this file). Pure and deterministic.
+function applyClear(state) {
+  const cleared = state.cleared;
+  if (!cleared) return state;
+  let recent = null;
+  for (const [id, entry] of Object.entries(state.recent)) {
+    if (entry.gone || entry.at >= cleared.at) continue;
+    if (!recent) recent = { ...state.recent };
+    recent[id] = { instance: entry.instance, task: entry.task, terminal: entry.terminal, title: '', agent: null, used: 0, gone: true, at: cleared.at, by: cleared.by };
+  }
+  return recent ? { ...state, recent } : state;
+}
 
 // The same FNV-1a pair as public/js/continue-drafts.js `draftKey`: the key name of the draft of a session identity.
 function hash32(text, seed) {
@@ -148,7 +173,7 @@ function repoint(state) {
     }
     if (!keys[nextName] || later(next, keys[nextName])) keys[nextName] = next;
   }
-  return withMoves({ recent, keys }, moves);
+  return withCleared(withMoves({ recent, keys }, moves), state.cleared);
 }
 
 // A key's value, checked: any JSON of at most VALUE_MAX characters (null clears it). Throws for a value that is too large or not JSON.
@@ -186,7 +211,7 @@ function cleanState(raw) {
     const entry = validKeyName(name) ? cleanKey(value) : null;
     if (entry) state.keys[name] = entry;
   }
-  return withMoves(state, moves);
+  return withCleared(withMoves(state, moves), cleanCleared(raw.cleared));
 }
 
 // Whether version `a` beats `b` (both { at, by, ... }).
@@ -203,11 +228,12 @@ function newestAt(state) {
   for (const entry of Object.values(state.recent)) newest = Math.max(newest, entry.at);
   for (const entry of Object.values(state.keys)) newest = Math.max(newest, entry.at);
   for (const entry of Object.values(state.moves || {})) newest = Math.max(newest, entry.at);
+  if (state.cleared) newest = Math.max(newest, state.cleared.at);
   return newest;
 }
 
 // The state cut to size: the RECENT_KEEP live entries used last (a tie by id), the tombstones of the last GONE_KEEP_MS (at most GONE_MAX, the newest),
-// cleared keys of the last GONE_KEEP_MS, and at most KEYS_MAX keys (cleared ones go first, then the oldest).
+// cleared keys of the last GONE_KEEP_MS, and at most KEYS_MAX keys (cleared ones go first, then the oldest). The clear mark stays (one value).
 function trim(state, now) {
   const out = { recent: {}, keys: {} };
   const entries = Object.entries(state.recent);
@@ -221,7 +247,7 @@ function trim(state, now) {
   const moves = {};
   Object.entries(state.moves || {}).filter(([, move]) => move.at >= now - MOVES_KEEP_MS).sort(([a, x], [b, y]) => (y.at - x.at) || (a < b ? -1 : 1)).slice(0, MOVES_MAX)
     .forEach(([id, move]) => { moves[id] = move; });
-  return withMoves(out, moves);
+  return withCleared(withMoves(out, moves), state.cleared);
 }
 
 // Two maps of times merged: every name with its later time (anything that is not such a map gives way to the other value).
@@ -246,18 +272,20 @@ function merge(local, incoming, now) {
   const next = { recent: { ...mine.recent }, keys: { ...mine.keys }, moves: { ...(mine.moves || {}) } };
   for (const [id, move] of Object.entries(theirs.moves || {})) if (later(move, next.moves[id])) next.moves[id] = move;
   for (const [id, entry] of Object.entries(theirs.recent)) if (later(entry, next.recent[id])) next.recent[id] = entry;
+  const cleared = theirs.cleared && (!mine.cleared || later(theirs.cleared, mine.cleared)) ? theirs.cleared : mine.cleared || null;
   for (const [name, entry] of Object.entries(theirs.keys)) {
     const mineNow = next.keys[name];
     const winner = later(entry, mineNow) ? entry : mineNow;
     next.keys[name] = TIME_MAPS.has(name) && mineNow ? { ...winner, value: mergeTimes(mineNow.value, entry.value) } : winner;
   }
-  const state = trim(repoint(withMoves({ recent: next.recent, keys: next.keys }, next.moves)), now);
+  const state = trim(applyClear(repoint(withCleared(withMoves({ recent: next.recent, keys: next.keys }, next.moves), cleared))), now);
   return { state, changed: stableJson(state) !== stableJson(mine) };
 }
 
-// A page's change as a state of its own, every part with the version { at, by }: { recent: [change, ...], keys: { name: value | null } }, and the
-// same under `import` (what a browser kept before this feature, sent once: version time 0, so anything changed since wins over it). Throws 400
-// INVALID_PAGE_STATE for a malformed body.
+// A page's change as a state of its own, every part with the version { at, by }: { recent: [change, ...], keys: { name: value | null }, clear?: true },
+// and the same under `import` (what a browser kept before this feature, sent once: version time 0, so anything changed since wins over it). `clear`
+// ("Clear list" of the Recent tab) is the clear mark with this version: every entry older than it goes, the entries sent with it (the current
+// session, entries put back by Undo) have the same version and stay. Throws 400 INVALID_PAGE_STATE for a malformed body.
 function changeState(body, { at, by }) {
   const bad = () => Object.assign(new Error('INVALID_PAGE_STATE'), { statusCode: 400 });
   if (!isObject(body)) throw bad();
@@ -279,9 +307,10 @@ function changeState(body, { at, by }) {
       state.keys[name] = { value: cleanValue(value), ...version };
     }
   };
+  if (body.clear !== undefined && typeof body.clear !== 'boolean') throw bad();
   add(body.import, { at: 0, by });
   add({ recent: body.recent, keys: body.keys }, { at, by });
-  return state;
+  return body.clear === true ? withCleared(state, { at, by }) : state;
 }
 
 // A task moved to another engine as a state of its own (services/page-state.js `recordMove`): { from: { instance, task }, to: { instance, task },

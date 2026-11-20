@@ -150,7 +150,7 @@ async function scenario(browser, wide) {
   if (!wide) await page.locator('#h5-open-tasks').click();
   const row = page.locator('#h5-tasks .h5-terminal-row').first();
   await row.locator('button').last().click();
-  await page.locator('button, [role="menuitem"]', { hasText: /^Delete$/ }).first().click();
+  await page.locator('button, [role="menuitem"]', { hasText: /^Delete session$/ }).first().click();
   await empty(page);
   await page.locator('#h5-empty-new').waitFor(WAIT);
   await settle(page);

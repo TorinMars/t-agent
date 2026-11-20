@@ -1177,18 +1177,58 @@
     if (entry && PageState) PageState.noteRecent([title === null ? { ...entry, gone: true } : { ...entry, title: String(title).slice(0, 120) }]);
     publishRecent();
   }
-  // The "⋯" of a row of the Recent tab (RecentList.jsx): the menu of a session row of the task list. The task's terminals are known when it is shown
-  // or open in the list; otherwise they are read first, and the menu opens under the button if it is still there.
+  // ── Remove from Recent and Clear list ("Remove from Recent and Clear list" in docs/design/shared-page-state.md) ──
+  // Only the Recent list changes: the session, its task, its terminal and its draft stay, and showing the session again puts it back on top
+  // (`noteShown`). The shown session is never removed (it is in use: it would come back at once). Both go to every device and engine through the
+  // shared page state (a tombstone per entry; a clear is the server's clear mark), and a snackbar offers Undo, which notes the same entries again
+  // with their times (so the order and "when" come back as they were).
+  const shownKey = () => { const shown = ui.get().shownTarget; return shown ? ui.recent.key({ sourceKey: shown.sourceKey, taskId: String(shown.taskId), terminalId: String(shown.terminalId) }) : null; };
+  // The shared entries of the list by this page's key (`<source>|<task>|<terminal>`).
+  function sharedByKey() {
+    const out = new Map();
+    for (const entry of PageState.recent()) { const row = PageState.toPage(entry, pageSources()); if (row && !out.has(ui.recent.key(row))) out.set(ui.recent.key(row), entry); }
+    return out;
+  }
+  const undoRecent = (message, removed) => ui.notify(message, 'info', { action: { label: 'Undo', run: () => PageState.noteRecent(removed) } });
+  // `keys`: this page's keys of the entries to remove (a row of the Recent tab, a card of the switcher). True when one went.
+  ui.actions.removeRecent = keys => {
+    if (PANE || !PageState) return false;
+    const current = shownKey();
+    const byKey = sharedByKey();
+    const removed = (Array.isArray(keys) ? keys : [keys]).filter(key => key !== current).map(key => byKey.get(key)).filter(Boolean);
+    if (!removed.length) return false;
+    PageState.noteRecent(removed.map(entry => ({ ...entry, gone: true }))); // it publishes again (the list without them)
+    undoRecent('Removed from Recent', removed);
+    return true;
+  };
+  // "Clear list": every entry but the shown session, also the ones this page cannot name (another engine's tasks it does not see).
+  ui.actions.clearRecent = () => {
+    if (PANE || !PageState) return false;
+    const current = shownKey();
+    const keep = current ? [sharedByKey().get(current)].filter(Boolean) : [];
+    const removed = PageState.recent().filter(entry => !keep.includes(entry));
+    if (!removed.length) return false;
+    PageState.clearRecent(keep);
+    undoRecent('Recent list cleared', removed);
+    return true;
+  };
+  // "Remove from Recent" in the popup of a row of the Recent tab: above the destructive items, not for the shown session.
+  const removeStep = (from, taskId, terminal) => {
+    const key = ui.recent.key({ sourceKey: from.key, taskId: String(taskId), terminalId: String(terminal) });
+    return key === shownKey() ? [] : [['Remove from Recent', () => { closeTerminalMenu(); ui.actions.removeRecent([key]); }, 'list']];
+  };
+  // The "⋯" of a row of the Recent tab (RecentList.jsx): the menu of a session row of the task list, with "Remove from Recent". The task's terminals
+  // are known when it is shown or open in the list; otherwise they are read first, and the menu opens under the button if it is still there.
   ui.actions.recentMore = async (ref, row, anchor) => {
     const hit = resolveRef(ref);
     if (!hit) return;
     const { from, item } = hit;
     const peek = peeks.get(ref);
-    if (isShown(from, item.id) || (peek && peek.status === 'ready')) { ui.actions.rowMore(ref, row, anchor); return; }
+    if (isShown(from, item.id) || (peek && peek.status === 'ready')) { ui.actions.rowMore(ref, row, anchor, { recent: true }); return; }
     const rows = await api('GET', `${from.tasksBase}/${item.id}/terminals`).catch(() => null);
     const entry = Array.isArray(rows) ? rows.find(candidate => String(candidate.terminal_id) === String(row.id)) : null;
     if (!entry) { if (Array.isArray(rows)) changeRecent({ from, taskId: item.id }, row.id, null); return; } // gone meanwhile
-    if (anchor && anchor.isConnected && !ui.get().menu) openOtherMenu(from, item, row, entry, anchor);
+    if (anchor && anchor.isConnected && !ui.get().menu) openOtherMenu(from, item, row, entry, anchor, { recent: true });
   };
   // The last lines of a terminal's buffer (trailing empty rows left out), plain text.
   function linesOf(term) {
@@ -1227,19 +1267,20 @@
     else ui.actions.openSwitcher();
   };
   // The "⋯" of a session row, of the task the row is under (`ref`), which may not be the selected one.
-  ui.actions.rowMore = (ref, row, anchor) => {
+  // `opts.recent`: opened from a row of the Recent tab (it adds "Remove from Recent").
+  ui.actions.rowMore = (ref, row, anchor, opts = {}) => {
     const hit = resolveRef(ref);
     if (!hit) return;
     const { from, item } = hit;
     if (isShown(from, item.id)) {
       const entry = terminals.find(candidate => candidate.terminal_id === row.id);
-      if (entry) openTerminalMenu(entry, anchor);
+      if (entry) openTerminalMenu(entry, anchor, opts);
       return;
     }
     const peek = peeks.get(taskRef(from, item.id));
     if (!peek) return;
     const entry = peek.terminals.find(candidate => candidate.terminal_id === row.id);
-    if (entry) openOtherMenu(from, item, row, entry, anchor);
+    if (entry) openOtherMenu(from, item, row, entry, anchor, opts);
   };
   // Resolves to whether the task was made (the shell then empties its input).
   // workDir: an absolute path, or empty for the default rule (a folder named after the task under the tasks folder); the default is never sent.
@@ -1981,7 +2022,8 @@
   const askRename = value => ui.set(state => ({
     menu: state.menu && { ...state.menu, rename: { kind: 'terminal', id: menuRow && menuRow.terminal_id, task: menuScope && taskRef(menuScope.from, menuScope.taskId) }, renameValue: value },
   }));
-  function openTerminalMenu(row, anchor) {
+  // "Delete session" (not "Delete"): beside "Remove from Recent" the two must not be mixed up.
+  function openTerminalMenu(row, anchor, { recent = false } = {}) {
     menuRow = row;
     const target = menuScope = { from: source, taskId: task.id, row };
     // "Copy text" is for the terminal that is open (the copy view reads its buffer); the long press on the terminal body is the other way in.
@@ -1992,24 +2034,26 @@
       ['Rename', () => askRename(row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ...sessionSteps(source, task, row.terminal_id),
+      ...(recent ? removeStep(source, task.id, row.terminal_id) : []),
       ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
-      ['Delete', () => void deleteTerminal(target), 'danger'],
+      ['Delete session', () => void deleteTerminal(target), 'danger'],
     ], { anchor });
   }
   // A remote Engine that says what it can do and does not list 'terminal:control' cannot restart or delete a terminal; one that has not said is asked (it answers with an error).
   const controlsTerminals = from => from.key === 'local' || !Array.isArray(from.capabilities) || from.capabilities.includes('terminal:control');
   // The actions of a session of a task that is not selected. Open is the same as a tap on the row; Rename, Restart and Delete go to the row's own Engine and task
   // (`target`) and leave the task, the terminal and the socket that are shown alone.
-  function openOtherMenu(from, item, row, entry, anchor) {
+  function openOtherMenu(from, item, row, entry, anchor, { recent = false } = {}) {
     menuRow = entry;
     const target = menuScope = { from, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
       ['Open', () => { closeTerminalMenu(); ui.actions.openRow(taskRef(from, item.id), { kind: row.kind, id: row.id }); }],
       ...sessionSteps(from, item, entry.terminal_id),
+      ...(recent ? removeStep(from, item.id, entry.terminal_id) : []),
       ...(controlsTerminals(from) ? [
         ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
-        ['Delete', () => void deleteTerminal(target), 'danger'],
+        ['Delete session', () => void deleteTerminal(target), 'danger'],
       ] : []),
     ], { anchor });
   }

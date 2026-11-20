@@ -3,7 +3,9 @@
 // them, the chosen tab remembered across a reload; the empty state; the rows of the recent sessions in the switcher's order (the shown one first and
 // selected, then the most recently used) with their name, device tag, task, state and time; the search field and the Running / Needs you chips with
 // their counts applied to the rows; a click opens the session (on a phone it closes the drawer) and the selected row follows it; the "⋯" menu of a row
-// with Rename in place; Expand all / Collapse all disabled on Recent.
+// with Rename in place; Expand all / Collapse all disabled on Recent. Remove from Recent and Clear list ("Remove from Recent and Clear list" in
+// docs/design/shared-page-state.md): the item above the renamed "Delete session" (not for the shown session), the row leaves the list and the snackbar's
+// Undo puts it back with its order and time; Clear list keeps only the shown session, Undo brings the rest back; the sessions are never deleted.
 // H5_SHOT_DIR=<dir> saves screenshots there (computer: Recent and By task; phone: the drawer on Recent).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -32,6 +34,7 @@ async function openPage(browser, viewport, { touch }) {
   const page = await context.newPage();
   const errors = [];
   const renames = [];
+  const writes = []; // every request that deletes, restarts or ends a session (none may come from Remove from Recent or Clear list)
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
     window.FakeSocket = class {
@@ -48,6 +51,7 @@ async function openPage(browser, viewport, { touch }) {
     const p = url.pathname;
     const method = route.request().method();
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (method !== 'GET' && method !== 'PATCH' && /\/terminals?\b/.test(p) && !/\/terminal\/ack$/.test(p)) writes.push(`${method} ${p}`); // PATCH: the rename above
     if (p === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(p)) return route.fulfill({ contentType: TYPES[path.extname(p)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', p)) });
     if (p === '/api/remote-servers') return json([{ id: 7, name: 'K01', status: 'online', base_url: 'http://10.0.0.7:14002', enabled: true }]);
@@ -75,7 +79,7 @@ async function openPage(browser, viewport, { touch }) {
     return json({ error: 'not mocked' }, 404);
   });
   await page.goto(`${ORIGIN}/h5`);
-  return { context, page, errors, renames };
+  return { context, page, errors, renames, writes };
 }
 
 const waitShown = (page, task, terminal) => page.waitForFunction(([name, id]) => document.querySelector('.h5-xterm:not([hidden])')?.dataset.terminalId === id
@@ -114,7 +118,7 @@ const ORDER = ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'];
   try {
     // ── Computer ──
     {
-      const { context, page, errors, renames } = await openPage(browser, { width: 1440, height: 900 }, { touch: false });
+      const { context, page, errors, renames, writes } = await openPage(browser, { width: 1440, height: 900 }, { touch: false });
       await page.locator('#h5-task-tabs').waitFor({ state: 'visible' });
       let list = await tabs(page);
       assert.deepEqual(list.map(tab => [tab.id, tab.text, tab.selected, tab.tabIndex]), [['h5-tab-tasks', 'By task', true, 0], ['h5-tab-recent', 'Recent', false, -1]], 'two tabs, By task first and chosen');
@@ -153,6 +157,9 @@ const ORDER = ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'];
       assert.ok(seen.every(row => row.height >= 52 && row.height <= 64), `rows are about 56px: ${seen.map(row => row.height)}`);
       assert.equal(seen[1].more, 0, 'the "⋯" is hidden until hover or focus on a computer');
       assert.equal(await page.locator('#h5-recent-caption').textContent(), 'Sessions you used, most recent first');
+      const captionBox = await page.locator('#h5-recent-caption').boundingBox();
+      const clearBox = await page.locator('#h5-recent-clear').boundingBox();
+      assert.ok(captionBox.height < 24 && Math.abs((captionBox.y + captionBox.height / 2) - (clearBox.y + clearBox.height / 2)) < 3, `the caption is one line with Clear list at its right: ${JSON.stringify([captionBox, clearBox])}`);
 
       // The chips count the recent sessions and filter them; the search matches the session and the task.
       await page.waitForFunction(() => document.querySelector('#h5-tasks [data-filter="running"]').textContent === 'Running 1' && document.querySelector('#h5-tasks [data-filter="pending"]').textContent === 'Needs you 1');
@@ -206,6 +213,59 @@ const ORDER = ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'];
       await page.waitForFunction(() => document.querySelector('#h5-recent-list .h5-recent-row[data-key="local|2|d1"] .h5-recent-name')?.textContent === 'Docs renamed');
       assert.deepEqual(renames, [{ task: '2', terminal: 'd1', title: 'Docs renamed' }]);
 
+      // Remove from Recent: above the destructive items, which say "Delete session"; set apart by dividers; not offered for the shown session.
+      const menuItems = () => page.evaluate(() => [...document.querySelectorAll('#h5-session-menu [role="menuitem"]')].map(item => ({
+        text: item.textContent, danger: item.classList.contains('danger'), divider: item.classList.contains('MuiMenuItem-divider'),
+      })));
+      const waitGone = () => page.locator('#h5-session-menu').waitFor({ state: 'detached' });
+      const shownRow = page.locator('#h5-recent-list .h5-recent-row[data-current="true"]');
+      await shownRow.hover();
+      await shownRow.locator('.h5-recent-more').click();
+      await page.locator('#h5-session-menu').waitFor();
+      let menu = await menuItems();
+      assert.ok(!menu.some(item => item.text === 'Remove from Recent'), `the shown session cannot be removed: ${menu.map(item => item.text)}`);
+      assert.equal(menu[menu.length - 1].text, 'Delete session', 'the destructive item is "Delete session"');
+      await page.keyboard.press('Escape');
+      await waitGone();
+      const beforeRemove = await rows(page);
+      const d1Row = page.locator('#h5-recent-list .h5-recent-row[data-key="local|2|d1"]');
+      await d1Row.hover();
+      await d1Row.locator('.h5-recent-more').click();
+      await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Remove from Recent' }).waitFor();
+      menu = await menuItems();
+      const at = menu.findIndex(item => item.text === 'Remove from Recent');
+      assert.deepEqual(menu.slice(at).map(item => [item.text, item.danger]), [['Remove from Recent', false], ['Restart in the working directory', true], ['Delete session', true]], `Remove from Recent is above the destructive items: ${JSON.stringify(menu)}`);
+      assert.ok(menu[at].divider && menu[at - 1].divider, 'a divider above and below it');
+      assert.ok(!menu.some(item => item.text === 'Delete'), 'no bare "Delete" in the session popup');
+      if (SHOTS) { await page.waitForTimeout(300); await page.screenshot({ path: path.join(SHOTS, 'recent-remove-menu-1440.png') }); }
+      await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Remove from Recent' }).click();
+      await waitKeys(page, beforeRemove.map(row => row.key).filter(key => key !== 'local|2|d1'));
+      const snack = page.locator('.h5-notice-action');
+      await snack.waitFor();
+      assert.match(await snack.textContent(), /Removed from Recent/);
+      if (SHOTS) { await page.mouse.move(1000, 500); await page.waitForTimeout(400); await page.screenshot({ path: path.join(SHOTS, 'recent-remove-snackbar-1440.png') }); }
+      await snack.locator('.h5-notice-action-button', { hasText: 'Undo' }).click();
+      await waitKeys(page, beforeRemove.map(row => row.key));
+      assert.deepEqual((await rows(page)).map(row => [row.key, row.when]), beforeRemove.map(row => [row.key, row.when]), 'Undo: the same place and time');
+      // The session itself is still there (By task lists it; nothing was sent to its engine).
+      assert.ok((await page.evaluate(() => window.H5UI.get().taskList.tasks.map(row => `${row.source}|${row.id}`))).includes('local|2'));
+
+      // Clear list: only the shown session stays; Undo brings the others back in their order.
+      await page.locator('#h5-recent-clear').click();
+      await waitKeys(page, ['local|1|default']);
+      await snack.filter({ hasText: 'Recent list cleared' }).waitFor();
+      assert.equal(await page.locator('#h5-recent-clear').count(), 0, 'nothing left to clear: the button goes');
+      if (SHOTS) { await page.waitForTimeout(400); await page.screenshot({ path: path.join(SHOTS, 'recent-remove-cleared-1440.png') }); }
+      await snack.locator('.h5-notice-action-button', { hasText: 'Undo' }).click();
+      await waitKeys(page, beforeRemove.map(row => row.key));
+      assert.deepEqual(writes, [], `Remove from Recent and Clear list change no session: ${writes}`);
+      // Removed, then shown again: back on top.
+      await page.evaluate(() => window.H5UI.actions.removeRecent(['remote:7|5|k1']));
+      await waitKeys(page, beforeRemove.map(row => row.key).filter(key => key !== 'remote:7|5|k1'));
+      await visit(page, 'remote:7|5', 'k1', 'Build server');
+      await page.waitForFunction(() => document.querySelector('#h5-recent-list .h5-recent-row')?.dataset.key === 'remote:7|5|k1');
+      await visit(page, 'local|1', 'default', 'Fix login');
+
       // The tabs with the keyboard: the arrows move to the other tab and choose it.
       await page.locator('#h5-tab-recent').focus();
       await page.keyboard.press('ArrowLeft');
@@ -235,7 +295,7 @@ const ORDER = ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'];
 
     // ── Phone ──
     {
-      const { context, page, errors } = await openPage(browser, { width: 390, height: 844 }, { touch: true });
+      const { context, page, errors, writes } = await openPage(browser, { width: 390, height: 844 }, { touch: true });
       await page.locator('#h5-tasks').waitFor({ state: 'visible' });
       await page.evaluate(() => window.H5UI.actions.closeTasks());
       await visitAll(page);
@@ -251,6 +311,22 @@ const ORDER = ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'];
       const more = await page.locator('#h5-recent-list .h5-recent-more').first().boundingBox();
       assert.ok(more.width >= 44 && more.height >= 44, `the "⋯" is a 44px target: ${JSON.stringify(more)}`);
       if (SHOTS) { await page.waitForTimeout(300); await page.screenshot({ path: path.join(SHOTS, 'phone-drawer-recent-390.png') }); }
+      // Remove from Recent on the phone: the popup, the row goes, the snackbar with Undo (a 44px target).
+      const clear = await page.locator('#h5-recent-clear').boundingBox();
+      assert.ok(clear.height >= 44, `Clear list is a 44px target: ${JSON.stringify(clear)}`);
+      await page.locator('#h5-recent-list .h5-recent-row[data-key="local|2|d1"] .h5-recent-more').tap();
+      await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Remove from Recent' }).waitFor();
+      if (SHOTS) { await page.waitForTimeout(200); await page.screenshot({ path: path.join(SHOTS, 'recent-remove-menu-390.png') }); }
+      await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Remove from Recent' }).tap();
+      await waitKeys(page, ORDER.filter(key => key !== 'local|2|d1'));
+      const undo = page.locator('.h5-notice-action .h5-notice-action-button', { hasText: 'Undo' });
+      await undo.waitFor();
+      await page.waitForTimeout(300); // the snackbar grows in
+      const undoBox = await undo.boundingBox();
+      assert.ok(undoBox.height >= 43.99, `Undo is a 44px target on a touch screen: ${JSON.stringify(undoBox)}`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'recent-remove-snackbar-390.png') });
+      await undo.tap();
+      await waitKeys(page, ORDER);
       // A tap opens the session and closes the drawer.
       await page.locator('#h5-recent-list .h5-recent-row[data-key="remote:7|5|k1"] .h5-recent-main').tap();
       await waitShown(page, 'Build server', 'k1');
@@ -266,9 +342,10 @@ const ORDER = ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'];
       await page.locator('#h5-task-tabs').waitFor({ state: 'visible' });
       list = await tabs(page);
       assert.deepEqual(list.map(tab => tab.selected), [false, true]);
+      assert.deepEqual(writes, [], 'Remove from Recent changes no session on the phone');
       assert.deepEqual(errors, [], 'no page errors on the phone');
       await context.close();
     }
-    console.log('Recent tab: two tabs (computer and phone), remembered choice, rows in the switcher order with task, device, state and time, search and chips, open on click (drawer closes), selected row, row menu with Rename, empty state: passed.');
+    console.log('Recent tab: two tabs (computer and phone), remembered choice, rows in the switcher order with task, device, state and time, search and chips, open on click (drawer closes), selected row, row menu with Rename, Remove from Recent and Clear list with Undo, empty state: passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

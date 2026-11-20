@@ -301,6 +301,41 @@ test('two linked engines: the Recent list and a remembered key are the same on b
   assert.deepEqual(A.logs, []);
 });
 
+test('two linked engines: Remove from Recent and Clear list travel (also to a task one side cannot see); Undo puts the entry back', async t => {
+  const { A, B } = await makeNetwork(t, ['A', 'B'], { links: [['A', 'B']], denied: { B: [{ task: 9, from: 'A' }] } });
+  await note(A, A.instanceId, 1, 'default', { title: 'Shown', used: 1000 });
+  await note(A, B.instanceId, 5, 'k1', { used: 2000 });
+  await note(B, B.instanceId, 6, 'k2', { used: 1500 });
+  await note(B, B.instanceId, 9, 'private', { used: 1200 }); // a task of B that A may not see
+  await A.service.syncAll();
+  const terminals = view => view.recent.map(item => item.terminal);
+  assert.deepEqual(terminals(await A.view()), ['k1', 'k2', 'default']);
+  assert.deepEqual(terminals(await B.view()), ['k1', 'k2', 'private', 'default']);
+  // Remove from Recent on A: a tombstone, the same on B.
+  const removed = (await A.view()).recent.find(item => item.terminal === 'k2');
+  await A.page('PUT', { recent: [{ instance: removed.instance, task: removed.task, terminal: removed.terminal, gone: true }] });
+  await A.service.syncAll();
+  assert.deepEqual(terminals(await B.view()), ['k1', 'private', 'default']);
+  // Undo: the same entry with its time.
+  await A.page('PUT', { recent: [removed] });
+  await A.service.syncAll();
+  assert.deepEqual((await B.view()).recent.find(item => item.terminal === 'k2'), removed);
+  // Clear list on A, keeping the shown session (the older copies of the other engine: test/recent-remove.test.js).
+  const shown = (await A.view()).recent.find(item => item.terminal === 'default');
+  const put = await A.page('PUT', { clear: true, recent: [shown] });
+  assert.equal(put.status, 200);
+  assert.deepEqual(terminals(put.body), ['default']);
+  await A.service.syncAll();
+  assert.deepEqual(terminals(await B.view()), ['default'], 'cleared on B too, its own entry that A cannot see included');
+  // A session shown on B after the clear stays on both.
+  await note(B, B.instanceId, 7, 'later', { used: 5000 });
+  await B.service.syncAll();
+  assert.deepEqual(terminals(await A.view()), ['later', 'default']);
+  assert.deepEqual(await A.view(), await B.view());
+  const put400 = await A.page('PUT', { clear: 'all' });
+  assert.equal(put400.status, 400);
+});
+
 test('the page push: a change on one engine reaches an open page of the other in well under 2 s, without a read; bursts are one push; no stream without ?state=1', async t => {
   const { A, B } = await makeNetwork(t, ['A', 'B'], { links: [['A', 'B']], debounceMs: 200 }); // the real debounce of the push between engines
   A.service.start();

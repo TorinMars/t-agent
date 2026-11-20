@@ -8,7 +8,8 @@
 //   translated between this page's source keys (`local`, `remote:<n>`) and engine instance ids (CODECS). `h5-column:<pane id>` is the session a
 //   column shows (h5.js, already in instance ids).
 // - Recent sessions: entries in instance ids (`recent()`, `noteRecent()`); `recentForPage` / `toShared` map them to this page's sources and back.
-//   A device whose instance id is not known (an older Engine) is named `~<source key>` and its entries stay in this browser only.
+//   A device whose instance id is not known (an older Engine) is named `~<source key>` and its entries stay in this browser only. "Clear list"
+//   (`clearRecent(keep)`) sends the clear mark (`clear: true`) with the entries that stay; until the server took it, only those are shown.
 // - Changes are shown at once and sent 800 ms later (one request for a burst), kept in the cache until the server took them (a reload sends them
 //   again), and sent with keepalive when the page is hidden. An answer replaces the state; changes made meanwhile stay on top.
 // - Following other devices: the server pushes the new state to the top page after every change on any device or linked engine (`pushed`, from
@@ -178,8 +179,9 @@
     return undefined;
   }
   function recent() {
-    const byId = new Map(state.recent.map(entry => [sharedId(entry), entry]));
-    for (const [id, entry] of Object.entries(imports.recent)) if (!byId.has(id) && !entry.gone) byId.set(id, entry);
+    const cleared = Boolean(pending.clear); // a clear not taken yet: only what was sent with it (or noted since) is left
+    const byId = new Map(cleared ? [] : state.recent.map(entry => [sharedId(entry), entry]));
+    if (!cleared) for (const [id, entry] of Object.entries(imports.recent)) if (!byId.has(id) && !entry.gone) byId.set(id, entry);
     for (const [id, entry] of Object.entries(pending.recent)) { if (entry.gone) byId.delete(id); else byId.set(id, entry); }
     for (const [id, entry] of Object.entries(localRecent)) byId.set(id, entry);
     return [...byId.values()].sort(byUse);
@@ -268,7 +270,7 @@
     emit(null);
     return true;
   }
-  const dirty = () => Object.keys(pending.recent).length + Object.keys(pending.keys).length + Object.keys(imports.recent).length + Object.keys(imports.keys).length > 0;
+  const dirty = () => Boolean(pending.clear) || Object.keys(pending.recent).length + Object.keys(pending.keys).length + Object.keys(imports.recent).length + Object.keys(imports.keys).length > 0;
   let timer = null;
   let sending = null;
   let failures = 0;
@@ -279,9 +281,10 @@
   async function send({ keepalive = false } = {}) {
     if (supported === false || !dirty()) return;
     if (sending) { if (!keepalive) { await sending; schedule(); } return; }
-    const sent = { recent: { ...pending.recent }, keys: { ...pending.keys } };
+    const sent = { recent: { ...pending.recent }, keys: { ...pending.keys }, clear: pending.clear || 0 };
     const sentImports = { recent: { ...imports.recent }, keys: { ...imports.keys } };
     const body = { recent: Object.values(sent.recent), keys: sent.keys };
+    if (sent.clear) body.clear = true;
     if (Object.keys(sentImports.recent).length || Object.keys(sentImports.keys).length) body.import = { recent: Object.values(sentImports.recent), keys: sentImports.keys };
     sending = (async () => {
       let res;
@@ -300,6 +303,7 @@
       // What was sent is taken; a change made meanwhile (another value under the same name) stays.
       for (const [id, entry] of Object.entries(sent.recent)) if (pending.recent[id] === entry) delete pending.recent[id];
       for (const [name, entry] of Object.entries(sent.keys)) if (has(pending.keys, name) && pending.keys[name] === entry) delete pending.keys[name];
+      if (sent.clear && pending.clear === sent.clear) delete pending.clear; // a second clear meanwhile is sent next
       for (const id of Object.keys(sentImports.recent)) delete imports.recent[id];
       for (const name of Object.keys(sentImports.keys)) delete imports.keys[name];
       writeCache();
@@ -353,6 +357,20 @@
     for (const list of [localRecent, pending.recent]) { // an older server never takes them: at most LOCAL_MAX wait
       for (const [id] of Object.entries(list).sort(([, x], [, y]) => byUse(x, y)).slice(LOCAL_MAX)) delete list[id];
     }
+    writeCache();
+    emit(['recent']);
+    schedule();
+  }
+  // "Clear list" of the Recent tab: every entry goes, on every device and engine (the server's clear mark, page-state-merge.js), except `keep`
+  // (the shown session, as shared entries, sent again with the clear's version). Entries put back by Undo are noted after it (`noteRecent`).
+  function clearRecent(keep) {
+    const stay = (Array.isArray(keep) ? keep : []).filter(entry => entry && entry.instance && !entry.gone);
+    const ids = new Set(stay.map(sharedId));
+    for (const id of Object.keys(localRecent)) if (!ids.has(id)) delete localRecent[id];
+    for (const id of Object.keys(pending.recent)) if (!ids.has(id)) delete pending.recent[id]; // a change not sent yet would carry the clear's version
+    imports.recent = {};
+    pending.clear = (Number(pending.clear) || 0) + 1;
+    for (const entry of stay) { if (isLocalOnly(entry.instance)) localRecent[sharedId(entry)] = entry; else pending.recent[sharedId(entry)] = entry; }
     writeCache();
     emit(['recent']);
     schedule();
@@ -429,7 +447,7 @@
   }
 
   root.TAPageState = {
-    ...pure, store, get: value, set, importKey, recent, noteRecent, importRecent, setSources, load, send, pushed,
+    ...pure, store, get: value, set, importKey, recent, noteRecent, clearRecent, importRecent, setSources, load, send, pushed,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     supported: () => supported,
     answered: () => answered,

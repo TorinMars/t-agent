@@ -1704,7 +1704,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
     await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete'], 'the open terminal also offers Copy text (and, as the last of its task, Move up)');
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete session'], 'the open terminal also offers Copy text (and, as the last of its task, Move up)');
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
     await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the popup closed at "Rename"); Save does not blur it
@@ -1713,7 +1713,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.ok(calls.includes('PATCH /api/tasks/1/terminals/h5-second'));
     // The first terminal can be deleted too.
     await page.locator('#h5-tasks .h5-terminal-row').nth(0).locator('.h5-terminal-more').tap();
-    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete' }).waitFor();
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete session' }).waitFor();
     await page.keyboard.press('Escape');
     await page.locator('#h5-session-menu').waitFor({ state: 'detached' });
     // Delete the current terminal (after a confirmation): the phone falls back to the remaining one.
@@ -1721,12 +1721,12 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.route(`${ORIGIN}/api/tasks/1/terminal/control`, route => { sentBodies.push(route.request().postDataJSON()); return route.fulfill({ contentType: 'application/json', body: '{"success":true}' }); });
     page.once('dialog', dialog => dialog.dismiss());
     await more.tap();
-    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete' }).tap();
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete session' }).tap();
     assert.equal(sentBodies.length, 0, 'declining the confirmation deletes nothing');
     await page.locator('#h5-session-menu').waitFor({ state: 'detached' }); // closed by choosing the item, whatever the answer
     await more.tap();
     page.once('dialog', dialog => dialog.accept());
-    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete' }).tap();
+    await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Delete session' }).tap();
     await page.waitForFunction(() => document.querySelectorAll('#h5-tasks .h5-terminal-main').length === 1);
     assert.deepEqual(sentBodies, [{ action: 'delete', terminal_id: 'h5-second' }]);
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });

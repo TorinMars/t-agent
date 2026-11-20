@@ -9,6 +9,8 @@
 
 export const RECENT_MAX = 12;
 const AGENTS = new Set(['claude', 'codex']);
+const CLIENTS = new Set(['phone', 'computer', 'mac', 'home']);
+const DEVICE = /^[a-z0-9]{8,32}$/;
 
 export const recentKey = entry => `${entry.sourceKey}|${entry.taskId}|${entry.terminalId}`;
 // The ref h5.js `openRow` takes for the task of an entry (`taskRef`).
@@ -24,7 +26,9 @@ export function cleanEntry(entry) {
   const title = typeof entry.title === 'string' ? entry.title.slice(0, 120) : '';
   const agent = AGENTS.has(entry.agent) ? entry.agent : null;
   const lastUsed = Number(entry.lastUsed);
-  return Number.isFinite(lastUsed) && lastUsed > 0 ? { sourceKey, taskId, terminalId, title, agent, lastUsed } : { sourceKey, taskId, terminalId, title, agent };
+  // Where it was noted (`client`, `device`; "The continue hint" in docs/design/continue-and-drafts.md), kept only when present.
+  const seen = { ...(CLIENTS.has(entry.client) ? { client: entry.client } : {}), ...(typeof entry.device === 'string' && DEVICE.test(entry.device) ? { device: entry.device } : {}) };
+  return Number.isFinite(lastUsed) && lastUsed > 0 ? { sourceKey, taskId, terminalId, title, agent, lastUsed, ...seen } : { sourceKey, taskId, terminalId, title, agent, ...seen };
 }
 
 // The list after `entry` was shown: it goes first, an older copy of it goes away, at most `max` entries. The same list comes back when nothing changed.
@@ -37,9 +41,11 @@ export function noteRecent(list, entry, max = RECENT_MAX, { now = null, leave = 
   const key = recentKey(clean);
   const first = before[0];
   const same = first && recentKey(first) === key;
-  if (same && first.title === clean.title && first.agent === clean.agent && before.length <= max) return before;
+  // Shown here while another device noted it last: noted again (stamped), so the hint on a third device names this one.
+  const moved = same && Boolean(clean.device) && first.device !== clean.device;
+  if (same && !moved && first.title === clean.title && first.agent === clean.agent && before.length <= max) return before;
   const stamp = (item, at) => (now ? { ...item, lastUsed: at } : item);
-  const top = same ? (first.lastUsed ? { ...clean, lastUsed: first.lastUsed } : clean) : stamp(clean, now);
+  const top = same && !moved ? (first.lastUsed ? { ...clean, lastUsed: first.lastUsed } : clean) : stamp(clean, now);
   // The one left was in use until just before (1 ms), so the order by time (the shared list's, docs/design/shared-page-state.md) is this order.
   const rest = before.filter(item => recentKey(item) !== key).map((item, index) => (leave && !same && index === 0 && item === first ? stamp(item, now - 1) : item));
   return [top, ...rest].slice(0, max);

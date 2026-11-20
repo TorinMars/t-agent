@@ -209,6 +209,9 @@
   const terminalHost = $('h5-terminal');
   const translateForm = $('h5-translate');
   const translateInput = $('h5-translate-input');
+  // The draft box's text follows its session across devices (public/js/continue-drafts.js, kept in the shared page state; "Drafts" in
+  // docs/design/continue-and-drafts.md); wired below, after the box's own handlers ("Drafts that follow their session").
+  const drafts = PageState && window.TAContinue ? window.TAContinue.createDrafts({ input: translateInput, store: PageState, setText: text => setDraftText(text), onNote: note => showDraftNote(note) }) : null;
   const bottomArea = $('h5-bottom'); // the function keys and the message bar; this box is what grows over the terminal
   const picker = $('h5-image-picker');
   const UPLOAD_MAX_FILES = 9; // files per pick or paste; more are refused before anything goes up
@@ -1039,6 +1042,7 @@
       if (gone.length) PageState.noteRecent(gone.map(entry => ({ ...entry, gone: true }))); // it publishes again (the list without them)
     }
     ui.set({ recent: ui.share(ui.get().recent, shown) });
+    if (!hintDone) maybeHint();
   }
   // The entries that differ between two lists of this page go to the shared page state (the new top, the one left with its time, a new name).
   function sendRecent(before, next) {
@@ -1058,6 +1062,7 @@
   let recentTaskList = null;
   ui.subscribe(() => { const list = ui.get().taskList; if (list !== recentTaskList) { recentTaskList = list; publishRecent(true); } });
   let recentShownKey = null; // the entry this page showed last: when it is still the first, leaving it stamps the time it was last used (`leave`)
+  let notedHere = new Map(); // the sessions this page came to since it opened (or came back), with their entry before that: the "Continue" hint reads those
   function noteShown(target, row) {
     // Only a terminal of the task's list: while another task's list loads, the terminal id is still the one left (not a session of this task).
     if (!target || !row) return;
@@ -1065,7 +1070,11 @@
     const before = recentList[0];
     const same = before && ui.recent.key(before) === ui.recent.key(target);
     const leave = Boolean(before) && ui.recent.key(before) === recentShownKey; // first because another device showed it: not stamped from here
-    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null }, undefined, { now: Date.now(), leave });
+    // Where it was seen (the "Continue" hint of another device): this device when it just came to this session; else what the entry says.
+    const fresh = recentShownKey !== ui.recent.key(target);
+    if (fresh && !notedHere.has(ui.recent.key(target))) notedHere.set(ui.recent.key(target), recentList.find(entry => ui.recent.key(entry) === ui.recent.key(target)) || null);
+    const seen = drafts && (fresh || !same) ? { client: drafts.kind, device: drafts.device } : same ? { client: before.client, device: before.device } : {};
+    const next = ui.recent.note(recentList, { ...target, title: row ? row.title || '' : same ? before.title : '', agent: row ? row.agent || null : same ? before.agent : null, ...seen }, undefined, { now: Date.now(), leave });
     recentShownKey = ui.recent.key(target);
     if (!same && ui.get().switcher) ui.actions.closeSwitcher(); // shown another way (the task list, T-Attention): the switcher is out of date
     if (next === recentList) return;
@@ -1073,6 +1082,45 @@
     recentList = next;
     sendRecent(was, next);
     publishRecent();
+  }
+  // ── The "Continue <session>" hint ("The continue hint" in docs/design/continue-and-drafts.md) ──
+  // Once on entry (and when the page comes back after 5 minutes or more hidden), after the task list and a fresh shared state are known: when the
+  // session last looked at anywhere (the shared Recent list past what this page itself came to) is another one than this device shows, was looked at
+  // on another device in the last 12 hours and still exists, a notice offers it ("Open"). It never switches by itself and goes after 10 s.
+  let hintDone = Boolean(PANE) || !drafts;
+  let hintFresh = Boolean(PageState && PageState.answered && PageState.answered()); // a state read or pushed since the page opened (or came back), not only the cache
+  const HINT_START = Date.now();
+  function maybeHint() {
+    if (hintDone || !listReady || !hintFresh || columnsShown()) return;
+    const shown = ui.get().shownTarget || null;
+    if (!shown && Date.now() - HINT_START < 4000) { setTimeout(maybeHint, 4100 - (Date.now() - HINT_START)); return; } // let the page open its own first
+    hintDone = true;
+    // The session last looked at anywhere before this page came: an entry this page noted since counts as it was before.
+    let top = null;
+    for (const entry of PageState.recentForPage(PageState.recent(), pageSources(), 24)) {
+      const before = notedHere.has(ui.recent.key(entry)) ? notedHere.get(ui.recent.key(entry)) : entry;
+      if (before && (!top || (Number(before.lastUsed) || 0) > (Number(top.lastUsed) || 0))) top = before;
+    }
+    const listed = Boolean(top) && ui.get().recent.some(entry => ui.recent.key(entry) === ui.recent.key(top));
+    const now = Date.now();
+    const hint = window.TAContinue.hintFor({ top, listed, shown, device: drafts.device, now });
+    if (!hint) return;
+    const taskRow = (ui.get().taskList.tasks || []).find(row => row.source === top.sourceKey && String(row.id) === String(top.taskId));
+    const name = top.title || (taskRow ? taskRow.title : '') || tr('Terminal');
+    ui.notify(name, 'info', {
+      lead: 'Continue', detail: window.TAContinue.lastViewedText(hint.client, hint.at, now), close: true, ms: window.TAContinue.HINT_MS,
+      action: { label: 'Open', run: () => ui.actions.openRow(`${top.sourceKey}|${top.taskId}`, { kind: 'terminal', id: top.terminalId }) },
+    });
+  }
+  if (!hintDone) {
+    PageState.subscribe(what => { if (!what) { hintFresh = true; maybeHint(); } });
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (!hiddenAt || Date.now() - hiddenAt < 5 * 60 * 1000) return;
+      notedHere = new Map();
+      hintDone = false; hintFresh = false; // the read that coming back starts decides
+    });
   }
   // A column of the multi-column view shows the same session on every device: the pane keeps it in the shared page state as `h5-column:<pane id>`
   // ({ instance, task, terminal } as JSON), and opens what another device chose there, at start and when it changes ("Columns" in
@@ -1976,6 +2024,7 @@
     const shownBefore = ui.get().shownTarget || null;
     if (JSON.stringify(shownBefore) !== JSON.stringify(target)) ui.set({ shownTarget: target });
     noteShown(target, current); // the recent sessions of the switcher
+    if (drafts && (!target || current)) drafts.bind(target && { ident: sharedEntry({ ...target, title: '' }), pageKey: ui.recent.key(target) }); // its draft
     if (agentChat && agentFor) {
       name = agentFor.title || '';
     } else if (terminalId) {
@@ -3785,6 +3834,7 @@
     if (translating || !text) return;
     const target = session;
     if (uploading || !connected(target)) { tell('The terminal is not connected', 'error'); return; }
+    const draftId = drafts ? drafts.id : '';
     translating = true;
     ui.set({ translating: true });
     try {
@@ -3804,6 +3854,7 @@
       const now = translateInput.value; // typed on while the translation ran: keep what came after the sent text
       translateInput.value = now === typed ? '' : now.startsWith(typed) ? now.slice(typed.length) : now;
       translateForm.removeAttribute('data-hold'); // the press on the send button is over: do not keep the box shown
+      if (drafts) drafts.sent(draftId); // a sent draft is cleared on every device
       // Sent: the focus stays in the box, on a computer and on a touch screen (the user's rule, 2026-11-19), so the next message can be typed at once; on a
       // touch screen the on-screen keyboard stays open and the box stays shown. The bar buttons keep the box's focus on press (mousedown is cancelled), and
       // the focus is put back here in case something else took it. A column the person left while its translation ran does not take the focus back
@@ -3872,6 +3923,27 @@
     if (!event.repeat) void submitBox(!event.altKey); // a held key sends once
   });
   translateInput.addEventListener('input', () => { autosize(); relayoutBar(); }); // the bar also changes layout when the box gains or loses text
+  // ── Drafts that follow their session ("Drafts" in docs/design/continue-and-drafts.md) ──
+  // Typing is written to the shared page state at most every 2 s, at once on blur and when the page hides; a draft from another device comes into an
+  // empty box that does not have the focus (with the caption "Draft from your <device>"), or is offered when this box has its own text.
+  function setDraftText(text) { translateInput.value = text; autosize(); relayoutBar(); }
+  function showDraftNote(note) {
+    const C = window.TAContinue;
+    const next = note ? { kind: note.kind, text: note.kind === 'offer' ? C.useDraftText(note.client) : C.draftFromText(note.client, note.at, Date.now()) } : null;
+    if (JSON.stringify(ui.get().draftNote) !== JSON.stringify(next)) ui.set({ draftNote: next });
+  }
+  if (drafts) {
+    translateInput.addEventListener('input', () => drafts.input());
+    translateInput.addEventListener('blur', () => drafts.blur());
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') drafts.flush(); });
+    window.addEventListener('pagehide', () => drafts.flush());
+    // The top page clears drafts older than 7 days (and the oldest beyond 20) once the server's state is read.
+    let swept = Boolean(PANE);
+    const sweep = () => { if (!swept && PageState.answered && PageState.answered()) { swept = true; drafts.sweep(); } };
+    PageState.subscribe(() => { drafts.changed(); sweep(); });
+    sweep();
+    ui.actions.useDraft = () => drafts.useOffer();
+  }
   // Send (translate, then send) sits in the draft box on a touch screen and in the row on a computer, so it is remounted when the input mode changes:
   // its click is heard on the bottom area, which stays.
   bottomArea.addEventListener('click', event => { if (event.target.closest && event.target.closest('#h5-translate-button')) void submitBox(true); });

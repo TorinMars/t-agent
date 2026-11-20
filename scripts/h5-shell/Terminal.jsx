@@ -232,7 +232,7 @@ export function BottomArea({ ui }) {
       sx={pointer ? { ...BAR_SURFACE, ...SINGLE_ROW } : { ...BAR_SURFACE, marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'env(safe-area-inset-bottom)', ...DRAFT_ON, ...TYPING_HIDES_ROWS }}
     >
       {list}
-      <TranslateBar state={state} pointer={pointer} single={pointer} />
+      <TranslateBar state={state} pointer={pointer} single={pointer} ui={ui} />
       {pointer ? null : <KeyBar state={state} ui={ui} />}
       <CompactTools state={state} ui={ui} onMenu={onMenu} menu={menu} pointer={pointer} mode={pointer ? 'single' : 'phone'} />
       {state.osk && !pointer ? <TerminalKeyboard ui={ui} /> : null}
@@ -544,6 +544,25 @@ function DraftPeek({ ui }) {
   );
 }
 
+// Where the box's draft came from (`state.draftNote`, h5.js "Drafts that follow their session"; docs/design/continue-and-drafts.md): "Draft from your
+// computer · 5 min ago" over a draft taken from another device, or the text button "Use the draft from your computer" when this box kept its own text.
+// Touch: the first line of the shown box (hidden with it). A row (a computer, a column): just above the box, over the terminal's last line, like the
+// box growing upward.
+function DraftNote({ ui, row }) {
+  const note = useStore(ui, state => state.draftNote || null);
+  if (!note) return null;
+  const place = row
+    ? { position: 'absolute', left: 0, bottom: '100%', mb: 0.5, px: 1, borderRadius: 1, bgcolor: 'background.paper', maxWidth: '100%' }
+    : { pb: 0.5, px: 0.5 };
+  return (
+    <Box className="h5-draft-note" id="h5-draft-note" sx={{ ...place, display: 'flex', alignItems: 'center', minHeight: 20, typography: 'caption', color: 'text.secondary', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      {note.kind === 'offer'
+        ? <Button id="h5-draft-use" size="small" color="primary" onMouseDown={event => event.preventDefault()} onClick={() => ui.actions.useDraft && ui.actions.useDraft()} sx={{ minHeight: 0, py: 0, px: 0.5, typography: 'caption', fontWeight: 500, [TOUCH]: { minHeight: 44 } }}>{t(note.text)}</Button>
+        : t(note.text)}
+    </Box>
+  );
+}
+
 // The draft box. The textarea is the plain DOM one that voice-input.js and h5.js read and write directly (value, height; `autosize()` in h5.js grows it to
 // show all its text); Material UI draws around it.
 // Touch: the box is hidden by default: it has no height at all (`COLLAPSED`) and sits ABOVE the two rows. The "Draft keyboard" key focuses the textarea;
@@ -573,6 +592,7 @@ export function TranslateBar({ state, pointer = false, compact = false, single =
       onFocus={compact && ui && ui.actions.paneUse ? () => ui.actions.paneUse() : undefined}
       sx={single ? SINGLE_BOX : compact ? COMPACT_BOX : { position: 'relative', ...COLLAPSED }}
     >
+      {ui ? <DraftNote ui={ui} row={row} /> : null}
       <OutlinedInput
         id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea"
         placeholder={t('Chinese → English, then send')}

@@ -65,6 +65,9 @@ function learnMock() {
       if (mode === 'mistakes') return { cards: [WORDS[0], SENTENCES[1], SENTENCES[2]] };
       return { cards: SENTENCES };
     }
+    // The Mistakes page (scripts/test-h5-learn-mistakes-browser.cjs checks it in detail).
+    if (p === '/api/learn/mistakes') return { mistakes: ['expire', 'Run the tests again before you merge.', 'Deploy the staging server tonight.'].map((en, index) => ({ uid: `m${index}`, at: AT, mode: index ? 'build' : 'spell', tag: 'other', hinted: false, expected: en, written: 'x', card: { id: index + 1, kind: index ? 'sentence' : 'word', en } })), more: false };
+    if (p === '/api/learn/reports' && method === 'GET') return { reports: [], since: { from: null, mistakes: 3, answers: 9 }, model: { ready: false, label: '', name: '' }, running: false, auto: true };
     const answer = p.match(/^\/api\/learn\/cards\/(\d+)\/answer$/);
     if (answer) return { card: { ...mock.material.find(item => String(item.id) === answer[1]), reps: 1 } };
     const one = p.match(/^\/api\/learn\/cards\/(\d+)$/);
@@ -276,7 +279,10 @@ async function toTerminal(page) {
       await shot(page, 'learn-desktop-build-check.png');
       await page.keyboard.press('2');
       await waitFor(() => Boolean(lastAnswer(mock)), 'the answer is posted');
-      assert.deepEqual(lastAnswer(mock), { id: '10', mode: 'build', grade: 'hard', correct: false, answer: 'Please fix the login redirect loop after the session cookie expire' });
+      assert.deepEqual(lastAnswer(mock), {
+        id: '10', mode: 'build', grade: 'hard', correct: false, answer: 'Please fix the login redirect loop after the session cookie expire',
+        expected: SENTENCES[0].en, tag: 'verb-form', hinted: false, // a wrong answer keeps what was asked for and the checker's tag
+      });
       // Card 2: typed only; Enter checks, Enter again takes the offered grade (right: Good).
       await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '2 / 3', 'the next card');
       await page.locator('#h5-learn-build-input').focus();
@@ -325,7 +331,7 @@ async function toTerminal(page) {
       assert.match(await text(page, '#h5-learn-feedback'), /expire.*You wrote: expier.*4 of 6 letters right/);
       await page.keyboard.press('1');
       await waitFor(() => mock.posts(/\/answer$/).length === 3, 'the spell answer');
-      assert.deepEqual(lastAnswer(mock), { id: '1', mode: 'spell', grade: 'again', correct: false, answer: 'expier' });
+      assert.deepEqual(lastAnswer(mock), { id: '1', mode: 'spell', grade: 'again', correct: false, answer: 'expier', expected: 'expire', tag: 'letter-order', hinted: false });
       await page.locator('#h5-learn-no-translator').waitFor();
       assert.match(await text(page, '#h5-learn-no-translator'), /Word meanings need a translator/);
       assert.deepEqual(mock.posts(/\/meaning$/).at(-1).body, { word: 'deploy' });
@@ -367,7 +373,7 @@ async function toTerminal(page) {
       assert.equal(await text(page, '#h5-learn-chinese'), ZH_LOOP, 'the Chinese after Check');
       await page.locator('#h5-learn-grade-good').click();
       await waitFor(() => mock.posts(/\/answer$/).length === 6, 'the dictation answer');
-      assert.deepEqual(lastAnswer(mock), { id: '10', mode: 'dictation', grade: 'good', correct: false, answer: 'Please fix login redirect loop after the session cookie expires' });
+      assert.deepEqual(lastAnswer(mock), { id: '10', mode: 'dictation', grade: 'good', correct: false, answer: 'Please fix login redirect loop after the session cookie expires', expected: SENTENCES[0].en, tag: 'article', hinted: false });
       // Escape closes the mode (the page stays), then the page.
       await page.keyboard.press('Escape');
       await page.locator('#h5-learn-how-card').waitFor();

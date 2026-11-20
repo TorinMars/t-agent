@@ -19,7 +19,8 @@ const merge = require('../services/learn-merge');
 const syncStore = require('../services/learn-sync-store');
 const { createLearn } = require('../services/learn');
 const { createLearnRouter } = require('../routes/learn');
-const { createLearnSync, CAPABILITY } = require('../services/learn-sync');
+const { createLearnSync, CAPABILITY, REPORTS_CAPABILITY } = require('../services/learn-sync');
+const { createLearnAnalysis } = require('../services/learn-analysis');
 const { createEngineLearnSyncRouter } = require('../routes/learn-sync');
 const { createSettingsSync } = require('../services/settings-sync');
 const { createDeviceTier, CAPABILITY: TIER_CAPABILITY } = require('../services/device-tier');
@@ -189,7 +190,7 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
     const instanceId = crypto.randomUUID();
     const tier = createDeviceTier({ db });
     if (company.includes(name)) tier.setCompany(true);
-    const side = { name, db, instanceId, tier, peers: [], issued: new Map(), linkByToken: new Map(), requests: [], capabilities: capabilities[name] || [CAPABILITY, TIER_CAPABILITY] };
+    const side = { name, db, instanceId, tier, peers: [], issued: new Map(), linkByToken: new Map(), requests: [], capabilities: capabilities[name] || [CAPABILITY, REPORTS_CAPABILITY, TIER_CAPABILITY] };
     const linkListeners = new Set();
     side.links = {
       peers: () => side.peers,
@@ -223,9 +224,20 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
       },
     });
     side.logs = [];
+    // The mistake analysis with a stubbed model (never a real one): it answers with one finding over every mistake and records the questions.
+    side.questions = [];
+    side.analysis = createLearnAnalysis({
+      learn: side.learn, sync: side.sync, owner: () => 'me', isConfigured: () => true, modelInfo: () => ({ label: 'Stub', model: name }),
+      company: () => tier.isCompany(), log: { warn() {}, info() {} },
+      chat: async (owner, system, user) => {
+        side.questions.push(JSON.parse(user));
+        const ids = JSON.parse(user).mistakes.map(item => item.id);
+        return JSON.stringify({ summary: `Made on ${name}.`, findings: [{ title: 'All of them', cause: 'c', action: 'a', items: ids }] });
+      },
+    });
     const app = express();
     app.use(express.json({ limit: '32mb' }));
-    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
+    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     app.use('/api/device-tier', createDeviceTierRouter({ tier: () => tier }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -532,4 +544,72 @@ test('the starter list imported on both sides is one set of cards after the firs
   assert.deepEqual(view(A), view(B));
   assert.equal(cardsOf(A).find(card => card.norm === first.norm).reps, 1);
   assert.deepEqual(await summaryOf(A), await summaryOf(B));
+});
+
+test('mistakes and reports: the detail of a wrong answer and the reports reach every normal engine; one automatic report per week; a company computer reads and analyses on its home', async t => {
+  const { A, B, K } = await makeNetwork(t, ['A', 'B', 'K'], { links: [['A', 'B'], ['A', 'K']] });
+  for (const side of [A, B, K]) await noStarter(side);
+  const card = (await A.page('POST', '/learn/cards', word('necessary'))).body.card;
+  await A.page('POST', `/learn/cards/${card.id}/answer`, { mode: 'spell', grade: 'again', correct: false, answer: 'neccesary', tag: 'double-letter', hinted: true });
+  await A.sync.syncAll();
+  const onB = (await B.page('GET', '/learn/mistakes')).body.mistakes;
+  assert.deepEqual(onB.map(item => [item.expected, item.written, item.tag, item.hinted, item.mode]), [['necessary', 'neccesary', 'double-letter', true, 'spell']]);
+
+  // A report made on B reaches A, the same everywhere; the cards behind it are found by text on each engine.
+  const made = await B.page('POST', '/learn/reports', { lang: 'en' });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  await B.sync.syncAll();
+  const onA = (await A.page('GET', '/learn/reports')).body;
+  assert.equal(onA.reports.length, 1);
+  assert.equal(onA.reports[0].uid, made.body.report.uid);
+  assert.deepEqual((await A.page('GET', `/learn/reports/${made.body.report.uid}`)).body.report.findings, made.body.report.findings);
+  const found = (await A.page('POST', '/learn/cards/find', { refs: made.body.report.findings[0].cards })).body.cards;
+  assert.deepEqual(found.map(item => item.id), [card.id], "A's own id for the card");
+  assert.equal(onA.since.mistakes, 0, 'the report covers the mistakes on every engine');
+
+  // The automatic report of one week made on both A and B while they could not see each other: after they meet, both keep the earlier one.
+  const autoRow = (side, at) => side.db.prepare(`INSERT INTO learn_reports (owner, uid, created_at, covers_from, covers_until, auto, lang, mistakes, answers, model, body, by, sync_seq)
+    VALUES ('me', 'auto-2026-W47', ?, 0, ?, 1, 'en', 10, 20, '', ?, '', ?)`).run(at, at, JSON.stringify({ summary: `from ${side.name}`, kinds: [], findings: [] }), syncStore.nextSeq(side.db));
+  autoRow(A, 5000); // times long before the report above, so that one stays the last
+  autoRow(B, 4000);
+  await A.sync.syncAll();
+  await B.sync.syncAll();
+  for (const side of [A, B]) {
+    const row = side.db.prepare("SELECT body FROM learn_reports WHERE uid = 'auto-2026-W47'").get();
+    assert.equal(JSON.parse(row.body).summary, 'from B', `${side.name} keeps the earlier one`);
+  }
+
+  // K is a company computer: it keeps no reports and no history; its page reads both from A and asks A to analyse.
+  K.tier.setCompany(true);
+  await A.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+  assert.equal(K.db.prepare('SELECT COUNT(*) AS n FROM learn_reports').get().n, 0, 'no report is copied to a company computer');
+  const cached = cardsOf(K).find(row => row.norm === 'necessary');
+  await K.page('POST', `/learn/cards/${cached.id}/answer`, { mode: 'spell', grade: 'again', correct: false, answer: 'necesary', tag: 'double-letter' });
+  const list = (await K.page('GET', '/learn/mistakes')).body;
+  assert.deepEqual(list.mistakes.map(item => item.written), ['necesary', 'neccesary'], "the home's list, with the answer just given here");
+  assert.equal(list.offline, undefined);
+  const view = (await K.page('GET', '/learn/reports')).body;
+  assert.equal(view.reports.length, 2);
+  assert.equal(view.since.mistakes, 1);
+  const before = A.questions.length;
+  const viaHome = await K.page('POST', '/learn/reports', { lang: 'zh' });
+  assert.equal(viaHome.status, 200, JSON.stringify(viaHome.body));
+  assert.equal(viaHome.body.report.summary, 'Made on A.', 'the analysis ran on the home');
+  assert.equal(A.questions.length, before + 1);
+  assert.equal(K.questions.length, 0, 'the company computer never asks a model');
+  assert.equal(viaHome.body.report.lang, 'zh');
+  assert.equal((await K.page('GET', `/learn/reports/${viaHome.body.report.uid}`)).body.report.uid, viaHome.body.report.uid);
+  assert.equal(await K.analysis.checkWeekly(), 'company');
+  // The home away: the list says so and shows what waits here; reports and Analyze say the home cannot be reached.
+  setOnline(K, 'A', false);
+  await K.page('POST', `/learn/cards/${cached.id}/answer`, { mode: 'spell', grade: 'again', correct: false, answer: 'nesessary', tag: 'wrong-letter' });
+  const offline = (await K.page('GET', '/learn/mistakes')).body;
+  assert.equal(offline.offline, true);
+  assert.deepEqual(offline.mistakes.map(item => item.written), ['nesessary']);
+  assert.equal((await K.page('GET', '/learn/reports')).body.offline, true);
+  const refused = await K.page('POST', '/learn/reports', {});
+  assert.equal(refused.status, 503);
+  assert.match(refused.body.error, /kept on a normal computer/);
 });

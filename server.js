@@ -674,6 +674,8 @@ server.listen(config.port, config.host, () => {
   if (config.settingsSyncEnabled) require('./services/settings-sync').getSettingsSync().start();
   // The English learning data follows the links from here on (services/learn-sync.js).
   if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().start();
+  // The weekly mistake report of Learn (services/learn-analysis.js; never on a company computer, and on one normal engine of the links).
+  require('./services/learn-analysis').getLearnAnalysis().start();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
   if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
   // The rules and skills sync watches the shared layer and the links from here on (services/rule-sync.js).
@@ -725,5 +727,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); require('./services/learn-analysis').stopShared(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

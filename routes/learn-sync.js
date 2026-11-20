@@ -4,6 +4,8 @@
 //   PUT  /v1/learn-sync { instance_id, public_key, sealed }  -> { applied, have }
 //   GET  /v1/learn-sync/summary, PUT /v1/learn-sync/settings, POST /v1/learn-sync/starter: what a company computer asks its home (the summary, the
 //   settings and the starter list live on the normal machines); the same answers as /api/learn.
+//   GET  /v1/learn-sync/mistakes?limit=&before=, GET /v1/learn-sync/reports, GET /v1/learn-sync/report?uid=, POST /v1/learn-sync/analyze { lang }:
+//   the wrong answers and the mistake reports of the home for a company computer's page (an analysis runs on the home).
 // Only a token issued for a live service link gets in (403 LINKED_ONLY for any other Engine token), like /v1/settings-sync. Rows only ever travel
 // inside the sealed envelopes. 404 with the sync turned off; 409 LEARN_COMPANY_COMPUTER on a company computer, which takes part only through its home.
 const express = require('express');
@@ -32,8 +34,8 @@ function createEngineLearnSyncRouter(options = {}) {
     req.serviceLink = link;
     next();
   });
-  const handle = run => (req, res, next) => {
-    try { res.set('Cache-Control', 'no-store').json(run(req)); } catch (error) { send(res, error, next); }
+  const handle = run => async (req, res, next) => {
+    try { res.set('Cache-Control', 'no-store').json(await run(req)); } catch (error) { send(res, error, next); }
   };
   router.get('/', handle(req => service().engineDescribe(req.serviceLink)));
   router.post('/pull', handle(req => service().enginePull(req.serviceLink, req.body)));
@@ -41,6 +43,10 @@ function createEngineLearnSyncRouter(options = {}) {
   router.get('/summary', handle(req => service().engineHome(req.serviceLink, 'summary')));
   router.put('/settings', handle(req => service().engineHome(req.serviceLink, 'settings', req.body)));
   router.post('/starter', handle(req => service().engineHome(req.serviceLink, 'starter', req.body)));
+  router.get('/mistakes', handle(req => service().engineHome(req.serviceLink, 'mistakes', { limit: req.query.limit, before: req.query.before })));
+  router.get('/reports', handle(req => service().engineHome(req.serviceLink, 'reports')));
+  router.get('/report', handle(req => service().engineHome(req.serviceLink, 'report', { uid: req.query.uid })));
+  router.post('/analyze', handle(req => service().engineHome(req.serviceLink, 'analyze', req.body)));
   return router;
 }
 

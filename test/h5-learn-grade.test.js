@@ -134,3 +134,32 @@ test('the automatic check: when the typed letters reach the length of the word (
   assert.equal(typedInFull('trade-off', 'trade-off'), true);
   assert.equal(typedInFull('', ''), false);
 });
+
+test('the first tag of a wrong answer: letters of a spelled word, grammar of a sentence, listening, and an answer left empty', async () => {
+  const { mistakeTag } = await load();
+  const tag = (mode, expected, answer, extra = {}) => mistakeTag({ mode, expected, answer, ...extra });
+  assert.equal(tag('spell', 'expire', 'expier'), 'letter-order');
+  assert.equal(tag('spell', 'necessary', 'neccesary'), 'double-letter');
+  assert.equal(tag('spell', 'occurred', 'occured'), 'double-letter');
+  assert.equal(tag('spell', 'merge', 'merg'), 'missing-letter');
+  assert.equal(tag('spell', 'merge', 'merges'), 'extra-letter');
+  assert.equal(tag('spell', 'deploy', 'deplay'), 'wrong-letter');
+  assert.equal(tag('spell', 'idempotent', 'idenpotant'), 'spelling');
+  assert.equal(tag('spell', 'deploy', 'rollback'), 'wrong-word');
+  assert.equal(tag('spell', 'deploy', '  '), 'unknown');
+  assert.equal(tag('spell', 'deploy', 'depl', { gaveUp: true }), 'unknown', '"I don\'t know"');
+  // Fill the gap: another form of the gap word is grammar (from the whole sentence, as the page sends it).
+  assert.equal(tag('fill', 'Please fix the loop after the session cookie expires.', 'Please fix the loop after the session cookie expire.'), 'verb-form');
+  assert.equal(tag('fill', 'merged', 'merge'), 'tense');
+  // Sentences.
+  assert.equal(tag('build', 'He has already left.', 'He already left.'), 'tense');
+  assert.equal(tag('dictation', 'I look forward to hearing from you.', 'I look forward to hear from you.'), 'verb-form');
+  assert.equal(tag('build', 'Please fix the login page now.', 'Please fix login page now.'), 'article');
+  assert.equal(tag('build', 'Run the tests before you merge.', 'Run the test before you merge.'), 'plural');
+  assert.equal(tag('build', 'Run the tests again before you merge.', 'Run again the tests before you merge.'), 'word-order');
+  assert.equal(tag('dictation', 'Deploy the staging server tonight.', 'Deploy the staging service tonight.'), 'listening');
+  assert.equal(tag('say', 'Deploy the staging server tonight.', 'Deploy the staging service tonight.'), 'pronunciation');
+  assert.equal(tag('build', 'Deploy the staging server tonight.', 'Deploy the staging service tonight.'), 'wrong-word');
+  assert.equal(tag('build', 'Deploy the staging server tonight.', 'Deploy the staging server.'), 'missing-word');
+  assert.equal(tag('build', 'Deploy the staging server.', 'Deploy the staging server now.'), 'extra-word');
+});

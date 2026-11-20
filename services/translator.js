@@ -112,20 +112,23 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
   const wordCache = new Map(); // insertion order = least recently used first
 
   // Sends one system + user message to the chosen provider and returns the text of its answer. Every failure is a TranslatorError with the provider's own reason.
-  async function complete(owner, system, user) {
+  // `options` (the Learn mistake analysis): `timeoutMs` instead of TIMEOUT_MS, `json` asks for a JSON object (response_format, which DeepSeek and GLM
+  // both take), `temperature`.
+  async function complete(owner, system, user, { timeoutMs = TIMEOUT_MS, json = false, temperature = 0 } = {}) {
     const all = read(owner);
     const config = { ...all.providers[all.provider], enabled: all.enabled };
     const label = PROVIDERS[all.provider].label;
     if (!config.enabled || !config.apiKey) throw new TranslatorError('Translation service not configured yet', 409);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
         body: JSON.stringify({
-          model: config.model, temperature: 0, stream: false,
+          model: config.model, temperature, stream: false,
           ...glmReasoning(all.provider, config.model),
+          ...(json ? { response_format: { type: 'json_object' } } : {}),
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         }),
         signal: controller.signal,
@@ -191,6 +194,14 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
     isConfigured(owner) {
       const all = read(owner);
       return Boolean(all.enabled && all.providers[all.provider].apiKey);
+    },
+    // Server side only (the Learn mistake analysis, services/learn-analysis.js): one question to the provider and model the person uses for translation,
+    // with the same checks and errors as a translation (409 "Translation service not configured yet" while it is off or has no key).
+    chat: (owner, system, user, options) => complete(owner, system, user, options),
+    // The label and model of the provider in use, for a page that names it (never the key).
+    activeModel(owner) {
+      const all = read(owner);
+      return { provider: all.provider, label: PROVIDERS[all.provider].label, model: all.providers[all.provider].model };
     },
     // Server side only (the T-Attention summary, services/attention-summary.js): the saved { apiKey, baseUrl, model } of one provider, whether or not
     // translation itself is switched on. Never send it to a page.

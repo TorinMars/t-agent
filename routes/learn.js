@@ -12,6 +12,12 @@ const express = require('express');
 //   POST  /api/learn/starter { list: 'dev' }            -> { added }
 //   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter?, audio_*? } -> settings
 //   GET   /api/learn/status                           -> { company_computer, cache_only, home_name, home_online, waiting }
+//   GET   /api/learn/mistakes?limit=50&before=<ISO>   -> { mistakes: [{ uid, at, mode, tag, hinted, expected, written, card }], more }
+//   GET   /api/learn/reports                          -> { reports, since: { from, mistakes, answers }, model: { ready, label, name }, running, auto }
+//   GET   /api/learn/reports/:uid                     -> { report }
+//   POST  /api/learn/reports { lang }                 -> { report }   (asks the translation model; 503 without one, 409 while one runs)
+//   POST  /api/learn/cards/find { refs: [{ kind, en }] } -> { cards }  (the cards of a report's findings on this engine)
+// ("Mistakes" and "Mistake reports" in docs/design/learn-english.md; services/learn-analysis.js.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
@@ -31,7 +37,8 @@ function translatorLookup() {
 }
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
-function createLearnRouter({ service = null, lookupWord = null, sync, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+// `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
+function createLearnRouter({ service = null, lookupWord = null, sync, analysis, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
   let syncService = sync === undefined ? (service ? null : undefined) : sync;
@@ -41,6 +48,12 @@ function createLearnRouter({ service = null, lookupWord = null, sync, requireAut
   };
   const cacheOnly = () => { const current = learnSync(); return Boolean(current && current.cacheOnly()); };
   const learn = () => service || (service = require('../services/learn').createLearn({ lookupWord: lookupWord || translatorLookup(), cacheOnly }));
+  let analysisService = analysis === undefined ? (service ? null : undefined) : analysis;
+  const analyzer = () => {
+    if (analysisService === undefined) analysisService = require('../services/learn-analysis').getLearnAnalysis();
+    if (!analysisService) throw Object.assign(new Error('Mistake analysis is not available'), { statusCode: 503 });
+    return analysisService;
+  };
   // A company computer reads through its home: the cards here are brought up to date first (a few seconds at most; offline, the cache as it is).
   const fresh = async () => { if (cacheOnly()) await learnSync().refresh(); };
   const status = () => { const current = learnSync(); return current ? current.status() : { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0 }; };
@@ -70,6 +83,32 @@ function createLearnRouter({ service = null, lookupWord = null, sync, requireAut
   router.patch('/cards/:id', handle(req => learn().updateCard(owner(req), req.params.id, req.body)));
   router.post('/meaning', handle(req => learn().meaning(owner(req), req.body && req.body.word)));
   router.post('/starter', handle(req => (cacheOnly() ? learnSync().viaHome('starter', req.body) : learn().starter(owner(req), req.body))));
+  // ---- Mistakes and reports: on a company computer read and made on its home (the wrong answers and the reports are personal data) ----
+  router.get('/mistakes', handle(async req => {
+    if (!cacheOnly()) return learn().mistakes(owner(req), req.query);
+    await fresh();
+    const query = new URLSearchParams();
+    for (const key of ['limit', 'before']) if (typeof req.query[key] === 'string') query.set(key, req.query[key]);
+    try { return await learnSync().askHome(`mistakes?${query}`); } catch (error) {
+      if (error.statusCode !== 503) throw error;
+      // The home is away: the wrong answers that wait here, said as such.
+      return { ...learn().mistakes(owner(req), req.query), offline: true };
+    }
+  }));
+  router.get('/reports', handle(async req => {
+    if (!cacheOnly()) return analyzer().view(owner(req));
+    try { return await learnSync().askHome('reports'); } catch (error) {
+      if (error.statusCode !== 503) throw error;
+      return { reports: [], since: null, model: { ready: false, label: '', name: '' }, running: false, auto: learn().settings(owner(req)).analysis_auto, offline: true };
+    }
+  }));
+  router.get('/reports/:uid', handle(req => (cacheOnly() ? learnSync().askHome(`report?uid=${encodeURIComponent(req.params.uid)}`) : learn().report(owner(req), req.params.uid))));
+  router.post('/reports', handle(async req => {
+    const body = req.body && typeof req.body === 'object' ? { lang: req.body.lang } : {};
+    if (cacheOnly()) return learnSync().askHome('analyze', { method: 'POST', body, timeout: 100_000 });
+    return analyzer().analyze(owner(req), body);
+  }));
+  router.post('/cards/find', handle(async req => { await fresh(); return learn().findCards(owner(req), req.body); }));
   router.get('/settings', handle(req => learn().settings(owner(req))));
   router.put('/settings', handle(req => (cacheOnly() ? learnSync().viaHome('settings', req.body) : learn().saveSettings(owner(req), req.body))));
   return router;

@@ -5,7 +5,7 @@
 // last_result, last_at, last_correct), changed by an answer. Each half goes to the later version on its own, a tie to the greater instance id, so an
 // answer on one device and a meaning edit on another both survive. A meaning or a phonetic transcription is never replaced by an empty one (an older
 // peer, schema 14, sends none), and created_at is the earliest.
-const { normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS } = require('./learn');
+const { normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, REPORT_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED } = require('./learn');
 const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
 
@@ -90,15 +90,68 @@ const resolved = (row, me) => ({ ...row, content_by: row.content_by || me, state
 
 const normOk = value => typeof value === 'string' && value.length > 0 && value.length <= MAX_NORM && value === normalize(value);
 
-// An answer as a peer sent it: { uid, kind, norm, at, mode, grade, correct, answer }, or null.
+// An answer as a peer sent it: { uid, kind, norm, at, mode, grade, correct, answer, expected, tag, hinted }, or null. The detail of a wrong answer
+// (schema 16) is optional: an older peer sends none, a tag this version does not know is kept as none.
 function reviewFromPeer(raw) {
   if (!raw || typeof raw !== 'object') return null;
   if (typeof raw.uid !== 'string' || !/^[A-Za-z0-9-]{8,64}$/.test(raw.uid) || !KINDS.includes(raw.kind) || !normOk(raw.norm)) return null;
   if (!time(raw.at) || !MODES.includes(raw.mode) || !GRADES.includes(raw.grade) || typeof raw.correct !== 'boolean') return null;
   if (!(raw.answer === null || raw.answer === undefined || typeof raw.answer === 'string')) return null;
-  return { uid: raw.uid, kind: raw.kind, norm: raw.norm, at: raw.at, mode: raw.mode, grade: raw.grade, correct: raw.correct ? 1 : 0, answer: typeof raw.answer === 'string' ? raw.answer.slice(0, MAX_ANSWER) : null };
+  const expected = typeof raw.expected === 'string' && raw.expected.trim() ? raw.expected.replace(/\s+/g, ' ').trim().slice(0, MAX_EXPECTED) : null;
+  return {
+    uid: raw.uid, kind: raw.kind, norm: raw.norm, at: raw.at, mode: raw.mode, grade: raw.grade, correct: raw.correct ? 1 : 0,
+    answer: typeof raw.answer === 'string' ? raw.answer.slice(0, MAX_ANSWER) : null,
+    expected: raw.correct ? null : expected, tag: !raw.correct && MISTAKE_TAGS.includes(raw.tag) ? raw.tag : '', hinted: !raw.correct && raw.hinted === true ? 1 : 0,
+  };
 }
-const reviewToPeer = row => ({ uid: row.uid, kind: row.kind, norm: row.norm, at: row.at, mode: row.mode, grade: row.grade, correct: Boolean(row.correct), answer: row.answer === undefined ? null : row.answer });
+const reviewToPeer = row => ({
+  uid: row.uid, kind: row.kind, norm: row.norm, at: row.at, mode: row.mode, grade: row.grade, correct: Boolean(row.correct), answer: row.answer === undefined ? null : row.answer,
+  expected: row.expected || null, tag: row.tag || '', hinted: Boolean(row.hinted),
+});
+
+// ---- Mistake reports (schema 16; "Mistake reports" in docs/design/learn-english.md) ----
+const REPORT_UID = /^[A-Za-z0-9-]{8,64}$/;
+const MAX_REPORT_BODY = 64 * 1024;
+const shortText = (value, max) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+// The body of a report, checked and cut to its sizes: { summary, kinds: [{ kind, count }], findings: [{ title, cause, action, cards: [{ kind, en }] }] },
+// or null when it is not one. Used for a report from a peer and (through services/learn-analysis.js) for one made here.
+function reportBody(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const summary = shortText(raw.summary, 600);
+  if (!summary || !Array.isArray(raw.kinds) || !Array.isArray(raw.findings)) return null;
+  const kinds = raw.kinds.slice(0, 20).filter(item => item && typeof item.kind === 'string' && count(item.count))
+    .map(item => ({ kind: shortText(item.kind, 40), count: item.count })).filter(item => item.kind);
+  const findings = raw.findings.slice(0, 8).filter(item => item && typeof item === 'object').map(item => ({
+    title: shortText(item.title, 120), cause: shortText(item.cause, 600), action: shortText(item.action, 600),
+    cards: (Array.isArray(item.cards) ? item.cards : []).slice(0, 60).filter(card => card && KINDS.includes(card.kind) && typeof card.en === 'string' && card.en.trim())
+      .map(card => ({ kind: card.kind, en: card.en.replace(/\s+/g, ' ').trim().slice(0, 300) })),
+  })).filter(item => item.title && (item.cause || item.action));
+  return { summary, kinds, findings };
+}
+// A report as a peer sent it, checked, or null.
+function reportFromPeer(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !REPORT_UID.test(raw.uid)) return null;
+  if (![raw.created_at, raw.covers_from, raw.covers_until].every(time) || raw.covers_from > raw.covers_until || !count(raw.mistakes) || !count(raw.answers)) return null;
+  if (JSON.stringify(raw.body || null).length > MAX_REPORT_BODY) return null;
+  const body = reportBody(raw.body);
+  if (!body) return null;
+  return {
+    uid: raw.uid, created_at: raw.created_at, covers_from: raw.covers_from, covers_until: raw.covers_until, auto: raw.auto === true ? 1 : 0,
+    lang: raw.lang === 'zh' ? 'zh' : 'en', mistakes: raw.mistakes, answers: raw.answers, model: shortText(raw.model, 80), body,
+    by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
+  };
+}
+const reportToPeer = (row, me) => {
+  let body = null;
+  try { body = JSON.parse(row.body); } catch { body = null; }
+  return {
+    uid: row.uid, created_at: row.created_at, covers_from: row.covers_from, covers_until: row.covers_until, auto: Boolean(row.auto), lang: row.lang,
+    mistakes: row.mistakes, answers: row.answers, model: row.model || '', body, by: row.by || me,
+  };
+};
+// Two engines made a report with the same id (the automatic one of a week, made on both while they could not see each other): the earlier one is
+// kept everywhere, a tie to the smaller engine id. True when `incoming` should replace `local`.
+const reportWins = (incoming, local) => (incoming.created_at !== local.created_at ? incoming.created_at < local.created_at : String(incoming.by) < String(local.by));
 
 // A move as a peer sent it: { kind, norm, moved_to, at, by }, or null.
 function moveFromPeer(raw, sender) {
@@ -118,10 +171,12 @@ function settingsFromPeer(value, starterLists) {
   if (value.starter !== undefined) { if (value.starter !== null && !Object.hasOwn(starterLists, value.starter)) invalid(); out.starter = value.starter; }
   // The audio settings: a value this version does not know is left out (the default here), so a newer peer's choice never stops the sync.
   for (const [key, field] of Object.entries(AUDIO_SETTINGS)) if (field.values.includes(value[key])) out[key] = value[key];
+  for (const [key, field] of Object.entries(REPORT_SETTINGS)) if (value[key] !== undefined && field.check(value[key])) out[key] = value[key];
   return out;
 }
 
 module.exports = {
   later, mergeCard, cardFromPeer, cardToPeer, resolved, reviewFromPeer, reviewToPeer, moveFromPeer, moveToPeer, settingsFromPeer,
+  reportBody, reportFromPeer, reportToPeer, reportWins,
   CONTENT, STATE, FIELDS,
 };

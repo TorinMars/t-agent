@@ -165,6 +165,7 @@ async function makeNetwork(t, names, { links: pairs = [], capabilities = {} } = 
     });
     side.copied = [];
     side.copy.onChange(change => side.copied.push(change));
+    if (!side.capabilities.includes(CAPABILITY)) { side.copy.stop(); side.copy.syncAll = async () => 0; side.copy.syncPeer = async () => 0; }
     const app = express();
     app.use(express.json({ limit: '32mb' }));
     const engineAuth = () => (req, res, next) => {
@@ -174,7 +175,9 @@ async function makeNetwork(t, names, { links: pairs = [], capabilities = {} } = 
       next();
     };
     app.get('/v1/info', engineAuth(), (req, res) => res.json({ engine_id: instanceId, name, capabilities: side.capabilities }));
-    app.use('/v1/attention-copy', createEngineAttentionCopyRouter({ service: () => side.copy, serviceLinks: () => ({ linkForToken: token => side.linkByToken.get(token) || null }), requireEngineAuth: engineAuth, enabled: () => true }));
+    // An engine without the capability stands for an older version: it has no copy routes and never pushes copies (it ran the new code here,
+    // so its push could reach a newer peer before that peer read its /v1/info, and the peer took it as a copy peer).
+    if (side.capabilities.includes(CAPABILITY)) app.use('/v1/attention-copy', createEngineAttentionCopyRouter({ service: () => side.copy, serviceLinks: () => ({ linkForToken: token => side.linkByToken.get(token) || null }), requireEngineAuth: engineAuth, enabled: () => true }));
     app.use('/v1/attention', createEngineAttentionRouter({ service: side.service, authenticate: engineAuth(), instanceId: () => instanceId, heartbeatMs: 60000 }));
     const routes = createAttentionRoutes({ service: side.service, copies: () => side.copy, instanceId: () => instanceId, heartbeatMs: 60000 });
     app.use('/api/attention', pass, routes.router);
@@ -205,7 +208,7 @@ async function makeNetwork(t, names, { links: pairs = [], capabilities = {} } = 
     Y.linkByToken.set(tokenXY, { id: linkId, revoked: false, peer_instance_id: X.instanceId });
     X.linkByToken.set(tokenYX, { id: linkId, revoked: false, peer_instance_id: Y.instanceId });
   }
-  for (const side of Object.values(sides)) side.copy.start();
+  for (const side of Object.values(sides)) if (side.capabilities.includes(CAPABILITY)) side.copy.start(); // an older engine runs no copies
   return sides;
 }
 const queueRows = side => side.db.prepare('SELECT state, reason FROM attention_copy_queue ORDER BY id').all();

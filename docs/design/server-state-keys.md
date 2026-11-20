@@ -49,6 +49,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `service_links_v1` | system_state | device | the service links of this machine and their tokens | `services/service-links.js` |
 | `settings_sync_keypair_v1` | system_state | device | this machine's key pair for the sync envelopes (the private key encrypted) | `services/settings-sync.js` |
 | `device_tier_v1` | system_state | device | the "Company computer" flag of this machine | `services/device-tier.js` |
+| `sign_in_handover_v1` | system_state | device | whether this machine accepts sign-in hand-overs from its linked engines (Settings → Devices): a choice about logins to this machine | `services/sign-in-handover.js` |
 | `peer_fs_v1` | system_state | device | whether linked sessions may read this machine's files (settings sync group peer-fs: device) | `services/peer-fs-settings.js` |
 | `rule_sync_v1` | system_state | device | this machine's role in the rules and skills sync, and its state | `services/rule-sync.js` |
 | `browser_ext_v1` | system_state | device | the browsers paired with this machine (token hashes) | `services/browser-bridge.js` |
@@ -64,6 +65,9 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `update_state` | system_state | runtime | the progress and result of the last update of this machine | `services/update-manager.js` |
 | `settings_sync_v1` | system_state | runtime | the settings sync's clocks and value hashes per group | `services/settings-sync.js` |
 | `settings_sync_peers_v1` | system_state | runtime | the settings sync's state per peer | `services/settings-sync.js` |
+| `sign_in_handover_used_v1` | system_state | runtime | the ids of sign-in hand-overs already used, each until it expires (at most a minute and a half), so a hand-over works once | `services/sign-in-handover.js` |
+| `linked_web_addresses_v1` | system_state | runtime | a cache of the web addresses and the hand-over switch each linked engine told while online, for the page's "Continue on" and app.json | `services/sign-in-handover.js` |
+| `linked_last_tasks_v1` | system_state | runtime | a cache of the task names last read from each linked engine, shown dimmed while it is offline | `services/linked-last-tasks.js` |
 | `page_state_peers_v1` | system_state | runtime | the shared page state sync's state per peer | `services/page-state.js` |
 | `learn_sync_peers_v1` | system_state | runtime | the Learn sync's change numbers per peer | `services/learn-sync.js` |
 | `learn_home_v1` | system_state | runtime | on a company computer: the last summary of the normal machine that keeps its learning data | `services/learn-sync.js` |

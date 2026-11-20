@@ -500,12 +500,23 @@ router.post('/:id/tasks/:taskId/rename-folder', async (req, res) => {
   }
 });
 
+// For a linked engine, the list that passed is kept in short (services/linked-last-tasks.js) and a failed read carries it as `last_known` { at, tasks },
+// so the page lists that engine's tasks, dimmed, while it is offline ("Tasks of an offline engine" in docs/design/failover-and-one-login.md).
 router.get('/:id/tasks', async (req, res) => {
   if (req.query.archived === '1') return proxyArchive(req, res, '/v1/tasks?archived=1');
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
-  try { res.json(await request(row.base_url, '/v1/tasks', decryptToken(row.token_cipher, config.sessionSecret))); }
-  catch (error) { res.status(502).json({ error: safeError(error) }); }
+  const linked = Boolean(getServiceLinks().linkForServer(row.id));
+  const lastTasks = () => require('../services/linked-last-tasks').getLinkedLastTasks();
+  let list;
+  try { list = await request(row.base_url, '/v1/tasks', decryptToken(row.token_cipher, config.sessionSecret)); }
+  catch (error) {
+    let lastKnown = null;
+    if (linked) { try { lastKnown = lastTasks().lastKnown(row.id); } catch { lastKnown = null; } }
+    return res.status(502).json({ error: safeError(error), ...(lastKnown ? { last_known: lastKnown } : {}) });
+  }
+  if (linked && Array.isArray(list)) { try { lastTasks().remember(row.id, list); } catch { /* the next read keeps it */ } }
+  res.json(list);
 });
 
 router.get('/:id/task-groups', async (req, res) => {

@@ -111,12 +111,23 @@ test('buildAppInfo: every field of the contract', () => {
   const info = appInfo.buildAppInfo({ host: '0.0.0.0', port: 3000, version: '2.133.1', pid: 4242, installDir: '/opt/t-agent', supervisor: 'pm2', pm2Name: 't-agent', addresses: [], now });
   assert.deepEqual(info, {
     url: 'http://127.0.0.1:3000', version: '2.133.1', pid: 4242, install_dir: '/opt/t-agent', supervisor: 'pm2', pm2_name: 't-agent', launchd_label: null,
-    updated_at: '2026-11-18T10:00:00.000Z', addresses: [],
+    updated_at: '2026-11-18T10:00:00.000Z', addresses: [], linked: [],
   });
   const bare = appInfo.buildAppInfo({ host: '127.0.0.1', port: 1, pid: 1, installDir: '/x', now });
   assert.equal(bare.supervisor, null);
   assert.equal(bare.pm2_name, null);
   assert.equal(bare.version, null);
+});
+
+test('buildAppInfo: the linked engines\' web addresses are cleaned (http(s) only, no query or credentials), and an engine without one is left out', () => {
+  const info = appInfo.buildAppInfo({
+    host: '127.0.0.1', port: 1, pid: 1, installDir: '/x',
+    linked: [
+      { name: 'K01', instance_id: 'k-1', urls: ['http://192.168.1.20:3000', 'https://k01.example.com', 'ftp://k01', 'http://user:pw@k01:1', 'http://k01:1/?token=x'] },
+      { name: 'Gone', instance_id: 'g-1', urls: ['javascript:alert(1)'] },
+    ],
+  });
+  assert.deepEqual(info.linked, [{ name: 'K01', instance_id: 'k-1', urls: ['http://192.168.1.20:3000', 'https://k01.example.com'] }]);
 });
 
 test('the publisher writes app.json atomically with mode 0600, again only when something changed, and every minute at most', t => {

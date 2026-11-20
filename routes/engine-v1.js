@@ -52,6 +52,8 @@ router.use('/updated-notice', require('./updated-notice').createEngineUpdatedNot
 // The per-device settings of this service, for a linked device's page (routes/device-settings.js): link tokens only, and only the allowlisted
 // page routes (the working directory, peer file access, agent skills, rules and skills sync, the desktop window switch). No task in them.
 router.use('/device-settings', require('./device-settings').createEngineDeviceSettingsRouter());
+// One login for linked engines (routes/sign-in-handover.js): whether this service accepts hand-overs and its web addresses, link tokens only. No task in it.
+router.use('/sign-in-handover', require('./sign-in-handover').createEngineSignInHandoverRouter());
 // Mind maps of this service, for the other services connected to it (routes/mindmap.js, the same router and service as /api/mindmaps). The token is checked
 // before any body is read; server.js keeps the global JSON parser off this path. Maps belong to no task, so per-task visibility does not apply to them.
 router.use('/mindmaps', require('./mindmap').createMindmapRouter({ getService: require('../services/mindmap').getMindmapService, authenticate: requireEngineAuth() }));
@@ -212,6 +214,9 @@ function infoHandler(req, res) {
       require('../services/device-tier').CAPABILITY,
       // settings:device: /v1/device-settings/<path>, the allowlisted per-device settings routes of the page, for a linked device's page (link tokens only).
       require('./device-settings').CAPABILITY,
+      // sign-in:handover: GET /v1/sign-in-handover (link tokens only) and the hand-over a linked service's page brings to this one's login page
+      // (services/sign-in-handover.js). A linked service without it never gets a hand-over.
+      require('../services/sign-in-handover').CAPABILITY,
       // environment:tools: /v1/device-settings/environment/tools, the tools agent sessions rely on, for Settings → Devices → Environment.
       require('../services/environment-check').TOOLS_CAPABILITY,
       // rule-sync:receive: GET /v1/rule-sync/status and PUT /v1/rule-sync/bundle (routes/rule-sync.js); the bundle is applied only when this Engine's role is receive.

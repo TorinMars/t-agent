@@ -1,7 +1,8 @@
 // What the T-Agent macOS app (apps/macos) needs to find and drive this server, and the web addresses it is reachable at
 // (see "Server and floating window integration" in docs/design/mac-app.md).
 //
-//   <data home>/app.json   { url, version, pid, install_dir, supervisor, pm2_name, launchd_label, updated_at, addresses: [{ kind, label, url }] }
+//   <data home>/app.json   { url, version, pid, install_dir, supervisor, pm2_name, launchd_label, updated_at, addresses: [{ kind, label, url }],
+//                            linked: [{ name, instance_id, urls }] }
 //
 // Written at listen time and again when anything in it changes (checked every minute and on GET /api/system/app-info), atomically
 // (a temporary file and a rename) with mode 0600. It is not deleted on exit: the app tells a running server by `pid` and a health
@@ -117,7 +118,17 @@ function launchdLabel(env, supervisor) {
   return label && label !== '0' && !label.startsWith('application.') ? label : null;
 }
 
-function buildAppInfo({ host, port, version = null, pid, installDir, supervisor = null, pm2Name: name = null, launchdLabel: label = null, addresses = [], now = new Date() }) {
+// `linked`: the web addresses of the engines joined to this one by a service link, as they told them while online (services/sign-in-handover.js):
+// the app opens one of them when this server does not answer ("Another engine while this one is down" in docs/design/mac-app.md).
+function cleanLinked(list) {
+  return (Array.isArray(list) ? list : []).slice(0, 8).map(entry => ({
+    name: typeof entry.name === 'string' ? entry.name.slice(0, 80) : '',
+    instance_id: typeof entry.instance_id === 'string' ? entry.instance_id.slice(0, 64) : '',
+    urls: (Array.isArray(entry.urls) ? entry.urls : []).map(cleanUrl).filter(Boolean).slice(0, 8),
+  })).filter(entry => entry.urls.length);
+}
+
+function buildAppInfo({ host, port, version = null, pid, installDir, supervisor = null, pm2Name: name = null, launchdLabel: label = null, addresses = [], linked = [], now = new Date() }) {
   return {
     url: listenUrl({ host, port }),
     version: version || null,
@@ -128,6 +139,7 @@ function buildAppInfo({ host, port, version = null, pid, installDir, supervisor 
     launchd_label: label || null,
     updated_at: now.toISOString(),
     addresses: (addresses || []).map(({ kind, label, url }) => ({ kind, label, url })),
+    linked: cleanLinked(linked),
   };
 }
 

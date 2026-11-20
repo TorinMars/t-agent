@@ -10,7 +10,7 @@ const express = require('express');
 //   GET   /api/learn/cards?kind=word|sentence&q=&limit=50&offset=0 -> { cards, total }
 //   POST  /api/learn/meaning { word }                   -> { zh }   (the configured translator; 503 when there is none)
 //   POST  /api/learn/starter { list: 'dev' }            -> { added }
-//   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter? } -> settings
+//   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter?, audio_*? } -> settings
 //   GET   /api/learn/status                           -> { company_computer, cache_only, home_name, home_online, waiting }
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the

@@ -141,7 +141,7 @@ const WordTranslate = (() => {
   function collect(hit, entry) {
     if (typeof LearnCollect === 'undefined' || !entry || !entry.meaning) return;
     const base = entry.base && /^[A-Za-z][A-Za-z'\u2019-]{0,39}$/.test(entry.base) ? entry.base : hit.word;
-    LearnCollect.word(base, entry.meaning);
+    LearnCollect.word(base, entry.meaning, entry.phonetic);
   }
 
   function show(hit) {

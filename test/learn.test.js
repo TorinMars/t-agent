@@ -9,6 +9,8 @@ const path = require('node:path');
 const express = require('express');
 const Database = require('better-sqlite3');
 const { createLearn, checkEnglish, codeLike } = require('../services/learn');
+// The audio settings with their defaults ("Audio" in docs/design/learn-english-page.md).
+const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');
@@ -98,7 +100,7 @@ test('a card is created once per owner, kind and text; adding it again returns i
   assert.equal(first.status, 200);
   assert.equal(first.body.created, true);
   const card = first.body.card;
-  assert.deepEqual(Object.keys(card).sort(), ['context', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'reps', 'source', 'suspended', 'zh'].sort());
+  assert.deepEqual(Object.keys(card).sort(), ['context', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'source', 'suspended', 'zh'].sort());
   assert.equal(card.en, 'Please fix the login page.');
   assert.equal(card.zh, '');
   assert.equal(card.context, 'Fix login');
@@ -132,7 +134,7 @@ test('collected material is not kept while collecting is off; cards added by han
   const { service, db } = setup(t);
   const call = await serve(t, service);
   await noStarter(call);
-  assert.deepEqual((await call('PUT', '/settings', { collect: false })).body, { collect: false, daily_goal: 20, starter: null });
+  assert.deepEqual((await call('PUT', '/settings', { collect: false })).body, { collect: false, daily_goal: 20, starter: null, ...AUDIO });
   assert.deepEqual((await call('POST', '/cards', sentence('Please fix the login page.'))).body, { card: null, created: false, collecting: false });
   assert.deepEqual((await call('POST', '/cards', word('merge'))).body, { card: null, created: false, collecting: false });
   assert.equal(db.prepare('SELECT COUNT(*) FROM learn_cards').pluck().get(), 0);
@@ -221,8 +223,8 @@ test('/meaning: the translator once per word (a card, or the cache), errors pass
   const { service, calls, fail } = setup(t);
   const call = await serve(t, service);
   await noStarter(call);
-  assert.deepEqual((await call('POST', '/meaning', { word: 'Rebase' })).body, { zh: `${ZH}:rebase` });
-  assert.deepEqual((await call('POST', '/meaning', { word: 'rebase' })).body, { zh: `${ZH}:rebase` });
+  assert.deepEqual((await call('POST', '/meaning', { word: 'Rebase' })).body, { zh: `${ZH}:rebase`, phonetic: '' });
+  assert.deepEqual((await call('POST', '/meaning', { word: 'rebase' })).body, { zh: `${ZH}:rebase`, phonetic: '' });
   assert.equal(calls.length, 1, 'cached: the same word is translated once');
   // A word card without a meaning gets it.
   const { card } = (await call('POST', '/cards', word('rollback'))).body;
@@ -231,7 +233,7 @@ test('/meaning: the translator once per word (a card, or the cache), errors pass
   assert.equal(calls.length, 2);
   // A meaning edited by the person is what /meaning answers.
   await call('PATCH', `/cards/${card.id}`, { zh: 'mine' });
-  assert.deepEqual((await call('POST', '/meaning', { word: 'rollback' })).body, { zh: 'mine' });
+  assert.equal((await call('POST', '/meaning', { word: 'rollback' })).body.zh, 'mine');
   assert.equal(calls.length, 2);
   for (const body of [{}, { word: 'two words' }, { word: 5 }]) assert.equal((await call('POST', '/meaning', body)).status, 400, JSON.stringify(body));
   fail(new TranslatorError('Translation timed out; please retry', 504));
@@ -240,6 +242,52 @@ test('/meaning: the translator once per word (a card, or the cache), errors pass
   const none = setup(t, { lookup: false });
   const bare = await serve(t, none.service);
   assert.deepEqual(await bare('POST', '/meaning', { word: 'merge' }), { status: 503, body: { error: 'Translation service not configured yet' } });
+});
+
+test('phonetic transcriptions: from the dictionary, else from the page or the translator (once), kept on the card without a new content time', async t => {
+  const db = database(t);
+  const calls = [];
+  const lookupWord = async (owner, word) => {
+    calls.push(word);
+    if (word === 'idempotent') return { word, base: 'idempotent', phonetic: '/aɪˈdɛmpətənt/', meaning: `${ZH}:${word}` };
+    if (word === 'grokked') return { word, base: 'grok', phonetic: '/ɡrɑk/', meaning: `${ZH}:${word}` };
+    return { word, meaning: `${ZH}:${word}` };
+  };
+  const service = createLearn({ db, now: () => NOW, timeZone: TZ, lookupWord });
+  const call = await serve(t, service);
+  await noStarter(call);
+  // A word in the dictionary gets it when it is added; a sentence never has one.
+  const expire = (await call('POST', '/cards', word('Expire'))).body.card;
+  assert.equal(expire.phonetic, '/ɪkˈspaɪər/');
+  assert.equal((await call('POST', '/cards', sentence('Please fix the login page.'))).body.card.phonetic, '');
+  // The dictionary wins over what the page sends; a word it does not have keeps the page's (checked) one.
+  assert.equal((await call('POST', '/cards', word('deploy', { phonetic: '/wrong/' }))).body.card.phonetic, '/dɪˈplɔɪ/');
+  assert.equal((await call('POST', '/cards', word('kubectl', { phonetic: 'kuːb kənˈtroʊl' }))).body.card.phonetic, '/kuːb kənˈtroʊl/');
+  assert.equal((await call('POST', '/cards', word('yaml', { phonetic: '<b>x</b>' }))).body.card.phonetic, '');
+  assert.equal((await call('POST', '/cards', word('jq', { phonetic: 5 }))).status, 400);
+  // A word nobody knows yet: the spell queue asks the translator once while the server runs, and keeps its answer for the word itself only.
+  db.prepare("INSERT INTO learn_cards (owner, kind, en, norm, zh, source, created_at, due_at) VALUES ('me', 'word', 'idempotent', 'idempotent', 'x', 'manual', 1, 1), ('me', 'word', 'grokked', 'grokked', 'y', 'manual', 1, 1)").run();
+  const before = db.prepare("SELECT content_at, sync_seq FROM learn_cards WHERE norm = 'idempotent'").get();
+  const queued = (await call('GET', '/queue?mode=spell')).body.cards;
+  assert.equal(queued.find(card => card.en === 'idempotent').phonetic, '/aɪˈdɛmpətənt/');
+  assert.equal(queued.find(card => card.en === 'grokked').phonetic, '', 'the translator named another form: not kept');
+  assert.equal(queued.find(card => card.en === 'yaml').phonetic, '');
+  const after = db.prepare("SELECT content_at, sync_seq, phonetic FROM learn_cards WHERE norm = 'idempotent'").get();
+  assert.equal(after.content_at, before.content_at, 'the content clock is kept (an empty transcription never wins in the merge)');
+  assert.ok(after.sync_seq > before.sync_seq, 'a new change number, so the linked devices get it');
+  const asked = calls.length;
+  await call('GET', '/queue?mode=spell');
+  assert.equal(calls.length, asked, 'not asked again');
+  // The material list reads the dictionary only.
+  db.prepare("INSERT INTO learn_cards (owner, kind, en, norm, source, created_at, due_at) VALUES ('me', 'word', 'latency', 'latency', 'manual', 2, 2), ('me', 'word', 'frobnicate', 'frobnicate', 'manual', 2, 2)").run();
+  const listed = (await call('GET', '/cards?kind=word')).body.cards;
+  assert.equal(listed.find(card => card.en === 'latency').phonetic, '/ˈleɪtənsi/');
+  assert.equal(calls.length, asked, 'the list never asks the translator');
+  assert.equal(db.prepare("SELECT phonetic FROM learn_cards WHERE norm = 'latency'").get().phonetic, '/ˈleɪtənsi/', 'stored');
+  // A text edit to another word takes that word's transcription.
+  assert.equal((await call('PATCH', `/cards/${expire.id}`, { en: 'merge' })).body.card.phonetic, '/mɜrdʒ/');
+  // /meaning answers it too.
+  assert.equal((await call('POST', '/meaning', { word: 'cache' })).body.phonetic, '/kæʃ/');
 });
 
 test('the material list: kind filter, search in English and Chinese, paging, newest first', async t => {
@@ -330,10 +378,16 @@ test('mistakes: a wrong last answer, or a failed card with a wrong answer in the
 test('settings: defaults, checks, and the starter list imported once with its words due a few a day', async t => {
   const { service, db, clock } = setup(t);
   const call = await serve(t, service);
-  assert.deepEqual((await call('GET', '/settings')).body, { collect: true, daily_goal: 20, starter: 'dev' });
-  for (const body of [{ daily_goal: 0 }, { daily_goal: 201 }, { daily_goal: 2.5 }, { collect: 'yes' }, { starter: 'medicine' }, { theme: 'dark' }, []]) {
+  assert.deepEqual((await call('GET', '/settings')).body, { collect: true, daily_goal: 20, starter: 'dev', ...AUDIO });
+  for (const body of [{ daily_goal: 0 }, { daily_goal: 201 }, { daily_goal: 2.5 }, { collect: 'yes' }, { starter: 'medicine' }, { theme: 'dark' }, [],
+    { audio_repeat: 4 }, { audio_pause: 0 }, { audio_speed: 'fast' }, { audio_words: 'on' }, { audio_sentences_at: 'never' }, { audio_stop_on_typing: 1 }]) {
     assert.equal((await call('PUT', '/settings', body)).status, 400, JSON.stringify(body));
   }
+  // The audio settings are saved one at a time and read back.
+  const audio = (await call('PUT', '/settings', { audio_repeat: 5, audio_pause: 1, audio_speed: 'slow', audio_sentences_at: 'start', audio_words: false, audio_stop_on_typing: false })).body;
+  assert.deepEqual(audio, { collect: true, daily_goal: 20, starter: 'dev', ...AUDIO, audio_repeat: 5, audio_pause: 1, audio_speed: 'slow', audio_sentences_at: 'start', audio_words: false, audio_stop_on_typing: false });
+  assert.deepEqual((await call('GET', '/settings')).body, audio);
+  await call('PUT', '/settings', AUDIO);
   const words = STARTER_LISTS.dev.words;
   assert.ok(words.length >= 280 && words.length <= 340, `about 300 words: ${words.length}`);
   for (const item of words) assert.match(item, /^[a-z][a-z'-]{0,39}$/, 'English words only');
@@ -382,7 +436,7 @@ test('owners are kept apart: cards, queues, answers, settings and summaries', as
   assert.equal((await call('PATCH', `/cards/${mine.id}`, { zh: 'x' }, { owner: 'other' })).status, 404);
   assert.deepEqual((await call('GET', '/cards', undefined, { owner: 'other' })).body.cards.map(card => card.id), [theirs.card.id]);
   await call('PUT', '/settings', { collect: false, daily_goal: 3 }, { owner: 'other' });
-  assert.deepEqual((await call('GET', '/settings')).body, { collect: true, daily_goal: 20, starter: null });
+  assert.deepEqual((await call('GET', '/settings')).body, { collect: true, daily_goal: 20, starter: null, ...AUDIO });
   await call('POST', `/cards/${mine.id}/answer`, { mode: 'spell', grade: 'again', correct: false });
   assert.equal((await call('GET', '/summary', undefined, { owner: 'other' })).body.done_today, 0);
   assert.equal((await call('GET', '/summary', undefined, { owner: 'other' })).body.mistakes, 0);

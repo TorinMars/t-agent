@@ -548,6 +548,7 @@ I18n.add({
   "Invalid card change": "卡片修改无效",
   "Invalid context": "来源无效",
   "Invalid learning settings": "学习设置无效",
+  "Invalid audio setting": "音频设置无效",
   "Learning settings are kept on a normal computer, which cannot be reached right now": "学习设置保存在普通电脑上，现在连不上那台电脑",
   "Invalid list range": "列表范围无效",
   "Invalid meaning": "释义无效",

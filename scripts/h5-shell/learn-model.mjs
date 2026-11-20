@@ -114,6 +114,29 @@ export function maskedContext(card) {
   return context.replace(new RegExp(`\\b${escaped}\\w*`, 'gi'), '___');
 }
 
+// The letter slots of Spell on one line: at the normal size (36px wide, a gap of 8px, a 24px letter) while the word fits the width; else the slots, the
+// gaps and the letters shrink together down to SLOT_MIN wide with a 14px letter; only a word longer than that wraps, in rows of even length (never one
+// letter alone on a line), each row as large as it fits. Returns { slot, gap, font, height, rows } (rows: the number of letters on each line).
+export const SLOT = 36;
+export const SLOT_GAP = 8;
+export const SLOT_MIN = 18;
+export function slotLayout(count, width) {
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  const room = Number(width) > 0 ? Number(width) : Infinity;
+  const sized = (perRow, rows) => {
+    const slot = Math.min(SLOT, room / (perRow + ((perRow - 1) * SLOT_GAP) / SLOT));
+    const scale = slot / SLOT;
+    const even = Array.from({ length: rows }, (_, row) => Math.floor(n / rows) + (row < n % rows ? 1 : 0));
+    return { slot: Math.floor(slot * 10) / 10, gap: Math.max(2, Math.floor(SLOT_GAP * scale * 10) / 10), font: Math.max(14, Math.round(24 * scale)), height: Math.max(30, Math.round(44 * scale)), rows: even };
+  };
+  for (let rows = 1; rows <= n; rows += 1) {
+    const perRow = Math.ceil(n / rows);
+    const fit = sized(perRow, rows);
+    if (fit.slot >= SLOT_MIN || perRow === 1) return fit;
+  }
+  return sized(1, n);
+}
+
 // A mixed session: words and sentences taken in turn (free practice when nothing is due), at most `limit` cards, no card twice.
 export function mixCards(lists, limit = 20) {
   const seen = new Set();

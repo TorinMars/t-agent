@@ -88,6 +88,30 @@ test('merge: each half goes to its later version, a tie to the greater instance 
   assert.equal(followed.reps, 3);
 });
 
+test('merge: a phonetic transcription travels with the content, is never replaced by an empty one, and never follows a move', () => {
+  const ipa = '/m\u025crd\u0292/';
+  // Filled on one side without a new content time (a lookup): it comes over whichever side has the later content.
+  for (const [local, incoming] of [[base({ phonetic: ipa }), base({ content_at: 99, content_by: 'b', zh: ZH })], [base({ content_at: 99, content_by: 'b', zh: ZH }), base({ phonetic: ipa })]]) {
+    const { card, changed } = merge.mergeCard(local, incoming);
+    assert.equal(card.phonetic, ipa);
+    assert.equal(card.zh, ZH);
+    assert.equal(changed, true);
+  }
+  // An older peer (schema 14) sends no transcription: the one here stays, and nothing changes.
+  const older = merge.cardToPeer({ ...base(), id: 1, owner: 'x', norm: 'merge' }, 'old');
+  delete older.phonetic;
+  const fromOlder = merge.cardFromPeer(older, 'old');
+  assert.equal(fromOlder.phonetic, '');
+  assert.equal(merge.mergeCard(base({ phonetic: ipa, content_by: 'old' }), fromOlder).card.phonetic, ipa);
+  // A moved card's transcription is that of its old text.
+  assert.equal(merge.mergeCard(base({ en: 'deploy' }), base({ en: 'deploi', phonetic: '/x/' }), { follow: true }).card.phonetic, '');
+  // Checked on the way in: a sentence has none, odd text is dropped.
+  const wire = merge.cardToPeer({ ...base({ phonetic: ipa }), id: 1, owner: 'x', norm: 'merge' }, 'me-id');
+  assert.equal(wire.phonetic, ipa);
+  assert.equal(merge.cardFromPeer({ ...wire, phonetic: '<script>' }, 's').phonetic, '');
+  assert.equal(merge.cardFromPeer({ ...wire, kind: 'sentence', en: 'Please merge it now.', phonetic: ipa }, 's').phonetic, '');
+});
+
 test('merge: what a peer sends is checked; norm is computed here, never taken from the wire', () => {
   const wire = merge.cardToPeer({ ...base(), id: 1, owner: 'x', norm: 'merge', content_by: '', state_by: '' }, 'me-id');
   assert.equal(wire.content_by, 'me-id', "'' is this device");
@@ -104,6 +128,9 @@ test('merge: what a peer sends is checked; norm is computed here, never taken fr
   assert.equal(merge.moveFromPeer({ kind: 'word', norm: 'a', moved_to: 'a', at: 1 }, 's'), null);
   assert.throws(() => merge.settingsFromPeer({ daily_goal: 0 }, { dev: {} }), /INVALID_SYNC_VALUE/);
   assert.deepEqual(merge.settingsFromPeer({ collect: false, daily_goal: 5, starter: null }, { dev: {} }), { collect: false, daily_goal: 5, starter: null });
+  // The audio settings travel with them; a value this version does not know is left out (the default here), never an error.
+  assert.deepEqual(merge.settingsFromPeer({ collect: true, audio_repeat: 5, audio_speed: 'slow', audio_words: false, audio_pause: 9, audio_sentences_at: 'later' }, { dev: {} }),
+    { collect: true, audio_repeat: 5, audio_speed: 'slow', audio_words: false });
 });
 
 // ---- Schema 13 -> 14 ----
@@ -258,6 +285,12 @@ test('two linked services: cards, answers and settings made on each side reach t
   assert.equal(cardsOf(A).length, 3);
   assert.equal(reviewsOf(B).length, 1);
   assert.equal((await B.page('GET', '/learn/settings')).body.starter, null, 'the settings travel too');
+  assert.equal(cardsOf(B).find(card => card.norm === 'merge').phonetic, '/m\u025crd\u0292/', 'the transcription travels with the card');
+  // A transcription filled in later on one side (the page sent it with a word the dictionary does not have) reaches the other.
+  B.db.prepare("INSERT INTO learn_cards (owner, kind, en, norm, source, created_at, due_at, content_at, sync_seq) VALUES ((SELECT owner FROM learn_cards LIMIT 1), 'word', 'kubectl', 'kubectl', 'manual', 1, 1, 0, 0)").run();
+  await B.page('POST', '/learn/cards', word('kubectl', { phonetic: '/ku\u02d0b k\u0259n\u02c8tro\u028al/' }));
+  await B.sync.syncAll();
+  assert.equal(cardsOf(A).find(card => card.norm === 'kubectl').phonetic, '/ku\u02d0b k\u0259n\u02c8tro\u028al/');
 
   // An answer on A and a meaning edit on B of the same card, before either syncs.
   const onB = cardsOf(B).find(card => card.norm === 'merge');
@@ -283,8 +316,10 @@ test('two linked services: cards, answers and settings made on each side reach t
   B.sync.start();
   await A.page('POST', '/learn/cards', word('rollback'));
   await until(() => cardsOf(B).some(card => card.norm === 'rollback'), 'the push after a local change');
-  await A.page('PUT', '/learn/settings', { daily_goal: 33 });
+  await A.page('PUT', '/learn/settings', { daily_goal: 33, audio_repeat: 3, audio_sentences_at: 'start' });
   await until(async () => (await B.page('GET', '/learn/settings')).body.daily_goal === 33, 'settings pushed');
+  const audioOnB = (await B.page('GET', '/learn/settings')).body;
+  assert.deepEqual([audioOnB.audio_repeat, audioOnB.audio_sentences_at], [3, 'start'], 'the audio settings are shared too');
   // Nothing loops: once both agree, rounds stop sending rows.
   await settle(200);
   const before = A.requests.length + B.requests.length;

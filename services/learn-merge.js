@@ -1,13 +1,15 @@
 // The merge rules of the English learning sync ("Sync across linked devices" in docs/design/learn-english.md): pure functions, no database, no clock.
 //
 // A card is one per kind and normalized text on every device. It has two versions, each a hybrid clock time and the instance id of the device that
-// made it: the content (en, zh, source, context, suspended), changed by an edit, and the review state (due_at, interval_days, ease, reps, lapses,
+// made it: the content (en, zh, phonetic, source, context, suspended), changed by an edit, and the review state (due_at, interval_days, ease, reps, lapses,
 // last_result, last_at, last_correct), changed by an answer. Each half goes to the later version on its own, a tie to the greater instance id, so an
-// answer on one device and a meaning edit on another both survive. A meaning is never replaced by an empty one, and created_at is the earliest.
-const { normalize, checkEnglish, KINDS, SOURCES, MODES } = require('./learn');
+// answer on one device and a meaning edit on another both survive. A meaning or a phonetic transcription is never replaced by an empty one (an older
+// peer, schema 14, sends none), and created_at is the earliest.
+const { normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS } = require('./learn');
 const { GRADES } = require('./learn-review');
+const { cleanPhonetic } = require('./phonetics');
 
-const CONTENT = ['en', 'zh', 'source', 'context', 'suspended'];
+const CONTENT = ['en', 'zh', 'phonetic', 'source', 'context', 'suspended'];
 const STATE = ['due_at', 'interval_days', 'ease', 'reps', 'lapses', 'last_result', 'last_at', 'last_correct'];
 const FIELDS = ['created_at', ...CONTENT, 'content_at', 'content_by', ...STATE, 'state_at', 'state_by'];
 const INSTANCE_ID = /^[A-Za-z0-9-]{1,64}$/;
@@ -32,6 +34,8 @@ function mergeCard(local, incoming, { follow = false } = {}) {
     created_at: Math.min(local.created_at, incoming.created_at),
     ...pick(content, [...CONTENT, 'content_at', 'content_by']),
     zh: content.zh || other.zh || '',
+    // A moved card's transcription is that of its old text: it never comes over.
+    phonetic: content.phonetic || (follow ? '' : other.phonetic) || '',
     ...pick(stateFromPeer ? incoming : local, [...STATE, 'state_at', 'state_by']),
   };
   return { card, changed: FIELDS.some(field => card[field] !== local[field]) };
@@ -39,7 +43,7 @@ function mergeCard(local, incoming, { follow = false } = {}) {
 
 function pick(row, fields) {
   const out = {};
-  for (const field of fields) out[field] = row[field] === undefined ? null : row[field];
+  for (const field of fields) out[field] = row[field] === undefined ? (field === 'phonetic' ? '' : null) : row[field];
   return out;
 }
 
@@ -62,7 +66,7 @@ function cardFromPeer(raw, sender) {
   if (!(raw.last_result === null || GRADES.includes(raw.last_result)) || !(raw.last_correct === null || typeof raw.last_correct === 'boolean')) return null;
   const by = value => (typeof value === 'string' && INSTANCE_ID.test(value) ? value : sender);
   return {
-    kind: raw.kind, norm: normalize(en), en, zh, source: raw.source, context, suspended: raw.suspended ? 1 : 0,
+    kind: raw.kind, norm: normalize(en), en, zh, phonetic: raw.kind === 'word' ? cleanPhonetic(raw.phonetic) : '', source: raw.source, context, suspended: raw.suspended ? 1 : 0,
     created_at: raw.created_at, content_at: raw.content_at, content_by: by(raw.content_by),
     due_at: raw.due_at, interval_days: raw.interval_days, ease: raw.ease, reps: raw.reps, lapses: raw.lapses,
     last_result: raw.last_result, last_at: raw.last_at, last_correct: raw.last_correct === null ? null : (raw.last_correct ? 1 : 0),
@@ -73,7 +77,7 @@ function cardFromPeer(raw, sender) {
 // A card row of this device in the form a peer gets (`me`: this device's instance id, for the versions it made itself, stored as '').
 function cardToPeer(row, me) {
   return {
-    kind: row.kind, en: row.en, zh: row.zh, source: row.source, context: row.context, suspended: Boolean(row.suspended),
+    kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context, suspended: Boolean(row.suspended),
     created_at: row.created_at, content_at: row.content_at, content_by: row.content_by || me,
     due_at: row.due_at, interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: row.last_at === null || row.last_at === undefined ? null : row.last_at,
@@ -112,6 +116,8 @@ function settingsFromPeer(value, starterLists) {
   if (value.collect !== undefined) { if (typeof value.collect !== 'boolean') invalid(); out.collect = value.collect; }
   if (value.daily_goal !== undefined) { if (!Number.isInteger(value.daily_goal) || value.daily_goal < 1 || value.daily_goal > 200) invalid(); out.daily_goal = value.daily_goal; }
   if (value.starter !== undefined) { if (value.starter !== null && !Object.hasOwn(starterLists, value.starter)) invalid(); out.starter = value.starter; }
+  // The audio settings: a value this version does not know is left out (the default here), so a newer peer's choice never stops the sync.
+  for (const [key, field] of Object.entries(AUDIO_SETTINGS)) if (field.values.includes(value[key])) out[key] = value[key];
   return out;
 }
 

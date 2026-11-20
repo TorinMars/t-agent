@@ -98,3 +98,26 @@ test('the keys of a computer: Enter checks and then continues, 1 / 2 / 3 grade o
   assert.equal(exerciseKey({ key: 'Enter', checked: false, modifiers: true }), null);
   assert.equal(exerciseKey({ key: 'x', checked: true }), null);
 });
+
+test('the letter slots of Spell stay on one line, shrinking together; a longer word wraps in rows of even length', async () => {
+  const { slotLayout, SLOT, SLOT_MIN } = await load();
+  const width = layout => layout.rows[0] * layout.slot + (layout.rows[0] - 1) * layout.gap;
+  assert.deepEqual(slotLayout(6, 358), { slot: SLOT, gap: 8, font: 24, height: 44, rows: [6] }, 'a short word: the normal size');
+  const sixteen = slotLayout(16, 358); // a 16-letter word on a 390px phone
+  assert.deepEqual(sixteen.rows, [16]);
+  assert.ok(sixteen.slot >= SLOT_MIN && sixteen.font >= 14 && width(sixteen) <= 358, JSON.stringify(sixteen));
+  const narrow = slotLayout(16, 288); // a 320px phone: too long for the smallest slots, so two even rows
+  assert.deepEqual(narrow.rows, [8, 8]);
+  assert.ok(width(narrow) <= 288 && narrow.slot >= SLOT_MIN);
+  assert.deepEqual(slotLayout(17, 288).rows, [9, 8], 'never one letter alone');
+  for (const n of [1, 5, 12, 20, 25, 33, 40]) {
+    for (const w of [240, 288, 358, 600]) {
+      const layout = slotLayout(n, w);
+      assert.equal(layout.rows.reduce((a, b) => a + b, 0), n);
+      assert.ok(Math.max(...layout.rows) - Math.min(...layout.rows) <= 1, 'even rows');
+      assert.ok(width(layout) <= w + 0.01, `${n} at ${w}: ${JSON.stringify(layout)}`);
+      assert.ok(layout.slot <= SLOT && layout.font >= 14);
+    }
+  }
+  assert.deepEqual(slotLayout(10, 0).rows, [10], 'before the width is known: one line');
+});

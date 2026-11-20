@@ -27,9 +27,10 @@ import { SwitchRow } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
-import { diffWords, hintText, normWord, spellCheck, suggestedGrade } from './learn-grade.mjs';
-import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, maskedContext, minutesFor, mixCards, modeOf, tilesFor } from './learn-model.mjs';
-import { attachVoice, canSpeak, speak, stopSpeaking, voiceWay } from './learn-speech.mjs';
+import { AUTO_CHECK_MS, diffWords, hintText, normWord, spellCheck, suggestedGrade, typedInFull } from './learn-grade.mjs';
+import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, maskedContext, minutesFor, mixCards, modeOf, slotLayout, tilesFor } from './learn-model.mjs';
+import { attachVoice, canSpeak, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
+import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
@@ -187,7 +188,7 @@ function PhoneLearn({ view, close, home, back, ...common }) {
 
 function ViewBody({ view, phone, back, open, data, ...common }) {
   const frame = title => ({ phone, title, onBack: back });
-  if (view.kind === 'session') return <Session mode={view.mode} preset={view.preset} phone={phone} onBack={back} onRestart={mode => open({ kind: 'session', mode })} onDone={data.reload} {...common} />;
+  if (view.kind === 'session') return <Session mode={view.mode} preset={view.preset} phone={phone} onBack={back} onRestart={mode => open({ kind: 'session', mode })} onDone={data.reload} settings={data.settings} {...common} />;
   if (view.kind === 'material') return <MaterialView frame={frame(t('Your material'))} ui={common.ui} />;
   if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} />;
   if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} onPractise={cards => open({ kind: 'session', mode: 'mistakes', preset: cards })} />;
@@ -383,7 +384,8 @@ async function loadQueue(mode) {
   return (data && Array.isArray(data.cards) ? data.cards : []).filter(card => card && !card.suspended);
 }
 
-function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onDone, openTranslator }) {
+function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onDone, openTranslator, settings }) {
+  const audio = useAudio(settings, speech.tts);
   const [cards, setCards] = useState(preset || null);
   const [error, setError] = useState('');
   const [index, setIndex] = useState(0);
@@ -472,7 +474,7 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
   const Exercise = EXERCISES[exercise];
   return (
     <Exercise key={`${card.id}-${index}`} ui={ui} card={card} cards={cards} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
-      onAnswer={answer} onSkip={skip} openTranslator={openTranslator} />
+      onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={exercise} />
   );
 }
 // A mode the browser cannot run falls back to Build the sentence (a card due for Dictation in a browser without speech output).
@@ -500,7 +502,7 @@ const INS = theme => ({ color: theme.palette.success.light, bgcolor: alpha(theme
 function DiffLine({ ops, sentence }) {
   const tail = (String(sentence || '').trim().match(/[.!?…]+$/) || [''])[0];
   return (
-    <Typography variant="body1" component="p" translate="no" className="h5-learn-diff" sx={{ overflowWrap: 'anywhere', lineHeight: 1.9 }}>
+    <Typography variant="body1" component="p" translate="no" className="h5-learn-diff" sx={{ overflowWrap: 'break-word', lineHeight: 1.9 }}>
       {ops.map((op, index) => (
         <span key={index} data-op={op.type}>
           {index ? ' ' : ''}
@@ -561,7 +563,7 @@ function Origin({ card }) {
   );
 }
 const ChineseText = ({ card, id }) => (
-  <Typography variant="h5" component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{card.zh || '—'}</Typography>
+  <Typography variant="h5" component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.zh || '—'}</Typography>
 );
 // The actions under an answer: before Check the exercise's own buttons, after it the grades (on a phone, pinned at the bottom).
 function useChecked({ register, onAnswer, check, answerText }) {
@@ -585,9 +587,99 @@ const keepFocus = field => ({
     if (event.detail > 0 && el && event.currentTarget.dataset.field === '1' && document.activeElement !== el) el.focus({ preventScroll: true });
   },
 });
-const HearButton = ({ text, phone, field, id = 'h5-learn-hear', label = 'Hear it', slow = false }) => (phone
-  ? <IconButton id={id} onClick={() => speak(text, { slow })} {...keepFocus(field)} {...named(t(label))} sx={{ color: 'primary.main' }}><Icon name="learnSound" size={22} /></IconButton>
-  : <Button id={id} startIcon={<Icon name="learnSound" size={20} />} onClick={() => speak(text, { slow })} {...keepFocus(field)}>{t(label)}</Button>);
+
+// ── Audio ("Audio" in docs/design/learn-english-page.md) ──
+// One player per session (learn-audio.mjs): a card plays by itself as the Learn settings say (`autoPlays`), Hear it / Play plays again with the same
+// repeat, typing skips the rest of the repeats (when "Stop when I start typing" is on), and leaving the card, answering or Stop cancels what is
+// pending, so nothing of one card is heard over the next. A browser that refuses sound before the first tap shows "Tap to play" once per page load.
+let tapToPlayShown = false;
+function useAudio(settings, tts) {
+  const options = audioOptions(settings);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+  const ttsRef = useRef(tts);
+  ttsRef.current = tts;
+  const [state, setState] = useState({ playing: false, text: '', index: 0, total: 0, blocked: false });
+  const player = useMemo(() => createPlayer({
+    speakOnce, cancel: stopSpeaking,
+    onChange: next => { if (next.blocked) tapToPlayShown = true; setState(next); },
+  }), []);
+  useEffect(() => () => player.stop(), [player]);
+  return useMemo(() => ({
+    options, state,
+    // `once`: a single reading (a word after its answer); `auto`: started by the page (only the first of those can show "Tap to play").
+    play: (text, { once = false, slow, auto = false } = {}) => {
+      if (!ttsRef.current) return;
+      const current = optionsRef.current;
+      player.play(text, { repeat: once ? 1 : current.repeat, pauseMs: current.pauseMs, slow: slow === undefined ? current.slow : slow, auto: auto && !tapToPlayShown });
+    },
+    stop: () => player.stop(),
+    typed: () => { if (optionsRef.current.stopOnTyping) player.skipRest(); },
+  }), [player, state, options.words, options.sentences, options.sentencesAt, options.repeat, options.pauseMs, options.slow, options.stopOnTyping]); // eslint-disable-line react-hooks/exhaustive-deps -- the options by value
+}
+// The plays of a card by itself: at the start (when it appears) and after the answer, as `autoPlays` says for the exercise.
+function useCardAudio(audio, exercise, text, result) {
+  const plays = autoPlays(exercise, audio.options);
+  useEffect(() => {
+    if (plays.includes('start')) audio.play(text, { auto: true });
+    return () => audio.stop();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per card (an exercise is drawn again for each card)
+  const checked = Boolean(result);
+  useEffect(() => {
+    if (!checked) return;
+    audio.stop();
+    if (plays.includes('after')) audio.play(text, { once: exercise === 'spell' });
+  }, [checked]); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the answer is checked
+}
+// Hear it / Play: while this text plays, "Playing 1 of 2" with Stop; when the browser refused the first play, "Tap to play".
+function AudioButton({ audio, text, phone, field, id = 'h5-learn-hear', label = 'Hear it', slow, onPress = null }) {
+  const press = () => { if (onPress) onPress(); audio.play(text, slow === undefined ? {} : { slow }); };
+  const { state } = audio;
+  if (state.blocked && state.text === text) {
+    return <Button id="h5-learn-tap-play" variant="outlined" startIcon={<Icon name="learnSound" size={20} />} onClick={press}>{t('Tap to play')}</Button>;
+  }
+  const playing = state.playing && state.text === text && slow === undefined;
+  const name = playing ? tf('Playing {1} of {2}', state.index, state.total) : t(label);
+  const stop = playing ? <Button id="h5-learn-stop" onClick={() => audio.stop()} {...keepFocus(field)}>{t('Stop')}</Button> : null;
+  const sx = theme => (playing ? { bgcolor: alpha(theme.palette.primary.main, 0.12) } : {});
+  if (phone) {
+    return (
+      <>
+        <IconButton id={id} data-playing={playing ? 'true' : undefined} onClick={press} {...keepFocus(field)} {...named(name)} sx={theme => ({ color: 'primary.main', ...sx(theme) })}><Icon name="learnSound" size={22} /></IconButton>
+        {stop}
+      </>
+    );
+  }
+  return (
+    <>
+      <Button id={id} data-playing={playing ? 'true' : undefined} startIcon={<Icon name="learnSound" size={20} />} onClick={press} {...keepFocus(field)} sx={sx}>{name}</Button>
+      {stop}
+    </>
+  );
+}
+// The phonetic transcription of a word (IPA, American English), shown with the word; nothing when none is known.
+function Phonetic({ text, id, sx }) {
+  if (!text) return null;
+  return <Typography component="span" variant="body2" color="text.secondary" translate="no" lang="en-US-fonipa" id={id} className="h5-learn-phonetic" sx={{ whiteSpace: 'nowrap', ...sx }}>{text}</Typography>;
+}
+// A word with its transcription after it on the same line when there is room.
+function WordLine({ word, phonetic, variant = 'body1', className, sx, phoneticId }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'baseline', columnGap: 1, flexWrap: 'wrap', minWidth: 0 }}>
+      <Typography variant={variant} component="p" translate="no" className={className} sx={{ overflowWrap: 'break-word', minWidth: 0, ...sx }}>{word}</Typography>
+      <Phonetic text={phonetic} id={phoneticId} />
+    </Box>
+  );
+}
+// The automatic check of Spell and Fill the gap: AUTO_CHECK_MS after the typed letters reach the word's length, so the last letter is seen; any
+// change in that pause (Backspace) starts over, and a shorter answer waits for Check.
+function useAutoCheck({ register, ready, value, result }) {
+  useEffect(() => {
+    if (result || !ready) return undefined;
+    const timer = setTimeout(() => { if (register.current && !register.current.checked) register.current.check(); }, AUTO_CHECK_MS);
+    return () => clearTimeout(timer);
+  }, [ready, value, result, register]);
+}
 
 // ── The page's own keyboard (touch screen) ──
 // On a touch screen without a hardware keyboard (`keys` false; a computer, or a hardware key seen, types as before) the answer fields of Spell, Fill the
@@ -660,20 +752,20 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
 
 // ── Spell the word ──
 
-function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, openTranslator }) {
+function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, openTranslator, audio, exercise }) {
   const word = String(card.en || '').trim();
   const [value, setValue] = useState('');
   const [helped, setHelped] = useState(false);
   const [focused, setFocused] = useState(false);
-  const [meaning, setMeaning] = useState({ zh: card.zh || '', state: card.zh ? 'ok' : 'loading' });
+  const [meaning, setMeaning] = useState({ zh: card.zh || '', phonetic: card.phonetic || '', state: card.zh ? 'ok' : 'loading' });
   const input = useRef(null);
   useEffect(() => {
     focusOnStart(input, true); // on a touch screen too: the page's keyboard types into it (no system keyboard)
     if (card.zh) return undefined;
     let live = true;
     api('POST', '/api/learn/meaning', { word }).then(
-      data => { if (live) setMeaning({ zh: (data && data.zh) || '', state: data && data.zh ? 'ok' : 'none' }); },
-      failure => { if (live) setMeaning({ zh: '', state: failure && failure.status === 503 ? 'no-translator' : 'none' }); },
+      data => { if (live) setMeaning({ zh: (data && data.zh) || '', phonetic: card.phonetic || (data && data.phonetic) || '', state: data && data.zh ? 'ok' : 'none' }); },
+      failure => { if (live) setMeaning({ zh: '', phonetic: card.phonetic || '', state: failure && failure.status === 503 ? 'no-translator' : 'none' }); },
     );
     return () => { live = false; };
   }, [card]); // eslint-disable-line react-hooks/exhaustive-deps -- one card
@@ -681,43 +773,70 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     register, onAnswer, answerText: () => value,
     check: set => { if (!value.trim()) return; const check = spellCheck(word, value); set({ ...check, correct: check.ok, helped }); },
   });
-  const change = next => { if (!result) setValue(next.replace(/\s+/g, '').slice(0, word.length)); };
+  useCardAudio(audio, exercise, word, result);
+  useAutoCheck({ register, ready: typedInFull(value, word), value, result });
+  const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '').slice(0, word.length)); } };
   const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
   const giveUp = () => { if (!result) setResult({ ...spellCheck(word, value), ok: false, correct: false, helped: true, gaveUp: true }); };
   const showFirst = () => { setHelped(true); setValue(now => (now ? now : word.slice(0, 1))); if (input.current) input.current.focus({ preventScroll: true }); };
   const context = maskedContext(card);
+  // The letter slots on one line (slotLayout): the width of the box is measured, and the slots shrink together for a long word.
+  const letters = useRef(null);
+  const [room, setRoom] = useState(0);
+  useLayoutEffect(() => {
+    const el = letters.current;
+    if (!el) return undefined;
+    const measure = () => setRoom(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
+  const layout = slotLayout(word.length, room);
+  const rows = [];
+  layout.rows.reduce((at, size) => { rows.push([at, size]); return at + size; }, 0);
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
     <Button id="h5-learn-dont-know" onClick={giveUp}>{t("I don't know")}</Button>
     <Box sx={{ flex: '1 1 auto' }} />
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
   </>);
+  const slot = at => {
+    const char = word[at];
+    const shown = result && result.gaveUp ? char : value[at] || '';
+    const tone = !result ? 'text.primary' : result.gaveUp ? 'primary.main' : result.letters[at].ok ? 'success.light' : 'error.light';
+    const caret = !result && focused && at === Math.min(value.length, word.length - 1);
+    return (
+      <Box key={at} className="h5-learn-letter" aria-hidden="true" sx={theme => ({
+        ...theme.typography.h5, fontSize: layout.font, width: layout.slot, height: layout.height, flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: tone, borderBottom: 2, borderColor: caret ? 'primary.main' : 'text.disabled',
+      })}>{shown}</Box>
+    );
+  };
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
       <Prompt label={t('Meaning')} footer={(
-        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', ml: -1 }}>
-          {tts ? <Button id="h5-learn-hear" startIcon={<Icon name="learnSound" size={20} />} onClick={() => speak(word)} {...keepFocus(input)}>{t('Hear it')}</Button> : null}
+        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
+          {tts ? <AudioButton audio={audio} text={word} field={input} /> : null}
           <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>
         </Box>
       )}>
-        {meaning.zh ? <Typography variant="h5" component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{meaning.zh}</Typography> : null}
+        {meaning.zh ? <Typography variant="h5" component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography> : null}
+        {/* The transcription next to Hear it: the sound is offered there already, so it gives nothing more away. */}
+        {tts && meaning.phonetic ? <Box sx={{ mt: 0.5 }}><Phonetic text={meaning.phonetic} id="h5-learn-phonetic" /></Box> : null}
         {meaning.state === 'loading' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t('Looking up the meaning…')}</Typography> : null}
         {meaning.state === 'none' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{tts ? t('No meaning found. Listen to the word instead.') : t('No meaning found for this word.')}</Typography> : null}
         {meaning.state === 'no-translator' ? <TranslatorNotice onOpen={openTranslator} sx={{ mt: 1 }} /> : null}
         {context ? <Typography variant="caption" component="p" color="text.secondary" sx={{ mt: 0.75 }}><Fmt template={'Used in "{1}"'} values={[context]} /></Typography> : null}
       </Prompt>
       <Box>
-        <Box className="h5-learn-letters" translate="no" onClick={() => { if (input.current) input.current.focus(); kb.show(); }} sx={{ position: 'relative', display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 1, py: 1 }}>
-          {[...word].map((char, at) => {
-            const shown = result && result.gaveUp ? char : value[at] || '';
-            const tone = !result ? 'text.primary' : result.gaveUp ? 'primary.main' : result.letters[at].ok ? 'success.light' : 'error.light';
-            const caret = !result && focused && at === Math.min(value.length, word.length - 1);
-            return (
-              <Box key={at} className="h5-learn-letter" aria-hidden="true" sx={theme => ({
-                ...theme.typography.h5, width: 36, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                color: tone, borderBottom: 2, borderColor: caret ? 'primary.main' : 'text.disabled',
-              })}>{shown}</Box>
-            );
-          })}
+        <Box ref={letters} className="h5-learn-letters" translate="no" data-rows={layout.rows.length} onClick={() => { if (input.current) input.current.focus(); kb.show(); }}
+          sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', rowGap: 1, py: 1 }}>
+          {rows.map(([from, size]) => (
+            <Box key={from} className="h5-learn-letter-row" sx={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', columnGap: `${layout.gap}px` }}>
+              {Array.from({ length: size }, (_, offset) => slot(from + offset))}
+            </Box>
+          ))}
           <InputBase inputRef={input} value={value} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
             onChange={event => change(event.target.value)}
             inputProps={{ id: 'h5-learn-spell-input', 'aria-label': t('Type the word'), maxLength: word.length, readOnly: Boolean(result), ...fieldProps, ...kb.inputProps }}
@@ -730,7 +849,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       </Box>
       {result ? (
         <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
-          <Typography variant="h6" component="p" translate="no" className="h5-learn-word" sx={{ color: 'success.light' }}>{word}</Typography>
+          <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
           {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
           {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[result.right, result.total]} /></Typography> : null}
         </Feedback>
@@ -763,7 +882,7 @@ function Tile({ used = false, className, children, ...props }) {
   );
 }
 
-function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, register, onAnswer, onSkip }) {
+function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise }) {
   const tiles = useMemo(() => tilesFor(card, cards), [card, cards]);
   const [placed, setPlaced] = useState([]);
   const [typed, setTyped] = useState('');
@@ -776,8 +895,10 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
     register, onAnswer, answerText: () => answer,
     check: set => { if (!answer) return; const diff = diffWords(card.en, answer); set({ ...diff, helped }); },
   });
+  useCardAudio(audio, exercise, card.en, result);
   const takeBack = () => { if (placed.length && !result) setPlaced(now => now.slice(0, -1)); };
-  const kb = useLearnKeys({ ui, keys, field, change: next => { if (!result) setTyped(next); }, atStart: false, emptyBack: takeBack });
+  const type = next => { if (!result) { audio.typed(); setTyped(next); } };
+  const kb = useLearnKeys({ ui, keys, field, change: type, atStart: false, emptyBack: takeBack });
   const place = id => { if (!result) setPlaced(now => (now.includes(id) ? now : [...now, id])); };
   const remove = id => { if (!result) setPlaced(now => now.filter(item => item !== id)); };
   // The next word in order; tiles placed wrongly after the right start are taken back first.
@@ -791,7 +912,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
     setPlaced([...base, id]);
   };
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
-    {tts ? <HearButton text={card.en} phone={phone} field={field} /> : null}
+    {tts ? <AudioButton audio={audio} text={card.en} phone={phone} field={field} /> : null}
     <Button id="h5-learn-hint" onClick={hint} {...keepFocus(field)}>{t('Hint')}</Button>
     <Box sx={{ flex: '1 1 auto' }} />
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
@@ -804,7 +925,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
         <Tile key={id} className="h5-learn-placed" data-tile={id} disabled={Boolean(result)} onClick={event => { event.stopPropagation(); remove(id); }} aria-label={tf('Remove "{1}"', tiles[id].text)}>{tiles[id].text}</Tile>
       ))}
       <InputBase inputRef={field} value={typed} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} placeholder={placed.length || typed ? '' : t('Type here, or tap the tiles')}
-        onChange={event => { if (!result) setTyped(event.target.value); }}
+        onChange={event => type(event.target.value)}
         onKeyDown={event => { if (event.key === 'Backspace' && !typed) takeBack(); }}
         inputProps={{ id: 'h5-learn-build-input', 'aria-label': t('Your sentence'), readOnly: Boolean(result), ...fieldProps, ...kb.inputProps }}
         sx={theme => ({ ...theme.typography.body1, flex: '1 1 120px', minWidth: 120 })} />
@@ -840,15 +961,16 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
 
 // ── Dictation ──
 
-function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAnswer, onSkip }) {
+function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAnswer, onSkip, audio, exercise }) {
   const [value, setValue] = useState('');
   const field = useRef(null);
-  useEffect(() => { speak(card.en); focusOnStart(field, true); return () => stopSpeaking(); }, [card]); // eslint-disable-line react-hooks/exhaustive-deps -- one card
+  useEffect(() => { focusOnStart(field, true); }, [card]); // eslint-disable-line react-hooks/exhaustive-deps -- one card
   const { result, suggested, grade } = useChecked({
     register, onAnswer, answerText: () => value,
     check: set => { if (!value.trim()) return; set({ ...diffWords(card.en, value), helped: false }); },
   });
-  const change = next => { if (!result) setValue(next); };
+  useCardAudio(audio, exercise, card.en, result); // Dictation always plays at the start: listening is the task
+  const change = next => { if (!result) { audio.typed(); setValue(next); } };
   const kb = useLearnKeys({ ui, keys, field, change });
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
@@ -859,8 +981,8 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
       <Prompt label={t('Listen and type what you hear')} footer={(
         <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', ml: -1 }}>
-          <Button id="h5-learn-play" startIcon={<Icon name="learnSound" size={20} />} onClick={() => speak(card.en)} {...keepFocus(field)}>{t('Play')}</Button>
-          <Button id="h5-learn-slow" onClick={() => speak(card.en, { slow: true })} {...keepFocus(field)}>{t('Slow')}</Button>
+          <AudioButton audio={audio} text={card.en} field={field} id="h5-learn-play" label="Play" />
+          <Button id="h5-learn-slow" onClick={() => audio.play(card.en, { slow: true })} {...keepFocus(field)}>{t('Slow')}</Button>
         </Box>
       )}>
         {result ? <ChineseText card={card} id="h5-learn-chinese" /> : null}
@@ -881,7 +1003,7 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
 
 // ── Say it ──
 
-function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, onSkip }) {
+function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise }) {
   const [value, setValue] = useState('');
   const [listening, setListening] = useState(false);
   const box = useRef(null);
@@ -895,8 +1017,9 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
     register, onAnswer, answerText: () => value,
     check: set => { if (!value.trim()) return; set({ ...diffWords(card.en, value), helped: false }); },
   });
+  useCardAudio(audio, exercise, card.en, result); // the model at the start
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
-    {tts ? <HearButton text={card.en} phone={phone} field={box} /> : null}
+    {tts ? <AudioButton audio={audio} text={card.en} phone={phone} field={box} /> : null}
     <Box sx={{ flex: '1 1 auto' }} />
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
@@ -904,7 +1027,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
   return (
     <ViewFrame {...frame} footer={phone ? actions : null}>
       <Prompt label={t('Read this aloud')}>
-        <Typography variant="h5" component="p" translate="no" id="h5-learn-say-text" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>{card.en}</Typography>
+        <Typography variant="h5" component="p" translate="no" id="h5-learn-say-text" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.en}</Typography>
         {card.zh ? <Typography variant="body2" color="text.secondary" lang="zh" translate="no" sx={{ mt: 0.5 }}>{card.zh}</Typography> : null}
       </Prompt>
       <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -917,7 +1040,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
             {listening ? t('Listening… press again when you are done.') : t('Press the microphone and read the sentence. You can also type it.')}
           </Typography>
         </Box>
-        <OutlinedInput inputRef={box} multiline minRows={2} value={value} onChange={event => { if (!result) setValue(event.target.value); }} placeholder={t('What you said')}
+        <OutlinedInput inputRef={box} multiline minRows={2} value={value} onChange={event => { if (!result) { audio.typed(); setValue(event.target.value); } }} placeholder={t('What you said')}
           inputProps={{ id: 'h5-learn-say-input', 'aria-label': t('What you said'), readOnly: Boolean(result), translate: 'no', ...fieldProps }} />
         {phone || result ? null : actions}
       </Card>
@@ -932,7 +1055,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
 
 // ── Fill the gap ──
 
-function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, onSkip }) {
+function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise }) {
   const gap = useMemo(() => gapFor(card), [card]);
   const [value, setValue] = useState('');
   const [helped, setHelped] = useState(false);
@@ -947,7 +1070,10 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
       set({ ...diff, correct: normWord(value) === normWord(gap.word), helped });
     },
   });
-  const change = next => { if (!result) setValue(next.replace(/\s+/g, '')); };
+  useCardAudio(audio, exercise, card.en, result);
+  // The gap word's length is known: the answer is checked by itself once that many letters are typed (Check stays for a shorter one).
+  useAutoCheck({ register, ready: Boolean(gap) && typedInFull(value, gap.word), value, result });
+  const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '')); } };
   const kb = useLearnKeys({ ui, keys, field, change, letters: true });
   if (!gap) {
     return (
@@ -973,14 +1099,14 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
       </Prompt>
       <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <Typography variant="body2" color="text.secondary">{t('Type the missing word')}</Typography>
-        <Typography variant="h6" component="p" translate="no" className="h5-learn-gap" sx={{ fontWeight: 400, lineHeight: 2, overflowWrap: 'anywhere' }}>
+        <Typography variant="h6" component="p" translate="no" className="h5-learn-gap" sx={{ fontWeight: 400, lineHeight: 2, overflowWrap: 'break-word' }}>
           {gap.before}
           <InputBase inputRef={field} value={value} onChange={event => change(event.target.value)} onClick={kb.show}
             inputProps={{ id: 'h5-learn-gap-input', 'aria-label': t('The missing word'), readOnly: Boolean(result), size: Math.max(4, gap.word.length + 1), ...fieldProps, ...kb.inputProps }}
             sx={theme => ({ ...theme.typography.h6, fontWeight: 400, mx: 0.5, verticalAlign: 'baseline', '& input': { p: 0, borderBottom: `2px solid ${theme.palette.primary.main}`, textAlign: 'center' } })} />
           {gap.after}
         </Typography>
-        {tts ? <Box sx={{ ml: -1 }}><Button id="h5-learn-hear" startIcon={<Icon name="learnSound" size={20} />} onClick={() => { setHelped(true); speak(card.en); }} {...keepFocus(field)}>{t('Hear it')}</Button></Box> : null}
+        {tts ? <Box sx={{ ml: -1, display: 'flex', gap: 1, flexWrap: 'wrap' }}><AudioButton audio={audio} text={card.en} field={field} onPress={() => { if (!result) setHelped(true); }} /></Box> : null}
         {phone || result ? null : actions}
       </Card>
       {result ? (
@@ -1021,7 +1147,7 @@ function MistakesView({ frame, ui, onPractise }) {
           <Card component="ul" id="h5-learn-mistakes" sx={{ listStyle: 'none', m: 0, px: 2, py: 0 }}>
             {cards.map(card => (
               <Box component="li" key={card.id} className="h5-learn-mistake" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
-                <Typography variant="body1" translate="no" sx={{ overflowWrap: 'anywhere' }}>{card.en}</Typography>
+                <WordLine word={card.en} phonetic={card.kind === 'word' ? card.phonetic : ''} />
                 {card.zh ? <Typography variant="body2" color="text.secondary" lang="zh" translate="no">{card.zh}</Typography> : null}
                 <Typography variant="caption" color="text.secondary">{t(card.kind === 'word' ? 'Word' : 'Sentence')}{card.lapses ? <> {'· '}<Fmt template={card.lapses === 1 ? 'forgotten once' : 'forgotten {1} times'} values={[card.lapses]} /></> : null}</Typography>
               </Box>
@@ -1093,7 +1219,7 @@ function MaterialView({ frame, ui }) {
               <Box component="li" key={card.id} className="h5-learn-card-row" data-id={card.id} data-suspended={card.suspended ? '' : undefined}
                 sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
                 <Box sx={{ flex: '1 1 auto', minWidth: 0, opacity: card.suspended ? 0.6 : 1 }}>
-                  <Typography variant="body1" translate="no" className="h5-learn-card-en" sx={{ overflowWrap: 'anywhere' }}>{card.en}</Typography>
+                  <WordLine word={card.en} phonetic={card.kind === 'word' ? card.phonetic : ''} className="h5-learn-card-en" />
                   {editingThis ? (
                     <Box sx={{ display: 'flex', gap: 1, mt: 1, alignItems: 'center', flexWrap: 'wrap' }}>
                       <TextField id="h5-learn-edit-zh" size="small" label={t('Meaning')} value={editing.zh} autoFocus sx={{ flex: '1 1 200px' }}
@@ -1103,7 +1229,7 @@ function MaterialView({ frame, ui }) {
                       <Button variant="contained" id="h5-learn-save-zh" onClick={() => saveMeaning(card)}>{t('Save')}</Button>
                     </Box>
                   ) : card.zh
-                    ? <Typography variant="body2" color="text.secondary" lang="zh" translate="no" className="h5-learn-card-zh" sx={{ overflowWrap: 'anywhere' }}>{card.zh}</Typography>
+                    ? <Typography variant="body2" color="text.secondary" lang="zh" translate="no" className="h5-learn-card-zh" sx={{ overflowWrap: 'break-word' }}>{card.zh}</Typography>
                     : <Typography variant="body2" color="text.disabled" className="h5-learn-card-zh">{t('No meaning yet')}</Typography>}
                   <Typography variant="caption" color="text.secondary" component="p">
                     {t(card.kind === 'word' ? 'Word' : 'Sentence')}{' · '}{sourceLabel(card)}{card.suspended ? <>{' · '}{t('Suspended')}</> : null}
@@ -1190,11 +1316,58 @@ function SettingsView({ frame, ui, data, openTranslator }) {
             secondary={t('Common words of software work, 10 new ones a day. Turning it off hides the starter words you have not practised yet; nothing is deleted.')} />
         </Card>
       )}
+      {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}
       <Card sx={{ p: 2 }}>
         <Typography variant="body2" color="text.secondary">{t('Word meanings come from the translator in Settings → Voice and translation.')}</Typography>
         <Button id="h5-learn-translator-settings" sx={{ mt: 1, ml: -1 }} onClick={openTranslator}>{t('Open Settings')}</Button>
       </Card>
     </ViewFrame>
+  );
+}
+
+// The Audio part of Learn settings: shared like the other learning settings (learn_v1 on the server, synced to every linked engine; on a company
+// computer changed on its home). Each choice is saved at once, so the rows are switches and toggle buttons, not a form.
+function ChoiceRow({ id, label, secondary = null, value, choices, disabled = false, onChange }) {
+  return (
+    <Box className="h5-learn-choice-row" sx={{ display: 'flex', alignItems: 'center', columnGap: 2, rowGap: 1, minHeight: 56, py: 1, flexWrap: 'wrap' }}>
+      <Box sx={{ flex: '1 1 140px', minWidth: 0 }}>
+        <Typography variant="body1" id={`${id}-label`} color={disabled ? 'text.disabled' : 'text.primary'}>{label}</Typography>
+        {secondary ? <Typography variant="body2" color="text.secondary">{secondary}</Typography> : null}
+      </Box>
+      <ToggleButtonGroup id={id} exclusive size="small" value={value} disabled={disabled} aria-labelledby={`${id}-label`}
+        onChange={(event, next) => { if (next !== null && next !== value) onChange(next); }}>
+        {choices.map(([choice, text]) => <ToggleButton key={String(choice)} value={choice} data-value={String(choice)} sx={{ px: 1.5, minWidth: 44 }}>{text}</ToggleButton>)}
+      </ToggleButtonGroup>
+    </Box>
+  );
+}
+function AudioSettings({ current, busy, save }) {
+  const options = audioOptions(current);
+  return (
+    <>
+      <Typography variant="overline" component="h3" color="text.secondary" sx={{ mt: 1, mb: -1 }}>{t('Audio')}</Typography>
+      <Card id="h5-learn-audio-card" sx={{ px: 2, py: 1 }}>
+        <SwitchRow inputId="h5-learn-audio-words" label={t('Play words automatically')} disabled={busy} checked={options.words} onChange={on => save({ audio_words: on })}
+          secondary={t('When a word card appears, and once more after the answer')} />
+        <Divider sx={{ mx: -2 }} />
+        <SwitchRow inputId="h5-learn-audio-sentences" label={t('Play sentences automatically')} disabled={busy} checked={options.sentences} onChange={on => save({ audio_sentences: on })}
+          secondary={t('Dictation and Say it play at the start')} />
+        <ChoiceRow id="h5-learn-audio-when" label={t('Sentences play')} secondary={t('In Build the sentence, Fill the gap and Review')} value={options.sentencesAt} disabled={busy || !options.sentences}
+          choices={[['after', t('After the answer')], ['start', t('When the card appears')]]} onChange={next => save({ audio_sentences_at: next })} />
+        <Divider sx={{ mx: -2 }} />
+        <ChoiceRow id="h5-learn-audio-repeat" label={t('Repeat')} secondary={t('How many times each one is played')} value={options.repeat} disabled={busy}
+          choices={[1, 2, 3, 5].map(n => [n, `${n}\u00d7`])} onChange={next => save({ audio_repeat: next })} />
+        <Divider sx={{ mx: -2 }} />
+        <ChoiceRow id="h5-learn-audio-pause" label={t('Pause between repeats')} value={options.pauseMs / 1000} disabled={busy}
+          choices={[1, 2, 3].map(n => [n, tf('{1} s', n)])} onChange={next => save({ audio_pause: next })} />
+        <Divider sx={{ mx: -2 }} />
+        <ChoiceRow id="h5-learn-audio-speed" label={t('Speed')} value={options.slow ? 'slow' : 'normal'} disabled={busy}
+          choices={[['slow', t('Slow')], ['normal', t('Normal')]]} onChange={next => save({ audio_speed: next })} />
+        <Divider sx={{ mx: -2 }} />
+        <SwitchRow inputId="h5-learn-audio-stop" label={t('Stop when I start typing')} disabled={busy} checked={options.stopOnTyping} onChange={on => save({ audio_stop_on_typing: on })}
+          secondary={t('The rest of the repeats is skipped')} />
+      </Card>
+    </>
   );
 }
 

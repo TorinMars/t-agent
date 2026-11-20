@@ -545,6 +545,7 @@ func runSelfTest() -> Never {
         func zoomIn(_ sender: Any?) {}
         func zoomOut(_ sender: Any?) {}
         func actualSize(_ sender: Any?) {}
+        func returnToThisMac(_ sender: Any?) {}
     }
     let menuTarget = MenuTarget()
     let mainMenu = buildMainMenu(target: menuTarget)
@@ -573,6 +574,46 @@ func runSelfTest() -> Never {
           && find("reloadPage:")?.target === menuTarget)
     check("main menu: Cmd+W closes (hides) the window, Cmd+Q quits", key("performClose:", "w") && key("terminate:", "q"))
     check("main menu: zoom keys", key("zoomIn:", "=") && key("zoomOut:", "-") && key("actualSize:", "0"))
+    check("main menu: View → Return to This Mac (no key, to the app)", find("returnToThisMac:")?.title == "Return to This Mac"
+          && find("returnToThisMac:")?.target === menuTarget && find("returnToThisMac:")?.keyEquivalent == "")
+
+    // Another linked engine while this Mac's server is down (Failover.swift).
+    let linkedConfig = parseAppConfig(json("""
+    {"url":"http://127.0.0.1:3000","linked":[{"name":"K01","instance_id":"k","urls":["http://192.168.1.20:3000","https://k01.example.com/","ftp://k01","http://u:p@k01:1","http://192.168.1.20:3000"]},
+     {"name":"","urls":["http://10.0.0.9:3000"]},{"name":"Nothing","urls":["javascript:x"]},"odd",{"name":"K02"}]}
+    """))
+    check("linked: names and http(s) addresses, repeats and bad ones dropped", linkedConfig.linked.map { $0.name } == ["K01", "Linked engine"]
+          && linkedConfig.linked[0].urls.map { $0.absoluteString } == ["http://192.168.1.20:3000", "https://k01.example.com"])
+    check("linked: none when app.json has none", parseAppConfig(json("{}")).linked.isEmpty && parseAppConfig(nil).linked.isEmpty)
+    check("linked: tried in order, every address of each engine", failoverCandidates(linkedConfig.linked).map { $0.url.absoluteString }
+          == ["http://192.168.1.20:3000", "https://k01.example.com", "http://10.0.0.9:3000"])
+    let k01 = FailoverTarget(name: "K01", url: URL(string: "http://192.168.1.20:3000")!)
+    let foT0 = Date(timeIntervalSince1970: 1_000_000)
+    var fo = FailoverState()
+    check("failover: down tries the linked addresses", stepFailover(&fo, .homeDown(byPerson: false, now: foT0), hasLinked: true) == [.probe] && fo.probing)
+    check("failover: no second try while one runs", stepFailover(&fo, .homeDown(byPerson: false, now: foT0.addingTimeInterval(5)), hasLinked: true).isEmpty)
+    check("failover: nothing answered keeps the placeholder", stepFailover(&fo, .probed(nil), hasLinked: true).isEmpty && fo.shown == nil && !fo.probing)
+    check("failover: tried again only after 15 s", stepFailover(&fo, .homeDown(byPerson: false, now: foT0.addingTimeInterval(10)), hasLinked: true).isEmpty
+          && stepFailover(&fo, .homeDown(byPerson: false, now: foT0.addingTimeInterval(16)), hasLinked: true) == [.probe])
+    check("failover: the first that answered is shown, and said so", stepFailover(&fo, .probed(k01), hasLinked: true) == [.showLinked(k01)]
+          && failoverTitleNote(fo) == "On K01 while this Mac's T-Agent is not running")
+    check("failover: this Mac back never switches by itself", stepFailover(&fo, .homeUp, hasLinked: true) == [.stay] && fo.shown == k01 && fo.homeBack
+          && failoverTitleNote(fo) == "On K01 · This Mac's T-Agent is back: View → Return to This Mac")
+    check("failover: down again while on K01 stays on K01", stepFailover(&fo, .homeDown(byPerson: false, now: foT0.addingTimeInterval(60)), hasLinked: true).isEmpty
+          && fo.shown == k01 && !fo.homeBack)
+    check("failover: Return to This Mac while it is still down shows the placeholder", stepFailover(&fo, .returnHome, hasLinked: true) == [.showPlaceholder]
+          && fo.shown == nil && failoverTitleNote(fo) == nil)
+    var fo2 = FailoverState(shown: k01, probing: false, lastProbe: foT0, homeBack: true, homeAnswers: true)
+    check("failover: Return to This Mac when it is back shows its page", stepFailover(&fo2, .returnHome, hasLinked: true) == [.showHome] && fo2.shown == nil)
+    check("failover: Return with nothing shown does nothing", stepFailover(&fo2, .returnHome, hasLinked: true).isEmpty)
+    var fo3 = FailoverState()
+    check("failover: a stop by the person opens no other engine", stepFailover(&fo3, .homeDown(byPerson: true, now: foT0), hasLinked: true).isEmpty)
+    check("failover: no linked address, nothing to try", stepFailover(&fo3, .homeDown(byPerson: false, now: foT0), hasLinked: false).isEmpty)
+    check("failover: up without a linked engine shows this Mac's page", stepFailover(&fo3, .homeUp, hasLinked: true) == [.showHome])
+    var fo4 = FailoverState()
+    _ = stepFailover(&fo4, .homeDown(byPerson: false, now: foT0), hasLinked: true)
+    check("failover: an answer that comes after this Mac came back is not used", stepFailover(&fo4, .homeUp, hasLinked: true) == [.showHome]
+          && stepFailover(&fo4, .probed(k01), hasLinked: true).isEmpty && fo4.shown == nil)
     check("main menu: no item takes Esc, Tab or the arrow keys", !allItems.contains { ["\u{1b}", "\t"].contains($0.keyEquivalent)
           || $0.keyEquivalent.unicodeScalars.contains { (0xF700...0xF703).contains($0.value) } })
 

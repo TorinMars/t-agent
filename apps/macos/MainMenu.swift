@@ -16,6 +16,8 @@ import AppKit
     func zoomIn(_ sender: Any?)
     func zoomOut(_ sender: Any?)
     func actualSize(_ sender: Any?)
+    /// Back to this Mac's page from a linked engine shown while this Mac's server did not answer (Failover.swift).
+    func returnToThisMac(_ sender: Any?)
 }
 
 private func menuItem(_ title: String, _ action: Selector?, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = [.command],
@@ -67,6 +69,7 @@ func buildMainMenu(target: MainMenuActions) -> NSMenu {
     ])
     let view = submenu("View", [
         menuItem("Reload Page", #selector(MainMenuActions.reloadPage(_:)), "r", target: target),
+        menuItem("Return to This Mac", #selector(MainMenuActions.returnToThisMac(_:)), "", [], target: target),
         .separator(),
         menuItem("Actual Size", #selector(MainMenuActions.actualSize(_:)), "0", target: target),
         menuItem("Zoom In", #selector(MainMenuActions.zoomIn(_:)), "=", target: target),

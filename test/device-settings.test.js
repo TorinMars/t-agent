@@ -50,7 +50,7 @@ test('the allowlist takes the per-device page routes only, written exactly', () 
     ['POST', '/agent-skills/tcli/install'], ['POST', '/agent-skills/t-attention/install'], ['POST', '/agent-skills/t-attention/remove-old'],
     ['GET', '/rule-sync'], ['PUT', '/rule-sync'], ['POST', '/rule-sync/push'], ['POST', '/rule-sync/reset-source'], ['POST', '/rule-sync/create-shared'],
     ['POST', '/rule-sync/remove-import'], ['POST', '/rule-sync/dismiss-local-changes'], ['GET', '/rule-sync/shared'], ['PUT', '/rule-sync/shared'],
-    ['GET', '/attention/widget/settings'], ['PUT', '/attention/widget/settings'],
+    ['GET', '/attention/widget/settings'], ['PUT', '/attention/widget/settings'], ['GET', '/environment/tools'], ['POST', '/environment/tools'],
   ];
   for (const [method, route] of ok) assert.ok(allowedRoute(method, route), `${method} ${route}`);
   const refused = [
@@ -65,6 +65,8 @@ test('the allowlist takes the per-device page routes only, written exactly', () 
     ['POST', '/agent-skills/%2e%2e/install'], ['POST', '/agent-skills/a/b/install'], ['POST', '/agent-skills/Tcli/install'], ['POST', '/rule-sync/bundle'],
     ['PUT', '/rule-sync/push'], ['GET', '//peer-fs/settings'], ['GET', 'peer-fs/settings'], ['GET', '/peer-fs/settings\n'], ['GET', '/peer-fs/settings '],
     ['GET', ''], [null, '/auth/me'], ['GET', null],
+    // Only the tools list of the environment check: not the full check (it holds the page's address and settings), not another method.
+    ['GET', '/environment/check'], ['PUT', '/environment/tools'], ['GET', '/environment/tools/'], ['GET', '/environment'],
   ];
   for (const [method, route] of refused) assert.equal(allowedRoute(method, route), null, `${method} ${JSON.stringify(route)}`);
   assert.ok(ALLOWLIST.every(entry => entry.path.source.startsWith('^') && entry.path.source.endsWith('$')), 'every pattern is anchored');
@@ -188,6 +190,23 @@ test('/v1/device-settings: only a live link token, only the allowlist; bodies ar
   assert.deepEqual(seen.widget, [false]);
 });
 
+test('/v1/device-settings/environment/tools: the tools list of this machine, read and probed again; nothing else of the environment check', async () => {
+  const asked = [];
+  const { createEnvironmentToolsRouter } = require('../routes/environment');
+  const service = { tools: async options => { asked.push(options); return { checked_at: 5, platform: 'darwin', tools: [{ id: 'git', name: 'git', status: 'ok', value: '2.39.5' }] }; } };
+  const router = createEngineDeviceSettingsRouter({ serviceLinks: LINKS, requireEngineAuth: fakeEngineAuth, db: memoryDb(), environment: () => createEnvironmentToolsRouter({ service }) });
+  const app = express();
+  app.use(express.json());
+  app.use('/v1/device-settings', router);
+  const url = await listen(app);
+  assert.deepEqual(await call(url, 'GET', '/v1/device-settings/environment/tools', undefined, auth(3)).then(r => r.status), 403, 'a link token only');
+  const read = await call(url, 'GET', '/v1/device-settings/environment/tools', undefined, auth(1));
+  assert.deepEqual([read.status, read.body.tools[0].value], [200, '2.39.5']);
+  assert.equal((await call(url, 'POST', '/v1/device-settings/environment/tools', { fresh: 'ignored' }, auth(1))).status, 200);
+  assert.deepEqual(asked, [{ fresh: false }, { fresh: true }]);
+  assert.deepEqual(await call(url, 'GET', '/v1/device-settings/environment/check', undefined, auth(1)).then(r => [r.status, r.body]), [404, { error: 'DEVICE_SETTING_NOT_ALLOWED' }]);
+});
+
 test('/v1/device-settings: the window paths say so when this service has no window', async () => {
   const router = createEngineDeviceSettingsRouter({ serviceLinks: LINKS, requireEngineAuth: fakeEngineAuth, db: memoryDb(), widget: () => null });
   const app = express();
@@ -230,14 +249,14 @@ const peerError = (status, body, message = body && body.error) => Object.assign(
 test('/api/device-settings/devices: linked devices of this owner only, with support read from /v1/info and kept for a minute', async () => {
   const { url, infos } = await pageApp({
     reply: () => ({}),
-    info: row => ({ 7: { capabilities: ['tasks:read', CAPABILITY] }, 9: { capabilities: ['tasks:read'] } })[row.id] || Promise.reject(new Error('REMOTE_OFFLINE')),
+    info: row => ({ 7: { capabilities: ['tasks:read', CAPABILITY, 'environment:tools'] }, 9: { capabilities: ['tasks:read'] } })[row.id] || Promise.reject(new Error('REMOTE_OFFLINE')),
   });
   const first = await call(url, 'GET', '/api/device-settings/devices');
   assert.equal(first.status, 200);
   assert.deepEqual(first.body, { devices: [
-    { id: 7, name: 'K01', online: true, supported: true, company_computer: null },
-    { id: 9, name: 'Old Mac', online: true, supported: false, company_computer: null },
-    { id: 10, name: 'Away', online: false, supported: null, company_computer: null },
+    { id: 7, name: 'K01', online: true, supported: true, company_computer: null, environment: true },
+    { id: 9, name: 'Old Mac', online: true, supported: false, company_computer: null, environment: false },
+    { id: 10, name: 'Away', online: false, supported: null, company_computer: null, environment: null },
   ] }, 'no plain Engine, no revoked link, no other owner; an offline device is not read');
   assert.equal(first.text.includes('tunnel://') || first.text.includes('cipher') || first.text.includes('token'), false, 'no address or token');
   assert.deepEqual(infos.sort(), [7, 9]);
@@ -265,6 +284,10 @@ test('/api/device-settings/:id/*: only the allowlist, only linked devices, bodie
   assert.deepEqual(calls.at(-1).options, { method: 'PUT', body: { enabled: false }, timeoutMs: 20000 }, 'the shared language never goes to the peer');
   await call(url, 'POST', '/api/device-settings/7/agent-skills/tcli/install', { junk: 1 });
   assert.deepEqual([calls.at(-1).pathname, calls.at(-1).options.body, calls.at(-1).options.timeoutMs], ['/v1/device-settings/agent-skills/tcli/install', {}, 60000]);
+  await call(url, 'GET', '/api/device-settings/7/environment/tools');
+  assert.deepEqual([calls.at(-1).pathname, calls.at(-1).options], ['/v1/device-settings/environment/tools', { method: 'GET', timeoutMs: 30000 }], 'the probes may take a while');
+  await call(url, 'POST', '/api/device-settings/7/environment/tools', { anything: 1 });
+  assert.deepEqual([calls.at(-1).options.method, calls.at(-1).options.body], ['POST', {}]);
 
   // The peer's own error passes as its page would see it.
   next = () => { throw peerError(409, { error: 'RULE_SYNC_SHARED_CHANGED', current: { content_revision: 'r2' } }); };

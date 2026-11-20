@@ -25,6 +25,7 @@ import { PeerFsSwitch } from './PeerFs.jsx';
 import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
 import { MacAppSection } from './MacApp.jsx';
+import { EnvironmentSection } from './EnvironmentCompare.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
 import { ScopeLabel, SettingsSyncStatus, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
 import { InTab, LocalOnly, refreshDeviceTargets, useDeviceTargets, useSettingsTab } from './DeviceTarget.jsx';
@@ -50,6 +51,8 @@ import { errorLabel } from './engine-errors.mjs';
 // "Company computer" ("Device tier" in docs/design/linked-device-settings.md) is a switch in the row of this machine and of each linked device, in
 // every tab (it belongs to that machine, never to the settings sync): this machine through /api/device-tier, a linked one through
 // /api/device-settings/<id>/device-tier, its value from the device list of DeviceTarget.jsx. A marked machine has a "Company computer" pill.
+// "Environment" (EnvironmentCompare.jsx) compares the tools of every machine: one table, the same in every tab, under the device list (under "Show in
+// task list" in Shared).
 
 // The error texts live in engine-errors.mjs (the Update dialog needs them without this file).
 export { errorLabel };
@@ -650,6 +653,8 @@ export function DevicesGroup({ state, ui, request = null }) {
   const listShown = tabScope !== 'shared';
   const status = <><Feedback id="h5-engines-feedback" feedback={feedback} /><SyncNote id="h5-engines-sync" note={shownSynced} /></>;
   const shownList = tabScope === 'shared' && switches;
+  const sourceName = ((state.sources || []).find(source => source.key === 'local') || {}).name || (localName ? localName.name : '');
+  const environment = <InTab part="environment"><EnvironmentSection opened={opened} localName={sourceName} /></InTab>;
   return (
     <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setTierShown({}); setOpened(count => count + 1); }}>
       <InTab part="settings-sync"><SettingsSyncStatus opened={opened} /></InTab>
@@ -690,6 +695,7 @@ export function DevicesGroup({ state, ui, request = null }) {
             {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
             {status}
           </Section>
+          {environment}
           {/* The T-Agent macOS app on this Mac and the web addresses of this service (read only; only on a macOS server). */}
           <MacAppSection opened={opened} />
           <ServiceLinksSection state={state} ui={ui} version={linksVersion} opened={opened} onChanged={onLinksChanged} />
@@ -707,6 +713,7 @@ export function DevicesGroup({ state, ui, request = null }) {
           </Advanced>
         </>
       ) : null}
+      {listShown ? null : environment}
       {!shownList && !listShown ? status : null}
       <ConnectDialog state={state} open={connecting} onClose={() => setConnecting(false)} onDone={created => { setConnecting(false); void changed(null); say(`${t('Connected')}: ${created && created.name ? created.name : ''}`); }} />
       <EditDialog state={state} server={editing} onClose={() => setEditing(null)} onDone={server => { setEditing(null); void changed(`remote:${server.id}`); say('Saved'); }} />

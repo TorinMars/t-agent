@@ -381,7 +381,7 @@ test('the company computer flag: set on the machine and from a linked page, told
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}/api/device-settings`;
   const devices = await (await fetch(`${base}/devices`)).json();
-  assert.deepEqual(devices.devices, [{ id: 1, name: 'K', online: true, supported: false, company_computer: true }]);
+  assert.deepEqual(devices.devices, [{ id: 1, name: 'K', online: true, supported: false, company_computer: true, environment: false }]);
   const read = await (await fetch(`${base}/1/device-tier`)).json();
   assert.deepEqual(read, { company_computer: true });
   const changed = await (await fetch(`${base}/1/device-tier`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ company_computer: false, extra: 1 }) })).json();

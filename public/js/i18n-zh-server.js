@@ -485,6 +485,10 @@ I18n.add({
   "Put the Client behind HTTPS (see the Nginx section of the README), or set CLIENT_ALLOW_HTTP=true for a trusted network": "把 Client 放到 HTTPS 后面（见 README 的 Nginx 一节），或在可信内网里设置 CLIENT_ALLOW_HTTP=true",
   "Install frpc again from the Page enhancement tab": "在“页面增强”标签页里重新安装 frpc",
   "Install it with `npm install -g pm2`": "用 `npm install -g pm2` 安装",
+  // The tools list of the environment check (Settings → Devices → Environment)
+  "Swift (Mac app)": "Swift（Mac 应用）",
+  "Reinstall T-Agent: scripts/tcli.js is missing": "重新安装 T-Agent：缺少 scripts/tcli.js",
+  "Install the Xcode Command Line Tools: `xcode-select --install`": "安装 Xcode 命令行工具：`xcode-select --install`",
   "Fix the permissions of that folder": "修复该目录的权限",
   "Free some disk space": "释放一些磁盘空间",
   "Terminals cannot open": "终端无法打开",

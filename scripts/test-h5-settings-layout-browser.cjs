@@ -163,8 +163,8 @@ async function testPhone(browser, width) {
   await page.waitForFunction(() => document.querySelectorAll('#h5-engine-list .h5-engine-row').length === 3 && document.querySelector('.h5-link-row'));
   await page.locator('#h5-rule-sync-role').waitFor();
   assert.deepEqual(await page.locator('#h5-engine-list .h5-engine-row').evaluateAll(rows => rows.map(row => row.dataset.engine)), ['local', '2', '3']);
-  assert.deepEqual(await cardsOf(page, 'devices'), ['h5-sec-engine-name', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
-  assert.deepEqual(await page.locator('#h5-set-devices h3.h5-setting-subheading').allTextContents(), ['Link a device', 'Rules and skills sync', 'Advanced']);
+  assert.deepEqual(await cardsOf(page, 'devices'), ['h5-sec-engine-name', 'h5-sec-environment', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
+  assert.deepEqual(await page.locator('#h5-set-devices h3.h5-setting-subheading').allTextContents(), ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced']);
   assert.equal(await page.locator('#h5-peer-fs .h5-switch-label').textContent(), 'Sessions can read files on linked devices');
   await assertSwitches(page, ['h5-peer-fs-enabled', 'h5-rule-sync-codex'], 'Devices');
   assert.equal(await page.getAttribute('#h5-devices-advanced-toggle', 'aria-expanded'), 'false', 'Advanced is folded by default');
@@ -281,7 +281,7 @@ async function testWide(browser) {
   const expected = {
     'tasks-files': ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library'],
     'voice-translate': ['Voice input', 'Translation'],
-    devices: ['Link a device', 'Rules and skills sync', 'Advanced'],
+    devices: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'],
     account: ['Access mode', 'Authenticator'],
     'usage-data': ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'],
   };
@@ -384,7 +384,7 @@ async function testChinese(browser) {
   await openGroup(page, 'devices');
   await page.locator('#h5-rule-sync-role').waitFor();
   assert.equal(await page.locator('#h5-settings-page-title').textContent(), '\u8bbe\u5907');
-  assert.deepEqual(await page.locator('#h5-set-devices h3.h5-setting-subheading').allTextContents(), ['\u5173\u8054\u8bbe\u5907', '\u89c4\u5219\u548c\u6280\u80fd\u540c\u6b65', '\u9ad8\u7ea7']);
+  assert.deepEqual(await page.locator('#h5-set-devices h3.h5-setting-subheading').allTextContents(), ['\u73af\u5883', '\u5173\u8054\u8bbe\u5907', '\u89c4\u5219\u548c\u6280\u80fd\u540c\u6b65', '\u9ad8\u7ea7']);
   await page.locator('#h5-devices-advanced-toggle').tap();
   await page.waitForSelector('.h5-token-row');
   await settled(page);

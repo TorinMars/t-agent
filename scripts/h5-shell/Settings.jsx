@@ -30,6 +30,7 @@ import { ScopeLabel, SyncNote, refreshSettingsSync, useSyncAfterSave } from './S
 import { InTab, LocalOnly, chooseTab, refreshDeviceTargets, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 import { SettingsTabs } from './SettingsTabs.jsx';
 import { UsageDataGroup } from './UsageData.jsx';
+import { refreshEnvironment, useEnvironmentSummary } from './EnvironmentCompare.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
 const pagePath = () => (/^\/h5(\/|$)/.test(location.pathname) ? '/h5' : '/');
@@ -513,7 +514,10 @@ function moveFocus(event) {
 
 // The group list. On a computer: a vertical tab list (one 48px row per group, the chosen one in the primary colour with a bar at its left edge);
 // on a phone: a list of two-line rows (the group and what it holds) that open the group's page.
+// A row may carry a note in the warning colour under its title: the Devices row says how the machines' tools differ ("2 differences · 1 missing").
 function GroupList({ groups, current, wide, onChoose }) {
+  const notes = { devices: useEnvironmentSummary() };
+  const note = group => (notes[group.id] ? <Box component="span" className="h5-settings-group-note" sx={{ display: 'block', color: 'warning.main' }}>{notes[group.id]}</Box> : null);
   if (wide) {
     return (
       <List component="div" id="h5-settings-groups" role="tablist" aria-orientation="vertical" aria-label={t('Settings groups')} onKeyDown={moveFocus} sx={{ py: 1 }}>
@@ -525,7 +529,7 @@ function GroupList({ groups, current, wide, onChoose }) {
               aria-controls={`h5-set-${group.id}`} tabIndex={selected || (!current && group === groups[0]) ? 0 : -1} selected={selected} onClick={() => onChoose(group.id)}
               sx={theme => ({ minHeight: 48, px: 2, '&.Mui-selected': { color: 'primary.main', boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` } })}
             >
-              <ListItemText primary={t(group.title)} slotProps={{ primary: { variant: 'body2', sx: { fontWeight: selected ? 500 : 400 } } }} />
+              <ListItemText primary={t(group.title)} secondary={note(group)} slotProps={{ primary: { variant: 'body2', sx: { fontWeight: selected ? 500 : 400 } }, secondary: { variant: 'caption' } }} />
             </ListItemButton>
           );
         })}
@@ -537,7 +541,7 @@ function GroupList({ groups, current, wide, onChoose }) {
       {groups.map(group => (
         <ListItem key={group.id} disablePadding divider>
           <ListItemButton id={`h5-settings-group-${group.id}`} className="h5-settings-group-item" data-group={group.id} aria-controls={`h5-set-${group.id}`} onClick={event => onChoose(group.id, event.currentTarget)} sx={{ minHeight: 72, px: 2 }}>
-            <ListItemText primary={t(group.title)} secondary={t(group.summary)} slotProps={{ primary: { variant: 'body1' }, secondary: { variant: 'body2' } }} />
+            <ListItemText primary={t(group.title)} secondary={<>{t(group.summary)}{note(group)}</>} slotProps={{ primary: { variant: 'body1' }, secondary: { variant: 'body2' } }} />
             <Chevron />
           </ListItemButton>
         </ListItem>
@@ -593,7 +597,9 @@ function SettingsPage({ state, ui }) {
   const fallback = groups.length ? groups[0].id : null;
   const current = chosen && shown(chosen) ? chosen : wide ? fallback : null;
   // The linked devices and the settings sync (whether a device is linked: the device tabs) are read each time the page opens.
-  useEffect(() => { void refreshDeviceTargets(); void refreshSettingsSync(); }, []);
+  // The tools of every machine are read after the device list while a device is linked, for the summary on the Devices row (EnvironmentCompare.jsx).
+  const localSource = (state.sources || []).find(source => source.key === 'local');
+  useEffect(() => { void refreshDeviceTargets().then(() => refreshEnvironment({ localName: (localSource && localSource.name) || '', linkedOnly: true })); void refreshSettingsSync(); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- each opening of the page
   const close = () => ui.actions.closeSettings();
   const pane = useRef(null);
   const choose = id => { focusTitle.current = true; setChosen(id); };

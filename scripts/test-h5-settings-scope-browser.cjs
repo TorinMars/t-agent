@@ -224,7 +224,7 @@ async function testLinkedPhone(browser) {
   await toggleGroup(page, 'devices', press);
   await page.waitForFunction(() => document.querySelectorAll('#h5-shown-devices .h5-shown-device').length === 2 && document.getElementById('h5-settings-sync-now'));
   const parts = await page.evaluate(() => [...document.getElementById('h5-set-devices').children].filter(el => !el.hidden && el.tagName !== 'HEADER' && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
-  assert.deepEqual(parts, ['h5-sec-settings-sync', 'h5-sec-task-list-devices'], 'the status line is at the top of Devices');
+  assert.deepEqual(parts, ['h5-sec-settings-sync', 'h5-sec-task-list-devices', 'h5-sec-environment'], 'the status line is at the top of Devices');
   assert.deepEqual(await page.locator('.h5-settings-sync-peer').allInnerTexts(), ['K01 · Online · Synced 2 min ago', 'K02 · Offline · Synced 2 h ago · Error: REMOTE_TIMEOUT']);
   assert.deepEqual(await labelsOf(page, 'devices'), DEVICES);
   assert.deepEqual(await page.locator('#h5-shown-devices .h5-engine-visible-input').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))), ['Show Home Mac · This machine in task list', 'Show K01 in task list']);
@@ -242,7 +242,7 @@ async function testLinkedPhone(browser) {
   await toggleGroup(page, 'devices', press);
   await page.waitForFunction(() => document.querySelector('.h5-link-row') && document.getElementById('h5-rule-sync-role') && document.getElementById('h5-peer-fs-enabled'));
   const own = await page.evaluate(() => [...document.getElementById('h5-set-devices').children].filter(el => !el.hidden && el.tagName !== 'HEADER' && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
-  assert.deepEqual(own, ['h5-sec-engine-name', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
+  assert.deepEqual(own, ['h5-sec-engine-name', 'h5-sec-environment', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
   assert.deepEqual(await labelsOf(page, 'devices'), []);
   assert.equal(await page.locator('#h5-engine-list .h5-engine-visible').count(), 0, 'the switches are in Shared');
   await assertFits(page, '390 Devices, This device');
@@ -313,7 +313,7 @@ async function testHidden(browser, sync) {
   // The page is as before: the Devices parts in their old order.
   await openSettingsGroup(page, 'devices');
   const parts = await page.evaluate(() => [...document.getElementById('h5-set-devices').children].filter(el => !el.hidden && el.tagName !== 'HEADER' && el.getBoundingClientRect().height > 0).map(el => el.id).filter(Boolean));
-  assert.deepEqual(parts, ['h5-sec-engine-name', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
+  assert.deepEqual(parts, ['h5-sec-engine-name', 'h5-sec-environment', 'h5-sec-link', 'h5-sec-peer-fs', 'h5-sec-rule-sync', 'h5-sec-advanced']);
   // A save says Saved and nothing about copying.
   await openSettingsGroup(page, 'voice-translate');
   await page.locator('#h5-tr-save').scrollIntoViewIfNeeded();

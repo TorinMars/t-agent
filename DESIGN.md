@@ -39,6 +39,7 @@
 | [service-links-tunnel.md](docs/design/service-links-tunnel.md) | The reverse WebSocket tunnel that lets a service behind NAT be reached by its linked service. | 6 KB |
 | [settings-sync.md](docs/design/settings-sync.md) | One set of settings for all linked devices: what is shared, registry, rounds, conflict rule, encryption, known limits. | 11 KB |
 | [shared-page-state.md](docs/design/shared-page-state.md) | The page's remembered state on the server, the same on every device and engine: recent sessions by engine instance id, the moved keys, merge per entry, the page client and its cache, the sync, the registry of browser storage and its key audit (what stays per browser and why). | 16 KB |
+| [environment-compare.md](docs/design/environment-compare.md) | Settings → Devices → Environment: the tools agent sessions rely on, compared across this machine and every linked device. | 5 KB |
 | [linked-device-settings.md](docs/design/linked-device-settings.md) | Reading and changing the per-device settings of a linked device from this page; the settings tabs; the "Company computer" device tier. | 16 KB |
 | [peer-file-access.md](docs/design/peer-file-access.md) | Read-only file access of agent sessions to linked Engines (MCP tools, scope, the switch). | 8 KB |
 | [engine-names.md](docs/design/engine-names.md) | One name per Engine, kept by that Engine and shown everywhere. | 3 KB |

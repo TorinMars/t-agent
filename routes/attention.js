@@ -386,14 +386,18 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
     res.set('Cache-Control', 'no-store');
     let decoded;
     try { decoded = decodeURIComponent(req.path); } catch { return sendError(res, 404, 'NOT_FOUND', 'Not found'); }
+    // The token is checked first: a valid token is always let in, and only wrong tokens are counted and limited per address. Every program on this
+    // machine (terminals, the CLI, background jobs, a reverse SSH tunnel) arrives from 127.0.0.1, so a limit that came before the check let one
+    // client with a dead token (a terminal's token ends with its terminal and with a server restart) lock every valid token out ("Tokens and security" in
+    // docs/design/architecture-features-and-page.md). Tokens are 256-bit random values, so letting a right one through while an address is limited gives guessing nothing.
     const key = `ip:${req.ip || (req.socket && req.socket.remoteAddress) || 'unknown'}`;
-    if (failures.limited(key)) {
-      res.set('Retry-After', String(failures.retryAfter(key)));
-      return sendError(res, 429, 'TOO_MANY_ATTEMPTS', 'Too many failed token attempts; try again later');
-    }
     const match = BEARER.exec(header);
     const auth = match ? service.verifyToken(match[1]) : null;
     if (!auth) {
+      if (failures.limited(key)) {
+        res.set('Retry-After', String(failures.retryAfter(key)));
+        return sendError(res, 429, 'TOO_MANY_ATTEMPTS', 'Too many failed token attempts; try again later');
+      }
       failures.add(key);
       return sendError(res, 401, 'TOKEN_INVALID', 'The attention token is missing, wrong or revoked');
     }

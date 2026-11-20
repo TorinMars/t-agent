@@ -1139,7 +1139,15 @@ async function main(argv = process.argv.slice(2), options = {}) {
       printError(JSON.stringify({ error: (error && error.code) || (error instanceof UsageError ? 'USAGE' : String((error && error.kind) || 'ERROR').toUpperCase()), message: error.message, exit: code }));
     } else {
       let message = error.message;
-      if (error && error.kind === 'auth' && error.status && error.status !== 403) message = `${message} (check the token: t-attention login)`;
+      if (error && error.kind === 'auth' && error.status === 401) {
+        // A token from a T-Agent terminal (TA_ATTENTION_TOKEN) lives only as long as its terminal and the server process: a job started there that
+        // outlives them keeps a dead token ("Tokens and security" in docs/design/architecture-features-and-page.md).
+        const env = options.env || process.env;
+        const fromTerminal = env.TA_ATTENTION_TOKEN && !argv.some(arg => arg === '--token' || arg.startsWith('--token='));
+        message = fromTerminal
+          ? `${message} (this terminal's token ends with its terminal and with a T-Agent restart: open a new terminal, or give a background job a CLI token from Settings -> T-Attention with t-attention login)`
+          : `${message} (check the token: t-attention login)`;
+      } else if (error && error.kind === 'auth' && error.status && error.status !== 403) message = `${message} (check the token: t-attention login)`;
       if (error && error.kind === 'conflict' && error.body && error.body.id) message = `${message} (#${error.body.id})`;
       if (error && error.kind === 'conflict' && error.body && Array.isArray(error.body.children)) message = `${message} (subtasks: ${error.body.children.map(id => `#${id}`).join(', ')})`;
       named(`t-attention: ${message}`);

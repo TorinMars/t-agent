@@ -2,7 +2,7 @@
 //
 // Page (behind the session and same-origin gates of /api, per owner):
 //   GET /api/page-state -> { instance_id, recent: [{ instance, task, terminal, title, agent, used }], keys: { <name>: value | null }, peers }
-//   PUT /api/page-state { recent?: [change], keys?: { <name>: value | null }, import?: { recent, keys } } -> the same as GET (400 INVALID_PAGE_STATE)
+//   PUT /api/page-state { recent?: [change], keys?: { <name>: value | null }, clear?: true, import?: { recent, keys } } -> the same as GET (400 INVALID_PAGE_STATE)
 // Linked services (only a token issued for a live service link gets in, 403 LINKED_ONLY for any other Engine token; 404 with the sync off):
 //   GET  /v1/page-state?public_key=                -> { instance_id, public_key, digest }
 //   POST /v1/page-state/pull { instance_id, public_key } -> { instance_id, sealed }

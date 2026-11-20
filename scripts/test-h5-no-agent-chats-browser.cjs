@@ -155,10 +155,10 @@ async function check(env, h, { wide, remote, label }) {
   // ── Terminals keep their actions, under the selected task and the others ──
   await h.openMenu('Phone terminals', 'Terminal 2');
   // This machine sorts sessions: the last of the selected task's terminals moves up, the first of Beta's down. The mocked remote Engine does not say 'terminals:order'.
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Reopen', ...(remote ? [] : ['Move up']), RESTART, 'Delete'], `${label}: the actions of a terminal of the selected task`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Reopen', ...(remote ? [] : ['Move up']), RESTART, 'Delete session'], `${label}: the actions of a terminal of the selected task`);
   await h.closeMenu();
   await h.openMenu('Beta', 'Terminal 1');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', ...(remote ? [] : ['Move down']), RESTART, 'Delete'], `${label}: the actions of a terminal of another task`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', ...(remote ? [] : ['Move down']), RESTART, 'Delete session'], `${label}: the actions of a terminal of another task`);
   await h.press(h.action('Rename'));
   await page.locator('#h5-term-rename-input').fill('Docs shell');
   await page.locator('#h5-term-rename-input').press('Enter');
@@ -169,7 +169,7 @@ async function check(env, h, { wide, remote, label }) {
   await h.actions.first().waitFor({ state: 'detached' });
   assert.deepEqual(server.writes.at(-1), ['POST', `${base}/${beta}/terminal/control`, { action: 'restart-workdir', terminal_id: 'default' }], `${label}: restart reaches that terminal`);
   await h.openMenu('Beta', 'Terminal 2');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   await h.row('Beta', 'Terminal 2').waitFor({ state: 'detached' });
   assert.deepEqual(server.writes.at(-1), ['POST', `${base}/${beta}/terminal/control`, { action: 'delete', terminal_id: `t${beta}-2` }], `${label}: delete reaches that terminal`);
   await h.openMenu('Beta', 'Docs shell');

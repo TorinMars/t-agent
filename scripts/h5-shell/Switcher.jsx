@@ -7,13 +7,17 @@
 // task; the row scrolls sideways and keeps the selected card in view. A session that needs the person has an orange edge. A tap on a card, Enter or
 // another press of the switch button switches to it (the card grows into the page) and closes; a tap on the empty space, Escape, the back button
 // (back.mjs: a layer) or a downward swipe close without switching.
+// Remove from Recent (only the list changes, h5.js `removeRecent`, with Undo in a snackbar): on a touch screen a card swiped up past REMOVE_PX (or
+// flicked up) flies off and goes, a shorter upward drag springs back; with a pointer a card shows a close button (x) while hovered or focused; Delete
+// or Backspace removes the selected card. The current session stays (it is in use).
 // It covers the terminal area on a computer (between the header and the bottom row) and the header, the terminal and the key row on a touch screen,
 // so the tool row with the pressed switch button stays. The single view's only: a pane never opens it (h5.js).
 // The list is h5.js's (`state.recent`, recent-sessions.mjs); the preview lines are what h5.js handed over when it opened (`state.switcher.previews`).
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
+import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { alpha, getOverlayAlpha, lighten } from '@mui/material/styles';
@@ -37,6 +41,15 @@ const TITLE_SPACE = 56; // the title row
 const LABEL_SPACE = 34; // the line above a card
 const ICON = 24;
 const HEAD = 52; // the header of a card in the wide row
+const REMOVE_PX = 120; // a card swiped up this far is removed from the list; a quick flick up (FLICK_V px/ms, at least 40px) too
+const FLICK_V = 0.6;
+const CLOSE = 32; // the close button of a card (pointer input)
+// The close button shows while its card (the element just before it) or the button itself is hovered or has the keyboard focus.
+const CLOSE_SX = {
+  position: 'absolute', zIndex: 60, width: CLOSE, height: CLOSE, p: 0.5, opacity: 0, transition: 'opacity 120ms ease-out',
+  bgcolor: 'background.paper', color: 'text.secondary', boxShadow: 2, '&:hover': { bgcolor: 'background.paper', color: 'text.primary' },
+  '.h5-switcher-card:hover + &, .h5-switcher-card:focus-visible + &, &:hover, &:focus-visible': { opacity: 1 },
+};
 // The MD2 dark theme's elevation overlay: the header of a wide card is the surface at 8dp, a step lighter than the card's own page.
 const overlay = (theme, dp) => { const tint = alpha(theme.palette.common.white, Number(getOverlayAlpha(dp))); return `linear-gradient(${tint}, ${tint})`; };
 const MONO = 'ui-monospace, Menlo, Consolas, monospace';
@@ -102,11 +115,19 @@ function OpenSwitcher({ ui, switcher }) {
   const area = useArea(touch);
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   // The cards are fixed while it is open (the shown session does not change meanwhile: that closes it, h5.js).
-  const cards = useMemo(() => switcherCards(state.recent, state.shownTarget), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const opened = useMemo(() => switcherCards(state.recent, state.shownTarget), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // A card removed from the list (here, by Undo's opposite on another device, ...) goes; Undo brings it back in its place.
+  const cards = useMemo(() => {
+    const listed = new Set((state.recent || []).map(recentKey));
+    const kept = opened.filter(card => listed.has(recentKey(card)));
+    return kept.length === opened.length ? opened : kept;
+  }, [opened, state.recent]);
   const tasks = useMemo(() => new Map(((state.taskList && state.taskList.tasks) || []).map(row => [`${row.source}|${row.id}`, row])), [state.taskList]);
   const [pos, setPos] = useState(() => startIndex(cards));
   const [dragging, setDragging] = useState(false);
   const [pull, setPull] = useState(0); // a downward swipe in progress (touch), in px
+  const [lift, setLift] = useState(null); // an upward swipe of a card in progress (touch): { key, dy } (dy < 0)
+  const [removing, setRemoving] = useState(null); // the key of the card flying off before it leaves the list
   const [moved, setMoved] = useState(false);
   const [leaving, setLeaving] = useState(null);
   const posRef = useRef(pos);
@@ -119,6 +140,8 @@ function OpenSwitcher({ ui, switcher }) {
   const wheel = useRef({ timer: 0 });
   const count = cards.length;
   const centred = settleIndex(pos, count);
+  // Fewer cards (one removed): the stack stays inside them.
+  useEffect(() => { if (pos > Math.max(0, count - 1)) setPos(Math.max(0, count - 1)); }, [count, pos]);
   // The wide row (an area of 600px and more): its sizes, its scroller and the scroll position a growing card starts from.
   const wide = !!area && isWide(area);
   const row = useMemo(() => (area && isWide(area) ? switcherRow(area, count) : null), [area, count]);
@@ -144,6 +167,22 @@ function OpenSwitcher({ ui, switcher }) {
     };
     if (reduced) done(); else setTimeout(done, GROW_MS);
   };
+  // Remove from Recent: the card flies up and off (at once with reduced motion), then leaves the list; a card before the centred one moves the
+  // stack by one so the centred card stays. The current session cannot go: it springs back.
+  const remove = index => {
+    const card = cards[index];
+    if (!card || card.current || leavingRef.current !== null || removing) return;
+    const key = recentKey(card);
+    setRemoving(key);
+    const done = () => {
+      setRemoving(null);
+      setLift(null);
+      if (!ui.actions.removeRecent([key])) return;
+      if (index < posRef.current) setPos(value => Math.max(0, value - 1));
+      rootRef.current?.focus({ preventScroll: true }); // the focus effect moves it on to the new centred card
+    };
+    if (reduced) done(); else setTimeout(done, GROW_MS);
+  };
   // Another press of the switch button while open: the centred card.
   const pressSeen = useRef(switcher.press);
   useEffect(() => {
@@ -160,7 +199,7 @@ function OpenSwitcher({ ui, switcher }) {
     if (!root || leavingRef.current !== null) return;
     const active = document.activeElement;
     if (!active || active === document.body || root.contains(active)) (card || root).focus({ preventScroll: true });
-  }, [centred, area]);
+  }, [centred, area, count]);
   // The wide row keeps the selected card in view (at once when it opens, smoothly after a key), unless the selection followed a scroll by hand.
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -218,11 +257,15 @@ function OpenSwitcher({ ui, switcher }) {
     else if (event.key === 'Home') { event.preventDefault(); go(0); }
     else if (event.key === 'End') { event.preventDefault(); go(count - 1); }
     else if (event.key === 'Enter' && !event.target.closest('.h5-switcher-card')) { event.preventDefault(); choose(centred); } // a card's own Enter is its click
+    else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); remove(centred); }
   };
   const onPointerDown = event => {
     if (leavingRef.current !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
     dragged.current = false;
-    gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pos: posRef.current, axis: null, touch: event.pointerType !== 'mouse', lastX: event.clientX, lastT: event.timeStamp, v: 0, scroll: scrollerRef.current ? scrollerRef.current.scrollLeft : 0 };
+    if (event.target.closest('.h5-switcher-close')) return; // its own click
+    const on = event.target.closest('.h5-switcher-card');
+    const card = on ? cards[Number(on.dataset.index)] : null;
+    gesture.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pos: posRef.current, axis: null, touch: event.pointerType !== 'mouse', lastX: event.clientX, lastT: event.timeStamp, v: 0, lastY: event.clientY, vy: 0, scroll: scrollerRef.current ? scrollerRef.current.scrollLeft : 0, card: card && !removing ? { index: Number(on.dataset.index), key: recentKey(card), current: card.current } : null };
   };
   const onPointerMove = event => {
     const s = gesture.current;
@@ -249,7 +292,12 @@ function OpenSwitcher({ ui, switcher }) {
       setPos(raw < 0 ? raw / 3 : raw > count - 1 ? count - 1 + (raw - count + 1) / 3 : raw);
       setMoved(true);
     } else if (s.touch) {
-      setPull(Math.max(0, dy));
+      const dt = Math.max(1, event.timeStamp - s.lastT);
+      s.vy = (event.clientY - s.lastY) / dt;
+      s.lastY = event.clientY;
+      s.lastT = event.timeStamp;
+      // Up on a card lifts it (the current one only a little: it cannot go); down anywhere pulls the stack to close.
+      if (s.card && dy < 0) { setPull(0); setLift({ key: s.card.key, dy: s.card.current ? dy / 4 : dy }); } else { setLift(null); setPull(Math.max(0, dy)); }
     }
   };
   const onPointerUp = event => {
@@ -263,8 +311,11 @@ function OpenSwitcher({ ui, switcher }) {
       const flick = Math.abs(s.v) > 0.5 ? Math.sign(s.v) * 0.5 : 0; // a quick flick goes on to the next card
       setPos(settleIndex(posRef.current + flick, count));
     } else {
-      const down = event.type === 'pointerup' && event.clientY - s.y > 80 && s.touch;
+      const dy = event.clientY - s.y;
+      const down = event.type === 'pointerup' && dy > 80 && s.touch;
+      const up = event.type === 'pointerup' && s.touch && s.card && !s.card.current && (-dy > REMOVE_PX || (-dy > 40 && s.vy < -FLICK_V));
       setPull(0);
+      if (up) remove(s.card.index); else setLift(null); // a short drag springs back
       if (down) close();
     }
   };
@@ -285,6 +336,8 @@ function OpenSwitcher({ ui, switcher }) {
     if (!event.target.closest('.h5-switcher-card') && leavingRef.current === null) close();
   };
 
+  // The upward offset of a card: following the finger, or flying off (above the area) while it is removed.
+  const upOf = (key, height) => (removing === key ? { y: -height, gone: true, lifting: false } : lift && lift.key === key ? { y: lift.dy, gone: false, lifting: true } : { y: 0, gone: false, lifting: false });
   const motion = reduced || dragging ? 'none'
     : 'transform 200ms cubic-bezier(0.4, 0, 0.2, 1), left 200ms cubic-bezier(0.4, 0, 0.2, 1), top 200ms cubic-bezier(0.4, 0, 0.2, 1), width 200ms cubic-bezier(0.4, 0, 0.2, 1), height 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms linear';
   const lineHeight = 1.6;
@@ -307,6 +360,11 @@ function OpenSwitcher({ ui, switcher }) {
       <Typography variant={g.narrow ? 'subtitle1' : 'h6'} component="h2" sx={{ position: 'absolute', left: g.narrow ? 16 : 24, right: 16, top: g.narrow ? 16 : 20, fontWeight: 500, pointerEvents: 'none' }}>
         {t('Recent sessions')}
       </Typography>
+      {touch && count > 1 ? (
+        <Typography className="h5-switcher-remove-hint" variant="caption" color="text.secondary" sx={{ position: 'absolute', right: g.narrow ? 16 : 24, top: g.narrow ? 20 : 26, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+          {t('Swipe a card up to remove it')}
+        </Typography>
+      ) : null}
       <Box className="h5-switcher-stack" sx={{ position: 'absolute', inset: 0, transform: pull ? `translateY(${pull / 2}px)` : 'none', opacity: pull ? Math.max(0.4, 1 - pull / 300) : 1 }}>
         {row ? (
           // The wide row: a sideways scroller over the whole area (its empty space still closes the switcher), the cards at their places in it.
@@ -316,12 +374,18 @@ function OpenSwitcher({ ui, switcher }) {
           >
             <Box sx={{ position: 'relative', width: row.contentW, height: '100%' }}>
               {cards.map((card, index) => (
-                <WideCard
-                  key={recentKey(card)} card={card} index={index} row={row} area={area} status={statusOf(card)} taskRow={tasks.get(recentTaskRef(card))}
-                  preview={(switcher.previews || {})[recentKey(card)]} previewRows={previewRows} selected={index === centred} leaving={leaving}
-                  growLeft={leaveScroll.current} motion={motion} reduced={reduced} cardRef={el => { cardRefs.current[index] = el; }}
-                  onChoose={() => { if (dragged.current) { dragged.current = false; return; } choose(index); }}
-                />
+                <Fragment key={recentKey(card)}>
+                  <WideCard
+                    card={card} index={index} row={row} area={area} status={statusOf(card)} taskRow={tasks.get(recentTaskRef(card))}
+                    preview={(switcher.previews || {})[recentKey(card)]} previewRows={previewRows} selected={index === centred} leaving={leaving}
+                    growLeft={leaveScroll.current} motion={motion} reduced={reduced} cardRef={el => { cardRefs.current[index] = el; }} closable={!touch && !card.current}
+                    up={upOf(recentKey(card), row.top + row.cardH)}
+                    onChoose={() => { if (dragged.current) { dragged.current = false; return; } choose(index); }}
+                  />
+                  {!touch && !card.current && leaving === null && removing !== recentKey(card) ? (
+                    <CloseButton onRemove={() => remove(index)} sx={{ left: row.xs[index] + row.cardW - CLOSE - 10, top: row.top + (HEAD - CLOSE) / 2, transition: `${motion === 'none' ? '' : 'left 200ms cubic-bezier(0.4, 0, 0.2, 1), '}opacity 120ms ease-out` }} />
+                  ) : null}
+                </Fragment>
               ))}
             </Box>
           </Box>
@@ -340,7 +404,9 @@ function OpenSwitcher({ ui, switcher }) {
           const grow = leaving === index;
           const label = [device ? deviceText(device) : '', name, taskTitle, t(STATE_WORDS[status]), card.current ? t('Current') : ''].filter(Boolean).join(', ');
           const edge = isCentred ? 'primary.main' : status === 'waiting' ? 'warning.main' : null;
+          const up = upOf(recentKey(card), g.top + g.cardH);
           return (
+            <Fragment key={recentKey(card)}>
             <ButtonBase
               key={recentKey(card)} ref={el => { cardRefs.current[index] = el; }} className="h5-switcher-card" disableRipple
               data-key={recentKey(card)} data-index={index} data-status={status} data-centred={isCentred ? 'true' : undefined} data-current={card.current ? 'true' : undefined}
@@ -349,9 +415,9 @@ function OpenSwitcher({ ui, switcher }) {
               sx={{
                 position: 'absolute', display: 'block', textAlign: 'left', p: 0,
                 left: grow ? 0 : g.centreX, top: grow ? 0 : g.top, width: grow ? area.width : g.cardW, height: grow ? area.height : g.cardH,
-                transform: grow ? 'none' : `translateX(${place.x}px) scale(${place.scale})`, transformOrigin: 'center center',
-                zIndex: grow ? 100 : 50 - index, transition: motion,
-                opacity: leaving !== null && !grow ? 0 : rel > 4.5 || rel < -1.5 ? 0 : 1,
+                transform: grow ? 'none' : `translate(${place.x}px, ${up.y}px) scale(${place.scale})`, transformOrigin: 'center center',
+                zIndex: grow ? 100 : 50 - index, transition: up.lifting ? 'none' : motion,
+                opacity: (leaving !== null && !grow) || up.gone ? 0 : rel > 4.5 || rel < -1.5 ? 0 : 1,
                 // The focus is always on the centred card, whose primary edge shows it: no second ring.
                 outline: 'none',
               }}
@@ -403,6 +469,11 @@ function OpenSwitcher({ ui, switcher }) {
                 <Box aria-hidden="true" sx={theme => ({ position: 'absolute', inset: 0, pointerEvents: 'none', bgcolor: alpha(theme.palette.common.black, grow ? 0 : place.dim), transition: motion === 'none' ? 'none' : 'background-color 200ms linear' })} />
               </Box>
             </ButtonBase>
+            {/* With a pointer, the centred card's close button, at its top right while the stack rests. */}
+            {!touch && isCentred && !card.current && !dragging && leaving === null && !removing && pos === centred ? (
+              <CloseButton onRemove={() => remove(index)} sx={{ left: g.centreX + g.cardW - CLOSE - 6, top: g.top + 6 }} />
+            ) : null}
+            </Fragment>
           );
         })}
       </Box>
@@ -431,6 +502,8 @@ function OpenSwitcher({ ui, switcher }) {
             <span>{t('move (or scroll sideways)')}</span>
             <Keys keys={['Enter']} />
             <span>{t('switch')}</span>
+            <Keys keys={['Del']} />
+            <span>{t('remove')}</span>
             <Keys keys={['Esc']} />
             <span>{t('close')}</span>
           </>
@@ -444,7 +517,7 @@ function OpenSwitcher({ ui, switcher }) {
 // A card of the wide row: a header that names the task (the agent's tile, the task as the title, then the device tag, the session, the state dot and
 // word), "Current" on the current card, then the preview lines or the quiet placeholder. The selected card has the primary edge (it holds the focus),
 // one that needs the person the orange one.
-function WideCard({ card, index, row, area, status, taskRow, preview, previewRows, selected, leaving, growLeft, motion, reduced, cardRef, onChoose }) {
+function WideCard({ card, index, row, area, status, taskRow, preview, previewRows, selected, leaving, growLeft, motion, reduced, cardRef, closable, up, onChoose }) {
   const device = taskRow ? taskRow.device : null;
   const taskTitle = (taskRow && taskRow.title) || '';
   const name = card.title || t(kindOf(card.agent));
@@ -463,7 +536,8 @@ function WideCard({ card, index, row, area, status, taskRow, preview, previewRow
       sx={{
         position: 'absolute', display: 'block', textAlign: 'left', p: 0,
         left: grow ? growLeft : row.xs[index], top: grow ? 0 : row.top, width: grow ? area.width : row.cardW, height: grow ? area.height : row.cardH,
-        zIndex: grow ? 100 : 1, transition: motion, opacity: leaving !== null && !grow ? 0 : 1,
+        zIndex: grow ? 100 : 1, transition: up.lifting ? 'none' : motion, opacity: (leaving !== null && !grow) || up.gone ? 0 : 1,
+        transform: up.y ? `translateY(${up.y}px)` : 'none',
         outline: 'none', // the selected card's primary edge shows the focus: no second ring
       }}
     >
@@ -477,7 +551,7 @@ function WideCard({ card, index, row, area, status, taskRow, preview, previewRow
       >
         <Box
           className="h5-switcher-head"
-          sx={theme => ({ flex: `0 0 ${HEAD}px`, display: 'flex', alignItems: 'center', gap: 1.25, px: 1.5, bgcolor: 'background.paper', backgroundImage: overlay(theme, 8), borderBottom: 1, borderColor: 'divider' })}
+          sx={theme => ({ flex: `0 0 ${HEAD}px`, display: 'flex', alignItems: 'center', gap: 1.25, pl: 1.5, pr: closable ? `${CLOSE + 16}px` : 1.5, bgcolor: 'background.paper', backgroundImage: overlay(theme, 8), borderBottom: 1, borderColor: 'divider' })}
         >
           <SessionKindIcon agent={card.agent} title={t(kindOf(card.agent))} size={28} />
           <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
@@ -505,6 +579,17 @@ function WideCard({ card, index, row, area, status, taskRow, preview, previewRow
         </Box>
       </Box>
     </ButtonBase>
+  );
+}
+
+// The close button of a card (pointer input): "Remove from Recent". A sibling just after its card (a button cannot hold another button); not a Tab
+// stop (the switcher has one, the selected card, whose Delete key does the same).
+function CloseButton({ onRemove, sx }) {
+  return (
+    <IconButton
+      className="h5-switcher-close" size="small" tabIndex={-1} aria-label={t('Remove from Recent')} title={t('Remove from Recent')}
+      onClick={event => { event.stopPropagation(); onRemove(); }} sx={{ ...CLOSE_SX, ...sx }}
+    ><Icon name="close" size={16} /></IconButton>
   );
 }
 

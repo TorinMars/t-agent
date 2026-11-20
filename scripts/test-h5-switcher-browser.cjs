@@ -8,6 +8,9 @@
 // wheel and a mouse drag scroll the row; Enter, a second press of the button and a click switch; Escape and the empty space close. No count on the
 // button; on a computer it is a button of the row (not in "More tools") that stays in the narrow row. A pane has no switcher. A session of another
 // engine (K01) is a card too, and the list is remembered (the shared page state; here, without a server for it, in this browser).
+// Remove from Recent: on the phone a card swiped up goes (the snackbar's Undo brings it back), a short upward drag springs back, the current card
+// stays, a sideways swipe still moves the stack; on the computer a card's close button (x, on hover) and the Delete key remove it; the shown session
+// never changes.
 // H5_SHOT_DIR=<dir> saves screenshots there (phone: first press, after a swipe; computer: open at 1440x900, open at 1920x1080 with the sidebar folded).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -254,6 +257,57 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       assert.equal(await page.evaluate(() => localStorage.getItem('h5-recent-sessions')), null, 'the old per-browser key is not written');
       await page.reload();
       await page.waitForFunction(() => window.H5UI.get().recent.length === 4, null, { timeout: 15000 });
+
+      // Remove from Recent by swiping a card up. Open on [d1 current, c1 centred, k1, default].
+      await waitShown(page, 'Write docs', 'd1');
+      await page.locator('#h5-cycle').tap();
+      await switcher(page).waitFor();
+      await settled(page);
+      assert.equal(await page.locator('.h5-switcher-remove-hint').textContent(), 'Swipe a card up to remove it');
+      let stack = await cards(page);
+      const lifted = stack.find(card => card.centred);
+      assert.equal(lifted.key, 'local|1|c1');
+      const cx = Math.round((lifted.left + Math.min(lifted.right, 300)) / 2);
+      const cy = Math.round((lifted.top + lifted.bottom) / 2);
+      // A short upward drag springs back.
+      await touchSwipe(page, cdp, { x: cx, y: cy }, { x: cx, y: cy - 60 });
+      await settled(page);
+      stack = await cards(page);
+      assert.equal(stack.length, 4, 'a short drag removes nothing');
+      assert.equal(stack.find(card => card.key === 'local|1|c1').top, lifted.top, 'the card springs back');
+      // The current card (peeking in at the right) cannot go.
+      await touchSwipe(page, cdp, { x: 370, y: cy }, { x: 370, y: cy - 260 });
+      await settled(page);
+      assert.equal((await cards(page)).length, 4, 'the current session stays');
+      // A long upward swipe: the card follows the finger, then goes.
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx, y: cy }] });
+      for (let i = 1; i <= 12; i += 1) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: cx, y: cy - (220 * i) / 12 }] }); await page.waitForTimeout(16); }
+      await page.waitForTimeout(120);
+      const up = (await cards(page)).find(card => card.key === 'local|1|c1');
+      assert.ok(up.top < lifted.top - 150, `the card follows the finger up: ${up.top} vs ${lifted.top}`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'recent-remove-switcher-swipe-390.png') });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.waitForFunction(() => ![...document.querySelectorAll('#h5-switcher .h5-switcher-card')].some(card => card.dataset.key === 'local|1|c1'));
+      await settled(page);
+      stack = await cards(page);
+      assert.deepEqual(stack.map(card => card.key), ['local|2|d1', 'remote:7|5|k1', 'local|1|default'], 'only that card went');
+      assert.equal(stack.find(card => card.centred).key, 'remote:7|5|k1', 'the next older card is centred');
+      assert.ok(!(await page.evaluate(() => window.H5UI.get().recent.map(entry => `${entry.sourceKey}|${entry.taskId}|${entry.terminalId}`))).includes('local|1|c1'), 'it left the Recent list');
+      assert.deepEqual(await shown(page), { terminal: 'd1', task: 'Write docs' }, 'the shown session did not change');
+      const swipeSnack = page.locator('.h5-notice-action', { hasText: 'Removed from Recent' });
+      await swipeSnack.waitFor();
+      await page.waitForTimeout(300);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'recent-remove-switcher-snackbar-390.png') });
+      // A sideways swipe still moves the stack.
+      await touchSwipe(page, cdp, { x: 195, y: 420 }, { x: 195 + 70, y: 424 });
+      await waitCentred(page, 'local|1|default');
+      // Undo puts it back, in its place.
+      await swipeSnack.locator('.h5-notice-action-button').tap();
+      await page.waitForFunction(() => document.querySelectorAll('#h5-switcher .h5-switcher-card').length === 4);
+      assert.deepEqual((await cards(page)).map(card => card.key), ['local|2|d1', 'local|1|c1', 'remote:7|5|k1', 'local|1|default'], 'Undo: the same order');
+      assert.equal(await page.locator('#h5-switcher .h5-switcher-close').count(), 0, 'no close buttons on a touch screen');
+      await page.keyboard.press('Escape');
+      await waitClosed(page);
       assert.deepEqual(errors, [], 'no page errors on the phone');
       await context.close();
     }
@@ -399,6 +453,49 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       await page.evaluate(() => window.H5UI.actions.toggleSidebar());
       await page.waitForFunction(() => window.H5UI.get().sidebarCollapsed === false);
 
+      // Remove from Recent on a computer (1440x900): a card's close button shows on hover; it and the Delete key remove a card; Undo brings it back.
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await cycle.click();
+      await switcher(page).waitFor();
+      await settled(page);
+      let row = await cards(page);
+      const currentKey = row[0].key;
+      assert.equal(await page.locator('#h5-switcher .h5-switcher-close').count(), row.length - 1, 'every card but the current one has a close button');
+      const target = row[2];
+      await page.mouse.move((target.left + target.right) / 2, 500);
+      const close = page.locator(`#h5-switcher .h5-switcher-card[data-key="${target.key}"] + .h5-switcher-close`);
+      await page.waitForFunction(key => Number(getComputedStyle(document.querySelector(`#h5-switcher .h5-switcher-card[data-key="${key}"] + .h5-switcher-close`)).opacity) === 1, target.key);
+      assert.equal(await close.getAttribute('aria-label'), 'Remove from Recent');
+      assert.equal(await close.getAttribute('title'), 'Remove from Recent');
+      const idle = row.find(card => !card.current && !card.centred && card.key !== target.key);
+      const other = page.locator(`#h5-switcher .h5-switcher-card[data-key="${idle.key}"] + .h5-switcher-close`);
+      assert.equal(Number(await other.evaluate(el => getComputedStyle(el).opacity)), 0, 'the close button of a card neither hovered nor focused is hidden');
+      const closeBox = await close.boundingBox();
+      assert.ok(closeBox.x + closeBox.width <= target.right && closeBox.y >= target.top && closeBox.y + closeBox.height <= target.headBottom, `the close button is in the card's header, at the right: ${JSON.stringify(closeBox)}`);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'recent-remove-switcher-close-1440.png') });
+      await close.click();
+      await page.waitForFunction(key => !document.querySelector(`#h5-switcher .h5-switcher-card[data-key="${key}"]`), target.key);
+      await settled(page);
+      assert.equal((await cards(page)).length, row.length - 1);
+      const deskSnack = page.locator('.h5-notice-action', { hasText: 'Removed from Recent' });
+      await deskSnack.waitFor();
+      await page.waitForTimeout(300);
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'recent-remove-switcher-snackbar-1440.png') });
+      await deskSnack.locator('.h5-notice-action-button').click();
+      await page.waitForFunction(n => document.querySelectorAll('#h5-switcher .h5-switcher-card').length === n, row.length);
+      assert.deepEqual((await cards(page)).map(card => card.key), row.map(card => card.key), 'Undo: back in its place');
+      // The Delete key removes the selected card (the switcher keeps one Tab stop, so the close buttons are not in the Tab order).
+      const selected = await centredKey(page);
+      await page.locator('#h5-switcher .h5-switcher-card[data-centred="true"]').focus();
+      await page.keyboard.press('Delete');
+      await page.waitForFunction(key => !document.querySelector(`#h5-switcher .h5-switcher-card[data-key="${key}"]`), selected);
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('h5-switcher-card')), true, 'the focus moves to the next card');
+      await deskSnack.locator('.h5-notice-action-button').click();
+      await page.waitForFunction(n => document.querySelectorAll('#h5-switcher .h5-switcher-card').length === n, row.length);
+      assert.equal((await cards(page))[0].key, currentKey, 'the current session stayed');
+      await page.keyboard.press('Escape');
+      await waitClosed(page);
+
       // The narrow row (under 560px): Saved commands and Docs go into More tools; the switch button stays.
       await page.setViewportSize({ width: 900, height: 900 });
       await page.waitForFunction(() => document.getElementById('h5-bottom').clientWidth < 560 && !document.getElementById('h5-commands'));
@@ -423,6 +520,6 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       assert.deepEqual(errors, []);
       await context.close();
     }
-    console.log('Session switcher: phone stack (order, labels, edges, previews, swipe, tap, double press, Back, empty space, downward swipe, focus) and the wide row (order, no overlap, card headers, wider window, keys and scroll into view, wheel, drag, Enter, second press, click, Escape, empty space), no badge, row placement, narrow row and pane passed.');
+    console.log('Session switcher: phone stack (order, labels, edges, previews, swipe, tap, double press, Back, empty space, downward swipe, focus) and the wide row (order, no overlap, card headers, wider window, keys and scroll into view, wheel, drag, Enter, second press, click, Escape, empty space), Remove from Recent (swipe up, spring back, current stays, close button on hover, Delete key, Undo), no badge, row placement, narrow row and pane passed.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

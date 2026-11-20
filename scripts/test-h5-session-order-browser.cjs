@@ -348,7 +348,7 @@ async function testMouse(browser) {
   assert.equal(t.puts(world).length, count, `${label}: a click saves nothing`);
   // The "⋯" is not a grip: a press on it opens the menu.
   await t.menu('Alpha', 'Two');
-  assert.deepEqual(await t.items(), ['Copy text', 'Rename', 'Reopen', 'Move up', 'Move down', 'Restart in the working directory', 'Delete'], `${label}: the actions of a middle session`);
+  assert.deepEqual(await t.items(), ['Copy text', 'Rename', 'Reopen', 'Move up', 'Move down', 'Restart in the working directory', 'Delete session'], `${label}: the actions of a middle session`);
   await page.keyboard.press('Escape');
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();
@@ -368,7 +368,7 @@ async function testRemote(browser, wide) {
     const movable = await t.list('Delta').locator('.h5-terminal-row[data-movable="true"]').count();
     assert.equal(movable, capable ? 3 : 0, `${label}: rows movable ${capable ? 'with' : 'without'} the capability`);
     await t.menu('Delta', 'Dee two');
-    assert.deepEqual(await t.items(), capable ? ['Rename', 'Open', 'Move up', 'Move down', 'Restart in the working directory', 'Delete'] : ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${label}: the menu ${capable ? 'with' : 'without'} moves`);
+    assert.deepEqual(await t.items(), capable ? ['Rename', 'Open', 'Move up', 'Move down', 'Restart in the working directory', 'Delete session'] : ['Rename', 'Open', 'Restart in the working directory', 'Delete session'], `${label}: the menu ${capable ? 'with' : 'without'} moves`);
     if (capable) {
       await t.item('Move down').click();
       await t.waitNames('Delta', ['Dee one', 'Dee three', 'Dee two']);
@@ -394,7 +394,7 @@ async function testRemote(browser, wide) {
       await t.waitNames('Delta', ['Dee three', 'Dee two', 'Dee one']);
       await page.waitForFunction(() => !document.querySelector('.h5-task .h5-terminal-row[data-movable="true"][data-session^="d"]'));
       await t.menu('Delta', 'Dee two');
-      assert.deepEqual(await t.items(), ['Rename', 'Open', 'Restart in the working directory', 'Delete'], `${label}: no moves after TERMINAL_ORDER_UNSUPPORTED`);
+      assert.deepEqual(await t.items(), ['Rename', 'Open', 'Restart in the working directory', 'Delete session'], `${label}: no moves after TERMINAL_ORDER_UNSUPPORTED`);
       await page.keyboard.press('Escape');
     } else {
       await page.keyboard.press('Escape');
@@ -429,10 +429,10 @@ async function testMenuAndFailure(browser, wide) {
   const t = tools(page, wide);
   await start(page, t, wide);
   await t.menu('Alpha', 'One');
-  assert.deepEqual(await t.items(), ['Copy text', 'Rename', 'Reopen', 'Move down', 'Restart in the working directory', 'Delete'], `${label}: the first row moves only down`);
+  assert.deepEqual(await t.items(), ['Copy text', 'Rename', 'Reopen', 'Move down', 'Restart in the working directory', 'Delete session'], `${label}: the first row moves only down`);
   await page.keyboard.press('Escape');
   await t.menu('Alpha', 'Three');
-  assert.deepEqual(await t.items(), ['Rename', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete'], `${label}: the last row moves only up`);
+  assert.deepEqual(await t.items(), ['Rename', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete session'], `${label}: the last row moves only up`);
   await t.press(t.item('Move up'));
   await t.waitNames('Alpha', ['One', 'Three', 'Two']);
   assert.equal(await t.said(), 'Moved to position 2 of 3', `${label}: announced`);

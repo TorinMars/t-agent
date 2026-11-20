@@ -129,6 +129,8 @@ test('menu rows carry their label only when it is a fixed product label', async 
   const { menuDetail } = await load('usage-track.mjs');
   assert.equal(menuDetail({ label: 'Rename' }), 'Rename');
   assert.equal(menuDetail({ label: 'Delete', kind: 'danger' }), 'Delete');
+  assert.equal(menuDetail({ label: 'Delete session', kind: 'danger' }), 'Delete session');
+  assert.equal(menuDetail({ label: 'Remove from Recent', kind: 'list' }), 'Remove from Recent');
   assert.equal(menuDetail({ label: 'K01', kind: 'raw' }), undefined);
   assert.equal(menuDetail({ label: 'Claude', kind: 'raw' }), undefined, 'a raw label is a name even when it looks fixed');
   assert.equal(menuDetail({ label: 'Move to Marketing' }), undefined);

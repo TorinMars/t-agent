@@ -1,12 +1,14 @@
 // The "Recent" tab of the task list ("Recent tab" in docs/design/page-task-list.md): the sessions this device used, most recent first, as one flat list:
 // the same entries and order as the session switcher (h5.js `state.recent`, recent-sessions.mjs). Each row: the session's tile with its state dot, its
 // name, when it was last used ("Current" for the shown one), and a line with the device tag, the task and the state word in the state's colour. A tap
-// opens the session the way the task list and the switcher do (`ui.actions.openRow`); the "⋯" opens the menu of a session row (`recentMore`), and Rename
-// puts the rename field of the task list in place of the row. The search field and the filter chips of the list apply here too (`filterRecent`), and
+// opens the session the way the task list and the switcher do (`ui.actions.openRow`); the "⋯" opens the menu of a session row (`recentMore`) with
+// "Remove from Recent" (only the list changes), and Rename puts the rename field of the task list in place of the row. "Clear list" at the right of
+// the caption empties the list except the shown session. The search field and the filter chips of the list apply here too (`filterRecent`), and
 // the chips count the sessions of this list (`onCounts`). A lazy chunk of its own (screen-recent.jsx, lazy-screens.jsx `RecentScreen`), loaded when
 // the tab is first reached, so the first screen does not carry it.
 import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import ListItemButton from '@mui/material/ListItemButton';
 import Typography from '@mui/material/Typography';
@@ -125,7 +127,13 @@ export function RecentList({ ui, query, filter, rename, onCounts }) {
   }
   return (
     <>
-      <Typography id="h5-recent-caption" variant="caption" component="p" color="text.secondary" sx={{ px: 1.5, pt: 0.5, pb: 0.75 }}>{t('Sessions you used, most recent first')}</Typography>
+      {/* "Clear list" empties the list except the shown session (h5.js `clearRecent`; a snackbar offers Undo). Only the list changes. */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 34, pl: 1.5, pr: 0, pt: 0.5, pb: 0.25 }}>
+        <Typography id="h5-recent-caption" variant="caption" component="p" color="text.secondary" sx={{ flex: '1 1 auto', minWidth: 0 }}>{t('Sessions you used, most recent first')}</Typography>
+        {all.some(row => !row.current) ? (
+          <Button id="h5-recent-clear" size="small" onClick={() => ui.actions.clearRecent()} sx={{ flex: '0 0 auto', minWidth: 0, px: 0.75, [TOUCH]: { minHeight: 44, px: 1 } }}>{t('Clear list')}</Button>
+        ) : null}
+      </Box>
       {rows.length ? (
         <Box component="ul" aria-labelledby="h5-recent-caption" sx={{ listStyle: 'none', m: 0, p: 0 }}>
           {rows.map(row => {

@@ -166,13 +166,13 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   await h.openMenu('Beta', 'Terminal 1');
   // This machine sorts sessions (Move up / Move down where the row can go); the mocked remote Engine does not say 'terminals:order'.
   const moves = steps => (remote ? [] : steps);
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', ...moves(['Move down']), RESTART, 'Delete'], `${label}: terminal actions`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Open', ...moves(['Move down']), RESTART, 'Delete session'], `${label}: terminal actions`);
   assert.deepEqual(await h.actions.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, ...moves([false]), true, true], `${label}: the same danger style`);
   await h.closeMenu();
 
   // ── Cancel in the confirmation sends nothing and names the session and the task ──
   answers.next = 'dismiss';
-  for (const [title, name, words] of [['Terminal 1', 'Delete', 'Delete this terminal'], ['Terminal 1', RESTART, 'clears its history']]) {
+  for (const [title, name, words] of [['Terminal 1', 'Delete session', 'Delete this terminal'], ['Terminal 1', RESTART, 'clears its history']]) {
     await h.openMenu('Beta', title);
     await h.press(h.action(name));
     assert.ok(dialogs.at(-1).includes(words), `${label}: the same question (${dialogs.at(-1)})`);
@@ -197,7 +197,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   // ── A server error: the notice, the row stays, the view stays ──
   server.fail = 'control';
   await h.openMenu('Beta', 'Terminal 4');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   await h.toast('Could not delete the terminal');
   assert.ok((await h.names('Beta')).includes('Terminal 4'), `${label}: the row stays after an error`);
   server.fail = 'control';
@@ -221,7 +221,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   await h.row('Beta', 'Logs').waitFor();
   while (!older.seen) await page.waitForTimeout(20);
   await h.openMenu('Beta', 'Terminal 2');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   await h.row('Beta', 'Terminal 2').waitFor({ state: 'detached' });
   assert.equal(await h.views(beta, `t${beta}-2`), 0, `${label}: the warm view of the deleted terminal is gone`);
   assert.equal((await h.socket(beta, `t${beta}-2`)).at(-1), 3, `${label}: and its socket is closed`);
@@ -238,7 +238,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
 
   // ── The key case: delete Beta's `default`; Alpha's `default` is untouched ──
   await h.openMenu('Beta', 'Terminal 1');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   await h.row('Beta', 'Terminal 1').waitFor({ state: 'detached' });
   assert.deepEqual(server.writes, [['POST', control, { action: 'delete', terminal_id: 'default' }]], `${label}: Beta's default and nothing else`);
   assert.ok(server.lists.get(alpha).terminals.some(row => row.terminal_id === 'default'), `${label}: the selected task's default still exists on the server`);
@@ -252,7 +252,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
 
   // ── The last row of a task ──
   await h.openMenu('Gamma', 'Terminal 1');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   await h.list('Gamma').locator('.h5-terminal-name', { hasText: 'Open this task' }).waitFor();
   assert.deepEqual(server.writes, [['POST', `${base}/${gamma}/terminal/control`, { action: 'delete', terminal_id: 'default' }]], `${label}: the last terminal of Gamma`);
   await untouched('last row');
@@ -260,7 +260,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
 
   // ── The selected task's own actions behave as before ──
   await h.openMenu('Phone terminals', 'Terminal 3');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Reopen', ...moves(['Move up', 'Move down']), RESTART, 'Delete'], `${label}: own terminal actions`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Reopen', ...moves(['Move up', 'Move down']), RESTART, 'Delete session'], `${label}: own terminal actions`);
   await h.press(h.action(RESTART));
   await h.shown(alpha, `t${alpha}-3`);
   assert.deepEqual(server.writes, [['POST', `${base}/${alpha}/terminal/control`, { action: 'restart-workdir', terminal_id: `t${alpha}-3` }]], `${label}: own restart`);
@@ -268,7 +268,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   server.writes.length = 0;
   await h.openSheet();
   await h.openMenu('Phone terminals', 'Terminal 3');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   await h.shown(alpha, 'default'); // the shown terminal is deleted: the first one is shown
   assert.deepEqual(server.writes, [['POST', `${base}/${alpha}/terminal/control`, { action: 'delete', terminal_id: `t${alpha}-3` }]], `${label}: own delete`);
   await h.openSheet();
@@ -281,7 +281,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   const hold = { released: new Promise(resolve => { free = resolve; }), seen: false };
   server.holdControl = hold;
   await h.openMenu('Beta', 'Logs');
-  await h.press(h.action('Delete'));
+  await h.press(h.action('Delete session'));
   while (!hold.seen) await page.waitForTimeout(20);
   await h.press(h.row('Beta', 'Logs').locator('.h5-terminal-main')); // the very terminal that is being deleted: its row is still there
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Beta');

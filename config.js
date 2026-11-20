@@ -50,6 +50,9 @@ module.exports = {
   // The usage data sync across linked devices (services/ui-events-sync.js). 'false' turns it off on this service (each engine keeps its own presses);
   // it is off too when the settings sync is (it uses the settings sync's link keys).
   usageSyncEnabled: process.env.USAGE_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
+  // Mind maps on every linked engine (services/mindmap-sync.js). 'false' turns it off on this service (its maps stay here, and its page lists the maps
+  // of each linked engine from that engine); it is off too when the settings sync is (it uses the settings sync's link keys).
+  mindmapSyncEnabled: process.env.MINDMAP_SYNC_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
   // The read copies of the linked engines' T-Attention items (services/attention-copy.js); off: every engine is read live, as before.
   attentionCopyEnabled: process.env.ATTENTION_COPY_ENABLED !== 'false' && process.env.SETTINGS_SYNC_ENABLED !== 'false',
   updateCheckIntervalMs: positiveInteger(process.env.UPDATE_CHECK_INTERVAL_SECONDS, 1800) * 1000,

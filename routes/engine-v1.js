@@ -45,6 +45,8 @@ router.use('/settings-sync', require('./settings-sync').createEngineSettingsSync
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
 // The usage data sync between linked services (routes/ui-events-sync.js), link tokens only; the rows travel sealed for the link.
 router.use('/usage-sync', require('./ui-events-sync').createEngineUsageSyncRouter());
+// Mind maps on every linked engine (routes/mindmap-sync.js), link tokens only; the maps travel sealed for the link.
+router.use('/mindmap-sync', require('./mindmap-sync').createEngineMindmapSyncRouter());
 // The T-Attention read copies between linked services (routes/attention-copy.js), link tokens only; the rows travel sealed for the link.
 router.use('/attention-copy', require('./attention-copy').createEngineAttentionCopyRouter());
 // The shared page state between linked services (routes/page-state.js), link tokens only; the state travels sealed for the link.
@@ -201,6 +203,9 @@ function infoHandler(req, res) {
       // usage:sync: GET|PUT /v1/usage-sync, POST /v1/usage-sync/pull and GET /v1/usage-sync/summary (routes/ui-events-sync.js), the usage data linked
       // services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or USAGE_SYNC_ENABLED=false.
       ...(require('../services/ui-events-sync').syncEnabled() ? [require('../services/ui-events-sync').CAPABILITY] : []),
+      // mindmaps:sync: GET|PUT /v1/mindmap-sync and POST /v1/mindmap-sync/pull (routes/mindmap-sync.js), the mind maps linked services keep a copy of
+      // each (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or MINDMAP_SYNC_ENABLED=false.
+      ...(require('../services/mindmap-sync').syncEnabled() ? [require('../services/mindmap-sync').CAPABILITY] : []),
       // attention:copy: GET|PUT /v1/attention-copy and POST /v1/attention-copy/pull (routes/attention-copy.js), the read copies of every linked engine's
       // T-Attention items (link tokens only). A linked service without it is read live, as before. Off with SETTINGS_SYNC_ENABLED=false or ATTENTION_COPY_ENABLED=false.
       ...(require('../services/attention-copy').syncEnabled() ? [require('../services/attention-copy').CAPABILITY] : []),

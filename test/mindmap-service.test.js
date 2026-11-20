@@ -47,7 +47,7 @@ test('create, read, update and list a map', async t => {
 
   const [summary, ...rest] = await service.list();
   assert.equal(rest.length, 0);
-  assert.deepEqual(Object.keys(summary).sort(), ['created_at', 'id', 'revision', 'size', 'title', 'updated_at'], 'the list has no data');
+  assert.deepEqual(Object.keys(summary).sort(), ['by', 'by_name', 'created_at', 'id', 'revision', 'size', 'title', 'updated_at'], 'the list has no data; by and by_name: the engine of the last change');
   assert.equal(summary.revision, 3);
   assert.equal(summary.size, fs.statSync(path.join(service.dir, `${created.id}.json`)).size);
 });

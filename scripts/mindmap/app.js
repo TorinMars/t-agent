@@ -36,6 +36,10 @@ const CODE_MESSAGES = {
   MINDMAP_TOO_LARGE: 'This map is too large to save (8 MB limit)',
   MINDMAP_LIMIT: 'No more maps can be created (limit reached)',
 };
+// While a map or the list is shown, the page asks this engine every POLL_MS whether the open map changed (on any engine: maps are copied to every
+// linked engine, "Mind maps on every engine" in docs/design/mind-maps.md), and reads the list again every LIST_EVERY polls.
+const POLL_MS = 10000;
+const LIST_EVERY = 3;
 const STATE_TEXT = { saved: 'Saved', dirty: 'Saving...', saving: 'Saving...', retrying: 'Not saved, retrying...', conflict: 'Conflict: not saved', rejected: 'Not saved' };
 
 const SHORTCUTS = [
@@ -80,6 +84,7 @@ function messageFor(error, src) {
     if (src && !src.local && isOffline(error)) return `${tr('This service is offline:')} ${sourceName(src)}`;
     if (isUnsupported(error)) return tr('This service is too old for mind maps. Update it first.');
     if (error.code === 'NETWORK') return tr('The service cannot be reached. Try again in a moment.');
+    if (error.code === 'MINDMAP_HOME_OFFLINE' && error.json && typeof error.json.message === 'string') return tr(error.json.message);
   }
   return tr('Something went wrong');
 }
@@ -170,6 +175,10 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   // { status: 'loading' | 'ready' | 'error' | 'offline' | 'unsupported', maps, error, seq, base }. A service whose answer is 501 is left out of the list.
   let sources = given === undefined ? [LOCAL_SOURCE] : normalizeSources(given);
   const lists = new Map();
+  // Where this engine keeps the maps (`sync` of its list answer, services/mindmap-sync.js): undefined until it answered, null when it does not say
+  // (the sync is off, or an older server: every service is listed as before), else { enabled, engines, older, cache_only, home_name, home_online,
+  // waiting }. With the sync every map is in this engine's own list; a linked engine is read itself only when it is too old to keep a copy (`older`).
+  let syncInfo;
   let loadSeq = 0;
   let createOn = null; // "Create on": the service chosen in this view; null: the one chosen last time (CREATE_ON_KEY), else the first
   let importTarget = null;
@@ -285,8 +294,19 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   const sourceByKey = key => sources.find(src => src.key === key) || null;
   const listOf = src => lists.get(src.key) || { status: 'loading', maps: [] };
-  // The services a map can be created on: online, and its list answered (so it is known to have maps at all). This machine always.
-  const createTargets = () => sources.filter(src => (src.local ? listOf(src).status !== 'unsupported' : src.online && listOf(src).status === 'ready'));
+  const syncOn = () => Boolean(syncInfo && syncInfo.enabled);
+  // The services whose maps are listed: this engine first alone (until it says whether it keeps every map), then with the sync this engine and the
+  // older linked engines, without it every service.
+  function listedSources() {
+    if (syncInfo === undefined) return sources.filter(src => src.local);
+    if (!syncOn()) return sources;
+    const older = new Set(Array.isArray(syncInfo.older) ? syncInfo.older : []);
+    return sources.filter(src => src.local || (src.instanceId && older.has(src.instanceId)));
+  }
+  // The services a map can be created on: online, and its list answered (so it is known to have maps at all). This machine always. With the sync
+  // only this engine: a map made here is on every engine, so there is no "Create on".
+  const createTargets = () => (syncOn() ? sources.filter(src => src.local)
+    : listedSources().filter(src => (src.local ? listOf(src).status !== 'unsupported' : src.online && listOf(src).status === 'ready')));
   function createTarget() {
     const targets = createTargets();
     const last = createOn === null ? readShared(CREATE_ON_KEY) : null;
@@ -314,9 +334,11 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     lists.set(src.key, before && before.status === 'ready' && before.base === src.base ? { ...before, seq } : { status: 'loading', maps: [], seq, base: src.base });
     renderList();
     let next;
+    let sync = null;
     try {
-      const { maps } = await call('GET', src.base);
-      next = { status: 'ready', maps: Array.isArray(maps) ? maps : [] };
+      const answer = await call('GET', src.base);
+      next = { status: 'ready', maps: Array.isArray(answer.maps) ? answer.maps : [] };
+      sync = answer.sync && typeof answer.sync === 'object' ? answer.sync : null;
     } catch (error) {
       next = isUnsupported(error) ? { status: 'unsupported', maps: [] }
         : !src.local && isOffline(error) ? { status: 'offline', maps: [] }
@@ -325,11 +347,19 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     const now = lists.get(src.key);
     if (disposed || !now || now.seq !== seq || !sourceByKey(src.key)) return;
     lists.set(src.key, { ...next, seq, base: src.base });
+    if (src.local) noteSync(next.status === 'ready' ? sync : (syncInfo || null));
     renderList();
+  }
+  // This engine said where it keeps the maps: the services listed follow (an older engine that came into view is read).
+  function noteSync(sync) {
+    const before = JSON.stringify(listedSources().map(src => src.key));
+    syncInfo = sync;
+    if (JSON.stringify(listedSources().map(src => src.key)) === before) return;
+    for (const src of listedSources()) if (!src.local && !lists.has(src.key)) void loadSource(src);
   }
   function loadList() {
     renderList();
-    return Promise.all(sources.map(src => loadSource(src)));
+    return Promise.all(listedSources().map(src => loadSource(src)));
   }
 
   // The engine tag of a row (`tagged`: more than one service is listed): the device's name cut to 8 characters in the colour its instance id gives it in
@@ -339,14 +369,23 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     const name = sourceName(src);
     return el('span', { class: 'mm-row-tag', translate: 'no', title: name, 'data-source': src.key, 'data-color': String(index), style: `color:${color};background:${background}`, text: shortName(name) });
   }
+  // With the sync the map is on every engine, so its tag says where it was edited last (the same tag, coloured by that engine's instance id).
+  function editedTag(map) {
+    const name = typeof map.by_name === 'string' && map.by_name ? map.by_name : null;
+    if (!name) return null;
+    const { index, color, background } = tagColor(map.by || null);
+    const title = `${tr('Edited on')} ${name}`;
+    return el('span', { class: 'mm-row-tag', translate: 'no', title, 'aria-label': title, 'data-edited': map.by || '', 'data-color': String(index), style: `color:${color};background:${background}`, text: shortName(name) });
+  }
   function mapRow(src, map, tagged = false) {
     const when = parseTime(map.updated_at);
     const meta = [when ? when.toLocaleString() : '', sizeText(map.size)].filter(Boolean).join(' · ');
     const ref = `${src.key}|${map.id}`;
+    const tag = !tagged ? null : src.local && syncOn() ? editedTag(map) : tagOf(src);
     return el('div', { class: 'mm-row', role: 'listitem', 'data-source': src.key, 'data-id': map.id, 'data-ref': ref },
       el('button', { type: 'button', class: 'mm-row-open', 'data-part': 'open', onClick: () => { void openFromList(src, map.id); } },
         el('span', { class: 'mm-row-title', translate: 'no', text: map.title || tr('Untitled map') }),
-        el('span', { class: 'mm-row-line' }, tagged ? tagOf(src) : null, el('span', { class: 'mm-row-meta', translate: 'no', text: meta }))),
+        el('span', { class: 'mm-row-line' }, tag, el('span', { class: 'mm-row-meta', translate: 'no', text: meta }))),
       iconButton('draftKeyboard', 'Rename', () => renameMap(src, map), { 'data-part': 'rename' }),
       iconButton('delete', 'Delete', () => deleteMap(src, map), { 'data-part': 'delete' }));
   }
@@ -364,15 +403,22 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     const active = document.activeElement;
     const focusRow = active && rows.contains(active) && active.closest('.mm-row');
     const focus = focusRow ? [focusRow.dataset.ref, active.dataset.part] : null;
-    const shown = sources.filter(src => listOf(src).status !== 'unsupported');
+    const shown = listedSources().filter(src => listOf(src).status !== 'unsupported');
     if (!shown.length) { rows.replaceChildren(note(tr(sources.length ? 'No mind maps yet. Create one or import a .xmind file.' : 'Loading...'))); return; }
-    const tagged = shown.length > 1;
+    // Tags when more than one engine is involved: several services listed, or (with the sync) more than one engine keeping the maps.
+    const tagged = shown.length > 1 || (syncOn() && Array.isArray(syncInfo.engines) && syncInfo.engines.length > 1);
     const rank = new Map(shown.map((src, index) => [src.key, index]));
     const all = shown.filter(src => listOf(src).status === 'ready').flatMap(src => listOf(src).maps.map(map => ({ src, map })));
     const maps = (query ? all.filter(({ map }) => String(map.title || tr('Untitled map')).toLowerCase().includes(query)) : all)
       .sort((a, b) => editedAt(b.map) - editedAt(a.map) || rank.get(a.src.key) - rank.get(b.src.key) || String(a.map.id).localeCompare(String(b.map.id)));
     const waiting = shown.filter(src => listOf(src).status !== 'ready');
     const parts = [];
+    // A company computer whose home is away lists the maps it has (opened here lately, or made here), and says so.
+    if (syncOn() && syncInfo.cache_only && syncInfo.home_online === false && syncInfo.home_name) {
+      const waitingCount = Number(syncInfo.waiting) || 0;
+      const text = `${tr(`${syncInfo.home_name} can't be reached. These are the maps opened on this computer lately; changes are kept here and move to ${syncInfo.home_name} when it is back.`)}${waitingCount ? ` ${tr(`${waitingCount} changes wait.`)}` : ''}`;
+      parts.push(el('p', { class: 'mm-banner', role: 'status', 'data-part': 'home-offline', text }));
+    }
     if (maps.length) parts.push(el('div', { class: 'mm-section-rows', role: 'list' }, ...maps.map(({ src, map }) => mapRow(src, map, tagged))));
     else if (waiting.length === shown.length && waiting.every(src => listOf(src).status === 'loading')) parts.push(note(tr('Loading...')));
     else if (query && all.length) parts.push(note(tr('No maps match')));
@@ -415,7 +461,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     sources = next;
     for (const key of [...lists.keys()]) if (!sourceByKey(key)) lists.delete(key);
     if (!sourceByKey(createOn)) createOn = null;
-    for (const src of next) {
+    for (const src of listedSources()) {
       const old = before.get(src.key);
       const back = old && !old.online && src.online;
       if (!old || old.base !== src.base || old.online !== src.online || !lists.has(src.key)) void loadSource(src);
@@ -532,11 +578,15 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   // The split view: fold the list away or bring it back (`aria-expanded`: whether the list is shown).
   const foldButton = split ? iconButton('sidebarFold', 'Hide the map list', () => setFolded(!listFolded), { id: 'mm-list-toggle', 'aria-controls': 'mm-list' }) : null;
   const emptyNote = split ? el('p', { class: 'mm-empty', text: tr('Open a mind map from the list, or create one.') }) : null;
+  // "A newer version was saved on <engine>", with Reload, while the open map has edits of its own that are not saved (without them it reloads by itself).
+  const newerText = el('span', { class: 'mm-newer-text' });
+  const newerBar = el('div', { id: 'mm-newer', class: 'mm-newer', role: 'status', hidden: true }, newerText,
+    el('button', { type: 'button', id: 'mm-newer-reload', class: 'mm-text-btn', text: tr('Reload the newer version'), onClick: () => { if (current) void reloadMap(current); } }));
   const editorView = el('section', { class: 'mm-view mm-editor', hidden: true },
     el('header', { class: 'mm-top' },
       split ? null : iconButton('back', 'Back to the list', () => { void leaveEditor(); }, { id: 'mm-back' }),
       titleField, statusNode, emptyNote ? el('span', { class: 'mm-top-gap' }) : null, foldButton, exportButton, moreButton),
-    emptyNote, canvas, bar);
+    newerBar, emptyNote, canvas, bar);
   root.append(listView, editorView);
 
   // What is shown: the list or the editor (the full-window view), or the list beside the editor (split; the editor says how to start while no map is
@@ -595,14 +645,27 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   }
 
   // The draft of a map on one service. It is used only when it says it is for that service (a draft of this machine written before sharing says nothing).
-  function readDraft(src, id) {
+  function readDraftOf(sourceKey, id) {
     let draft = null;
-    try { draft = JSON.parse(localGet(DRAFT_KEY(src.key, id))); } catch { return null; }
+    try { draft = JSON.parse(localGet(DRAFT_KEY(sourceKey, id))); } catch { return null; }
     if (!draft || typeof draft !== 'object') return null;
     const owner = draft.source === undefined ? LOCAL_KEY : draft.source;
-    return owner === src.key && (draft.id === undefined || draft.id === id) ? draft : null;
+    return owner === sourceKey && (draft.id === undefined || draft.id === id) ? draft : null;
   }
-  const clearDraft = (sourceKey, id) => { localSet(DRAFT_KEY(sourceKey, id), null); };
+  // With the sync a map has one id on every engine, so a draft kept while the map was opened from another engine (`<source key>|<id>`, from before
+  // the sync) belongs to this engine's copy of it too.
+  const draftKeys = (src, id) => (src.local && syncOn() ? [LOCAL_KEY, ...sources.filter(item => !item.local).map(item => item.key)] : [src.key]);
+  function readDraft(src, id) {
+    for (const key of draftKeys(src, id)) {
+      const draft = readDraftOf(key, id);
+      if (draft) return draft;
+    }
+    return null;
+  }
+  const clearDraft = (sourceKey, id) => {
+    localSet(DRAFT_KEY(sourceKey, id), null);
+    if (sourceKey === LOCAL_KEY && syncOn()) for (const item of sources) if (!item.local) localSet(DRAFT_KEY(item.key, id), null);
+  };
   function writeDraft(sourceKey, id, revision, title, doc) {
     try {
       const text = JSON.stringify({ source: sourceKey, id, revision, title, data: doc, at: Date.now() });
@@ -612,6 +675,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   // `src`: the service the map is on. Everything the editor sends goes there: saves, the check after a conflict, reload, save as a new copy.
   function showEditor(map, src, { doc: given, restored = false, draftConflict = null } = {}) {
+    newerBar.hidden = true;
     let doc = given;
     try {
       if (!doc) doc = map.data ? sanitizeDoc(map.data) : blankDoc(map.title);
@@ -689,6 +753,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   function showConflict(state, { gone }) {
     if (state !== current) return;
+    newerBar.hidden = true;
     const doc = state.editor ? state.editor.getDoc() : null;
     const buttons = [];
     if (!gone) buttons.push({ label: tr('Reload from the service'), run: () => { void reloadMap(state); } });
@@ -705,13 +770,56 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     ]);
   }
 
-  async function reloadMap(state) {
+  // `from`: the engine a newer version came from, when the map reloads by itself.
+  async function reloadMap(state, { from = null } = {}) {
     try {
       const map = await call('GET', `${state.src.base}/${encodeURIComponent(state.id)}`);
+      if (state !== current) return;
       clearDraft(state.src.key, state.id);
       await returnToList(true);
       showEditor(map, state.src);
+      if (from) say(tr(`Updated to the version saved on ${from}`), 'info');
     } catch (error) { say(messageFor(error, state.src), 'error'); }
+  }
+
+  // The open map changed (on another engine, or another page of this one): without unsaved edits here it reloads; with them the bar offers the
+  // newer version (keeping on typing ends in the usual conflict, which offers a new copy). Only maps of this engine's own copy are asked about.
+  async function checkNewer() {
+    const state = current;
+    if (!syncOn() || !state || !state.src.local || !state.saver || !state.editor || state.leaving) return;
+    if (['conflict', 'rejected'].includes(state.saver.state)) return;
+    let head;
+    try { head = await call('GET', `${state.src.base}/${encodeURIComponent(state.id)}/head`); } catch (error) {
+      if (error instanceof ApiError && error.code === 'MINDMAP_NOT_FOUND' && state === current && !state.saver.dirty) {
+        say(tr(CODE_MESSAGES.MINDMAP_NOT_FOUND), 'warning');
+        await returnToList();
+      }
+      return;
+    }
+    // A save of ours on its way: its answer says whether the head was ours (the same revision) or a conflict (then the conflict dialog says so).
+    if (state === current && state.saver.state === 'saving') await state.saver.flush();
+    if (state !== current || ['conflict', 'rejected'].includes(state.saver.state) || !(Number(head.revision) > state.saver.revision)) return;
+    const from = typeof head.by_name === 'string' && head.by_name ? head.by_name : tr('another device');
+    const busy = state.saver.dirty || state.editor.isEditing() || document.activeElement === titleField || Boolean(dialog);
+    if (!busy) { await reloadMap(state, { from }); return; }
+    newerText.textContent = tr(`A newer version was saved on ${from}.`);
+    newerBar.hidden = false;
+  }
+  let pollTimer = null;
+  let polls = 0;
+  const listShown = () => (split ? !listFolded && active : screen === 'list');
+  function schedulePoll() {
+    if (disposed) return;
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      if (document.visibilityState !== 'hidden' && syncOn()) {
+        polls += 1;
+        await checkNewer().catch(() => {});
+        const local = sources.find(src => src.local);
+        if (local && listShown() && polls % LIST_EVERY === 0) await loadSource(local).catch(() => {});
+      }
+      schedulePoll();
+    }, POLL_MS);
   }
 
   function exportMap() {
@@ -803,7 +911,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   // ── Page events ──
   const onVisibility = () => {
-    if (document.visibilityState !== 'hidden') { if (current && current.saver) current.saver.wake(); return; }
+    if (document.visibilityState !== 'hidden') { if (current && current.saver) current.saver.wake(); void checkNewer().catch(() => {}); return; }
     if (current && current.saver) { current.editor && current.editor.finishEdit(); void current.saver.flush({ keepalive: true }); }
   };
   const onPageHide = () => { if (current && current.saver) void current.saver.flush({ keepalive: true }); };
@@ -819,6 +927,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   pushLayers();
   void loadList();
+  schedulePoll();
   if (!split) root.querySelector('#mm-new').focus(); // the tab leaves the keyboard on its rail
 
   return {
@@ -834,6 +943,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     },
     destroy() {
       disposed = true;
+      if (pollTimer) clearTimeout(pollTimer);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('online', onOnline);

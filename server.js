@@ -225,7 +225,8 @@ app.use('/api/attention/skill', require('./routes/attention-skill').createAttent
 app.use('/api/attention/widget/settings', attentionWidgetRoutes.settings);
 app.use('/api/attention', attentionRoutes.router);
 // The same service instance as /v1/mindmaps (routes/engine-v1.js), so writes of one map run one at a time whichever path they come in by.
-app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').getMindmapService() }));
+// The page's list, reads and writes go through the sync (services/mindmap-sync.js): a company computer reads through its home; off, the service alone.
+app.use('/api/mindmaps', require('./routes/mindmap').createMindmapRouter({ service: require('./services/mindmap').getMindmapService(), sync: () => (config.mindmapSyncEnabled ? require('./services/mindmap-sync').getMindmapSync() : null) }));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/oss', require('./routes/oss').createOssRouter());
 // The site capability library the Settings "Site library" viewer reads (routes/browser-sites.js); the session check is the /api gate above.
@@ -678,6 +679,8 @@ server.listen(config.port, config.host, () => {
   if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().start();
   // The usage data follows the links from here on (services/ui-events-sync.js).
   if (config.usageSyncEnabled) usageSync().start();
+  // Mind maps follow the links from here on (services/mindmap-sync.js).
+  if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().start();
   // The read copies of the linked engines' T-Attention items follow the links from here on (services/attention-copy.js); this engine's own items are
   // journaled for them from now on, and checked against the table once at this start.
   if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().start();
@@ -736,5 +739,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); require('./services/learn-analysis').stopShared(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

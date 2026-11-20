@@ -61,7 +61,7 @@ test('the API contract: create, read, save, list and delete', async t => {
   const list = await call('GET', '');
   assert.equal(list.status, 200);
   assert.deepEqual(Object.keys(list.body), ['maps']);
-  assert.deepEqual(Object.keys(list.body.maps[0]).sort(), ['created_at', 'id', 'revision', 'size', 'title', 'updated_at']);
+  assert.deepEqual(Object.keys(list.body.maps[0]).sort(), ['by', 'by_name', 'created_at', 'id', 'revision', 'size', 'title', 'updated_at']);
 
   const removed = await call('DELETE', `/${id}`);
   assert.equal(removed.status, 204);

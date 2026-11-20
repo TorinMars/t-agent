@@ -137,7 +137,7 @@ test('/v1/mindmaps has the contract of /api/mindmaps and the same maps', async (
   assert.deepEqual((await call('GET', v1, undefined, auth)).body, (await call('GET', `${local}/api/mindmaps`)).body);
   const listed = (await call('GET', v1, undefined, auth)).body;
   assert.deepEqual(Object.keys(listed), ['maps']);
-  assert.deepEqual(Object.keys(listed.maps[0]).sort(), ['created_at', 'id', 'revision', 'size', 'title', 'updated_at']);
+  assert.deepEqual(Object.keys(listed.maps[0]).sort(), ['by', 'by_name', 'created_at', 'id', 'revision', 'size', 'title', 'updated_at']);
 
   const saved = await call('PUT', `${v1}/${id}`, { revision: 1, data: { root: { topic: 'v1' } } }, auth);
   assert.equal(saved.status, 200);
@@ -187,21 +187,25 @@ test('/v1/mindmaps keeps the 8 MB limit with its own parser', async () => {
   assert.equal((await call('DELETE', `${v1}/${full.body.id}`, undefined, auth)).status, 204);
 });
 
+// The filler files are written and removed without blocking: this process runs the servers and the client, and a loop of 2000 synchronous writes
+// under load held the event loop for over 10 s, long enough for the server's keep-alive timeout and the client's reuse of the same idle connection
+// to meet in one turn (ECONNRESET before the request reached the server).
+async function eachInBatches(items, run, size = 50) {
+  for (let start = 0; start < items.length; start += size) await Promise.all(items.slice(start, start + size).map(run));
+}
+
 test('/v1/mindmaps keeps the map limit', async () => {
-  const before = fs.readdirSync(mapsDir).filter(name => name.endsWith('.json')).length;
+  const before = (await fs.promises.readdir(mapsDir)).filter(name => name.endsWith('.json')).length;
   const filler = [];
-  for (let index = before; index < LIMITS.maps; index += 1) {
-    const id = `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`;
-    filler.push(id);
-    fs.writeFileSync(path.join(mapsDir, `${id}.json`), JSON.stringify({ id, title: 'x', data: null, revision: 1, created_at: 'a', updated_at: 'a' }));
-  }
+  for (let index = before; index < LIMITS.maps; index += 1) filler.push(`${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`);
+  await eachInBatches(filler, id => fs.promises.writeFile(path.join(mapsDir, `${id}.json`), JSON.stringify({ id, title: 'x', data: null, revision: 1, created_at: 'a', updated_at: 'a' })));
   try {
     const refused = await call('POST', `${engine}/v1/mindmaps`, { title: 'one too many' }, auth);
     assert.equal(refused.status, 409);
     assert.equal(refused.body.error, 'MINDMAP_LIMIT');
     assert.deepEqual(await call('POST', `${proxy}/api/remote-servers/${ids.engine}/mindmaps`, { title: 'one too many' }), refused);
   } finally {
-    for (const id of filler) fs.rmSync(path.join(mapsDir, `${id}.json`), { force: true });
+    await eachInBatches(filler, id => fs.promises.rm(path.join(mapsDir, `${id}.json`), { force: true }));
   }
 });
 
@@ -295,11 +299,12 @@ test('an offline Engine gets 502 with the connection code, and errors keep only 
 
 const HEADERS = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
 
-async function startService(t) {
+// `env`: more environment (the proxy test turns the mind map sync off: it checks the maps of an engine reached through the link, as for an older engine).
+async function startService(t, env = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-mindmap-share-real-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: process.env.SESSION_SECRET, T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false', ACCESS_MODE: 'local' },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: process.env.SESSION_SECRET, T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false', ACCESS_MODE: 'local', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -322,8 +327,8 @@ async function startService(t) {
   return { url, temp, call: (method, route, body, headers = HEADERS) => call(method, `${url}${route}`, body, headers) };
 }
 
-async function until(check, label) {
-  const deadline = Date.now() + 8000;
+async function until(check, label, ms = 8000) {
+  const deadline = Date.now() + ms;
   for (;;) {
     const value = await check();
     if (value) return value;
@@ -345,9 +350,9 @@ async function sendChunked(url, method, text, headers) {
   return { status: response.status, body: await response.json() };
 }
 
-test('two real services: maps are edited in place on their owner, directly and through the tunnel', { timeout: 120000 }, async t => {
-  const a = await startService(t);
-  const b = await startService(t);
+test('two real services without the sync: maps are edited in place on their owner, directly and through the tunnel', { timeout: 120000 }, async t => {
+  const a = await startService(t, { MINDMAP_SYNC_ENABLED: 'false' });
+  const b = await startService(t, { MINDMAP_SYNC_ENABLED: 'false' });
   const made = await a.call('POST', '/api/service-links/code', {});
   assert.equal(made.status, 201);
   const joined = await b.call('POST', '/api/service-links/join', { url: a.url, code: made.body.code, confirm: true });
@@ -412,4 +417,33 @@ test('two real services: maps are edited in place on their owner, directly and t
   assert.equal((await b.call('GET', `/api/mindmaps/${created.body.id}`)).status, 404);
   assert.ok(fs.readdirSync(path.join(b.temp, 'mindmaps', 'trash')).some(name => name.startsWith(`${created.body.id}-`)));
   assert.deepEqual((await a.call('GET', '/api/mindmaps')).body.maps.map(map => map.id), [mine.body.id], 'nothing was copied to A');
+});
+
+test('two real services with the sync: a map made on either is on both, saved through the link keys; a delete travels', { timeout: 120000 }, async t => {
+  const a = await startService(t);
+  const b = await startService(t);
+  const made = await a.call('POST', '/api/service-links/code', {});
+  const joined = await b.call('POST', '/api/service-links/join', { url: a.url, code: made.body.code, confirm: true });
+  assert.equal(joined.status, 201, JSON.stringify(joined.body));
+  const linkOf = async side => (await side.call('GET', '/api/service-links')).body.links.find(link => link.id === joined.body.id);
+  await until(async () => (await linkOf(a))?.online && (await linkOf(b))?.online, 'both sides online');
+  const aOnB = (await linkOf(b)).remote_server_id;
+  const info = await b.call('GET', `/api/remote-servers/${aOnB}/mindmaps`);
+  assert.equal(info.status, 200);
+
+  const onA = await a.call('POST', '/api/mindmaps', { title: 'Made on A', data: { root: { topic: 'a' } } });
+  const onB = await b.call('POST', '/api/mindmaps', { title: 'Made on B', data: { root: { topic: 'b' } } });
+  const titles = async side => (await side.call('GET', '/api/mindmaps')).body.maps.map(map => map.title).sort();
+  await until(async () => JSON.stringify(await titles(a)) === '["Made on A","Made on B"]' && JSON.stringify(await titles(b)) === '["Made on A","Made on B"]', 'each map on both', 30000);
+  const listed = (await b.call('GET', '/api/mindmaps')).body;
+  assert.equal(listed.sync.enabled, true);
+  assert.equal(listed.sync.engines.length, 2, 'B names both engines as keeping the set');
+  assert.equal(listed.maps.find(map => map.id === onA.body.id).by_name, (await a.call('GET', '/api/mindmaps')).body.sync.engines[0].name, 'edited on A');
+  assert.deepEqual((await b.call('GET', `/api/mindmaps/${onA.body.id}`)).body.data, { root: { topic: 'a' } });
+
+  assert.equal((await b.call('DELETE', `/api/mindmaps/${onA.body.id}`)).status, 204);
+  const tombstones = () => fs.readdirSync(path.join(a.temp, 'mindmaps', 'sync', 'tombstones'));
+  await until(async () => (await a.call('GET', `/api/mindmaps/${onA.body.id}`)).status === 404 && tombstones().includes(`${onA.body.id}.json`), 'the delete reaches A, which keeps the tombstone', 30000);
+  assert.deepEqual(await titles(a), ['Made on B']);
+  assert.ok(onB.body.id);
 });

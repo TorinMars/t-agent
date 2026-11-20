@@ -35,9 +35,13 @@ function createMindmapBodyParser() {
 }
 
 // `service` is the mind map service, or `getService` a function that returns it (made on first use, for a router built when its module loads).
-function createMindmapRouter({ service, getService, authenticate } = {}) {
+// `sync` (the page's /api/mindmaps only): a function that returns the mind map sync (services/mindmap-sync.js) or null when it is off. With it the
+// list says where the maps are kept (`sync`), and on a company computer the list, reads and writes go through its home. /v1/mindmaps (an older
+// linked engine reading this one's maps) uses the service alone.
+function createMindmapRouter({ service, getService, authenticate, sync = () => null } = {}) {
   if (!service && !getService) throw new Error('createMindmapRouter needs the mind map service');
   const maps = () => service || getService();
+  const page = () => sync() || null;
   const router = express.Router();
   // Before any body is read.
   if (authenticate) router.use(authenticate);
@@ -55,12 +59,18 @@ function createMindmapRouter({ service, getService, authenticate } = {}) {
     return undefined;
   };
 
-  router.get('/', wrap(async (req, res) => res.json({ maps: await maps().list() })));
+  router.get('/', wrap(async (req, res) => {
+    const syncing = page();
+    res.set('Cache-Control', 'no-store').json(syncing ? await syncing.pageList() : { maps: await maps().list() });
+  }));
   router.post('/', parseBody, wrap(async (req, res) => res.status(201).json(await maps().create(req.body))));
-  router.get('/:id', wrap(async (req, res) => res.json(await maps().get(req.params.id))));
-  router.put('/:id', parseBody, wrap(async (req, res) => res.json(await maps().update(req.params.id, req.body))));
+  router.get('/:id', wrap(async (req, res) => { const syncing = page(); res.json(syncing ? await syncing.pageGet(req.params.id) : await maps().get(req.params.id)); }));
+  // Whether an open map changed (on another engine too) and where: { id, title, revision, updated_at, by, by_name }, without the map itself.
+  router.get('/:id/head', wrap(async (req, res) => { const syncing = page(); res.set('Cache-Control', 'no-store').json(syncing ? await syncing.pageHead(req.params.id) : await maps().head(req.params.id)); }));
+  router.put('/:id', parseBody, wrap(async (req, res) => { const syncing = page(); res.json(syncing ? await syncing.pageUpdate(req.params.id, req.body) : await maps().update(req.params.id, req.body)); }));
   router.delete('/:id', wrap(async (req, res) => {
-    await maps().remove(req.params.id);
+    const syncing = page();
+    if (syncing) await syncing.pageRemove(req.params.id); else await maps().remove(req.params.id);
     res.status(204).end();
   }));
 

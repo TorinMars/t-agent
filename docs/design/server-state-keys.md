@@ -69,6 +69,8 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `learn_home_v1` | system_state | runtime | on a company computer: the last summary of the normal machine that keeps its learning data | `services/learn-sync.js` |
 | `ui_usage_sync_peers_v1` | system_state | runtime | the usage data sync's change numbers and tiers per peer | `services/ui-events-sync.js` |
 | `ui_usage_home_v1` | system_state | runtime | on a company computer: the normal machine its usage data was last handed to | `services/ui-events-sync.js` |
+| `mindmap_sync_peers_v1` | system_state | runtime | the mind map sync's change numbers, tiers and hand-over per peer | `services/mindmap-sync.js` |
+| `mindmap_home_v1` | system_state | runtime | on a company computer: the normal machine its mind maps were last handed to | `services/mindmap-sync.js` |
 | `ui_usage_seq_v1` | system_state | runtime | the newest change number of the usage data, kept when rows are deleted so the numbers never go back | `services/ui-events.js` |
 | `ui_usage_engines_v1` | system_state | runtime | the names of the engines whose button presses are in the usage data (a cache from the sync pages) | `services/ui-events.js` |
 | `remote_engine_instances_v1` | system_state | runtime | the instance id each `remote_servers` row's engine reported in `/v1/info` (a cache) | `services/engine-name.js` |
@@ -89,10 +91,10 @@ Moved since: `ui_usage_v1` (the "Record button use" switch) is shared through th
 
 Not key / value rows, so not in the registry; listed so the picture is whole. Tables of the person's work are owned by the engine that runs it and reached from the others through the service link (location transparency), unless named otherwise.
 
-- Personal, synced (the Learn sync): `learn_cards`, `learn_reviews`, `learn_card_moves`. Personal, synced (the usage data sync): `ui_events`, `ui_controls`.
+- Personal, synced (the Learn sync): `learn_cards`, `learn_reviews`, `learn_card_moves`. Personal, synced (the usage data sync): `ui_events`, `ui_controls`. Personal, a copy on every normal engine (the mind map sync, [mind-maps.md](mind-maps.md)): the files of `<data folder>/mindmaps/` with `sync/state.json` and `sync/tombstones/`.
 - Owned by their engine, reached through the link: `tasks`, `task_terminals` and the default-terminal tables, `task_todos`, `agent_conversations`, `apps`, `repo_cleanups`.
 - This machine's connections and access: `remote_servers`, `remote_access_tokens`, `engine_access_tokens`, `engine_pairing_codes`, `attention_tokens`, `client_auth`, `users` (`work_dir` is the device setting "Working directory").
-- Per engine today, with an item of the single-system-image program to change it: `attention_items` and `attention_events` (a read copy on every engine, "attention-replicated"), mind maps in `<data folder>/mindmaps/` (replicated, "mindmaps-replicated"). Also per engine: `task_groups` and `bookmarks`.
+- Per engine today, with an item of the single-system-image program to change it: `attention_items` and `attention_events` (a read copy on every engine, "attention-replicated"). Also per engine: `task_groups` and `bookmarks`.
 - Audited per-owner tables ("scope-fixes", 2026-11-20), left per engine with a recommendation:
   - `task_groups`: the groups the tasks of that engine sit in (a task's `status` is the group key). Every engine makes the same four (Personal tasks, In progress, To do, Done) and the page groups by key, falling back to those four; the page no longer creates, renames or reorders groups (the writes of `/api/task-groups` are kept for compatibility only), the order of the tasks is shared (`task_order_v1`) and the collapsed groups are in the shared page state. Nothing the person sees differs between engines today. Recommendation: keep it with its engine; if editing groups comes back, keep the list as one settings sync group keyed by group key (name and order), not by row id.
   - `bookmarks`: no owner column, read and written only by the compatibility endpoint `/api/bookmarks`; no page shows it. Recommendation: retire the table and the route in a later cleanup rather than sync it; if bookmarks come back, keep them in the shared page state or a settings sync group merged per entry (as the site library).

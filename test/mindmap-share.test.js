@@ -137,7 +137,7 @@ test('/v1/mindmaps has the contract of /api/mindmaps and the same maps', async (
   assert.deepEqual((await call('GET', v1, undefined, auth)).body, (await call('GET', `${local}/api/mindmaps`)).body);
   const listed = (await call('GET', v1, undefined, auth)).body;
   assert.deepEqual(Object.keys(listed), ['maps']);
-  assert.deepEqual(Object.keys(listed.maps[0]).sort(), ['created_at', 'id', 'revision', 'size', 'title', 'updated_at']);
+  assert.deepEqual(Object.keys(listed.maps[0]).sort(), ['by', 'by_name', 'created_at', 'id', 'revision', 'size', 'title', 'updated_at']);
 
   const saved = await call('PUT', `${v1}/${id}`, { revision: 1, data: { root: { topic: 'v1' } } }, auth);
   assert.equal(saved.status, 200);
@@ -295,11 +295,12 @@ test('an offline Engine gets 502 with the connection code, and errors keep only 
 
 const HEADERS = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
 
-async function startService(t) {
+// `env`: more environment (the proxy test turns the mind map sync off: it checks the maps of an engine reached through the link, as for an older engine).
+async function startService(t, env = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-mindmap-share-real-'));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: process.env.SESSION_SECRET, T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false', ACCESS_MODE: 'local' },
+    env: { ...process.env, HOST: '127.0.0.1', PORT: '0', NODE_ENV: 'test', SESSION_SECRET: process.env.SESSION_SECRET, T_AGENT_DATA_DIR: temp, T_AGENT_DB_PATH: path.join(temp, 'db.sqlite'), TASKS_BASE_DIR: path.join(temp, 'tasks'), SINGLE_USER_ID: 'local', UPDATE_CHECK_ENABLED: 'false', ACCESS_MODE: 'local', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -322,8 +323,8 @@ async function startService(t) {
   return { url, temp, call: (method, route, body, headers = HEADERS) => call(method, `${url}${route}`, body, headers) };
 }
 
-async function until(check, label) {
-  const deadline = Date.now() + 8000;
+async function until(check, label, ms = 8000) {
+  const deadline = Date.now() + ms;
   for (;;) {
     const value = await check();
     if (value) return value;
@@ -345,9 +346,9 @@ async function sendChunked(url, method, text, headers) {
   return { status: response.status, body: await response.json() };
 }
 
-test('two real services: maps are edited in place on their owner, directly and through the tunnel', { timeout: 120000 }, async t => {
-  const a = await startService(t);
-  const b = await startService(t);
+test('two real services without the sync: maps are edited in place on their owner, directly and through the tunnel', { timeout: 120000 }, async t => {
+  const a = await startService(t, { MINDMAP_SYNC_ENABLED: 'false' });
+  const b = await startService(t, { MINDMAP_SYNC_ENABLED: 'false' });
   const made = await a.call('POST', '/api/service-links/code', {});
   assert.equal(made.status, 201);
   const joined = await b.call('POST', '/api/service-links/join', { url: a.url, code: made.body.code, confirm: true });
@@ -412,4 +413,33 @@ test('two real services: maps are edited in place on their owner, directly and t
   assert.equal((await b.call('GET', `/api/mindmaps/${created.body.id}`)).status, 404);
   assert.ok(fs.readdirSync(path.join(b.temp, 'mindmaps', 'trash')).some(name => name.startsWith(`${created.body.id}-`)));
   assert.deepEqual((await a.call('GET', '/api/mindmaps')).body.maps.map(map => map.id), [mine.body.id], 'nothing was copied to A');
+});
+
+test('two real services with the sync: a map made on either is on both, saved through the link keys; a delete travels', { timeout: 120000 }, async t => {
+  const a = await startService(t);
+  const b = await startService(t);
+  const made = await a.call('POST', '/api/service-links/code', {});
+  const joined = await b.call('POST', '/api/service-links/join', { url: a.url, code: made.body.code, confirm: true });
+  assert.equal(joined.status, 201, JSON.stringify(joined.body));
+  const linkOf = async side => (await side.call('GET', '/api/service-links')).body.links.find(link => link.id === joined.body.id);
+  await until(async () => (await linkOf(a))?.online && (await linkOf(b))?.online, 'both sides online');
+  const aOnB = (await linkOf(b)).remote_server_id;
+  const info = await b.call('GET', `/api/remote-servers/${aOnB}/mindmaps`);
+  assert.equal(info.status, 200);
+
+  const onA = await a.call('POST', '/api/mindmaps', { title: 'Made on A', data: { root: { topic: 'a' } } });
+  const onB = await b.call('POST', '/api/mindmaps', { title: 'Made on B', data: { root: { topic: 'b' } } });
+  const titles = async side => (await side.call('GET', '/api/mindmaps')).body.maps.map(map => map.title).sort();
+  await until(async () => JSON.stringify(await titles(a)) === '["Made on A","Made on B"]' && JSON.stringify(await titles(b)) === '["Made on A","Made on B"]', 'each map on both', 30000);
+  const listed = (await b.call('GET', '/api/mindmaps')).body;
+  assert.equal(listed.sync.enabled, true);
+  assert.equal(listed.sync.engines.length, 2, 'B names both engines as keeping the set');
+  assert.equal(listed.maps.find(map => map.id === onA.body.id).by_name, (await a.call('GET', '/api/mindmaps')).body.sync.engines[0].name, 'edited on A');
+  assert.deepEqual((await b.call('GET', `/api/mindmaps/${onA.body.id}`)).body.data, { root: { topic: 'a' } });
+
+  assert.equal((await b.call('DELETE', `/api/mindmaps/${onA.body.id}`)).status, 204);
+  const tombstones = () => fs.readdirSync(path.join(a.temp, 'mindmaps', 'sync', 'tombstones'));
+  await until(async () => (await a.call('GET', `/api/mindmaps/${onA.body.id}`)).status === 404 && tombstones().includes(`${onA.body.id}.json`), 'the delete reaches A, which keeps the tombstone', 30000);
+  assert.deepEqual(await titles(a), ['Made on B']);
+  assert.ok(onB.body.id);
 });

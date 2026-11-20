@@ -209,6 +209,7 @@ const REVIEWED_ROUTES = new Set([
 // /oss/files: objects of this service's own OSS bucket (routes/tcli.js), never a task, a work directory or a terminal.
 // /settings-sync: the settings linked services keep as one set (routes/settings-sync.js), never a task, and link tokens only.
 // /learn-sync: the English learning cards, answers and settings linked services keep as one set (routes/learn-sync.js), never a task, link tokens only.
+// /mindmap-sync: the mind maps linked services each keep a copy of (routes/mindmap-sync.js); maps belong to no task, link tokens only.
 // /usage-sync: the usage data (button presses) linked services keep as one set (routes/ui-events-sync.js), never a task, link tokens only.
 // /page-state: the page state linked services keep as one set (routes/page-state.js): recent sessions as ids and titles, never a task's content;
 // the entries of this service's tasks a link may not see are left out of what it gets; link tokens only.
@@ -217,7 +218,7 @@ const REVIEWED_ROUTES = new Set([
 // nothing about this service's tasks, and link tokens only.
 // /updated-notice: this service's "Updated to v…" notice (versions, a time and release notes from DESIGN.md; routes/updated-notice.js), never a task,
 // and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/page-state', '/updated-notice', '/device-settings', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

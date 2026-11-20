@@ -45,6 +45,8 @@ router.use('/settings-sync', require('./settings-sync').createEngineSettingsSync
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
 // The usage data sync between linked services (routes/ui-events-sync.js), link tokens only; the rows travel sealed for the link.
 router.use('/usage-sync', require('./ui-events-sync').createEngineUsageSyncRouter());
+// Mind maps on every linked engine (routes/mindmap-sync.js), link tokens only; the maps travel sealed for the link.
+router.use('/mindmap-sync', require('./mindmap-sync').createEngineMindmapSyncRouter());
 // The shared page state between linked services (routes/page-state.js), link tokens only; the state travels sealed for the link.
 router.use('/page-state', require('./page-state').createEnginePageStateRouter());
 // "Updated to v…" (routes/updated-notice.js): this engine's notice about its own update, read and acknowledged by a linked service's page.
@@ -199,6 +201,9 @@ function infoHandler(req, res) {
       // usage:sync: GET|PUT /v1/usage-sync, POST /v1/usage-sync/pull and GET /v1/usage-sync/summary (routes/ui-events-sync.js), the usage data linked
       // services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or USAGE_SYNC_ENABLED=false.
       ...(require('../services/ui-events-sync').syncEnabled() ? [require('../services/ui-events-sync').CAPABILITY] : []),
+      // mindmaps:sync: GET|PUT /v1/mindmap-sync and POST /v1/mindmap-sync/pull (routes/mindmap-sync.js), the mind maps linked services keep a copy of
+      // each (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or MINDMAP_SYNC_ENABLED=false.
+      ...(require('../services/mindmap-sync').syncEnabled() ? [require('../services/mindmap-sync').CAPABILITY] : []),
       // learn:reports: the detail of wrong answers and the mistake reports travel with the learning data, and the home routes of the reports
       // (/v1/learn-sync/mistakes, /reports, /report, /analyze) answer; the weekly report is made by one of the engines that list it.
       ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').REPORTS_CAPABILITY] : []),

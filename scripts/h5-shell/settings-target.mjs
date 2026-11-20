@@ -19,7 +19,7 @@ export const groupInfo = id => GROUPS.find(group => group.id === id) || null;
 const SECTIONS = {
   workdir: 'tasks-files', oss: 'tasks-files', 'agent-skills': 'tasks-files', 'browser-ext': 'tasks-files',
   voice: 'voice-translate', translate: 'voice-translate',
-  link: 'devices', 'peer-fs': 'devices', 'rule-sync': 'devices', advanced: 'devices', connect: 'devices', remote: 'devices',
+  link: 'devices', 'peer-fs': 'devices', 'sign-in': 'devices', 'rule-sync': 'devices', advanced: 'devices', connect: 'devices', remote: 'devices',
   access: 'account', authenticator: 'account',
   'usage-record': 'usage-data', 'usage-top': 'usage-data', 'usage-unused': 'usage-data', 'usage-store': 'usage-data',
 };

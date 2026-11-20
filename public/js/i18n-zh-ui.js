@@ -2003,6 +2003,15 @@ I18n.add({
   "Task renamed": "任务已重命名",
   "Could not close the terminals:": "无法关闭终端：",
   "Sessions can read files on linked devices": "会话可读取关联设备上的文件",
+  "Accept sign-in from linked devices": "接受来自关联设备的登录",
+  "A browser signed in on a linked device can open this one without the code, when that login used a code too. Each hand-over works once, within a minute. Off: every login here needs the code.": "在关联设备上已登录的浏览器可以不输入验证码打开这台设备（前提是那次登录也用了验证码）。每次交接只能用一次，一分钟内有效。关闭后：在这里登录都需要验证码。",
+  "Sign in on {1} too": "也登录 {1}",
+  "Signed in on {1} in a new tab": "已在新标签页登录 {1}",
+  "{1} does not accept sign-in from linked devices": "{1} 不接受来自关联设备的登录",
+  "{1} is offline": "{1} 已离线",
+  "This login used no authenticator code, so {1} asks for its own": "这次登录没有使用身份验证器验证码，所以 {1} 需要它自己的验证码",
+  "No address of {1} answers from this browser": "从这个浏览器连不上 {1} 的任何地址",
+  "{1} is not linked to this device": "{1} 没有关联到这台设备",
   "Sessions started here can read files on linked devices, and those devices can read this one’s the same way. Read only, home folder only; sensitive files such as ~/.ssh and .env are left out. Applies to sessions started after the change.": "在这里启动的会话可以读取关联设备上的文件，关联设备也能以同样方式读取本设备的文件。只读，仅限主目录；~/.ssh、.env 等敏感文件不包括在内。对更改之后启动的会话生效。",
 });
 // Settings "Rules and skills sync" (scripts/h5-shell/RuleSync.jsx).

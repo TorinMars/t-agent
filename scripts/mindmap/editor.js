@@ -29,11 +29,17 @@ const THEME = {
 export async function createEditor(host, doc, handlers) {
   const mind = new MindElixir({
     el: host, direction: RIGHT_ONLY, toolBar: false, contextMenu: false, keypress: true, allowUndo: true, theme: THEME, alignment: 'nodes',
-    newTopicName: handlers.t('New topic'), scaleMin: 0.2, scaleMax: 3, mouseSelectionButton: 2,
+    newTopicName: handlers.t('New topic'), scaleMin: 0.2, scaleMax: 3,
+    // A drag with the left button on empty canvas selects the topics it covers (the user's choice, 2026-11-20); the map moves with a scroll or two
+    // fingers on a trackpad, Space and a drag, or a drag with the right button (the library pans with the other button). "Mouse" in docs/design/mind-maps.md.
+    mouseSelectionButton: 0,
     markdown: text => escapeHtml(text), // every text the library would draw as HTML goes through this
   });
   await mind.init({ nodeData: doc.nodeData, arrows: doc.arrows, summaries: doc.summaries, direction: RIGHT_ONLY, theme: THEME });
   if (!mind.container) throw new Error('The editor could not start');
+  // The selection rectangle in the theme's primary colour (the library draws it in its own blue).
+  const area = mind.selection && mind.selection.getSelectionArea && mind.selection.getSelectionArea();
+  if (area) Object.assign(area.style, { background: 'rgba(144, 202, 249, 0.16)', border: '1px solid #90caf9', borderRadius: '4px' });
   mind.container.onkeydown = null; // the shortcuts are handled below; the library's own handler also blocks keys such as reload
   // The library's scaleFit leaves the map off-centre when it scales down (its transform origin is the canvas, not the nodes), so the centre is put right from what is on the screen.
   function fitMap() {
@@ -171,8 +177,25 @@ export async function createEditor(host, doc, handlers) {
     event.preventDefault();
     event.stopPropagation();
     if (target.closest && target.closest('.xterm')) mind.container.focus({ preventScroll: true });
+    // Space held with a drag moves the map; Space pressed and let go without a drag edits the selected topic, on its release ("Mouse" in
+    // docs/design/mind-maps.md). The library's own Space flag is set here, because this handler keeps the key from reaching it.
+    if (action === 'edit' && event.key === ' ') {
+      if (!space.held) { space.held = true; space.panned = false; mind.spacePressed = true; mind.container.classList.add('space-pressed'); }
+      return;
+    }
     actions[action]();
   }
+  const space = { held: false, panned: false };
+  function releaseSpace(edit) {
+    if (!space.held) return;
+    space.held = false;
+    mind.spacePressed = false;
+    mind.container.classList.remove('space-pressed');
+    if (edit && !space.panned && !disposed && !handlers.isBlocked()) actions.edit();
+  }
+  function onKeyup(event) { if (event.key === ' ' && space.held) { event.preventDefault(); event.stopPropagation(); releaseSpace(true); } }
+  function onSpacePointer(event) { if (space.held && event.button === 0) space.panned = true; }
+  function onWindowBlur() { releaseSpace(false); }
 
   const isTextTarget = event => {
     const t2 = event.target;
@@ -221,6 +244,9 @@ export async function createEditor(host, doc, handlers) {
   markNotes();
 
   document.addEventListener('keydown', onKeydown, true);
+  document.addEventListener('keyup', onKeyup, true);
+  document.addEventListener('pointerdown', onSpacePointer, true);
+  window.addEventListener('blur', onWindowBlur);
   document.addEventListener('copy', onCopy, true);
   document.addEventListener('cut', onCopy, true);
   document.addEventListener('paste', onPaste, true);
@@ -257,6 +283,9 @@ export async function createEditor(host, doc, handlers) {
       detachTouch();
       unhistory();
       document.removeEventListener('keydown', onKeydown, true);
+      document.removeEventListener('keyup', onKeyup, true);
+      document.removeEventListener('pointerdown', onSpacePointer, true);
+      window.removeEventListener('blur', onWindowBlur);
       document.removeEventListener('copy', onCopy, true);
       document.removeEventListener('cut', onCopy, true);
       document.removeEventListener('paste', onPaste, true);

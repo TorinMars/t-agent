@@ -2,7 +2,8 @@
 // tcli: the command line of agent sessions in T-Agent terminals. It talks to the T-Agent that started the terminal, through the local relay
 // /api/tcli (routes/tcli.js) on the origin of TA_HOOK_URL, with the terminal's hook token (TA_HOOK_TOKEN). The T-Agent makes the real calls, so no
 // cloud key is ever in this process. Groups of commands live in GROUPS below; `oss` works on the bucket of "Image and file upload", `notify`
-// sends the user a message through the T-Attention notifiers (scripts/tcli-notify.js).
+// sends the user a message through the T-Attention notifiers (scripts/tcli-notify.js), `attention` runs every t-attention command
+// (scripts/tcli-attention.js).
 // See "tcli (agent command line)" in docs/design/tcli.md. Node built-ins only.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -39,11 +40,18 @@ Groups
            Telegram or email
            (tcli notify help)
 
+  attention  T-Attention tasks: every
+           t-attention command (add, list,
+           update, schedules, run-now ...)
+           (tcli attention help)
+
   help     this text
 
 tcli works inside a T-Agent terminal: it uses
 TA_HOOK_URL and TA_HOOK_TOKEN, which T-Agent
-sets in every shell it starts.
+sets in every shell it starts. tcli attention
+uses t-attention's login instead, so it also
+works elsewhere (tcli attention login).
 
 Exit codes: 0 ok, 1 usage or request error,
 2 not in a T-Agent terminal or refused,
@@ -447,6 +455,7 @@ GROUPS.site = require('./tcli-site').GROUP;
 const helpers = { send, readJson, failureOf, networkFailure, CliError, usage, EXIT, humanSize };
 GROUPS.browser = require('./tcli-browser').createBrowserGroup(helpers);
 GROUPS.notify = require('./tcli-notify').createNotifyGroup({ ...helpers, parseArgs, callJson });
+GROUPS.attention = require('./tcli-attention').createAttentionGroup();
 
 async function main(argv = process.argv.slice(2), { env = process.env, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr, cwd = process.cwd() } = {}) {
   const out = text => stdout.write(`${text}\n`);
@@ -459,7 +468,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdin = p
     if (!group) throw usage(`Unknown group "${groupName}"; see tcli help`);
     if (!commandName) { stderr.write(group.help); return EXIT.usage; }
     if (commandName === 'help' || commandName === '--help' || commandName === '-h') { stdout.write(group.help); return EXIT.ok; }
-    if (group.run) return await group.run(commandName, rest, { relay: () => relayFromEnv(env), out, stdin, stdout, stderr, cwd });
+    if (group.run) return await group.run(commandName, rest, { relay: () => relayFromEnv(env), env, out, stdin, stdout, stderr, cwd });
     const command = group.commands[commandName];
     if (!command) throw usage(`Unknown command "${groupName} ${commandName}"; see tcli ${groupName} help`);
     const { flags, positional } = parseArgs(rest, command);

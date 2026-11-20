@@ -23,10 +23,14 @@ const GROUPS = [
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
 const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind', 'parent', 'custom-status', 'result', 'before', 'after', 'source',
-  'at', 'every', 'time', 'starts', 'ends', 'prompt', 'session']);
+  'at', 'every', 'time', 'starts', 'ends', 'prompt', 'session', 'script', 'script-file', 'task', 'timeout-min']);
 const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge', 'top', 'bottom', 'tree', 'dry-run', 'no-schedule']);
 // Schedules ("Scheduled and recurring tasks" in docs/design/attention-schedules.md): add and update take these; update also --no-schedule.
-const SCHEDULE_FLAGS = ['at', 'every', 'time', 'starts', 'ends', 'prompt', 'session'];
+const SCHEDULE_FLAGS = ['at', 'every', 'time', 'starts', 'ends', 'prompt', 'session', 'script', 'script-file', 'task', 'timeout-min'];
+// The flags of the "Then" part (the action at the time); the others are the "When" part, the only ones `preview` takes.
+const ACTION_FLAGS = ['prompt', 'session', 'script', 'script-file', 'task', 'timeout-min'];
+const WHEN_FLAGS = SCHEDULE_FLAGS.filter(name => !ACTION_FLAGS.includes(name));
+const SCRIPT_MAX = 4000; // the server's limit (services/attention-schedule.js)
 const WEEKDAYS = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7 };
 // Status spellings: the names above and SELF-ATTENTION's ("In Progress", "Completed — Awaiting Confirmation", ...), compared in lower case
 // without anything but letters.
@@ -47,12 +51,13 @@ const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due:
 const ITEM_FLAGS = ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'parent', 'custom-status', 'result'];
 const LISTENER_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
 
-// --at, --every, --time, --starts, --ends, --prompt and --session -> the schedule and then_action of the body (the server checks them again and adds its
-// time zone). --no-schedule clears the schedule; --prompt '' goes back to a reminder.
+// --at, --every, --time, --starts, --ends, --prompt, --session, --script / --script-file, --task and --timeout-min -> the schedule and then_action of
+// the body (the server checks them again and adds its time zone). --no-schedule clears the schedule; --prompt '' or --script '' goes back to a reminder.
+// A script can be set only with a token the person made in Settings: a terminal's own token gets 403 SCRIPT_NEEDS_PERSON from the server.
 function scheduleFrom(flags, { update = false } = {}) {
   const body = {};
   const has = name => flags[name] !== undefined;
-  if (flags['no-schedule'] && SCHEDULE_FLAGS.filter(name => name !== 'prompt' && name !== 'session').some(has)) throw new UsageError('--no-schedule cannot be used with --at or --every');
+  if (flags['no-schedule'] && WHEN_FLAGS.some(has)) throw new UsageError('--no-schedule cannot be used with --at or --every');
   if (has('at') && has('every')) throw new UsageError('Give --at (once) or --every (repeats), not both');
   for (const name of ['time', 'starts', 'ends']) if (has(name) && !has('every')) throw new UsageError(`--${name} is for a repeating task: add --every`);
   if (flags['no-schedule']) body.schedule = null;
@@ -87,6 +92,9 @@ function scheduleFrom(flags, { update = false } = {}) {
     }
     body.schedule = schedule;
   }
+  const scripted = has('script') || has('script-file') || has('task') || has('timeout-min');
+  if (scripted && (has('prompt') || has('session'))) throw new UsageError('Give --prompt (send to a session) or --script (run a script), not both');
+  if (scripted) body.then_action = scriptAction(flags, { update });
   if (has('prompt') || has('session')) {
     const text = has('prompt') ? String(flags.prompt) : '';
     if (!text.trim()) {
@@ -100,6 +108,31 @@ function scheduleFrom(flags, { update = false } = {}) {
     }
   }
   return body;
+}
+
+// --script T or --script-file F, --task <id>, --timeout-min N -> { kind: 'script', ... } (or a reminder again for --script '' on update).
+function scriptAction(flags, { update }) {
+  const has = name => flags[name] !== undefined;
+  if (has('script') && has('script-file')) throw new UsageError('Give --script or --script-file, not both');
+  let script = has('script') ? String(flags.script) : '';
+  if (has('script-file')) {
+    try { script = fs.readFileSync(String(flags['script-file']), 'utf8'); } catch (error) { throw new UsageError(`Cannot read --script-file ${flags['script-file']}: ${error.code || error.message}`); }
+  }
+  if (!script.trim()) {
+    if (has('task') || has('timeout-min') || has('script-file')) throw new UsageError('--task and --timeout-min need --script "<commands>" or --script-file F');
+    if (!update) throw new UsageError('--script cannot be empty');
+    return { kind: 'remind' };
+  }
+  if (script.length > SCRIPT_MAX) throw new UsageError(`The script can be at most ${SCRIPT_MAX} characters`);
+  const task = has('task') ? String(flags.task).trim().replace(/^#/, '') : '';
+  if (!/^\d{1,15}$/.test(task)) throw new UsageError('--script needs --task <task id> (the task of the server whose folder it runs in)');
+  const action = { kind: 'script', task_id: task, script };
+  if (has('timeout-min')) {
+    const minutes = Number(flags['timeout-min']);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 720) throw new UsageError('--timeout-min must be a number of minutes from 1 to 720');
+    action.timeout_min = minutes;
+  }
+  return action;
 }
 
 // The schedule part of a row: "Every day at 09:00 · next 11-24 09:00 · sends a prompt". short (the list): the rule without its first and last day.
@@ -138,6 +171,12 @@ Commands
     | --bottom [--status S] [--reason T]
                           reorder inside its group
   upsert --ref R          create or update by ref
+  run-now <id|ref:R>      run a scheduled task's action
+                          now: remind, send the prompt,
+                          or run the script again
+  preview --at T | --every R --time HH:MM
+                          the rule in words and the
+                          next three times
   rm <id|ref:R>           delete a task (not one that
                           has subtasks)
   import-tasks-md <file> [--dry-run] [--source S]
@@ -184,6 +223,12 @@ Schedule (add, update)
   --prompt T --session <task>:<terminal>
                             then type T into that
                             session (default: remind)
+  --script T | --script-file F  --task <task id>
+    [--timeout-min N]       then run the script in a
+                            new terminal of that task
+                            (1-720 min, default 30);
+                            only with a token made in
+                            Settings, not a terminal's
   --no-schedule             update: clear the schedule
 
 Statuses: todo working waiting_user review
@@ -513,7 +558,11 @@ function timeoutOf(flags) {
   return Math.round(seconds * 1000);
 }
 
-async function run(argv, { env = process.env, print, printError, ask = defaultAsk } = {}) {
+// The help text, under the name the command was called by (`t-attention`, or `tcli attention` from scripts/tcli-attention.js).
+const helpText = (name = 't-attention') => (name === 't-attention' ? HELP : HELP.replace(/\bt-attention\b/g, name));
+
+async function run(argv, { env = process.env, print, printError, ask = defaultAsk, name = 't-attention' } = {}) {
+  const HELP = helpText(name);
   const { flags, positional } = parseArgs(argv);
   const [command, ...args] = positional;
   const json = Boolean(flags.json);
@@ -676,6 +725,28 @@ async function run(argv, { env = process.env, print, printError, ask = defaultAs
     addNote(body, flags);
     const result = await connect(flags, env).upsertByRef(flags.ref, body);
     show(result.item, `${result.created ? 'Added' : 'Updated'} #${result.item.id} ${oneLine(result.item.title)} (${STATUS_LABELS[result.item.status] || result.item.status})`);
+    return EXIT.ok;
+  }
+
+  if (command === 'run-now' || command === 'run') {
+    only(flags, [], command);
+    const api = connect(flags, env);
+    const id = await resolveId(api, target(args[0], command));
+    const answer = await api.runNow(id);
+    const item = (answer && answer.item) || answer;
+    show(answer, `Ran #${item.id} ${oneLine(item.title)} now (${STATUS_LABELS[item.status] || item.status})${scheduleLine(item) ? `\n  ${scheduleLine(item)}` : ''}${item.attention_reason && item.status === 'waiting_user' ? `\n  ${oneLine(item.attention_reason)}` : ''}`);
+    return EXIT.ok;
+  }
+
+  if (command === 'preview') {
+    only(flags, WHEN_FLAGS, 'preview');
+    if (args.length) throw new UsageError('preview takes no arguments: give the schedule with --at or --every and --time');
+    const { schedule } = scheduleFrom(flags);
+    if (!schedule) throw new UsageError('preview needs --at <date and time> or --every <rule> --time HH:MM');
+    const answer = await connect(flags, env).previewSchedule(schedule);
+    if (answer && answer.error) throw new client.AttentionClientError('invalid', answer.error, { status: 400, code: 'VALIDATION_FAILED', body: answer });
+    const next = (answer && Array.isArray(answer.next) ? answer.next : []).map(shortTime).filter(Boolean);
+    show(answer, [answer.text || '', next.length ? `Next: ${next.join(', ')}` : 'Nothing left to run'].filter(Boolean).join('\n'));
     return EXIT.ok;
   }
 
@@ -1056,9 +1127,12 @@ function exitFor(error) {
 async function main(argv = process.argv.slice(2), options = {}) {
   const print = options.print || (text => process.stdout.write(`${text}\n`));
   const printError = options.printError || (text => process.stderr.write(`${text}\n`));
+  // options.name: the name the person typed (`tcli attention`), used in help, hints and error messages instead of t-attention.
+  const name = options.name || 't-attention';
+  const named = name === 't-attention' ? printError : text => printError(String(text).replace(/\bt-attention\b/g, name));
   const json = argv.includes('--json');
   try {
-    return await run(argv, { env: options.env || process.env, print, printError, ask: options.ask || defaultAsk });
+    return await run(argv, { env: options.env || process.env, print, printError: named, ask: options.ask || defaultAsk, name });
   } catch (error) {
     const code = exitFor(error);
     if (json) {
@@ -1068,8 +1142,8 @@ async function main(argv = process.argv.slice(2), options = {}) {
       if (error && error.kind === 'auth' && error.status && error.status !== 403) message = `${message} (check the token: t-attention login)`;
       if (error && error.kind === 'conflict' && error.body && error.body.id) message = `${message} (#${error.body.id})`;
       if (error && error.kind === 'conflict' && error.body && Array.isArray(error.body.children)) message = `${message} (subtasks: ${error.body.children.map(id => `#${id}`).join(', ')})`;
-      printError(`t-attention: ${message}`);
-      if (error instanceof UsageError) printError('Run t-attention --help for usage.');
+      named(`t-attention: ${message}`);
+      if (error instanceof UsageError) named('Run t-attention --help for usage.');
     }
     return code;
   }
@@ -1079,4 +1153,4 @@ if (require.main === module) {
   main().then(code => { process.exitCode = code; });
 }
 
-module.exports = { main, parseArgs, formatList, formatItem, formatTree, treeGroups, formatPlugins, normalizeStatus, EXIT };
+module.exports = { main, helpText, parseArgs, formatList, formatItem, formatTree, treeGroups, formatPlugins, normalizeStatus, EXIT };

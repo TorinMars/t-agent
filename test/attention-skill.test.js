@@ -262,7 +262,7 @@ test('server.js mounts the skill router before the T-Attention router, which ans
 // ---- The skill text ----
 
 // The commands and flags of the t-attention CLI contract the skill may use (scripts/t-attention.js; `login` with --url / --token already existed).
-const COMMANDS = new Set(['add', 'update', 'review', 'confirm', 'reject', 'handled', 'wait', 'work', 'fail', 'move', 'list', 'tree', 'show', 'login']);
+const COMMANDS = new Set(['add', 'update', 'review', 'confirm', 'reject', 'handled', 'wait', 'work', 'fail', 'move', 'list', 'tree', 'show', 'login', 'preview', 'run-now']);
 // The schedule flags (one line of the skill: only when the user asks for a reminder or a repeating task).
 const FLAGS = new Set(['parent', 'status', 'custom-status', 'result', 'notes', 'ref', 'json', 'title', 'note', 'reason', 'link', 'label', 'before', 'after', 'top', 'bottom', 'tree', 'url', 'token',
   'at', 'every', 'time', 'prompt', 'session', 'no-schedule']);

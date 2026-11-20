@@ -10,6 +10,7 @@ description: The tcli command of T-Agent. Use it to manage files in the user's o
 - `oss`: files in the object storage bucket that the user set up in T-Agent (Settings → Tasks and files → Image and file upload).
 - `browser`: the user's Chrome on this computer, through the T-Agent browser extension (Settings → Tasks and files → Browser extension). See "Browser" below.
 - `notify`: a short message to the user on the notifiers they set up in T-Attention (Telegram, email, a bubble beside the Mac desktop window). See "Notify the user" below.
+- `attention`: the user's T-Attention task list. `tcli attention <command>` is the `t-attention` command with the same commands, options, output and exit codes (add, list, tree, show, update, review, wait, move, schedules, `run-now`, `preview` ...). Follow the t-attention skill for when and how to use it; `tcli attention help` lists everything.
 
 More groups may come later; `tcli help` lists what this version has.
 

@@ -177,11 +177,13 @@ export function AttentionSettings({ ui, request = null }) {
   };
   return (
     <Group id="attention" title="T-Attention" onOpen={open} request={request}>
-      {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). */}
+      {/* The first-run guide, or its "Show setup guide" button once it is closed or done (AttentionGuide.jsx). Its steps act on this machine, so it is a
+          part of the device tab, but whether it is shown or closed is one choice for every linked device (settings sync group attention-guide): the
+          label says so. */}
       <InTab part="attention-guide">
         {/* The guide draws its own outlined box (AttentionGuide.jsx), so it is not put in a card. */}
         <Box id="h5-sec-attention-guide" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 1, '& > #h5-guide-show': { alignSelf: 'flex-start' }, '&:not(:has(> :not([hidden])))': { display: 'none' } }}>
-          <ScopeLabel subject="Setup guide" sx={{ alignSelf: 'flex-start' }} />
+          <ScopeLabel id="attention-guide" subject="Setup guide shown or hidden" sx={{ alignSelf: 'flex-start' }} />
           <LocalOnly id="h5-guide-settings-remote"><AttentionGuide ui={ui} place="settings" active={opened} /></LocalOnly>
         </Box>
       </InTab>

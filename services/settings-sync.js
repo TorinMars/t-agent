@@ -41,8 +41,9 @@ const NEVER = Object.freeze({ updated_at: 0, updated_by: '', hash: null });
 
 // The setting groups the page shows, and where each one lives: 'shared' (this registry), 'device' (never synced), 'telegram' (its own plugin).
 const SCOPES = Object.freeze({
-  translate: 'shared', voice: 'shared', oss: 'shared', 'oss-agent-access': 'shared', 'attention-summary': 'shared', 'notify-rules': 'shared',
-  'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'browser-sites': 'shared',
+  translate: 'shared', voice: 'shared', oss: 'shared', 'oss-agent-access': 'shared', 'agent-config': 'shared',
+  'attention-summary': 'shared', 'attention-guide': 'shared', 'notify-rules': 'shared',
+  'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'update-auto': 'shared', 'browser-sites': 'shared',
   workdir: 'device', access: 'device', authenticator: 'device', 'engine-name': 'device', 'widget-enabled': 'device', 'peer-fs': 'device',
   restart: 'device', 'rule-sync': 'device',
   telegram: 'telegram',
@@ -567,11 +568,18 @@ function defaultRegistry({ db, sessionSecret }) {
     entry('voice', () => require('./speech'), { secret: true }),
     entry('oss', () => require('./oss-images'), { secret: true }),
     entry('oss-agent-access', () => require('./oss-agent-settings')),
+    // The Claude / Codex defaults (services/agent-config.js); the per-server overrides and push results stay on each machine.
+    entry('agent-config', () => require('./agent-config')),
     entry('attention-summary', () => require('./attention-summary')),
+    // The T-Attention first-run guide: closed and "This page only" (services/attention-guide.js); paired and tested stay on each machine.
+    entry('attention-guide', () => require('./attention-guide')),
     entry('notify-rules', () => require('./attention-notify'), { exportName: 'exportRulesForSync', importName: 'importRulesFromSync' }),
     entry('notifier-plugins', () => require('./attention-notify'), { secret: true, exportName: 'exportPluginsForSync', importName: 'importPluginsFromSync' }),
     entry('widget-language', () => require('./attention-widget')),
     entry('task-list-devices', () => require('../routes/task-list-prefs')),
+    // "Update automatically when idle" (services/update-manager.js): only the switch, once set with this version or later; each engine keeps its own
+    // attempts and history and updates itself under its own idle rule.
+    entry('update-auto', () => require('./update-manager')),
     // The site capability library (services/browser-sites.js): the whole shared set travels, merged per site on import (last-writer-wins with
     // tombstones), so two devices that each edit a different site keep both. It holds no raw secrets, so syncing it is safe. Merge semantics, not
     // replace: a null from a peer is a no-op (deletions travel as per-site tombstones inside the value), so it is not cleared by write(null).

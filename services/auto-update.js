@@ -19,7 +19,7 @@ const RESTART_DID_NOT_HELP = 'RESTART_DID_NOT_HELP';
 const RESTART_BUSY = new Set(['UPDATE_IN_PROGRESS', 'RESTART_PENDING']);
 
 function defaults() {
-  return { enabled: true, attempts: null, restart: null, last_auto_version: null, last_auto_at: null, last_auto_action: null, last_auto_boot: null };
+  return { enabled: true, shared: false, attempts: null, restart: null, last_auto_version: null, last_auto_at: null, last_auto_action: null, last_auto_boot: null };
 }
 
 function createAutoUpdate({
@@ -275,10 +275,32 @@ function createAutoUpdate({
     if (!supported) log('auto', `Auto update is not available here: ${reason}`);
   }
 
-  function setEnabled(enabled) {
-    if (enabled !== load().enabled) log('auto', enabled ? 'Auto update turned on' : 'Auto update turned off');
-    save({ enabled });
+  // The switch is one choice of the person for every engine (settings sync group update-auto, "Automatic update" in
+  // docs/design/update-check-and-versions.md). `shared` marks a value set with this version or later, here or on a linked engine: only such a value
+  // travels. A value from before (or the default) stays on this engine and is never sent, so the first sync after the update changes nothing.
+  function setEnabled(enabled, { from = '' } = {}) {
+    if (enabled !== load().enabled) log('auto', `${enabled ? 'Auto update turned on' : 'Auto update turned off'}${from ? ` (${from})` : ''}`);
+    save({ enabled, shared: true });
     if (enabled) kick(); else clearWait();
+  }
+
+  // The shared value for the settings sync: { enabled } once the switch was set with this version or later, else null (nothing to share).
+  function syncValue() {
+    const setting = load();
+    return setting.shared === true ? { enabled: setting.enabled } : null;
+  }
+
+  // A value from a linked engine. null (that engine has no shared value any more) keeps the switch as it is and only stops sharing it here.
+  // Throws INVALID_SYNC_VALUE for anything but null or { enabled: true|false }.
+  function applySync(value) {
+    if (value === null || value === undefined) {
+      if (load().shared === true) save({ shared: false });
+      return;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.enabled !== 'boolean' || Object.keys(value).some(key => key !== 'enabled')) {
+      throw Object.assign(new Error('INVALID_SYNC_VALUE'), { statusCode: 400 });
+    }
+    setEnabled(value.enabled, { from: 'from a linked device' });
   }
 
   function setIdleProbe(fn) {
@@ -331,7 +353,7 @@ function createAutoUpdate({
     };
   }
 
-  return { tick, kick, start, setEnabled, setIdleProbe, publicState };
+  return { tick, kick, start, setEnabled, setIdleProbe, publicState, syncValue, applySync };
 }
 
 module.exports = { createAutoUpdate, AUTO_RESTART_REQUIRED, RESTART_DID_NOT_HELP, DEFAULT_QUIET_MS, MAX_ATTEMPTS, MAX_RESTARTS, TICK_MS };

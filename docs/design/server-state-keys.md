@@ -27,10 +27,13 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `speech:<owner>` | system_state | shared | settings sync, group voice (encrypted) | `services/speech.js` |
 | `oss-images:<owner>` | system_state | shared | settings sync, group oss (encrypted) | `services/oss-images.js` |
 | `oss_agent_access_v1` | system_state | shared | settings sync, group oss-agent-access | `services/oss-agent-settings.js` |
+| `agent-config:<owner>` | system_state | shared | settings sync, group agent-config: the Claude / Codex defaults; the per-server overrides and push results in the same row stay here (keyed by `local` and this machine's `remote_servers` row ids) | `services/agent-config.js` |
 | `attention-summary:<owner>` | system_state | shared | settings sync, group attention-summary (encrypted) | `services/attention-summary.js` |
+| `attention-guide:<owner>` | system_state | shared | settings sync, group attention-guide: `dismissed` and `pageOnly`; `paired` and `tested` in the same row stay here (what was done on this machine) | `services/attention-guide.js` |
 | `attention-notify:<owner>` | system_state | shared | settings sync, group notify-rules (encrypted) | `services/attention-notify.js` |
 | `attention-plugin:<plugin>:<owner>` | system_state | shared | settings sync, group notifier-plugins (encrypted) | `services/attention-notify.js` |
 | `task_list_hidden_instances_v1` | system_state | shared | settings sync, group task-list-devices (as engine instance ids) | `routes/task-list-prefs.js` |
+| `update_auto` | system_state | shared | settings sync, group update-auto: the `enabled` switch, once set with this version or later; the attempts, restarts and history in the same row stay here (each engine updates itself under its own idle rule) | `services/update-manager.js` |
 | `browser_site_v1:<host>` | system_state | shared | settings sync, group browser-sites (merged per site) | `services/browser-sites.js` |
 | `browser_sites_tombstones_v1` | system_state | shared | settings sync, group browser-sites (the deleted sites) | `services/browser-sites.js` |
 | `page_state_v1:<owner>` | system_state | shared | the shared page state sync | `services/page-state.js` |
@@ -52,12 +55,9 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `file_sync_v1` | system_state | device | this machine's file sync role and file list (the files travel by the file sync itself) | `services/file-sync.js` |
 | `single_user_id` | system_state | device | the login that owns this machine's data | `services/single-user.js` |
 | `updated_notice_v1:<owner>` | system_state | device | the update of this machine the person has not acknowledged yet; the dialog of any linked page acknowledges it here through /v1/updated-notice | `services/updated-notice.js` |
-| `update_auto` | system_state | device | automatic update of this machine: each engine updates itself under its own idle rule, with its history | `services/update-manager.js` |
 | `task_link_visibility_v1` | system_state | device | which links may see which task of this machine (its own tasks and links) | `services/task-visibility.js` |
 | `terminal_order_v1:<task>` | system_state | device | the order of the terminals of a task of this machine; other engines read it through the link with the task | `routes/terminal.js` |
 | `remote_engine_names_v1` | system_state | device | which `remote_servers` rows of this machine take their name from their engine (row ids are machine-relative) | `services/engine-name.js` |
-| `agent-config:<owner>` | system_state | device | the agent config defaults and per-server overrides, keyed by this machine's `remote_servers` rows | `services/agent-config.js` |
-| `attention-guide:<owner>` | system_state | device | the T-Attention setup guide flags (dismissed, page only, paired, tested) | `services/attention-guide.js` |
 | `ui_usage_v1` | system_state | device | the "Record button use" switch of this server | `services/ui-events.js` |
 | `updated_running_v1` | system_state | runtime | the version this service ran at its last start, to notice an update | `services/updated-notice.js` |
 | `update_state` | system_state | runtime | the progress and result of the last update of this machine | `services/update-manager.js` |
@@ -77,10 +77,9 @@ Found by the audit that made the registry (2026-11-20). They keep their scope un
 
 | Key | Scope today | Why it looks wrong for the rule |
 | --- | --- | --- |
-| `agent-config:<owner>` | device | the person's Claude / Codex defaults: the page of another engine shows a different set; should be shared, with the overrides keyed by engine instance id |
-| `attention-guide:<owner>` | device | dismissed and pageOnly describe the person: the guide comes back on every other engine; should be shared (paired / tested may stay per machine) |
 | `ui_usage_v1` | device | a preference of the person kept per server; becomes shared with the merged usage data ("usage-data-merged") |
-| `update_auto` | device | the switch "Update automatically when idle" is a choice the person makes once; only its history and the idle rule are this machine's |
+
+Moved since ("scope-fixes", 2026-11-20): `agent-config:<owner>` (its defaults), `attention-guide:<owner>` (`dismissed`, `pageOnly`) and `update_auto` (`enabled`, once set with this version) are shared through the settings sync, groups `agent-config`, `attention-guide` and `update-auto` ([settings-sync.md](settings-sync.md)). Each keeps its per-machine fields in the same row: the agent-config overrides and push results (keyed by this machine's `remote_servers` rows: re-keying them by engine instance id would only matter for a page that edits them, and none does now), the guide's `paired` / `tested`, and the update attempts and history.
 
 ## Other stores
 
@@ -89,6 +88,10 @@ Not key / value rows, so not in the registry; listed so the picture is whole. Ta
 - Personal, synced (the Learn sync): `learn_cards`, `learn_reviews`, `learn_card_moves`.
 - Owned by their engine, reached through the link: `tasks`, `task_terminals` and the default-terminal tables, `task_todos`, `agent_conversations`, `apps`, `repo_cleanups`.
 - This machine's connections and access: `remote_servers`, `remote_access_tokens`, `engine_access_tokens`, `engine_pairing_codes`, `attention_tokens`, `client_auth`, `users` (`work_dir` is the device setting "Working directory").
-- Per engine today, with an item of the single-system-image program to change it: `attention_items` and `attention_events` (a read copy on every engine, "attention-replicated"), `ui_events` and `ui_controls` (one data set for the person, "usage-data-merged"), mind maps in `<data folder>/mindmaps/` (replicated, "mindmaps-replicated"). Also per engine: `task_groups` and `bookmarks`.
+- Per engine today, with an item of the single-system-image program to change it: `attention_items` and `attention_events` (a read copy on every engine, "attention-replicated"), `ui_events` and `ui_controls` (one data set for the person, "usage-data-merged"), mind maps in `<data folder>/mindmaps/` (replicated, "mindmaps-replicated").
+- Audited per-owner tables ("scope-fixes", 2026-11-20), left per engine with a recommendation:
+  - `task_groups`: the groups the tasks of that engine sit in (a task's `status` is the group key). Every engine makes the same four (Personal tasks, In progress, To do, Done) and the page groups by key, falling back to those four; the page no longer creates, renames or reorders groups (the writes of `/api/task-groups` are kept for compatibility only), the order of the tasks is shared (`task_order_v1`) and the collapsed groups are in the shared page state. Nothing the person sees differs between engines today. Recommendation: keep it with its engine; if editing groups comes back, keep the list as one settings sync group keyed by group key (name and order), not by row id.
+  - `bookmarks`: no owner column, read and written only by the compatibility endpoint `/api/bookmarks`; no page shows it. Recommendation: retire the table and the route in a later cleanup rather than sync it; if bookmarks come back, keep them in the shared page state or a settings sync group merged per entry (as the site library).
+  - Device by design: `users.work_dir` (folders differ per machine), `apps` and `repo_cleanups` (they run on their machine), `attention_tokens` and `remote_servers` (this machine's connections).
 
 Test: `test/server-state-keys.test.js` (the scan of the sources, the scanner's own check on sample sources, unused declarations, the registry's shape and its most-specific match, the guard on a fresh database and on the server's database, this table, and the line in `AGENTS.md`).

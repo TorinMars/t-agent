@@ -24,7 +24,7 @@ const SHOTS = process.env.H5_SHOT_DIR || '';
 const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-const SHARED = ['translate', 'voice', 'oss', 'oss-agent-access', 'attention-summary', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices'];
+const SHARED = ['translate', 'voice', 'oss', 'oss-agent-access', 'agent-config', 'attention-summary', 'attention-guide', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'update-auto'];
 const DEVICE = ['workdir', 'access', 'authenticator', 'engine-name', 'widget-enabled', 'peer-fs', 'restart', 'rule-sync'];
 
 // `sync`: 'linked' (two peers), 'alone' (supported, no peer) or 'missing' (404).
@@ -266,11 +266,14 @@ async function testLinkedPhone(browser) {
   await page.locator('.h5-plugin-page').waitFor({ state: 'detached' });
   await toggleGroup(page, 'attention', press);
 
-  // T-Attention and Account in This device: the guide, reminders, listeners, the marketplace, the window switch and the tokens; no pill.
+  // T-Attention and Account in This device: the guide, reminders, listeners, the marketplace, the window switch and the tokens. One pill: the guide
+  // acts on this machine, but whether it is shown is shared.
   await chooseTab(page, 'local', press);
   await toggleGroup(page, 'attention', press);
   await page.waitForFunction(() => document.getElementById('h5-attention-widget-enabled') && document.getElementById('h5-guide-show') && document.getElementById('h5-plugins-tab-market'));
-  assert.deepEqual(await labelsOf(page, 'attention'), []);
+  assert.deepEqual(await labelsOf(page, 'attention'), ['shared Setup guide shown or hidden: Shared across devices']);
+  assert.equal(await page.locator('#h5-sec-attention-guide .h5-scope').getAttribute('data-setting'), 'attention-guide');
+  await assertFits(page, '390 T-Attention, This device');
   for (const id of ['#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-attention-widget-language', '#h5-attention-summary-save']) assert.equal(await page.locator(id).count(), 0, `${id} is in Shared`);
   await toggleGroup(page, 'attention', press);
   await toggleGroup(page, 'account', press);

@@ -15,7 +15,7 @@ export const LOCAL_TAB = 'local';
 export const TAB_KEY = 't-agent.settings-tab';
 const OLD_KEY = 't-agent.settings-device'; // the device chosen in "Settings for" before the tabs (a row id)
 
-// Every part of the sheet: its group and its scope ('shared', 'telegram' or 'device'). The ids are the setting ids of GET /api/settings-sync where
+// Every part of the sheet: its group and its scope ('shared', 'telegram', 'device', or 'all' for a part drawn the same in every tab). The ids are the setting ids of GET /api/settings-sync where
 // there is one, and the part ids of settings-target.mjs (every one of those is here, so opening a part from code knows its tab).
 export const PARTS = {
   workdir: ['tasks-files', 'device'],
@@ -32,6 +32,7 @@ export const PARTS = {
   'peer-fs': ['devices', 'device'],
   'rule-sync': ['devices', 'device'],
   advanced: ['devices', 'device'],
+  environment: ['devices', 'all'], // a table of every machine (EnvironmentCompare.jsx): the same whichever tab is chosen
   connect: ['devices', 'device'],
   remote: ['devices', 'device'],
   'attention-guide': ['attention', 'device'],
@@ -71,7 +72,7 @@ export function tabScope(tab, { shared = true } = {}) {
   if (tab === SHARED_TAB) return 'shared';
   return tab === LOCAL_TAB && !shared ? null : 'device';
 }
-const holds = (scope, partScope) => (scope === 'shared' ? partScope === 'shared' || partScope === 'telegram' : partScope === scope);
+const holds = (scope, partScope) => partScope === 'all' || (scope === 'shared' ? partScope === 'shared' || partScope === 'telegram' : partScope === scope);
 
 // Whether a part is drawn in a tab of that scope. Without tabs (null) every part is drawn, as before the tabs. An unknown part is drawn everywhere.
 export function partShown(id, scope) {

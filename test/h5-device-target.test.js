@@ -20,11 +20,12 @@ const answer = {
 test('the answer is cleaned: bad entries are dropped, `supported` and `company_computer` are true, false or null', async () => {
   const { normalizeDevices } = await load();
   assert.deepEqual(normalizeDevices(answer), [
-    { id: 7, name: 'K01', online: true, supported: true, company_computer: true },
-    { id: 9, name: 'Old Mac', online: true, supported: false, company_computer: null },
-    { id: 11, name: 'Away', online: false, supported: null, company_computer: null },
-    { id: 12, name: 'Sleeping', online: false, supported: true, company_computer: null },
+    { id: 7, name: 'K01', online: true, supported: true, company_computer: true, environment: null },
+    { id: 9, name: 'Old Mac', online: true, supported: false, company_computer: null, environment: null },
+    { id: 11, name: 'Away', online: false, supported: null, company_computer: null, environment: null },
+    { id: 12, name: 'Sleeping', online: false, supported: true, company_computer: null, environment: null },
   ]);
+  assert.deepEqual(normalizeDevices({ devices: [{ id: 3, name: 'A', environment: true }, { id: 4, name: 'B', environment: 'yes' }] }).map(device => device.environment), [true, null], 'whether its tools list can be read');
   assert.deepEqual(normalizeDevices(null), [], 'an older server (404) has no devices');
   assert.deepEqual(normalizeDevices({ devices: 'x' }), []);
 });

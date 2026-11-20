@@ -239,3 +239,83 @@ test('request() reads the status and headers of an answer, for HEAD and for a CO
   assert.equal(refused.ok, false);
   assert.ok(refused.error && refused.error.length > 0, 'the reason is given');
 });
+
+// ── the tools list (Settings → Devices → Environment) ──
+const versions = {
+  '/usr/bin/node': 'v24.22.0\n', '/usr/bin/git': 'git version 2.50.1\n', '/bin/claude': '2.1.323 (Claude Code)\n', '/bin/codex': 'codex-cli 0.167.1\n',
+  '/usr/bin/swift': 'swift-driver version: 1.115 Apple Swift version 6.0.3 (swiftlang-6.0.3.1.10 clang-1600.0.30.1)\n', '/usr/bin/pm2': '6.0.8\n',
+};
+const toolDeps = (extra = {}) => healthy({
+  platform: 'darwin', tcliFile: '/install/scripts/tcli.js',
+  exists: file => file === '/bin/zsh' || file === '/install/scripts/tcli.js',
+  finders: { claude: finder('/bin/claude'), git: finder('/usr/bin/git'), pm2: finder('/usr/bin/pm2'), node: finder('/usr/bin/node'), swift: finder('/usr/bin/swift') },
+  run: async (file, args) => (file === 'xcode-select' ? { ok: true, stdout: '/Library/Developer/CommandLineTools\n', stderr: '' } : { ok: true, stdout: versions[file] || '', stderr: '' }),
+  ...extra,
+});
+const valueOf = (report, id) => report.tools.find(tool => tool.id === id);
+
+test('the tools list names each tool the sessions rely on with its version, in a fixed order', async () => {
+  const report = await createEnvironmentCheck(toolDeps({ now: () => 1000 })).tools();
+  assert.equal(report.checked_at, 1000);
+  assert.equal(report.platform, 'darwin');
+  assert.deepEqual(report.tools.map(tool => [tool.id, tool.name, tool.status, tool.value]), [
+    ['node', 'Node.js', 'ok', 'v24.22.0'], ['git', 'git', 'ok', '2.50.1'], ['claude', 'Claude Code', 'ok', '2.1.323'], ['codex', 'Codex', 'ok', '0.167.1'],
+    ['tcli', 'tcli', 'ok', ''], ['shell', 'Shell', 'ok', 'zsh'], ['swift', 'Swift (Mac app)', 'ok', '6.0.3'], ['pm2', 'pm2', 'ok', '6.0.8'],
+  ]);
+  assert.ok(report.tools.every(tool => !('fix' in tool)), 'a found tool has no hint');
+});
+
+test('a missing tool carries the install hint of the check; Swift is not needed off macOS and never asked for without the developer tools', async () => {
+  const asked = [];
+  const missing = await createEnvironmentCheck(toolDeps({
+    finders: { claude: finder(null), git: finder(null), pm2: finder(null), node: finder(null), swift: finder('/usr/bin/swift') },
+    codexModule: { findCodex: async () => null },
+    exists: () => false,
+    run: async file => { asked.push(file); return file === 'xcode-select' ? { ok: false, stdout: '', stderr: 'error: unable to get active developer directory' } : { ok: true, stdout: '', stderr: '' }; },
+  })).tools();
+  assert.equal(valueOf(missing, 'node').value, process.version, 'no node on the PATH: the Client\'s own');
+  for (const id of ['git', 'claude', 'codex', 'tcli', 'shell', 'swift', 'pm2']) assert.equal(valueOf(missing, id).status, 'missing', id);
+  assert.match(valueOf(missing, 'claude').fix, /Install Claude Code/);
+  assert.match(valueOf(missing, 'codex').fix, /CODEX_PATH/);
+  assert.match(valueOf(missing, 'swift').fix, /xcode-select --install/);
+  assert.ok(!asked.includes('/usr/bin/swift'), 'swift is not started without the developer tools (it would open the install dialog)');
+
+  const linux = await createEnvironmentCheck(toolDeps({ platform: 'linux' })).tools();
+  assert.deepEqual([valueOf(linux, 'swift').status, valueOf(linux, 'swift').value], ['not-needed', '']);
+});
+
+test('a probe that throws or hangs is an unknown value, never a failed list', async () => {
+  const report = await createEnvironmentCheck(toolDeps({
+    checkTimeoutMs: 30,
+    finders: { claude: { find: () => new Promise(() => {}) }, git: { find: async () => { throw new Error('boom'); } }, pm2: finder('/usr/bin/pm2'), node: finder('/usr/bin/node'), swift: finder('/usr/bin/swift') },
+  })).tools();
+  assert.equal(valueOf(report, 'claude').status, 'unknown');
+  assert.equal(valueOf(report, 'git').status, 'unknown');
+  assert.equal(valueOf(report, 'pm2').value, '6.0.8');
+});
+
+test('the tools list is kept for ten minutes, "fresh" probes again, and two reads while one runs share it', async () => {
+  let clock = 0;
+  let probes = 0;
+  const service = createEnvironmentCheck(toolDeps({ now: () => clock, run: async file => { if (file === '/usr/bin/git') probes += 1; return { ok: true, stdout: versions[file] || '/x\n', stderr: '' }; } }));
+  const [a, b] = await Promise.all([service.tools(), service.tools()]);
+  assert.equal(a, b);
+  assert.equal(probes, 1);
+  clock = 9 * 60_000;
+  assert.equal(await service.tools(), a, 'kept');
+  assert.equal(probes, 1);
+  await service.tools({ fresh: true });
+  assert.equal(probes, 2, 'Check again probes');
+  clock += 10 * 60_000 + 1;
+  await service.tools();
+  assert.equal(probes, 3, 'too old: probed again');
+});
+
+test('versionOf finds the number in what each tool prints', () => {
+  const { versionOf } = require('../services/environment-check');
+  assert.equal(versionOf('v24.22.0'), 'v24.22.0');
+  assert.equal(versionOf('git version 2.39.5 (Apple Git-154)'), '2.39.5');
+  assert.equal(versionOf('2.1.310 (Claude Code)'), '2.1.310');
+  assert.equal(versionOf('codex-cli 0.167.1'), '0.167.1');
+  assert.equal(versionOf('no number'), '');
+});

@@ -1,7 +1,8 @@
 // Which device the per-device parts of the settings sheet read and write ("Settings of a linked device" in docs/design/linked-device-settings.md): this device, or a linked
 // device whose tab is chosen at the top of the sheet (DeviceTarget.jsx, settings-tabs.mjs). Data: GET /api/device-settings/devices
-//   { devices: [{ id, name, online, supported, company_computer }] }   (`id` is the remote_servers row; `supported` true, false for an older version,
-//   null when unknown; `company_computer` the device's "Company computer" flag, null when unknown or too old)
+//   { devices: [{ id, name, online, supported, company_computer, environment }] }   (`id` is the remote_servers row; `supported` true, false for an
+//   older version, null when unknown; `company_computer` the device's "Company computer" flag, null when unknown or too old; `environment` whether
+//   its tools list can be read for Settings → Devices → Environment, null when unknown)
 // A call of a part goes to its own /api path for this device, and to /api/device-settings/<id><path without /api> for a linked one, which the
 // server forwards to that device's allowlisted /v1/device-settings routes (routes/device-settings.js). Pure functions, no React; `t` translates.
 
@@ -13,6 +14,7 @@ export function normalizeDevices(data) {
     .map(device => ({
       id: device.id, name: device.name, online: device.online !== false, supported: device.supported === true ? true : device.supported === false ? false : null,
       company_computer: typeof device.company_computer === 'boolean' ? device.company_computer : null,
+      environment: typeof device.environment === 'boolean' ? device.environment : null,
     }));
 }
 

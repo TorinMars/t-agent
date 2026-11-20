@@ -1,10 +1,30 @@
-// The environment check: GET /api/environment/check says which features of this machine will have problems.
+// The environment check: GET /api/environment/check says which features of this machine will have problems; GET /api/environment/tools lists the
+// tools agent sessions rely on with their versions (kept for a while), POST /api/environment/tools probes them again ("Check again"). The tools list
+// of a linked device is read through /v1/device-settings/environment/tools (routes/device-settings.js, `createEnvironmentToolsRouter` below);
+// Settings → Devices → Environment compares them ("Environment" in docs/design/environment-compare.md).
 const express = require('express');
 const clientOrigin = require('../middleware/client-origin');
-const { createEnvironmentCheck } = require('../services/environment-check');
+const { getEnvironmentCheck } = require('../services/environment-check');
+
+// GET and POST /tools. No checks of its own: the page's router and the linked devices' router put theirs in front.
+function addToolsRoutes(router, service) {
+  const answer = fresh => async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try { res.json(await service.tools({ fresh })); }
+    catch { res.status(500).json({ error: 'The environment check failed' }); }
+  };
+  router.get('/tools', answer(false));
+  router.post('/tools', answer(true));
+  return router;
+}
+
+// For /v1/device-settings/environment (the link token was checked there).
+function createEnvironmentToolsRouter(options = {}) {
+  return addToolsRoutes(express.Router(), options.service || getEnvironmentCheck());
+}
 
 function createEnvironmentRouter(options = {}) {
-  const service = options.service || createEnvironmentCheck();
+  const service = options.service || getEnvironmentCheck();
   const db = options.db || require('../db');
   const router = express.Router();
   router.use(clientOrigin, options.requireAuth || require('../middleware/auth'));
@@ -31,7 +51,8 @@ function createEnvironmentRouter(options = {}) {
     try { res.json(await running.get(key)); }
     catch { res.status(500).json({ error: 'The environment check failed' }); }
   });
+  addToolsRoutes(router, service);
   return router;
 }
 
-module.exports = { createEnvironmentRouter };
+module.exports = { createEnvironmentRouter, createEnvironmentToolsRouter };

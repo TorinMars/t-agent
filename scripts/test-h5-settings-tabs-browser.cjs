@@ -170,12 +170,12 @@ const EXPECTED = {
   shared: {
     'tasks-files': { headings: ['Image and file upload', 'Site library'], marks: [] },
     'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
-    devices: { headings: ['Settings sync', 'Show in task list'], marks: ['#h5-shown-devices', '#h5-settings-sync'] },
+    devices: { headings: ['Settings sync', 'Show in task list', 'Environment'], marks: ['#h5-shown-devices', '#h5-settings-sync'] },
     attention: { headings: ['Plugins', 'Desktop window (macOS)', 'AI summary'], marks: ['#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-attention-widget-language'] },
   },
   local: {
     'tasks-files': { headings: ['Working directory', 'Agent skills', 'Browser extension'], marks: [] },
-    devices: { headings: ['Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
+    devices: { headings: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
     attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
     account: { headings: ['Access mode', 'Authenticator'], marks: [] },
     'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
@@ -305,7 +305,7 @@ async function testOpenSettings(browser) {
 const ALL_LOCAL = {
   'tasks-files': { headings: ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library'], marks: [] },
   'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
-  devices: { headings: ['Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
+  devices: { headings: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
   // The desktop window is one card again, with its switch and its language (as without tabs).
   attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
   account: { headings: ['Access mode', 'Authenticator'], marks: [] },

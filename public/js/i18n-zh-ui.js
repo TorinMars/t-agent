@@ -1095,6 +1095,17 @@ I18n.add({
   "Keeps your personal data, such as learning progress.": "保存你的个人数据，例如学习进度。",
   "Personal data stays on your other machines. Kept here only while none of them can be reached.": "个人数据保存在你的其他机器上。只有在都连不上时，才会暂时留在这里。",
   "At least one device must stay visible": "至少要有一个设备保持显示",
+  // Settings → Devices → Environment (EnvironmentCompare.jsx, environment-compare.mjs)
+  "Environment": "环境",
+  "What agent sessions find on each machine. Differences are marked.": "智能体会话在每台机器上能用到的工具。不一致的地方会标出来。",
+  "Tool": "工具",
+  "not installed": "未安装",
+  "not needed": "不需要",
+  "unknown": "未知",
+  "Could not be read": "无法读取",
+  "The tools could not be read.": "无法读取工具信息。",
+  "The same on every machine": "每台机器都一样",
+  "1 difference": "1 处不同",
   // Engine names (Settings → Engines, Rename)
   "Rename engine": "重命名引擎",
   "Current name": "当前名称",

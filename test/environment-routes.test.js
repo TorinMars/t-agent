@@ -4,13 +4,13 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const { createEnvironmentRouter } = require('../routes/environment');
 
-async function setup(t, { run, ossFor, clientAuth, frp } = {}) {
+async function setup(t, { run, ossFor, clientAuth, frp, tools } = {}) {
   const db = new Database(':memory:');
   db.exec('CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)');
   if (frp) db.prepare("INSERT INTO system_state (key, value) VALUES ('frp_config', ?)").run(JSON.stringify(frp));
   const contexts = [];
   let arrived = 0;
-  const service = { run: async context => { contexts.push(context); return run ? run(context) : { features: [], summary: { ok: 0, warn: 0, fail: 0 } }; } };
+  const service = { run: async context => { contexts.push(context); return run ? run(context) : { features: [], summary: { ok: 0, warn: 0, fail: 0 } }; }, tools: tools || (async () => ({ tools: [] })) };
   const app = express();
   app.use('/api/environment', createEnvironmentRouter({
     service, db, ossFor: ossFor || (() => null), clientAuth: () => clientAuth || null,
@@ -20,7 +20,7 @@ async function setup(t, { run, ossFor, clientAuth, frp } = {}) {
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); db.close(); });
   const base = `http://127.0.0.1:${server.address().port}/api/environment`;
-  return { base, contexts, arrived: () => arrived, call: (path = '/check', headers = {}) => fetch(base + path, { headers: { Authorization: 'test-session', ...headers } }) };
+  return { base, contexts, arrived: () => arrived, call: (path = '/check', headers = {}, method = 'GET') => fetch(base + path, { method, headers: { Authorization: 'test-session', ...headers } }) };
 }
 
 test('the report needs a signed-in browser of this page, and is never cached', async t => {
@@ -72,4 +72,38 @@ test('settings that cannot be read do not stop the report, a second request whil
   const answer = await failing.call();
   assert.equal(answer.status, 500);
   assert.deepEqual(await answer.json(), { error: 'The environment check failed' }, 'no internals in the error');
+});
+
+test('the tools list: GET reuses the kept answer, POST probes again; both need the page\'s session and are never cached', async t => {
+  const asked = [];
+  const { base, call } = await setup(t, { tools: async options => { asked.push(options); return { checked_at: 1, platform: 'linux', tools: [{ id: 'git', name: 'git', status: 'ok', value: '2.50.1' }] }; } });
+  assert.equal((await fetch(`${base}/tools`)).status, 401);
+  assert.equal((await call('/tools', { Origin: 'https://evil.example' })).status, 403);
+  const kept = await call('/tools');
+  assert.equal(kept.status, 200);
+  assert.equal(kept.headers.get('cache-control'), 'no-store');
+  assert.equal((await kept.json()).tools[0].value, '2.50.1');
+  assert.equal((await call('/tools', {}, 'POST')).status, 403, 'a POST needs the page\'s header');
+  assert.equal((await call('/tools', { 'X-Requested-With': 'XMLHttpRequest' }, 'POST')).status, 200);
+  assert.deepEqual(asked, [{ fresh: false }, { fresh: true }]);
+
+  const failing = await setup(t, { tools: async () => { throw new Error('boom /secret'); } });
+  const answer = await failing.call('/tools');
+  assert.equal(answer.status, 500);
+  assert.deepEqual(await answer.json(), { error: 'The environment check failed' });
+});
+
+test('the linked devices\' router has only the tools routes and no checks of its own (the link token is checked in front of it)', async t => {
+  const { createEnvironmentToolsRouter } = require('../routes/environment');
+  const asked = [];
+  const app = express();
+  app.use('/environment', createEnvironmentToolsRouter({ service: { tools: async options => { asked.push(options); return { tools: [] }; }, run: async () => { throw new Error('not here'); } } }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}/environment`;
+  assert.equal((await fetch(`${base}/tools`)).status, 200);
+  assert.equal((await fetch(`${base}/tools`, { method: 'POST' })).status, 200);
+  assert.equal((await fetch(`${base}/check`)).status, 404, 'the full check (with the page\'s address and settings) is not reachable');
+  assert.deepEqual(asked, [{ fresh: false }, { fresh: true }]);
 });

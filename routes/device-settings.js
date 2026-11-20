@@ -42,6 +42,10 @@ const ALLOWLIST = Object.freeze([
   // The "Company computer" flag (routes/device-tier.js, services/device-tier.js).
   { method: 'GET', path: /^\/device-tier$/, body: null },
   { method: 'PUT', path: /^\/device-tier$/, body: ['company_computer'] },
+  // The tools agent sessions rely on, for Settings → Devices → Environment (routes/environment.js; capability `environment:tools`). Read only;
+  // POST probes again. The probes take a few seconds (a login shell may be asked where a program is).
+  { method: 'GET', path: /^\/environment\/tools$/, body: null, timeoutMs: 30_000 },
+  { method: 'POST', path: /^\/environment\/tools$/, body: [], timeoutMs: 30_000 },
 ]);
 
 // The entry for a request, or null. `path` must be a plain path of printable ASCII.
@@ -77,6 +81,7 @@ function createEngineDeviceSettingsRouter(options = {}) {
     ruleSync = () => require('./rule-sync').createBrowserRouter({ requireAuth: pass, clientOrigin: pass }),
     widget = () => widgetRouter,
     deviceTier = () => require('./device-tier').createDeviceTierRouter(),
+    environment = () => require('./environment').createEnvironmentToolsRouter(),
   } = options;
   const { effectiveWorkDir, saveWorkDir } = require('../services/work-dir');
   const router = express.Router();
@@ -104,6 +109,7 @@ function createEngineDeviceSettingsRouter(options = {}) {
   router.use('/agent-skills', agentSkills());
   router.use('/rule-sync', ruleSync());
   router.use('/device-tier', deviceTier());
+  router.use('/environment', environment());
   router.use('/attention/widget/settings', (req, res, next) => {
     const target = widget();
     if (!target) return res.status(404).json({ error: 'WIDGET_UNAVAILABLE' });
@@ -129,7 +135,8 @@ function createDeviceSettingsRouter(options = {}) {
   } = options;
   const router = express.Router();
   const owner = req => req.session.user.login;
-  // server id -> { at, supported, company } from the last /v1/info that answered (`company`: its `company_computer`, null from an older version).
+  // server id -> { at, supported, company, environment } from the last /v1/info that answered (`company`: its `company_computer`, null from an older
+  // version; `environment`: whether it lists `environment:tools`).
   const known = new Map();
 
   // The linked devices of this page's owner: a link that is not revoked, with its row.
@@ -139,10 +146,10 @@ function createDeviceSettingsRouter(options = {}) {
   };
   const tokenOf = row => decrypt(row.token_cipher);
 
-  // { supported, company } of a device: from the cache, else its /v1/info when it is online. Unknown parts are null.
+  // { supported, company, environment } of a device: from the cache, else its /v1/info when it is online. Unknown parts are null.
   async function supportOf(row, online) {
     const cached = known.get(row.id);
-    const unknown = { supported: null, company: null };
+    const unknown = { supported: null, company: null, environment: null };
     if (cached && now() - cached.at < INFO_TTL_MS) return cached;
     if (!online) return cached || unknown;
     try {
@@ -151,21 +158,23 @@ function createDeviceSettingsRouter(options = {}) {
       const entry = {
         at: now(), supported: capabilities.includes(CAPABILITY),
         company: capabilities.includes(require('../services/device-tier').CAPABILITY) ? info.company_computer === true : null,
+        environment: capabilities.includes(require('../services/environment-check').TOOLS_CAPABILITY),
       };
       known.set(row.id, entry);
       return entry;
     } catch { return cached || unknown; }
   }
 
-  // { devices: [{ id, name, online, supported, company_computer }] }: `id` is the remote_servers row; `supported` is true, false (an older version)
-  // or null (not known: offline and never read); `company_computer` is the device's "Company computer" flag, null when not known (an older version,
-  // or offline and never read). No address, token or link id.
+  // { devices: [{ id, name, online, supported, company_computer, environment }] }: `id` is the remote_servers row; `supported` is true, false (an
+  // older version) or null (not known: offline and never read); `company_computer` is the device's "Company computer" flag, null when not known (an
+  // older version, or offline and never read); `environment` whether its tools list can be read (true, false, or null when not known). No address,
+  // token or link id.
   router.get('/devices', async (req, res) => {
     const entries = linkedRows(req);
     const devices = await Promise.all(entries.map(async ({ row }) => {
       const online = row.status === 'online';
-      const { supported, company } = await supportOf(row, online);
-      return { id: row.id, name: row.name, online, supported, company_computer: company };
+      const { supported, company, environment } = await supportOf(row, online);
+      return { id: row.id, name: row.name, online, supported, company_computer: company, environment: environment === undefined ? null : environment };
     }));
     res.set('Cache-Control', 'no-store').json({ devices });
   });
@@ -197,7 +206,7 @@ function createDeviceSettingsRouter(options = {}) {
       const peerCode = Boolean(error.peerBody && typeof error.peerBody.error === 'string');
       // A device from before this feature: its /v1 has no such path, and the answer is a plain 404 or a redirect to its page, without a JSON error.
       if (!peerCode && (status === 404 || (status >= 300 && status < 400))) {
-        known.set(found.row.id, { at: now(), supported: false, company: null });
+        known.set(found.row.id, { at: now(), supported: false, company: null, environment: false });
         return res.status(501).json({ error: 'DEVICE_SETTINGS_UNSUPPORTED' });
       }
       // The device's own answer, as its page would get it (an allowlisted route of the page; none of them carries a secret).

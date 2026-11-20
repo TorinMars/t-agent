@@ -87,6 +87,9 @@ I18n.add({
   // ---- Settings of a linked device (DeviceTarget.jsx, device-target.mjs, the tabs of SettingsTabs.jsx and settings-tabs.mjs) ----
   '{1} only': '仅 {1}',
   'Update {1} first': '请先升级 {1}',
+  // Settings → Devices → Environment (environment-compare.mjs summaryText)
+  '{1} differences': '{1} 处不同',
+  '{1} missing': '缺少 {1} 项',
   'Only {1} uses this. Changes here are saved on {2}.': '只有 {1} 使用这项设置。这里的修改保存在 {2} 上。',
   'Open {1}’s own page to change this': '请打开 {1} 自己的页面来修改这项设置',
   'These settings are read and saved on {1}': '这些设置会读取并保存到 {1}',

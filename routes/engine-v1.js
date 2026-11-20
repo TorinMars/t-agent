@@ -201,6 +201,8 @@ function infoHandler(req, res) {
       require('../services/device-tier').CAPABILITY,
       // settings:device: /v1/device-settings/<path>, the allowlisted per-device settings routes of the page, for a linked device's page (link tokens only).
       require('./device-settings').CAPABILITY,
+      // environment:tools: /v1/device-settings/environment/tools, the tools agent sessions rely on, for Settings → Devices → Environment.
+      require('../services/environment-check').TOOLS_CAPABILITY,
       // rule-sync:receive: GET /v1/rule-sync/status and PUT /v1/rule-sync/bundle (routes/rule-sync.js); the bundle is applied only when this Engine's role is receive.
       require('../services/rule-sync').CAPABILITY,
       // rule-sync:edit: GET / PUT /v1/rule-sync/shared read and write the shared rules file while this Engine is the source (routes/rule-sync.js).

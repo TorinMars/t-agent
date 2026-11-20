@@ -82,6 +82,7 @@ export function chooseTab(tab) {
 }
 
 export const useDeviceTargets = () => useSyncExternalStore(subscribe, () => snapshot);
+export const deviceTargets = () => snapshot; // outside React (EnvironmentCompare.jsx reads the device list when it reads the tools)
 export const useDeviceTarget = () => useSyncExternalStore(subscribe, () => snapshot.target);
 // The chosen tab ('shared', 'local', a device id, or null without tabs), the scope of the parts it holds ('shared', 'device' or null: every part)
 // and whether there is a Shared tab.

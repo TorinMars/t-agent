@@ -24,6 +24,14 @@ const review = require('./learn-review');
 const { STARTER_LISTS } = require('./learn-starter');
 
 const CAPABILITY = 'learn:sync';
+// learn:reports: the peer keeps the detail of wrong answers and the mistake reports (schema 17), and answers the home routes of the reports. The
+// weekly report is made by the normal engine with the smallest instance id among the online ones that have it ("Mistake reports" in
+// docs/design/learn-english.md).
+const REPORTS_CAPABILITY = 'learn:reports';
+// The kind of pull a normal machine keeps its `have` for. It was 'full' before schema 16: the new name makes every link read the other side once from
+// the start after the update, so the reports and the detail of wrong answers that an older version left out come over (rows that change nothing are
+// not applied again).
+const FULL = 'full-16';
 const ROUTE = '/v1/learn-sync';
 const PEERS_KEY = 'learn_sync_peers_v1';
 const HOME_KEY = 'learn_home_v1';
@@ -154,17 +162,20 @@ function createLearnSync(options) {
     const answers = reviews ? db.prepare(`SELECT r.*, c.kind AS kind, c.norm AS norm FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id
       WHERE r.owner = ? AND r.sync_seq > ? ORDER BY r.sync_seq LIMIT ?`).all(name, after, limit) : [];
     const moves = db.prepare('SELECT * FROM learn_card_moves WHERE owner = ? AND sync_seq > ? ORDER BY sync_seq LIMIT ?').all(name, after, limit);
+    // The mistake reports are personal like the answers: a company computer gets none.
+    const reports = reviews ? db.prepare('SELECT * FROM learn_reports WHERE owner = ? AND sync_seq > ? ORDER BY sync_seq LIMIT ?').all(name, after, limit) : [];
     const version = settingsVersion(name);
     const settingsValue = version.seq > after ? readState(db, learnModule.settingsKey(name)) : null;
     const rows = [
       ...cards.map(row => ({ type: 'card', seq: row.sync_seq, row })),
       ...answers.map(row => ({ type: 'review', seq: row.sync_seq, row })),
       ...moves.map(row => ({ type: 'move', seq: row.sync_seq, row })),
+      ...reports.map(row => ({ type: 'report', seq: row.sync_seq, row })),
       ...(settingsValue !== null ? [{ type: 'settings', seq: version.seq }] : []),
     ].sort((a, b) => a.seq - b.seq);
     const taken = rows.slice(0, limit);
-    const more = rows.length > limit || [cards, answers, moves].some(list => list.length >= limit);
-    const page = { cards: [], reviews: [], moves: [], settings: null, after, next: more ? taken[taken.length - 1].seq : Math.max(newest, after), more };
+    const more = rows.length > limit || [cards, answers, moves, reports].some(list => list.length >= limit);
+    const page = { cards: [], reviews: [], moves: [], reports: [], settings: null, after, next: more ? taken[taken.length - 1].seq : Math.max(newest, after), more };
     const ids = new Set();
     const self = me();
     const addCard = row => { if (row && !ids.has(row.id)) { ids.add(row.id); page.cards.push(merge.cardToPeer(row, self)); } };
@@ -172,6 +183,7 @@ function createLearnSync(options) {
       if (entry.type === 'card') addCard(entry.row);
       else if (entry.type === 'review') page.reviews.push(merge.reviewToPeer(entry.row));
       else if (entry.type === 'move') page.moves.push(merge.moveToPeer(entry.row, self));
+      else if (entry.type === 'report') page.reports.push(merge.reportToPeer(entry.row, self));
       else page.settings = { value: settingsValue, at: version.at, by: version.by || self };
     }
     for (const entry of taken) {
@@ -187,7 +199,7 @@ function createLearnSync(options) {
   function applyPage(payload, sender, { bump = true } = {}) {
     if (!isPlainObject(payload)) throw fault('INVALID_LEARN_SYNC', 400);
     const list = key => (Array.isArray(payload[key]) ? payload[key] : []);
-    if (list('cards').length + list('reviews').length + list('moves').length > MAX_PAGE * 3) throw fault('LEARN_SYNC_TOO_LARGE', 413);
+    if (list('cards').length + list('reviews').length + list('moves').length + list('reports').length > MAX_PAGE * 4) throw fault('LEARN_SYNC_TOO_LARGE', 413);
     prepare();
     const self = me();
     const name = o();
@@ -257,11 +269,37 @@ function createLearnSync(options) {
 
     function applyReview(raw) {
       const answer = merge.reviewFromPeer(raw);
-      if (!answer || db.prepare('SELECT 1 FROM learn_reviews WHERE uid = ?').get(answer.uid)) return;
+      if (!answer) return;
+      const existing = db.prepare('SELECT id, tag, expected, sync_seq FROM learn_reviews WHERE uid = ?').get(answer.uid);
+      if (existing) {
+        // An answer that came here through an older version lost its detail: it is filled in, never replaced (like a meaning).
+        if (!existing.tag && existing.expected === null && (answer.tag || answer.expected)) {
+          db.prepare('UPDATE learn_reviews SET expected = ?, tag = ?, hinted = ?, sync_seq = ? WHERE id = ?')
+            .run(answer.expected, answer.tag, answer.hinted, bump ? syncStore.nextSeq(db) : existing.sync_seq, existing.id);
+          applied += 1;
+        }
+        return;
+      }
       const card = cardFollowing(answer.kind, answer.norm);
       if (!card) return;
-      db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(card.id, name, answer.at, answer.mode, answer.grade, answer.correct, answer.answer, answer.uid, bump ? syncStore.nextSeq(db) : 0);
+      db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq, expected, tag, hinted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(card.id, name, answer.at, answer.mode, answer.grade, answer.correct, answer.answer, answer.uid, bump ? syncStore.nextSeq(db) : 0, answer.expected, answer.tag, answer.hinted);
+      applied += 1;
+    }
+
+    // A report is made once and never changed: a new one is copied; the same id from another engine (the automatic report of one week made on two)
+    // keeps the earlier one everywhere.
+    function applyReport(raw) {
+      const value = merge.reportFromPeer(raw, sender);
+      if (!value) return;
+      const existing = db.prepare('SELECT created_at, by, sync_seq FROM learn_reports WHERE owner = ? AND uid = ?').get(name, value.uid);
+      if (existing && !merge.reportWins(value, { created_at: existing.created_at, by: existing.by || self })) return;
+      db.prepare(`INSERT INTO learn_reports (owner, uid, created_at, covers_from, covers_until, auto, lang, mistakes, answers, model, body, by, sync_seq)
+        VALUES (@owner, @uid, @created_at, @covers_from, @covers_until, @auto, @lang, @mistakes, @answers, @model, @body, @by, @sync_seq)
+        ON CONFLICT (owner, uid) DO UPDATE SET created_at = excluded.created_at, covers_from = excluded.covers_from, covers_until = excluded.covers_until,
+        auto = excluded.auto, lang = excluded.lang, mistakes = excluded.mistakes, answers = excluded.answers, model = excluded.model, body = excluded.body,
+        by = excluded.by, sync_seq = excluded.sync_seq`)
+        .run({ ...value, owner: name, body: JSON.stringify(value.body), by: own(value.by), sync_seq: bump ? syncStore.nextSeq(db) : (existing ? existing.sync_seq : 0) });
       applied += 1;
     }
 
@@ -284,16 +322,18 @@ function createLearnSync(options) {
       for (const raw of list('cards')) applyCard(raw);
       for (const raw of list('moves')) applyMove(raw);
       for (const raw of list('reviews')) applyReview(raw);
+      for (const raw of list('reports')) applyReport(raw);
       if (payload.settings) applySettings(payload.settings);
     })();
     return applied;
   }
 
   // ---- A company computer hands its answers over ----
-  // The answers the home has (change number up to `acked`) leave this machine; the cards stay as the cache.
+  // The answers and the mistake reports the home has (change number up to `acked`) leave this machine; the cards stay as the cache.
   function dropHandedOver(acked) {
     if (!cacheOnly() || !acked) return 0;
-    return db.prepare('DELETE FROM learn_reviews WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
+    const reports = db.prepare('DELETE FROM learn_reports WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
+    return reports + db.prepare('DELETE FROM learn_reviews WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
   }
   // How many changes of this company computer wait for a normal machine: its answers, and the cards it added or edited and the moves it made that the
   // home has not got (an answer's new review state goes with the answer and is not counted again).
@@ -335,7 +375,7 @@ function createLearnSync(options) {
     const state = peerState(peer.id);
     return {
       instance_id: me(), public_key: linkKeys.publicKey(), company: company(), max_seq: syncStore.maxSeq(db),
-      have: haveOf(state, link.peer_instance_id || state.instance_id || (isPlainObject(state.have) ? state.have.instance_id : ''), 'full'),
+      have: haveOf(state, link.peer_instance_id || state.instance_id || (isPlainObject(state.have) ? state.have.instance_id : ''), FULL),
     };
   }
   // POST /v1/learn-sync/pull { instance_id, public_key, after, limit, cards_only }
@@ -358,13 +398,14 @@ function createLearnSync(options) {
     const payload = open(key, given.sealed, aadOf('push', given.instance_id, link.id));
     const applied = applyPage(payload, given.instance_id, { bump: true });
     const state = peerState(peer.id);
-    const had = haveOf(state, given.instance_id, 'full');
+    const had = haveOf(state, given.instance_id, FULL);
     const have = int(payload.after) <= had ? Math.max(had, int(payload.next)) : had;
-    updatePeer(peer.id, () => ({ supported: true, instance_id: given.instance_id, have: { seq: have, mode: 'full', instance_id: given.instance_id } }));
+    updatePeer(peer.id, () => ({ supported: true, instance_id: given.instance_id, have: { seq: have, mode: FULL, instance_id: given.instance_id } }));
     if (applied) fanOut();
     return { applied, have };
   }
-  // The routes a company computer calls on its home: the summary, the settings and the starter list live on the normal machines.
+  // The routes a company computer calls on its home: the summary, the settings, the starter list, the wrong answers and the mistake reports live on
+  // the normal machines (an analysis asked for there runs here, with this machine's translation model).
   function engineHome(link, action, body) {
     requirePeer(link);
     refuseOnCompany();
@@ -372,8 +413,19 @@ function createLearnSync(options) {
     if (action === 'summary') return service().summary(name);
     if (action === 'settings') return service().saveSettings(name, body);
     if (action === 'starter') return service().starter(name, body);
+    if (action === 'mistakes') return service().mistakes(name, isPlainObject(body) ? body : {});
+    if (action === 'reports') return reportsView ? reportsView(name) : { reports: service().reports(name).reports };
+    if (action === 'report') return service().report(name, isPlainObject(body) ? body.uid : null);
+    if (action === 'analyze') {
+      if (!analyzer) throw fault('NOT_FOUND', 404);
+      return analyzer(name, isPlainObject(body) ? body : {});
+    }
     throw fault('NOT_FOUND', 404);
   }
+  // services/learn-analysis.js hands in how it answers a company computer's page: the reports with the analysis state, and an analysis.
+  let analyzer = null;
+  let reportsView = null;
+  function setAnalysis({ analyze, view }) { analyzer = analyze; reportsView = view; }
 
   // ---- Failures in the log (as in services/settings-sync.js: once per reason, once when it works again, codes only) ----
   const reported = new Map();
@@ -399,8 +451,10 @@ function createLearnSync(options) {
     try {
       const info = await call('/v1/info');
       const supported = Boolean(info && Array.isArray(info.capabilities) && info.capabilities.includes(CAPABILITY));
+      const reports = Boolean(supported && info.capabilities.includes(REPORTS_CAPABILITY));
       const peerCompany = Boolean(info && info.company_computer === true);
-      updatePeer(peer.id, () => ({ supported, company: peerCompany }));
+      const peerInstance = info && typeof info.engine_id === 'string' && INSTANCE_ID.test(info.engine_id) ? info.engine_id : null;
+      updatePeer(peer.id, current => ({ supported, reports, company: peerCompany, instance_id: peerInstance || current.instance_id }));
       const skip = () => { report(peer.id, `sync with ${peer.name}`); return 0; };
       if (!supported) return skip();
       // A normal machine leaves a company computer to its own rounds; a company computer syncs with its home only.
@@ -413,7 +467,7 @@ function createLearnSync(options) {
       const self = me();
       const mine = linkKeys.publicKey();
       const cardsOnly = company();
-      const mode = cardsOnly ? 'cards' : 'full';
+      const mode = cardsOnly ? 'cards' : FULL;
       const theirMax = int(theirs.max_seq);
 
       // Pull: the peer's rows after what this device has of them.
@@ -561,6 +615,22 @@ function createLearnSync(options) {
     };
   }
 
+  // A read or an action of the mistake reports on a company computer, made on its home. `offline`: the message while the home cannot be reached.
+  async function askHome(route, { method = 'GET', body, offline = 'Mistake reports are kept on a normal computer, which cannot be reached right now', timeout = timeoutMs } = {}) {
+    const home = homePeer();
+    if (!home || !request) throw new learnModule.LearnError(offline, 503);
+    try { return await request(home.baseUrl, `${ROUTE}/${route}`, home.token, { method, body, timeoutMs: timeout }); } catch (error) {
+      // The home answered (its refusal or the model's error, with its message); anything else means it cannot be reached.
+      const status = error && error.statusCode;
+      if (Number.isInteger(status) && status >= 400 && status < 600 && error.peerBody && typeof error.peerBody.error === 'string') {
+        throw new learnModule.LearnError(error.peerBody.error, status);
+      }
+      throw new learnModule.LearnError(offline, 503);
+    }
+  }
+  // The online normal peers that make reports, with their instance ids (the weekly report is made by the smallest id).
+  const reportPeers = () => { const states = readPeers(); return normalPeers().filter(peer => peer.online && states[peer.id].reports === true).map(peer => ({ id: peer.id, name: peer.name, instance_id: states[peer.id].instance_id || null })); };
+
   // A settings change or a starter list on a company computer is made on the home, then read back.
   async function viaHome(action, body) {
     const home = homePeer();
@@ -613,7 +683,7 @@ function createLearnSync(options) {
   }
 
   return {
-    start, stop, syncAll, syncPeer, refresh, status, cacheOnly, companySummary, viaHome, waiting,
+    start, stop, syncAll, syncPeer, refresh, status, cacheOnly, companySummary, viaHome, waiting, askHome, reportPeers, setAnalysis, me, company,
     engineDescribe, enginePull, enginePush, engineHome, exportPage, applyPage, peerStates: readPeers, service,
   };
 }
@@ -637,4 +707,4 @@ function getLearnSync() {
   return singleton;
 }
 
-module.exports = { createLearnSync, getLearnSync, syncEnabled, aadOf, learnKeyFrom, CAPABILITY, ROUTE, PEERS_KEY, HOME_KEY, PAGE_SIZE };
+module.exports = { createLearnSync, getLearnSync, syncEnabled, aadOf, learnKeyFrom, CAPABILITY, REPORTS_CAPABILITY, ROUTE, PEERS_KEY, HOME_KEY, PAGE_SIZE };

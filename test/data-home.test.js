@@ -547,6 +547,36 @@ test('a schema 15 database gets the usage data sync columns (schema 16), with a 
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
+test('a schema 16 database gets the detail of wrong answers and learn_reports (schema 17), with a copy taken first; answers are kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: learn_reviews without expected, tag and hinted, no learn_reports, user_version 16.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE learn_reports; ALTER TABLE learn_reviews DROP COLUMN expected; ALTER TABLE learn_reviews DROP COLUMN tag; ALTER TABLE learn_reviews DROP COLUMN hinted;');
+  old.prepare("INSERT INTO learn_cards (owner, kind, en, norm, source, created_at, due_at) VALUES ('owner', 'word', 'merge', 'merge', 'lookup', 1, 2)").run();
+  old.prepare("INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq) VALUES (1, 'owner', 777, 'spell', 'again', 0, 'merg', 'u-1-2-3-4', 4)").run();
+  old.pragma('user_version = 16');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 16 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const answer = after.prepare('SELECT * FROM learn_reviews').get();
+  assert.deepEqual([answer.answer, answer.uid, answer.sync_seq, answer.expected, answer.tag, answer.hinted], ['merg', 'u-1-2-3-4', 4, null, '', 0], 'kept, with no detail');
+  assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'learn_reports'").get().n, 1);
+  assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = 'idx_learn_reports_seq'").get().n, 1);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-16-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
 test('a database of this schema is refused by a version that knows the one before at most', t => {
   // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);

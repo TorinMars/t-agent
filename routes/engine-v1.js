@@ -196,6 +196,9 @@ function infoHandler(req, res) {
       // usage:sync: GET|PUT /v1/usage-sync, POST /v1/usage-sync/pull and GET /v1/usage-sync/summary (routes/ui-events-sync.js), the usage data linked
       // services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or USAGE_SYNC_ENABLED=false.
       ...(require('../services/ui-events-sync').syncEnabled() ? [require('../services/ui-events-sync').CAPABILITY] : []),
+      // learn:reports: the detail of wrong answers and the mistake reports travel with the learning data, and the home routes of the reports
+      // (/v1/learn-sync/mistakes, /reports, /report, /analyze) answer; the weekly report is made by one of the engines that list it.
+      ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').REPORTS_CAPABILITY] : []),
       // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
       // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
       ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),

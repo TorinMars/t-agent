@@ -349,7 +349,12 @@ CREATE TABLE IF NOT EXISTS learn_reviews (
   correct INTEGER NOT NULL,                      -- 1 / 0
   answer  TEXT,                                  -- what the person answered, at most 500 characters
   uid     TEXT,                                  -- schema 14: the id of the answer on every linked device (a random UUID), always set
-  sync_seq INTEGER NOT NULL DEFAULT 0            -- schema 14: the change number the sync pages by
+  sync_seq INTEGER NOT NULL DEFAULT 0,           -- schema 14: the change number the sync pages by
+  -- Schema 17, the Mistakes list and the analysis ("Mistakes" in docs/design/learn-english.md; services/learn-sync-store.js adds them): for a wrong
+  -- answer what was asked for (NULL: the card's text), the first tag of the page's checker ('' for none) and whether help was used.
+  expected TEXT,
+  tag      TEXT    NOT NULL DEFAULT '',
+  hinted   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_learn_reviews_owner_at ON learn_reviews (owner, at);
 CREATE INDEX IF NOT EXISTS idx_learn_reviews_card ON learn_reviews (card_id, at);
@@ -369,3 +374,23 @@ CREATE TABLE IF NOT EXISTS learn_card_moves (
   PRIMARY KEY (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_card_moves_seq ON learn_card_moves (owner, sync_seq);
+
+-- Schema 17: the mistake reports ("Mistake reports" in docs/design/learn-english.md; services/learn-analysis.js makes them, services/learn-sync.js
+-- syncs them like answers: made once, never changed; an automatic report has the id auto-<week>, so two engines never keep two for one week).
+CREATE TABLE IF NOT EXISTS learn_reports (
+  owner        TEXT    NOT NULL,
+  uid          TEXT    NOT NULL,                 -- a random UUID, or auto-<ISO week> for an automatic report
+  created_at   INTEGER NOT NULL,
+  covers_from  INTEGER NOT NULL,                 -- the wrong answers after this time ...
+  covers_until INTEGER NOT NULL,                 -- ... up to this one (the next report starts here)
+  auto         INTEGER NOT NULL DEFAULT 0,       -- 1: made by the weekly run
+  lang         TEXT    NOT NULL DEFAULT 'en',    -- en | zh: the language of the text
+  mistakes     INTEGER NOT NULL DEFAULT 0,       -- wrong answers in the stretch
+  answers      INTEGER NOT NULL DEFAULT 0,       -- all answers in the stretch
+  model        TEXT    NOT NULL DEFAULT '',      -- the model that wrote it
+  body         TEXT    NOT NULL,                 -- JSON { summary, kinds: [{ kind, count }], findings: [{ title, cause, action, cards: [{ kind, en }] }] }
+  by           TEXT    NOT NULL DEFAULT '',      -- the engine that made it ('' is this one)
+  sync_seq     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_reports_seq ON learn_reports (owner, sync_seq);

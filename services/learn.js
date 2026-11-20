@@ -36,8 +36,23 @@ const AUDIO_SETTINGS = {
   audio_speed: { default: 'normal', values: ['normal', 'slow'] },
   audio_stop_on_typing: { default: true, values: [true, false] },
 };
-const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS)]);
-const DEFAULT_SETTINGS = { collect: true, daily_goal: 20, starter: 'dev', ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.default])) };
+// The mistake analysis ("Mistake reports" in docs/design/learn-english.md): the weekly automatic report on or off, the report the person last opened
+// (so the Learn home offers a new automatic one once, on every device) and the language reports are written in (the page's language, sent by the page).
+const REPORT_SETTINGS = {
+  analysis_auto: { default: true, check: value => typeof value === 'boolean' },
+  report_seen: { default: '', check: value => typeof value === 'string' && /^[A-Za-z0-9-]{0,64}$/.test(value) },
+  report_lang: { default: 'en', check: value => value === 'en' || value === 'zh' },
+};
+const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS), ...Object.keys(REPORT_SETTINGS)]);
+const DEFAULT_SETTINGS = {
+  collect: true, daily_goal: 20, starter: 'dev', ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.default])),
+  ...Object.fromEntries(Object.entries(REPORT_SETTINGS).map(([key, field]) => [key, field.default])),
+};
+// The first tag of a wrong answer, from the page's checker (scripts/h5-shell/learn-grade.mjs MISTAKE_TAGS, the same list).
+const MISTAKE_TAGS = ['letter-order', 'double-letter', 'missing-letter', 'extra-letter', 'wrong-letter', 'spelling', 'article', 'plural', 'tense',
+  'verb-form', 'word-order', 'missing-word', 'extra-word', 'wrong-word', 'listening', 'pronunciation', 'unknown', 'other'];
+const MAX_EXPECTED = 300;
+const MISTAKES_PAGE = 200;
 
 const WORD = /^[A-Za-z][A-Za-z'-]{0,39}$/;
 const LETTER_WORD = /[A-Za-z][A-Za-z'-]*/g;
@@ -105,6 +120,34 @@ const checkId = value => {
 };
 const iso = ms => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
 
+// The detail kept with an answer: for a wrong one what was asked for (the page sends the gap word of Fill the gap; else the card's text), the first tag
+// of the page's checker (a tag this version does not know is kept as none) and whether help was used; for a right one none.
+function mistakeDetail(body, row) {
+  if (body.correct) return { expected: null, tag: '', hinted: 0 };
+  if (body.expected !== undefined && body.expected !== null && typeof body.expected !== 'string') throw bad('Invalid answer');
+  if (body.tag !== undefined && body.tag !== null && typeof body.tag !== 'string') throw bad('Invalid answer');
+  const expected = typeof body.expected === 'string' && collapse(body.expected) ? collapse(body.expected).slice(0, MAX_EXPECTED) : row.en;
+  return { expected, tag: MISTAKE_TAGS.includes(body.tag) ? body.tag : '', hinted: body.hinted === true ? 1 : 0 };
+}
+// A wrong answer for the Mistakes list and the analysis. Answers from before schema 17 have no tag and expect the card's text.
+function mistakeJson(row) {
+  return {
+    uid: row.uid, at: iso(row.at), mode: row.mode, tag: row.tag || '', hinted: Boolean(row.hinted), expected: row.expected || row.en, written: row.answer || '',
+    card: { id: row.card_id, kind: row.kind, en: row.en },
+  };
+}
+// A stored report as the page gets it: the numbers, and with `full` the summary, the kinds and the findings.
+function reportJson(row, { full = true } = {}) {
+  let body = {};
+  try { body = JSON.parse(row.body); } catch { body = {}; }
+  const out = {
+    uid: row.uid, created_at: iso(row.created_at), covers_from: iso(row.covers_from), covers_until: iso(row.covers_until), auto: Boolean(row.auto), lang: row.lang,
+    mistakes: row.mistakes, answers: row.answers, summary: typeof body.summary === 'string' ? body.summary : '',
+  };
+  if (full) Object.assign(out, { kinds: Array.isArray(body.kinds) ? body.kinds : [], findings: Array.isArray(body.findings) ? body.findings : [], model: row.model || '' });
+  return out;
+}
+
 // The JSON of a card for the page. Times are ISO 8601 strings.
 function cardJson(row) {
   return {
@@ -139,6 +182,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       daily_goal: Number.isInteger(value.daily_goal) && value.daily_goal >= 1 && value.daily_goal <= 200 ? value.daily_goal : DEFAULT_SETTINGS.daily_goal,
       starter: value.starter === null || Object.hasOwn(STARTER_LISTS, value.starter) ? value.starter : DEFAULT_SETTINGS.starter,
       ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.values.includes(value[key]) ? value[key] : field.default])),
+      ...Object.fromEntries(Object.entries(REPORT_SETTINGS).map(([key, field]) => [key, field.check(value[key]) ? value[key] : field.default])),
     };
   }
   function saveSettings(owner, body) {
@@ -159,6 +203,11 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     for (const [key, field] of Object.entries(AUDIO_SETTINGS)) {
       if (body[key] === undefined) continue;
       if (!field.values.includes(body[key])) throw bad('Invalid audio setting');
+      next[key] = body[key];
+    }
+    for (const [key, field] of Object.entries(REPORT_SETTINGS)) {
+      if (body[key] === undefined) continue;
+      if (!field.check(body[key])) throw bad('Invalid learning settings');
       next[key] = body[key];
     }
     writeState(db, settingsKey(owner), next);
@@ -254,14 +303,17 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     if (typeof body.correct !== 'boolean') throw bad('Invalid answer');
     if (body.answer !== undefined && body.answer !== null && typeof body.answer !== 'string') throw bad('Invalid answer');
     const text = typeof body.answer === 'string' ? body.answer.slice(0, MAX_ANSWER) : null;
+    // A wrong answer keeps what was asked for (the word, the sentence, or the gap word of Fill the gap), the first tag of the page's checker and
+    // whether help was used: the Mistakes list and the analysis read them ("Mistakes" in docs/design/learn-english.md). A right one keeps none.
+    const detail = mistakeDetail(body, row);
     const at = now();
     const next = review.applyAnswer(row, body.grade, body.correct, at);
     db.transaction(() => {
       db.prepare(`UPDATE learn_cards SET due_at = @due_at, interval_days = @interval_days, ease = @ease, reps = @reps, lapses = @lapses,
         last_result = @last_result, last_at = @last_at, last_correct = @last_correct, state_at = @state_at, state_by = '', sync_seq = @seq WHERE id = @id`)
         .run({ ...next, state_at: stamp(), seq: seq(), id: row.id });
-      db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(row.id, owner, at, body.mode, body.grade, body.correct ? 1 : 0, text, syncStore.reviewId(), seq());
+      db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq, expected, tag, hinted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(row.id, owner, at, body.mode, body.grade, body.correct ? 1 : 0, text, syncStore.reviewId(), seq(), detail.expected, detail.tag, detail.hinted);
     })();
     changed();
     return { card: cardJson(getCard(owner, row.id)) };
@@ -297,6 +349,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       mistakes: mistakeRows(owner, current.starter).length,
       collecting: current.collect,
       starter: current.starter,
+      new_report: newReport(owner, current),
     };
   }
 
@@ -445,10 +498,91 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     return { added };
   }
 
-  return { settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter };
+  // ---- Mistakes and reports ("Mistakes" and "Mistake reports" in docs/design/learn-english.md) ----
+  const MISTAKE_SELECT = `SELECT r.uid, r.at, r.mode, r.answer, r.expected, r.tag, r.hinted, c.id AS card_id, c.kind, c.en
+    FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = @owner AND r.correct = 0`;
+  // The wrong answers, newest first, a page at a time (`before`: the time of the last one shown).
+  function mistakes(owner, query = {}) {
+    const limit = query.limit === undefined || query.limit === '' ? 50 : Number(query.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > MISTAKES_PAGE) throw bad('Invalid list range');
+    const before = query.before ? Date.parse(query.before) : NaN;
+    const rows = db.prepare(`${MISTAKE_SELECT} AND (@before IS NULL OR r.at < @before) ORDER BY r.at DESC, r.id DESC LIMIT @take`)
+      .all({ owner, before: Number.isFinite(before) ? before : null, take: limit + 1 });
+    return { mistakes: rows.slice(0, limit).map(mistakeJson), more: rows.length > limit };
+  }
+  // The newest report (the one that covers until the latest time), or null.
+  const lastReport = owner => db.prepare('SELECT * FROM learn_reports WHERE owner = ? ORDER BY covers_until DESC, created_at DESC LIMIT 1').get(owner) || null;
+  // What happened since the last report: { from, mistakes, answers, last } (from = the time the last report covers until, 0 before the first one).
+  function sinceReport(owner) {
+    const last = lastReport(owner);
+    const from = last ? last.covers_until : 0;
+    const count = sql => Number(db.prepare(sql).pluck().get(owner, from)) || 0;
+    return {
+      from, last: last ? reportJson(last, { full: false }) : null,
+      mistakes: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND correct = 0 AND at > ?'),
+      answers: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND at > ?'),
+    };
+  }
+  // The wrong answers after `from` (at most `max`, the newest), with the counts of the whole stretch, for an analysis.
+  function mistakesSince(owner, from, max) {
+    const rows = db.prepare(`${MISTAKE_SELECT} AND r.at > @from ORDER BY r.at DESC, r.id DESC LIMIT @max`).all({ owner, from, max });
+    const count = sql => Number(db.prepare(sql).pluck().get(owner, from)) || 0;
+    return {
+      mistakes: rows.map(mistakeJson), total: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND correct = 0 AND at > ?'),
+      answers: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND at > ?'),
+    };
+  }
+  const reports = owner => ({ reports: db.prepare('SELECT * FROM learn_reports WHERE owner = ? ORDER BY covers_until DESC, created_at DESC LIMIT 50').all(owner).map(row => reportJson(row, { full: false })) });
+  function report(owner, uid) {
+    const row = typeof uid === 'string' ? db.prepare('SELECT * FROM learn_reports WHERE owner = ? AND uid = ?').get(owner, uid) : null;
+    if (!row) throw new LearnError('Report not found', 404);
+    return { report: reportJson(row) };
+  }
+  const lastAutoReport = owner => db.prepare('SELECT * FROM learn_reports WHERE owner = ? AND auto = 1 ORDER BY created_at DESC LIMIT 1').get(owner) || null;
+  const hasReport = (owner, uid) => Boolean(db.prepare('SELECT 1 FROM learn_reports WHERE owner = ? AND uid = ?').get(owner, uid));
+  // Stores a report made here (services/learn-analysis.js has checked it): { uid, created_at, covers_from, covers_until, auto, lang, mistakes, answers,
+  // model, body: { summary, kinds, findings } }. It syncs like an answer: made once, never changed.
+  function saveReport(owner, value) {
+    db.prepare(`INSERT INTO learn_reports (owner, uid, created_at, covers_from, covers_until, auto, lang, mistakes, answers, model, body, by, sync_seq)
+      VALUES (@owner, @uid, @created_at, @covers_from, @covers_until, @auto, @lang, @mistakes, @answers, @model, @body, '', @seq)`)
+      .run({ ...value, owner, auto: value.auto ? 1 : 0, body: JSON.stringify(value.body), seq: seq() });
+    changed();
+    return report(owner, value.uid);
+  }
+  // The cards behind a report's findings, by kind and text (the ids differ between engines): the ones this engine has, following a changed text.
+  function findCards(owner, body) {
+    const refs = isPlainObject(body) && Array.isArray(body.refs) ? body.refs.slice(0, 200) : null;
+    if (!refs) throw bad('Invalid card list');
+    const out = [];
+    const seen = new Set();
+    for (const ref of refs) {
+      if (!isPlainObject(ref) || !KINDS.includes(ref.kind) || typeof ref.en !== 'string') continue;
+      let norm = normalize(ref.en);
+      let row = null;
+      for (let hops = 0; hops <= 8 && !row; hops += 1) {
+        row = db.prepare('SELECT * FROM learn_cards WHERE owner = ? AND kind = ? AND norm = ?').get(owner, ref.kind, norm) || null;
+        if (row) break;
+        const move = db.prepare('SELECT moved_to FROM learn_card_moves WHERE owner = ? AND kind = ? AND norm = ?').get(owner, ref.kind, norm);
+        if (!move) break;
+        norm = move.moved_to;
+      }
+      if (row && !row.suspended && !seen.has(row.id)) { seen.add(row.id); out.push(row); }
+    }
+    return { cards: out.map(cardJson) };
+  }
+  // The newest automatic report the person has not opened yet, for the one line on the Learn home; else null.
+  function newReport(owner, current = settings(owner)) {
+    const last = lastReport(owner);
+    return last && last.auto && last.uid !== current.report_seen ? { uid: last.uid, created_at: iso(last.created_at), mistakes: last.mistakes } : null;
+  }
+
+  return {
+    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter,
+    mistakes, sinceReport, mistakesSince, reports, report, hasReport, saveReport, findCards, newReport, lastReport, lastAutoReport,
+  };
 }
 
 module.exports = {
   createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
 };

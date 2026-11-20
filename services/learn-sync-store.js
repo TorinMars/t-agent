@@ -14,7 +14,8 @@ const listeners = new Set();
 // The sync columns of schema 14 on an older database (13 had learn_cards and learn_reviews without them), and the indexes on them. Safe to run on
 // every start: a column or an index that is there is left alone. Rows from before get: a content clock of 0 (they never beat a real edit), the
 // time of the last answer as the review-state clock (so on the first merge the side answered last keeps its schedule), a random review id, and
-// change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way.
+// change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way, and
+// schema 17 the detail of a wrong answer (`expected`, `tag`, `hinted`) and the table `learn_reports`.
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
@@ -28,6 +29,10 @@ function ensureSyncSchema(db) {
   const addReview = [];
   if (!reviews.includes('uid')) addReview.push('ALTER TABLE learn_reviews ADD COLUMN uid TEXT');
   if (!reviews.includes('sync_seq')) addReview.push('ALTER TABLE learn_reviews ADD COLUMN sync_seq INTEGER NOT NULL DEFAULT 0');
+  // Schema 17: the detail of a wrong answer (what was asked for, the first tag, whether help was used) and the table of mistake reports.
+  for (const [name, type] of [['expected', 'TEXT'], ['tag', "TEXT NOT NULL DEFAULT ''"], ['hinted', 'INTEGER NOT NULL DEFAULT 0']]) {
+    if (!reviews.includes(name)) addReview.push(`ALTER TABLE learn_reviews ADD COLUMN ${name} ${type}`);
+  }
   db.transaction(() => {
     for (const sql of addCard) db.exec(sql);
     if (!cards.includes('state_at')) db.exec('UPDATE learn_cards SET state_at = COALESCE(last_at, 0)');
@@ -42,6 +47,11 @@ function ensureSyncSchema(db) {
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_learn_reviews_uid ON learn_reviews (uid)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_reviews_seq ON learn_reviews (owner, sync_seq)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_card_moves_seq ON learn_card_moves (owner, sync_seq)');
+    db.exec(`CREATE TABLE IF NOT EXISTS learn_reports (
+      owner TEXT NOT NULL, uid TEXT NOT NULL, created_at INTEGER NOT NULL, covers_from INTEGER NOT NULL, covers_until INTEGER NOT NULL,
+      auto INTEGER NOT NULL DEFAULT 0, lang TEXT NOT NULL DEFAULT 'en', mistakes INTEGER NOT NULL DEFAULT 0, answers INTEGER NOT NULL DEFAULT 0,
+      model TEXT NOT NULL DEFAULT '', body TEXT NOT NULL, by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_reports_seq ON learn_reports (owner, sync_seq)');
   })();
 }
 
@@ -52,7 +62,8 @@ function stateOf(db) {
   const max = sql => Number(db.prepare(sql).pluck().get()) || 0;
   state = {
     clock: Math.max(max('SELECT MAX(MAX(content_at), MAX(state_at)) FROM learn_cards'), max('SELECT MAX(at) FROM learn_card_moves')),
-    seq: Math.max(max('SELECT MAX(sync_seq) FROM learn_cards'), max('SELECT MAX(sync_seq) FROM learn_reviews'), max('SELECT MAX(sync_seq) FROM learn_card_moves')),
+    seq: Math.max(max('SELECT MAX(sync_seq) FROM learn_cards'), max('SELECT MAX(sync_seq) FROM learn_reviews'), max('SELECT MAX(sync_seq) FROM learn_card_moves'),
+      max('SELECT MAX(sync_seq) FROM learn_reports')),
   };
   clocks.set(db, state);
   return state;

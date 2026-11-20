@@ -10,7 +10,9 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const { createLearn, checkEnglish, codeLike } = require('../services/learn');
 // The audio settings with their defaults ("Audio" in docs/design/learn-english-page.md).
-const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true };
+const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true,
+  // The mistake analysis settings ("Mistake reports" in docs/design/learn-english.md), kept with them.
+  analysis_auto: true, report_seen: '', report_lang: 'en' };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');
@@ -345,7 +347,7 @@ test('the summary: due, new and done today, the goal, the streak in the server\'
   await call('POST', `/cards/${w.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
   await call('POST', `/cards/${old.id}/answer`, { mode: 'review', grade: 'hard', correct: true });
   assert.deepEqual((await call('GET', '/summary')).body, {
-    due: 0, new_today: 2, done_today: 3, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1, collecting: true, starter: null,
+    due: 0, new_today: 2, done_today: 3, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1, collecting: true, starter: null, new_report: null,
     // Where the data is kept (services/learn-sync.js): a normal machine, nothing waiting.
     device: { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0, offline_copy_at: null },
   });
@@ -458,7 +460,7 @@ test('every route needs the page login, and changes need the same-origin proof',
 });
 
 test('every English error message of the learning routes has a Chinese translation', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'services', 'learn.js'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', 'routes', 'learn.js'), 'utf8');
+  const source = ['services/learn.js', 'routes/learn.js', 'services/learn-analysis.js', 'services/learn-sync.js'].map(file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')).join('\n');
   const dictionary = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'i18n-zh-server.js'), 'utf8');
   const messages = new Set();
   for (const match of source.matchAll(/(?:bad|LearnError)\((['`])([^'`]+)\1/g)) {

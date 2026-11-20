@@ -92,13 +92,16 @@
   it back to the field that had it, so the caret stays where it was; a button reached with Tab keeps its focus.
 - **Keys of a computer** (`exerciseKey`): Enter checks, Enter again takes the offered grade; 1 / 2 / 3 grade a checked answer (the fields are
   read-only then); Enter on a focused button is the button's own.
-- **Mistakes**: `GET /queue?mode=mistakes&limit=50` as a list (English, Chinese, word or sentence, times forgotten) and Practise them.
+- **Mistakes** (`LearnMistakes.jsx`, in the same chunk): the card "Why do I get these wrong?" (`#h5-learn-analyze-card`): "38 mistakes since the last report (11-13). The analysis uses your translation model." with Analyze (contained, `#h5-learn-analyze`; off with no new mistakes, no model or a run going on; "Analyzing your mistakes…" with an indeterminate bar while `POST /reports { lang }` waits), Last report and All reports; without a usable model an info Alert with Open Settings (`#h5-learn-analyze-no-model`) and Analyze off; a failed run in an error Alert in the card (`#h5-learn-analyze-error`). Then "Mistakes, newest first" with Practise them (`GET /queue?mode=mistakes`) and every wrong answer (`GET /mistakes`, 50 at a time, Show more): what was asked for (success light), "You wrote: …" or "You didn't know it" (error light), the time (today, yesterday, 11-18), a mode chip (the mode's name), the tag chip (warning, outlined) and "with help". On a company computer whose home is away an info Alert says only this computer's mistakes are shown.
+- **A report** (`#h5-learn-report`): "11-13 – 11-20 · 38 mistakes in 212 answers", the summary (subtitle1), the kinds as rows of label, determinate bar (relative to the largest) and count; then per finding its title, "Cause · …", "What to do · …" and the first three cards "+N"; "Practise these N cards" (`POST /cards/find` with the findings' cards, then a session in the Mistakes mode). The model's text is `translate="no"`. All reports lists them (range, count, Weekly / Asked for, two lines of summary). A report opened from Mistakes goes back there (`parent` of the view). Opening an automatic report sets `report_seen` (`PUT /settings`), so the home's line goes away on every device.
+- **Home line**: while `summary.new_report` is set, an info Alert under the numbers "Your weekly mistake report is ready (38 mistakes)." with View (`#h5-learn-new-report`).
+- **Report language**: after `GET /settings`, when the server has `report_lang` and it differs from the page's language (`I18n.get()`), the page sets it, so the weekly report is written in the language the person reads.
 - **Your material**: `GET /cards?kind=&q=&limit=50&offset=` with a search field (250 ms), All / Words / Sentences, "N cards", Show more; each
   row: the English, the meaning or "No meaning yet", kind and source; Edit meaning (`PATCH { zh }`) and Suspend / Restore (`PATCH { suspended }`).
   Nothing is deleted from here.
 - **Learn settings**: Collect study material (`PUT { collect }`, then `window.LearnCollect.set(on)` so the page stops or starts collecting at
   once), Daily goal 1 to 200 (saved on Enter or blur), Starter list: Programmer English (on: `POST /starter` then `PUT { starter: 'dev' }`; off:
-  `PUT { starter: null }`, which hides the starter words not practised yet), and where word meanings come from, with Open Settings.
+  `PUT { starter: null }`, which hides the starter words not practised yet), Analyze my mistakes every week (`#h5-learn-analysis-auto`, `PUT { analysis_auto }`, shared), and where word meanings come from, with Open Settings.
 - Card text (English and Chinese) is user content: drawn with `translate="no"`, so the Chinese interface never translates a word of a card
   that happens to be a dictionary key; hint words go into the translated templates the same way (`Fmt`).
 - MD2 through the theme: cards with the 8px radius, typography variants only (h4 due count, h5 titles and prompts, subtitle1 mode names, body2,
@@ -117,6 +120,7 @@
   consonant); a spelling slip (edit distance 1, or 2 for words longer than 7; not for words of 3 letters or fewer); the word order (the same
   words in another order, or a word missing in one place and extra in another).
 - `spellCheck` compares a spelled word letter by letter; `suggestedGrade` offers the grade.
+- `mistakeTag` gives a wrong answer its first tag (see "Mistakes" in [learn-english.md](learn-english.md)); the session sends it with `expected` and `hinted` for a wrong answer only.
 
 ## Audio
 
@@ -147,7 +151,8 @@
 
 ## Tests
 
-- Unit: `test/h5-learn-audio.test.js` (the settings, `autoPlays`, the player: repeat and pause, Stop, a new play, typing, a lost end, a refusal),
+- `scripts/test-h5-learn-mistakes-browser.cjs` (mocked API, 1440x900 and 390x844 touch): the home line and View, a report (range, summary, bars, findings), marked seen, Practise these N cards, the Mistakes list with chips, Show more, Analyze (the body, the wait, the report), a model error, All reports, the weekly switch, the language told once, the page without a model, no sideways scroll at 390px; `H5_SHOT_DIR` saves `mistakes-*.png`.
+- Unit: `test/h5-learn-grade.test.js` also has `mistakeTag`. `test/h5-learn-audio.test.js` (the settings, `autoPlays`, the player: repeat and pause, Stop, a new play, typing, a lost end, a refusal),
   `test/h5-learn-grade.test.js` (tolerance, the diff, each hint, letters, grades, `typedInFull`), `test/h5-learn-model.test.js` (`slotLayout`, modes and what a
   browser offers, the estimate, tiles and distractors, Hint, the gap, the masked context, a mixed session, the keys), `test/h5-columns.test.js`
   (the destination in `railDestinations` / `phoneDestinations`, `railView` / `phoneView`), `test/page-bundles.test.js` (the chunk, not in the

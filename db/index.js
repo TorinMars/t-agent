@@ -42,7 +42,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 // schema 12 the usage data tables and schema 13 the English learning tables (learn_cards, learn_reviews).
 // Schema 14: the sync columns of learn_cards and learn_reviews and the table learn_card_moves. They are added to a schema 13 database before
 // schema.sql runs, because schema.sql makes indexes on them (services/learn-sync-store.js; a database without learn_cards gets it all from schema.sql).
-// Schema 15: learn_cards.phonetic, added there too.
+// Schema 15: learn_cards.phonetic, added there too. Schema 17: learn_reviews.expected, tag and hinted, and the table learn_reports, the same way.
 require('../services/learn-sync-store').ensureSyncSchema(db);
 // Schema 16: the sync columns of ui_events and ui_controls (the usage data of every linked engine as one set), added the same way
 // (services/ui-events.js ensureSchema; a database without the usage data tables gets them from schema.sql).

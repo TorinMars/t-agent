@@ -200,3 +200,61 @@ export function suggestedGrade({ correct, helped = false }) {
   if (!correct) return 'again';
   return helped ? 'hard' : 'good';
 }
+
+// ── The first tag of a wrong answer ("Mistakes" in docs/design/learn-english-page.md) ──
+// Stored with the answer (services/learn.js keeps the same list in MISTAKE_TAGS; test/learn-mistakes.test.js compares them) and sent to the model
+// with the mistake when the person asks for an analysis. One tag per answer: the most telling one.
+export const MISTAKE_TAGS = ['letter-order', 'double-letter', 'missing-letter', 'extra-letter', 'wrong-letter', 'spelling', 'article', 'plural', 'tense',
+  'verb-form', 'word-order', 'missing-word', 'extra-word', 'wrong-word', 'listening', 'pronunciation', 'unknown', 'other'];
+// Small words that carry the tense ("He has already left", "It will run"): one missing or extra is a tense mistake.
+const AUXILIARIES = new Set(['has', 'have', 'had', 'will', 'would', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am', 'do', 'does', 'did', "'s", "'ve", "'ll"]);
+const addsIng = (long, short) => long !== short && long.endsWith('ing') && [`${short}ing`, `${short.replace(/e$/, '')}ing`, `${short}${short.at(-1)}ing`].includes(long);
+const collapseRuns = word => word.replace(/(.)\1+/g, '$1');
+const sortedLetters = word => [...word].sort().join('');
+const dropsOne = (long, short) => long.length === short.length + 1 && [...long].some((_, at) => long.slice(0, at) + long.slice(at + 1) === short);
+
+// A single word against the expected one (Spell, Fill the gap): what kind of slip it is.
+function wordTag(expected, answer, { grammar = false } = {}) {
+  const want = normWord(expected);
+  const got = normWord(answer);
+  if (!got) return 'unknown';
+  if (want === got) return 'other';
+  if (grammar) {
+    // A gap in a sentence: another form of the same word is a grammar mistake, not a spelling one.
+    if (addsEd(want, got) || addsEd(got, want)) return 'tense';
+    if (addsIng(want, got) || addsIng(got, want)) return 'verb-form';
+    if (addsS(want, got) || addsS(got, want)) return 'plural';
+    if (ARTICLES.has(want) && ARTICLES.has(got)) return 'article';
+  }
+  if (want.length === got.length && sortedLetters(want) === sortedLetters(got)) return 'letter-order';
+  if (collapseRuns(want) === collapseRuns(got)) return 'double-letter';
+  if (dropsOne(want, got)) return 'missing-letter';
+  if (dropsOne(got, want)) return 'extra-letter';
+  if (want.length === got.length && [...want].filter((char, at) => char !== got[at]).length === 1) return 'wrong-letter';
+  if (editDistance(want, got) <= Math.max(2, Math.floor(want.length / 3))) return 'spelling';
+  return 'wrong-word';
+}
+
+// The tag of a wrong answer: { mode: spell | fill | build | dictation | say | review | mistakes, expected (the word or sentence asked for), answer,
+// gaveUp ("I don't know") }. Spell compares letters; Fill the gap a word in a sentence (its other forms are grammar); a sentence uses the named mistakes
+// of `diffWords` (tense, verb form, article, plural, word order, spelling), then what is left (a missing, extra or wrong word), and for Dictation and
+// Say it a sentence with no named mistake is a listening or pronunciation one.
+export function mistakeTag({ mode, expected, answer, gaveUp = false }) {
+  if (gaveUp || !String(answer || '').trim()) return 'unknown';
+  const sentence = wordsOf(expected).length > 1;
+  if (!sentence) return wordTag(expected, answer, { grammar: mode === 'fill' });
+  const result = diffWords(expected, answer);
+  if (result.correct) return 'other';
+  const changed = result.ops.filter(op => op.type !== 'same');
+  if (changed.some(op => AUXILIARIES.has(normWord(op.expected || op.answer || '')) && op.type !== 'wrong')) return 'tense';
+  if (changed.some(op => op.type === 'wrong' && (addsIng(normWord(op.expected), normWord(op.answer)) || addsIng(normWord(op.answer), normWord(op.expected))))) return 'verb-form';
+  const kinds = result.hints.map(hint => hint.kind);
+  const named = [['past-tense', 'tense'], ['third-person', 'verb-form'], ['article-missing', 'article'], ['article-extra', 'article'], ['article-wrong', 'article'],
+    ['plural', 'plural'], ['order', 'word-order'], ['spelling', 'spelling']].find(([kind]) => kinds.includes(kind));
+  if (named) return named[1];
+  if (mode === 'dictation') return 'listening';
+  if (mode === 'say') return 'pronunciation';
+  if (changed.some(op => op.type === 'wrong')) return 'wrong-word';
+  if (changed.some(op => op.type === 'missing')) return 'missing-word';
+  return changed.some(op => op.type === 'extra') ? 'extra-word' : 'other';
+}

@@ -27,10 +27,11 @@ import { SwitchRow } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
-import { AUTO_CHECK_MS, diffWords, hintText, normWord, spellCheck, suggestedGrade, typedInFull } from './learn-grade.mjs';
+import { AUTO_CHECK_MS, diffWords, hintText, mistakeTag, normWord, spellCheck, suggestedGrade, typedInFull } from './learn-grade.mjs';
 import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, maskedContext, minutesFor, mixCards, modeOf, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
+import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
@@ -47,7 +48,7 @@ import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 // Hard / Good, keys 1 / 2 / 3 on a computer; Enter checks, Enter again takes the offered grade). See "The Learn page" in docs/design/learn-english-page.md.
 
 // A translated template with its values put in as user content (never translated: a word of a card could be a dictionary key).
-function Fmt({ template, values = [] }) {
+export function Fmt({ template, values = [] }) {
   const parts = t(template).split(/(\{\d\})/);
   return (
     <>
@@ -58,13 +59,13 @@ function Fmt({ template, values = [] }) {
     </>
   );
 }
-const tf = (template, ...values) => t(template).replace(/\{(\d)\}/g, (all, number) => String(values[Number(number) - 1]));
+export const tf = (template, ...values) => t(template).replace(/\{(\d)\}/g, (all, number) => String(values[Number(number) - 1]));
 // "42 words": the number and a translated noun (exact dictionary keys, not a "{1} words" template that would match any text ending in "words").
 const count = (n, one, many) => `${n} ${t(n === 1 ? one : many)}`;
 
 const SOURCE_LABELS = { translation: 'from your translations', lookup: 'from words you looked up', starter: 'from the starter list', manual: 'added by you' };
 const sourceLabel = card => t(SOURCE_LABELS[card && card.source] || SOURCE_LABELS.manual);
-const shortDate = iso => {
+export const shortDate = iso => {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? '' : `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 };
@@ -88,7 +89,13 @@ function useLearnData() {
   ), []);
   useEffect(() => {
     void reload();
-    api('GET', '/api/learn/settings').then(data => setSettings(data || {}), () => setSettings({}));
+    api('GET', '/api/learn/settings').then(data => {
+      setSettings(data || {});
+      // Mistake reports are written in the language this page shows; the server keeps the last one for the weekly report (shared setting). Only a
+      // server that has the setting is told.
+      const lang = typeof I18n !== 'undefined' && I18n.get() === 'zh' ? 'zh' : 'en';
+      if (data && typeof data.report_lang === 'string' && data.report_lang !== lang) api('PUT', '/api/learn/settings', { report_lang: lang }).then(next => { if (next) setSettings(next); }, () => {});
+    }, () => setSettings({}));
   }, [reload]);
   return { summary, error, reload, settings, setSettings };
 }
@@ -112,7 +119,7 @@ function Learn({ state, ui }) {
   const keys = state.input === 'pointer' || Boolean(state.hasKeyboard);
   const data = useLearnData();
   const speech = useSpeech();
-  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'how', mode?, preset?, seq }
+  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how', mode?, preset?, uid?, seq }
   const viewRef = useRef(null);
   viewRef.current = view;
   const close = () => ui.actions.closeLearn();
@@ -187,18 +194,21 @@ function PhoneLearn({ view, close, home, back, ...common }) {
 }
 
 function ViewBody({ view, phone, back, open, data, ...common }) {
-  const frame = title => ({ phone, title, onBack: back });
+  // A report opened from the Mistakes page (or the list of reports) goes back there (`parent`); every other view back to the home.
+  const frame = title => ({ phone, title, onBack: view.parent ? () => open(view.parent) : back });
   if (view.kind === 'session') return <Session mode={view.mode} preset={view.preset} phone={phone} onBack={back} onRestart={mode => open({ kind: 'session', mode })} onDone={data.reload} settings={data.settings} {...common} />;
   if (view.kind === 'material') return <MaterialView frame={frame(t('Your material'))} ui={common.ui} />;
   if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} />;
-  if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} onPractise={cards => open({ kind: 'session', mode: 'mistakes', preset: cards })} />;
+  if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} open={open} openTranslator={common.openTranslator} />;
+  if (view.kind === 'reports') return <ReportsView frame={frame(t('Mistake reports'))} ui={common.ui} open={open} />;
+  if (view.kind === 'report') return <ReportView frame={frame(t('Mistake report'))} view={view} ui={common.ui} open={open} data={data} />;
   return <HowView frame={frame(t('How learning works'))} />;
 }
 
 // The frame of a mode: on a phone an app bar (back arrow, title, "7 / 20 · from your translations") over the page that scrolls and the actions pinned
 // at its bottom; on a computer a title row with the counter, the progress bar and a close button, then the content.
 // `keyboard`: the page's own keyboard (useLearnKeys), under the page on a phone, at the bottom of the pane on a computer-sized touch screen.
-function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, children }) {
+export function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, children }) {
   if (phone) {
     const subtitle = [counter, source].filter(Boolean).join(' · ');
     return (
@@ -314,6 +324,7 @@ function Home({ ui, phone, data, modes, current, open }) {
           </Box>
         </Card>
       )}
+      {summary.new_report && summary.new_report.uid ? <NewReportLine report={summary.new_report} onView={() => open({ kind: 'report', uid: summary.new_report.uid })} /> : null}
       {away && summary.device.offline_copy_at && summary.device.home_name ? (
         <Typography id="h5-learn-offline-counts" variant="caption" component="p" color="text.secondary" sx={{ m: 0 }}>
           <Fmt template="The counts are those of the last copy from {1} plus what you answered here." values={[summary.device.home_name]} />
@@ -325,7 +336,7 @@ function Home({ ui, phone, data, modes, current, open }) {
           selected={current === mode.id} onClick={() => open({ kind: 'session', mode: mode.id })} />
       ))}
       <ModeCard id="h5-learn-mode-mistakes" icon="learnMistakes" title={t('Mistakes')} note={t('Words and sentences you got wrong')}
-        count={count(mistakes, 'card', 'cards')} selected={current === 'mistakes'} onClick={() => open({ kind: 'mistakes' })} />
+        count={count(mistakes, 'card', 'cards')} selected={current === 'mistakes' || current === 'report' || current === 'reports'} onClick={() => open({ kind: 'mistakes' })} />
       <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Your material')}</Typography>
       <Card sx={theme => (current === 'material' ? { bgcolor: alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) } : {})}>
         <CardActionArea id="h5-learn-material" onClick={() => open({ kind: 'material' })} sx={{ p: 2 }}>
@@ -421,12 +432,19 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
   }, []);
   const card = cards && cards[index];
   const exercise = card ? pickExercise(exerciseOf(card, mode), speech) : null;
-  const answer = async ({ grade, correct, answer: text }) => {
+  const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, detail = null }) => {
     if (busyRef.current || !card) return;
     busyRef.current = true;
     setBusy(true);
+    const body = { mode: exercise, grade, correct: Boolean(correct), answer: String(text || '').slice(0, 500) };
+    // A wrong answer keeps what was asked for, the first tag of the checker and whether help was used ("Mistakes" in learn-english-page.md).
+    if (!correct) {
+      body.expected = (detail && detail.expected) || card.en;
+      body.tag = (detail && detail.tag) || mistakeTag({ mode: exercise, expected: card.en, answer: text, gaveUp });
+      body.hinted = Boolean(helped && !gaveUp);
+    }
     try {
-      await api('POST', `/api/learn/cards/${encodeURIComponent(card.id)}/answer`, { mode: exercise, grade, correct: Boolean(correct), answer: String(text || '').slice(0, 500) });
+      await api('POST', `/api/learn/cards/${encodeURIComponent(card.id)}/answer`, body);
       setStats(now => ({ answered: now.answered + 1, right: now.right + (correct ? 1 : 0) }));
       register.current = null;
       setIndex(now => now + 1);
@@ -566,10 +584,14 @@ const ChineseText = ({ card, id }) => (
   <Typography variant="h5" component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.zh || '—'}</Typography>
 );
 // The actions under an answer: before Check the exercise's own buttons, after it the grades (on a phone, pinned at the bottom).
-function useChecked({ register, onAnswer, check, answerText }) {
+// `detail()`: what a wrong answer was asked for and its tag, when the exercise knows better than the card's text (Fill the gap).
+function useChecked({ register, onAnswer, check, answerText, detail = null }) {
   const [result, setResult] = useState(null); // { correct, helped, ... }
   const suggested = result ? suggestedGrade({ correct: result.correct, helped: result.helped }) : null;
-  const grade = choice => { if (result) onAnswer({ grade: choice || suggested, correct: result.correct, answer: answerText() }); };
+  const grade = choice => {
+    if (!result) return;
+    onAnswer({ grade: choice || suggested, correct: result.correct, answer: answerText(), helped: Boolean(result.helped), gaveUp: Boolean(result.gaveUp), detail: detail && !result.correct ? detail() : null });
+  };
   register.current = { checked: Boolean(result), check: () => { if (!result) check(setResult); }, grade };
   return { result, setResult, suggested, grade };
 }
@@ -1064,6 +1086,8 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   const full = gap ? `${gap.before}${value.trim()}${gap.after}` : '';
   const { result, suggested, grade } = useChecked({
     register, onAnswer, answerText: () => value,
+    // The gap word was asked for; the tag comes from the whole sentence, so another form of the word is named as grammar (a third person -s).
+    detail: () => ({ expected: gap.word, tag: mistakeTag({ mode: 'fill', expected: card.en, answer: full }) }),
     check: set => {
       if (!gap || !value.trim()) return;
       const diff = diffWords(card.en, full);
@@ -1120,44 +1144,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
 
 const EXERCISES = { spell: SpellExercise, build: BuildExercise, dictation: DictationExercise, say: SayExercise, fill: FillExercise };
 
-// ── Mistakes ──
-
-function MistakesView({ frame, ui, onPractise }) {
-  const [cards, setCards] = useState(null);
-  useEffect(() => {
-    let live = true;
-    api('GET', '/api/learn/queue?mode=mistakes&limit=50').then(data => { if (live) setCards((data && data.cards) || []); }, failure => { if (live) { setCards([]); ui.notify(errorText(failure), 'error'); } });
-    return () => { live = false; };
-  }, [ui]);
-  return (
-    <ViewFrame {...frame}>
-      {!cards ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : null}
-      {cards && !cards.length ? (
-        <Card id="h5-learn-mistakes-empty" sx={{ p: 2 }}>
-          <Typography variant="h6" component="p">{t('No mistakes to review')}</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{t('Words and sentences you get wrong show up here.')}</Typography>
-        </Card>
-      ) : null}
-      {cards && cards.length ? (
-        <>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-            <Typography variant="body2" color="text.secondary" sx={{ flex: '1 1 auto' }}><Fmt template={cards.length === 1 ? '{1} card to practise again' : '{1} cards to practise again'} values={[cards.length]} /></Typography>
-            <Button variant="contained" id="h5-learn-practise-mistakes" onClick={() => onPractise(cards)}>{t('Practise them')}</Button>
-          </Box>
-          <Card component="ul" id="h5-learn-mistakes" sx={{ listStyle: 'none', m: 0, px: 2, py: 0 }}>
-            {cards.map(card => (
-              <Box component="li" key={card.id} className="h5-learn-mistake" sx={{ py: 1.5, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
-                <WordLine word={card.en} phonetic={card.kind === 'word' ? card.phonetic : ''} />
-                {card.zh ? <Typography variant="body2" color="text.secondary" lang="zh" translate="no">{card.zh}</Typography> : null}
-                <Typography variant="caption" color="text.secondary">{t(card.kind === 'word' ? 'Word' : 'Sentence')}{card.lapses ? <> {'· '}<Fmt template={card.lapses === 1 ? 'forgotten once' : 'forgotten {1} times'} values={[card.lapses]} /></> : null}</Typography>
-              </Box>
-            ))}
-          </Card>
-        </>
-      ) : null}
-    </ViewFrame>
-  );
-}
+// ── Mistakes and reports: LearnMistakes.jsx ──
 
 // ── Your material ──
 
@@ -1314,6 +1301,9 @@ function SettingsView({ frame, ui, data, openTranslator }) {
           <Divider sx={{ mx: -2 }} />
           <SwitchRow inputId="h5-learn-starter" label={t('Starter list: Programmer English')} disabled={busy} checked={current.starter === 'dev'} onChange={toggleStarter}
             secondary={t('Common words of software work, 10 new ones a day. Turning it off hides the starter words you have not practised yet; nothing is deleted.')} />
+          <Divider sx={{ mx: -2 }} />
+          <SwitchRow inputId="h5-learn-analysis-auto" label={t('Analyze my mistakes every week')} disabled={busy} checked={current.analysis_auto !== false} onChange={on => save({ analysis_auto: on })}
+            secondary={t('When a week has at least 10 new mistakes, your translation model writes a report: the causes and what to practise. Only the words and sentences you got wrong and what you wrote are sent.')} />
         </Card>
       )}
       {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}

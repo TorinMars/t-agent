@@ -25,6 +25,10 @@ I18n.add({
   'Update failed: {1}': '更新失败：{1}',
   // "Updated to v…" (UpdatedNotice.jsx)
   'Updated to v{1}': '已更新到 v{1}',
+  // The banner of an engine on an older version (VersionSkew.jsx); {3} is the list of features, already translated
+  '{1} runs an older version (v{2}). {3} is not in step with it until it updates.': '{1} 运行的是旧版本（v{2}）。在它更新之前，{3}与它不同步。',
+  '{1} runs an older version (v{2}). {3} are not in step with it until it updates.': '{1} 运行的是旧版本（v{2}）。在它更新之前，{3}与它不同步。',
+  '{1} runs an older version (v{2}). Some things shared between engines are not in step with it until it updates.': '{1} 运行的是旧版本（v{2}）。在它更新之前，设备之间共享的部分内容与它不同步。',
   'T-Agent on {1} was updated on {2}, from v{3}.': '{1} 上的 T-Agent 已于 {2} 从 v{3} 更新。',
   '{1} was also updated to v{2}.': '{1} 也已更新到 v{2}。',
   'Up to date {1}': '已是最新 {1}',

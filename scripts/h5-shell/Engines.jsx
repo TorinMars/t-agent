@@ -24,7 +24,7 @@ import { RestartButton, restartInfo } from './Restart.jsx';
 import { PeerFsSwitch } from './PeerFs.jsx';
 import { RuleSyncSection } from './RuleSync.jsx';
 import { RemoteAccessSection } from './RemoteAccess.jsx';
-import { MacAppSection } from './MacApp.jsx';
+import { MacAppSection, compareVersions } from './MacApp.jsx';
 import { EnvironmentSection } from './EnvironmentCompare.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
 import { ScopeLabel, SettingsSyncStatus, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
@@ -67,6 +67,10 @@ const UPDATE_STATUS = {
 const updateStatusLabel = status => UPDATE_STATUS[status] || status || 'Unknown';
 const installTypeLabel = type => ({ archive: 'Package update', git: 'Git fast-forward update', docker: 'Docker image update' })[type] || 'Unknown';
 const versionText = version => (version ? (String(version).startsWith('v') ? String(version) : `v${version}`) : t('Unknown version'));
+// "Older version": another device of the list runs a newer version ("When engines run different versions" in docs/design/update-check-and-versions.md).
+const bare = version => String(version || '').replace(/^v/, '');
+const isOlder = (version, versions) => versions.some(other => compareVersions(bare(other), bare(version)) === 1);
+const OlderPill = () => <Pill className="h5-engine-older" tone="warning" label={t('Older version')} sx={{ flexShrink: 0 }} />;
 function updateVersion(status, remote = false) {
   if (!status) return 'Unknown';
   if (remote) return status.remote_version || 'Not fetched yet';
@@ -465,7 +469,7 @@ function DeviceRow({ engine, title, meta, show, tier, menu, children }) {
 // `show`: the props of its "Show in task list" switch, or null when the switches do not appear.
 // `onRename`: null when this row cannot be renamed (an older server).
 // `tier`: the props of its "Company computer" switch, or null when it has none (a remote Engine that is not linked).
-function EngineRow({ server, link, busy, show, tier, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
+function EngineRow({ server, link, busy, show, tier, older, onCheck, onUpdate, onEdit, onRename, onRemove, feedback }) {
   const actions = [
     ...(onRename ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: onRename }] : []),
     { key: 'check', className: 'h5-engine-check', label: t('Check'), onClick: onCheck, disabled: busy },
@@ -481,6 +485,7 @@ function EngineRow({ server, link, busy, show, tier, onCheck, onUpdate, onEdit, 
         {link ? <Typography className="h5-engine-linked" variant="caption" color="text.secondary" sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}>{t('Linked')}</Typography> : null}
         <Pill className="h5-engine-status" tone={statusColor(server.status)} label={t(statusLabel(server.status))} />
         {tier && tier.checked ? <CompanyPill /> : null}
+        {older ? <OlderPill /> : null}
       </>}
       meta={<Typography className="h5-engine-meta" variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
         {[link ? link.peer_url : server.base_url, versionText(server.remote_version), server.last_checked_at ? `${t('Last checked')} ${server.last_checked_at}` : ''].filter(Boolean).join(' · ')}
@@ -630,6 +635,7 @@ export function DevicesGroup({ state, ui, request = null }) {
     return { device: key, checked, disabled: Boolean(block) || Boolean(tierBusy[key]), caption: t(caption), onChange: on => void setTier(key, server, on) };
   };
   const localTierRow = localTierProps();
+  const versions = [localVersion, ...servers.map(server => server.remote_version)].filter(Boolean);
   const showProps = device => (switches ? { device, hidden: hidden.keys.includes(device), last: visibleDevices.length === 1 && visibleDevices[0] === device, onChange: (key, visible) => void setVisible(key, visible) } : null);
   // After a rename: this list, the task list and every other place that names a device (the same refresh as any change here); the links list too.
   const renamed = async target => {
@@ -677,6 +683,7 @@ export function DevicesGroup({ state, ui, request = null }) {
                   <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
                   <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
                   {localTierRow && localTierRow.checked ? <CompanyPill /> : null}
+                  {isOlder(localVersion, versions) ? <OlderPill /> : null}
                 </>}
                 meta={<Typography className="h5-engine-meta" variant="body2" color="text.secondary"><span id="h5-engine-local-version">{versionText(localVersion)}</span></Typography>}
               >
@@ -686,7 +693,7 @@ export function DevicesGroup({ state, ui, request = null }) {
               </DeviceRow>
               {servers.map(server => (
                 <EngineRow
-                  key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
+                  key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} older={isOlder(server.remote_version, versions)} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
                   onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
                   onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
                 />

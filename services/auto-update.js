@@ -39,6 +39,9 @@ function createAutoUpdate({
   let applyingAction = null;
   let ticking = false;
   let timer = null;
+  // "Update all" of the Update dialog asked for this update (`request`): it is applied under the same idle rule even with the switch off. In memory
+  // only: the update it asks for ends this process anyway, and a restart without it falls back to the switch.
+  let requested = false;
 
   function load() {
     if (stored) return stored;
@@ -246,11 +249,12 @@ function createAutoUpdate({
   async function evaluate() {
     // A restart asked for from the page exits within a second: skip this tick, and keep the wait as it is for the new process to rebuild anyway.
     if (restartPending()) return undefined;
-    if (!support().supported || !load().enabled || isApplying()) return clearWait();
+    if (!support().supported || (!load().enabled && !requested) || isApplying()) return clearWait();
     const update = updateState();
     // An available update goes first: it restarts as well when it needs to.
     if (update.status === 'available' && update.remote_version) return evaluateUpdate(update);
     if (update.status === 'restart_pending' && update.restart_target) return evaluateRestart(update);
+    requested = false; // nothing (left) to update: the request is done
     return clearWait();
   }
 
@@ -279,6 +283,20 @@ function createAutoUpdate({
     if (enabled !== load().enabled) log('auto', enabled ? 'Auto update turned on' : 'Auto update turned off');
     save({ enabled });
     if (enabled) kick(); else clearWait();
+  }
+
+  // "Update all": apply what is available (or load the code on disk) under the idle rule, as if the switch were on. Throws when this service cannot
+  // restart itself; false when there is nothing to update.
+  function request() {
+    const { supported, unsupported_reason: reason } = support();
+    if (!supported) throw Object.assign(new Error('AUTO_UPDATE_UNSUPPORTED'), { statusCode: 409, reason });
+    const update = updateState();
+    const due = (update.status === 'available' && update.remote_version) || (update.status === 'restart_pending' && update.restart_target);
+    if (!due) return false;
+    if (!requested) log('auto', 'Auto update: asked to update when idle');
+    requested = true;
+    kick();
+    return true;
   }
 
   function setIdleProbe(fn) {
@@ -313,10 +331,11 @@ function createAutoUpdate({
     let action = next.action;
     if (!supported) { current = 'unsupported'; action = null; }
     else if (applying) { current = 'applying'; action = applyingAction; }
-    else if (!setting.enabled) { current = 'off'; action = null; }
+    else if (!setting.enabled && !requested) { current = 'off'; action = null; }
     const counting = current === 'waiting' && quietStart !== null && quietAction === action;
     return {
       enabled: setting.enabled,
+      requested,
       supported,
       unsupported_reason: unsupportedReason,
       state: current,
@@ -331,7 +350,7 @@ function createAutoUpdate({
     };
   }
 
-  return { tick, kick, start, setEnabled, setIdleProbe, publicState };
+  return { tick, kick, start, setEnabled, setIdleProbe, publicState, request };
 }
 
 module.exports = { createAutoUpdate, AUTO_RESTART_REQUIRED, RESTART_DID_NOT_HELP, DEFAULT_QUIET_MS, MAX_ATTEMPTS, MAX_RESTARTS, TICK_MS };

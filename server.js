@@ -680,6 +680,8 @@ server.listen(config.port, config.host, () => {
   require('./services/rule-sync').getRuleSync().start();
   // The Telegram sender choice follows the links from here on (services/attention-relay.js).
   attentionRelay.start();
+  // Linked engines on other versions: read as their links come up, and an older one is asked to check for updates (services/version-skew.js).
+  require('./services/version-skew').getVersionSkew().start();
   const anyHost = ['0.0.0.0', '::', '', 'localhost'].includes(config.host);
   terminal.setHookEndpoint(`http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}/hooks/terminal-activity`);
   attentionLocalUrl = `http://${anyHost ? '127.0.0.1' : config.host}:${listeningPort}`;

@@ -112,7 +112,8 @@ export function UpdateDialog({ ui, open, onClose, status, setStatus, auto, setAu
   const timer = useRef(null);
   const alive = useRef(true);
   const logNode = useRef(null);
-  const linked = useLinkedUpdates(); // "Also update": the connected services (LinkedUpdates.jsx)
+  const linked = useLinkedUpdates(open, autoStateLine); // the connected services, "Also update" and "Update all" (LinkedUpdates.jsx)
+  const [allStarted, setAllStarted] = useState(false); // "Update all" was pressed in this opening
   useEffect(() => () => { alive.current = false; clearInterval(timer.current); }, []);
   useEffect(() => { const node = logNode.current; if (node) node.scrollTop = node.scrollHeight; }, [log]);
 
@@ -198,6 +199,13 @@ export function UpdateDialog({ ui, open, onClose, status, setStatus, auto, setAu
     }
   };
 
+  // "Update all": every engine with an update, this machine included, updates by itself under its own idle rule; the rows follow each one.
+  const updateAll = async () => {
+    setAllStarted(true);
+    const here = view.phase === 'available' && view.status && view.status.is_update_admin ? { target: view.status.remote_version } : null;
+    await linked.startAll({ here });
+  };
+
   // The switch shows what the server answered, never what was pressed.
   const saveAuto = async enabled => {
     setAutoSaving(true);
@@ -215,7 +223,7 @@ export function UpdateDialog({ ui, open, onClose, status, setStatus, auto, setAu
   };
 
   // Each opening checks again; in a layout effect, so the first frame of the dialog already says "Checking" and never shows the last opening's answer.
-  useLayoutEffect(() => { if (open) { void check(); void linked.load(); } }, [open]);
+  useLayoutEffect(() => { if (open) { setAllStarted(false); void check(); void linked.load(); } }, [open]);
 
   const busy = view.phase === 'checking' || view.phase === 'updating';
   // While the update runs the modal cannot be closed by accident (the service is about to restart).
@@ -231,8 +239,12 @@ export function UpdateDialog({ ui, open, onClose, status, setStatus, auto, setAu
   const autoWhy = !auto ? null : !auto.supported ? (AUTO_UNSUPPORTED[auto.unsupported_reason] || 'Not available on this service') : !autoAdmin ? 'Only the update administrator can run updates' : null;
   const autoLine = auto ? autoStateLine(auto) : null;
   const updateHere = view.phase === 'available' && admin;
-  // "Update now" also when only other services have an update; it then names what it does.
-  const offerNow = updateHere || (linked.selected > 0 && !busy);
+  // "Update now" updates this machine at once, with the ticked services; the others are updated by "Update all" (each when it is idle).
+  const offerNow = updateHere;
+  const listed = Boolean(linked.rows && linked.rows.length);
+  const offerAll = listed && !busy && !allStarted && (linked.updatable > 0 || updateHere);
+  const sources = (ui && ui.get && ui.get().sources) || [];
+  const here = { name: (sources.find(source => source.key === 'local') || {}).name || t('This machine'), status: shown, updating: view.phase === 'updating', describe: autoStateLine };
 
   return (
     <Dialog id="h5-update-dialog" open={open} onClose={close} fullWidth maxWidth="sm" aria-labelledby="h5-update-title" aria-describedby="h5-update-body">
@@ -315,7 +327,8 @@ export function UpdateDialog({ ui, open, onClose, status, setStatus, auto, setAu
           </Typography>
         ) : null}
         {view.phase === 'error' ? <Typography id="h5-update-state" role="alert" color="error">{t(view.message)}</Typography> : null}
-        <LinkedList linked={linked} locked={view.phase === 'updating'} />
+        <LinkedList linked={linked} locked={view.phase === 'updating'} here={here} choose={updateHere} />
+        {offerAll ? <Typography id="h5-update-all-hint" variant="body2" color="text.secondary" sx={{ mt: 1 }}>{t(updateHere && linked.updatable ? 'Update now updates this machine and the ticked engines at once. Update all lets each engine update by itself when its terminals are idle.' : 'Update all lets each engine update by itself when its terminals are idle.')}</Typography> : null}
         {log ? <Paper id="h5-update-log" component="pre" variant="outlined" ref={logNode} aria-label={t('Update log')} aria-live="off" sx={{ ...MONO, m: 0, mt: 2, p: 1, maxHeight: '30vh', overflow: 'auto', whiteSpace: 'pre-wrap' }}>{log}</Paper> : null}
       </DialogContent>
       {/* The one dialog pattern: text buttons at the bottom right, the dismissive Close first, the confirming action last (a forced update in the warning colour). */}
@@ -323,7 +336,8 @@ export function UpdateDialog({ ui, open, onClose, status, setStatus, auto, setAu
         <Button id="h5-update-dismiss" disabled={view.phase === 'updating'} onClick={close}>{t('Close')}</Button>
         {view.phase === 'error' && view.dirty && admin ? <Button id="h5-update-force-retry" onClick={() => { setForce(true); setView(previous => ({ ...previous, phase: 'available', forceOffered: true })); }}>{t('Choose force update…')}</Button> : null}
         {view.phase === 'error' || view.phase === 'restart' ? <Button id="h5-update-retry" onClick={() => void check()}>{t('Check again')}</Button> : null}
-        {offerNow ? <Button id="h5-update-now" color={forcing && updateHere ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(!updateHere ? 'Update the selected services' : forcing ? 'Force update now' : 'Update now')}</Button> : null}
+        {offerAll ? <Button id="h5-update-all" disabled={busy} onClick={() => void updateAll()}>{t('Update all')}</Button> : null}
+        {offerNow ? <Button id="h5-update-now" color={forcing ? 'warning' : 'primary'} disabled={busy} onClick={() => void start()}>{t(forcing ? 'Force update now' : 'Update now')}</Button> : null}
       </DialogActions>
     </Dialog>
   );

@@ -37,10 +37,11 @@
   // this one with `#handover=<token>&n=<nonce>`. The fragment is taken off the address at once (it never reaches a server, history or a Referer), and
   // the token is used only when this browser is not signed in here already.
   const handover = (() => {
-    const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const hash = typeof location.hash === 'string' ? location.hash : '';
+    const params = new URLSearchParams(hash.replace(/^#/, ''));
     const token = params.get('handover');
     const nonce = params.get('n');
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    if (hash && typeof history !== 'undefined') history.replaceState(null, '', location.pathname + location.search);
     return token && nonce ? { token, nonce } : null;
   })();
 

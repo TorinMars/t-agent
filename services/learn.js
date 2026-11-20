@@ -25,6 +25,10 @@ const MAX_ANSWER = 500;
 const MAX_LIMIT = 100;
 const MEANING_CACHE_SIZE = 1000;
 const MEANING_CONCURRENCY = 4;
+// A practice queue waits for the meanings and transcriptions of its first cards only (the one shown first and the next); the others are looked up
+// in the background, so a list of new words does not wait for the translator once per word ("Practice queues load fast" in
+// docs/design/learn-english.md).
+const QUEUE_HEAD = 2;
 // The audio of the practice ("Audio" in docs/design/learn-english-page.md): each field with its default and its allowed values. Shared like the other
 // learning settings (the same on every device and linked engine).
 const AUDIO_SETTINGS = {
@@ -166,6 +170,9 @@ const settingsVersionKey = owner => `learn_v1_sync:${owner}`;
 function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false, lookupPhonetic = phonetics.lookupPhonetic } = {}) {
   const meanings = new Map(); // `${owner}|${word}` -> zh, least recently used first
   const askedPhonetic = new Set(); // `${owner}|${norm}` the translator was asked for a transcription (once per word while the server runs)
+  const lookingUp = new Map(); // `${owner}|${norm}` -> the meaning lookup in progress, so the queue's background fill and the page's /meaning ask once
+  let translatorDown = false; // the last meaning lookup failed: until one works again, a queue leaves out words that have no meaning yet
+  let background = Promise.resolve(); // the queue's last background fill (tests wait for it with settle())
   const stamp = () => syncStore.stamp(db, now());
   const seq = () => syncStore.nextSeq(db);
   const changed = () => syncStore.learnChanged(db);
@@ -364,8 +371,15 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     let zh = meanings.get(key);
     let phonetic = lookupPhonetic(word);
     if (zh === undefined) {
-      if (!lookupWord) throw new LearnError('Translation service not configured yet', 503);
-      const entry = await lookupWord(owner, word);
+      if (!lookupWord) { translatorDown = true; throw new LearnError('Translation service not configured yet', 503); }
+      let pending = lookingUp.get(key);
+      if (!pending) {
+        pending = lookupWord(owner, word).finally(() => lookingUp.delete(key));
+        lookingUp.set(key, pending);
+      }
+      let entry;
+      try { entry = await pending; } catch (error) { translatorDown = true; throw error; }
+      translatorDown = false;
       zh = collapse((entry && entry.meaning) || '').slice(0, MAX_ZH);
       if (!zh) throw new LearnError('The translation service gave an answer that could not be read', 502);
       if (!phonetic) phonetic = translatorPhonetic(word, entry);
@@ -442,9 +456,17 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       // Spell needs the meaning: a word without one is asked for it first and left out when none can be found, so a few more are read.
       rows = pick(mode === 'spell' ? limit * 2 : limit);
     }
-    await fillMeanings(owner, rows);
-    if (mode === 'spell') rows = rows.filter(row => row.zh).slice(0, limit);
-    await fillPhonetics(owner, rows, { ask: true });
+    // The first cards are made ready now; the rest in the background (the page asks /meaning for a card that is still without one when it is shown).
+    const head = rows.slice(0, QUEUE_HEAD);
+    await fillMeanings(owner, head);
+    // Spell needs the meaning: while the translator fails (or there is none), a word without one is left out, as the page could not show it.
+    if (mode === 'spell') rows = rows.filter(row => row.zh || !translatorDown).slice(0, limit);
+    await fillPhonetics(owner, rows.slice(0, QUEUE_HEAD), { ask: true });
+    await fillPhonetics(owner, rows); // the dictionary only: no waiting
+    const rest = rows.slice(QUEUE_HEAD).filter(row => row.kind === 'word' && (!row.zh || !row.phonetic));
+    if (rest.length && !translatorDown) {
+      background = background.then(async () => { await fillMeanings(owner, rest); await fillPhonetics(owner, rest, { ask: true }); }).catch(() => {});
+    }
     return { cards: rows.map(cardJson) };
   }
 
@@ -578,6 +600,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
 
   return {
     settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter,
+    settle: () => background, // the queue's background fill has ended (tests)
     mistakes, sinceReport, mistakesSince, reports, report, hasReport, saveReport, findCards, newReport, lastReport, lastAutoReport,
   };
 }

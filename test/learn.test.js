@@ -203,7 +203,7 @@ test('the queue of each mode: review takes due cards of both kinds, spell words,
   for (const query of ['?mode=other', '', '?mode=review&limit=0', '?mode=review&limit=101', '?mode=review&limit=two']) assert.equal((await call('GET', `/queue${query}`)).status, 400, query);
 });
 
-test('a word without a meaning asks the translator once; spell leaves out words whose meaning cannot be found', async t => {
+test('a word without a meaning asks the translator once; spell leaves out words without one while the translator fails', async t => {
   const { service, calls, fail } = setup(t);
   const call = await serve(t, service);
   await noStarter(call);
@@ -214,11 +214,48 @@ test('a word without a meaning asks the translator once; spell leaves out words 
   assert.deepEqual(calls.map(c => c.word), ['latency']);
   await call('GET', '/queue?mode=spell');
   assert.equal(calls.length, 1, 'the meaning is kept in the card');
-  // The translator fails: a new word without a meaning is left out of spell, but stays in the review.
+  // The translator fails: the queue does not know yet (the new word is past the first two cards, looked up in the background, which fails);
+  // from then on a word without a meaning is left out of spell, but stays in the review.
   fail(new TranslatorError('Translation timed out; please retry', 504));
   await call('POST', '/cards', word('throughput'));
+  assert.deepEqual((await call('GET', '/queue?mode=spell')).body.cards.map(card => [card.en, card.zh]), [['latency', `${ZH}:latency`], ['timeout', ZH], ['throughput', '']]);
+  await service.settle();
   assert.deepEqual((await call('GET', '/queue?mode=spell')).body.cards.map(card => card.en), ['latency', 'timeout']);
   assert.ok((await call('GET', '/queue?mode=review')).body.cards.some(card => card.en === 'throughput' && card.zh === ''));
+  // It works again (a /meaning of the page): the word is back.
+  fail(null);
+  assert.equal((await call('POST', '/meaning', { word: 'throughput' })).body.zh, `${ZH}:throughput`);
+  assert.deepEqual((await call('GET', '/queue?mode=spell')).body.cards.map(card => card.en), ['latency', 'timeout', 'throughput']);
+});
+
+test('a queue waits for the first two cards only: the others get their meanings in the background, and the page and the fill ask once', async t => {
+  const db = database(t);
+  const calls = [];
+  const gates = new Map();
+  // A slow translator: each word answers when the test opens its gate.
+  const lookupWord = (owner, word) => {
+    calls.push(word);
+    return new Promise(resolve => gates.set(word, () => resolve({ word, meaning: `${ZH}:${word}` })));
+  };
+  const service = createLearn({ db, now: () => NOW, timeZone: TZ, lookupWord });
+  service.saveSettings('me', { starter: null });
+  for (const en of ['alpha', 'bravo', 'charlie', 'delta', 'echo']) service.addCard('me', word(en));
+  const queued = service.queue('me', 'spell', 20);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['alpha', 'bravo'], 'only the first two are asked before the answer');
+  gates.get('alpha')();
+  gates.get('bravo')();
+  const cards = (await queued).cards;
+  assert.deepEqual(cards.map(card => [card.en, card.zh]), [['alpha', `${ZH}:alpha`], ['bravo', `${ZH}:bravo`], ['charlie', ''], ['delta', ''], ['echo', '']]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.slice(2), ['charlie', 'delta', 'echo'], 'the rest in the background');
+  // The page shows charlie before the fill is done: its /meaning joins the lookup in progress instead of asking again.
+  const meaning = service.meaning('me', 'charlie');
+  for (const en of ['charlie', 'delta', 'echo']) gates.get(en)();
+  assert.equal((await meaning).zh, `${ZH}:charlie`);
+  await service.settle();
+  assert.equal(calls.filter(en => en === 'charlie').length, 1);
+  assert.deepEqual(db.prepare("SELECT en, zh FROM learn_cards WHERE owner = 'me' ORDER BY id").all().map(row => row.zh), ['alpha', 'bravo', 'charlie', 'delta', 'echo'].map(en => `${ZH}:${en}`), 'stored on the cards');
 });
 
 test('/meaning: the translator once per word (a card, or the cache), errors passed on, 503 when no translator is set up', async t => {

@@ -1,7 +1,8 @@
 // The screens that open on demand: Settings (with the plugin market, engines, pairing, remote access, rule sync and the notifiers inside it), the
-// T-Attention panel, the design document and file tree sheets, the session switcher, the Learn page and the task dialogs (delete, working directory, archive,
-// visibility). They are not in public/js/h5-shell.js: each is a chunk of its own
-// (scripts/build-page-bundles.js) that is imported the first time it opens, so the first screen downloads and parses only what it draws.
+// T-Attention panel, the design document and file tree sheets, the session switcher, the Learn page, the task dialogs (delete, working directory, archive,
+// visibility), the Update dialog and the terminal's dialogs (copy view, upload progress, Paste sheet, uploaded link). They are not in
+// public/js/h5-shell.js: each is a chunk of its own (scripts/build-page-bundles.js) that is imported the first time it opens, so the first screen
+// downloads and parses only what it draws.
 //
 // Each export has the name and the props of the component it stands for, so App.jsx draws it as before. While its chunk loads, nothing is drawn (the
 // sheet opens with its own animation once it is there, a few milliseconds on a cached page). The chunk is asked for early when the pointer
@@ -22,7 +23,8 @@ class LoadBoundary extends Component {
   render() { return this.state.failed ? null : this.props.children; }
 }
 
-// `load`: imports the chunk; `name`: its export to draw; `isOpen(state)`: whether the screen is open; `close(ui)`: closes it after a failed load.
+// `load`: imports the chunk; `name`: its export to draw; `isOpen(state, props)`: whether the screen is open; `close(ui, props)`: closes it after a
+// failed load. (`props` serves a screen whose open state is its owner's, not the store's: the Update dialog.)
 function screen(load, name, isOpen, close) {
   let loading = null;
   let ready = false; // the chunk is there: from then on the screen stays drawn while it is closed (its closing animation, as before)
@@ -37,11 +39,18 @@ function screen(load, name, isOpen, close) {
   let Loaded = make();
   function Screen(props) {
     const [attempt, setAttempt] = useState(0);
-    if (!ready && !isOpen(props.state)) return null; // closed after a failed load: nothing is asked for until it opens again
+    // A failed load of a screen that `close` cannot close (the upload progress, the Recent tab) is not asked for again until it has closed and opens
+    // again: a browser that remembers the failure would otherwise answer at once, over and over.
+    const [gaveUp, setGaveUp] = useState(false);
+    const open = isOpen(props.state, props);
+    if (gaveUp && !open) setGaveUp(false);
+    if (!ready && !open) return null; // closed after a failed load: nothing is asked for until it opens again
+    if (gaveUp) return null;
     const failed = () => {
       Loaded = make(); // React.lazy remembers a failure for good: the next opening gets a new one
       setAttempt(value => value + 1);
-      close(props.ui);
+      setGaveUp(true);
+      close(props.ui, props);
       if (props.ui && props.ui.notify) props.ui.notify(t(FAILED), 'error');
     };
     return (
@@ -64,13 +73,22 @@ export const SwitcherScreen = screen(() => import('./screen-switcher.jsx'), 'Swi
 export const RecentScreen = screen(() => import('./screen-recent.jsx'), 'RecentList', () => true, () => {});
 export const LearnScreen = screen(() => import('./screen-learn.jsx'), 'LearnPage', state => Boolean(state.learnOpen), ui => ui.actions.closeLearn && ui.actions.closeLearn());
 export const TaskDialogScreen = screen(() => import('./screen-task-dialog.jsx'), 'TaskDialog', state => Boolean(state.taskDialog), ui => ui.set && ui.set({ taskDialog: null }));
+// The Update dialog of UpdateButton (Update.jsx), which keeps its open state and passes `open` / `onClose`.
+export const UpdateDialogScreen = screen(() => import('./screen-update.jsx'), 'UpdateDialog', (state, props) => Boolean(props.open), (ui, props) => props.onClose());
+// The terminal's dialogs (Dialogs.jsx), one chunk. An upload that cannot show its progress goes on (h5.js unlocks the page when it ends).
+const dialogs = () => import('./screen-dialogs.jsx');
+export const CopyScreen = screen(dialogs, 'CopyDialog', state => state.copyText !== null, ui => ui.actions.copyClose && ui.actions.copyClose());
+export const UploadScreen = screen(dialogs, 'UploadDialog', state => Boolean(state.upload), () => {});
+export const PasteScreen = screen(dialogs, 'PasteDialog', state => Boolean(state.pasteSheet && state.pasteSheet.open), ui => ui.actions.pasteSheetClose && ui.actions.pasteSheetClose());
+export const RetainScreen = screen(dialogs, 'RetainDialog', state => state.retainUrl !== null, ui => ui.actions.retainClose && ui.actions.retainClose());
 
 // "Updated to v…" (UpdatedNotice.jsx): no button opens it. The updater calls this when the update status says the person has a notice to see; the
 // chunk asks for the notice, waits until the page is free and draws the dialog in a root of its own. A chunk that cannot be loaded shows nothing.
 export const showUpdatedNotice = ui => import('./screen-updated.jsx').then(module => module.showUpdatedNotice(ui), () => {});
 
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
-// `pointerdown` a finger (about 100 ms before the click), `focusin` the keyboard.
+// `pointerdown` a finger (about 100 ms before the click), `focusin` the keyboard. The terminal's dialogs open from the terminal itself (a long press
+// opens the copy view, a pasted or dropped file the upload), the image button, the saved commands (Paste text) and the session menus (Copy text).
 const OPENERS = [
   ['#h5-tasks-settings, #h5-nav-settings, #h5-bnav-settings', SettingsDrawer],
   ['#h5-attention, #h5-nav-attention, #h5-bnav-attention', AttentionPanel],
@@ -79,12 +97,16 @@ const OPENERS = [
   ['#h5-cycle', SwitcherScreen],
   ['#h5-tab-recent', RecentScreen],
   ['#h5-nav-learn, #h5-bnav-learn', LearnScreen],
+  ['#h5-update, #h5-header-update', UpdateDialogScreen],
+  ['.h5-xterm, #h5-image, #h5-commands, #h5-more-commands, #h5-session-menu, #h5-term-menu', CopyScreen, UploadScreen, PasteScreen, RetainScreen],
 ];
 export function preloadOnIntent(root = document) {
   const handle = event => {
     const target = event.target;
     if (!target || typeof target.closest !== 'function') return;
-    for (const [selector, Screen] of OPENERS) if (target.closest(selector)) Screen.preload().catch(() => { /* tried again on open */ });
+    for (const [selector, ...screens] of OPENERS) {
+      if (target.closest(selector)) for (const Screen of screens) Screen.preload().catch(() => { /* tried again on open */ });
+    }
   };
   for (const type of ['pointerover', 'pointerdown', 'focusin']) root.addEventListener(type, handle, { capture: true, passive: true });
 }

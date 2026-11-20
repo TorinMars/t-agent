@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState } from 'react';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@mui/material/styles';
-import { CopyDialog, Notice, PasteDialog, RetainDialog, UploadDialog } from './Dialogs.jsx';
+import { Notice } from './Notice.jsx';
 import { Header } from './Header.jsx';
 import { NewSessionDialog, NewTaskDialog, TaskDrawer } from './TaskDrawer.jsx';
 import { BottomArea, TerminalArea } from './Terminal.jsx';
@@ -13,7 +13,9 @@ import { theme } from './theme.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 // Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
-import { AttentionPanel, DesignSheet, FileTreeSheet, LearnScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen } from './lazy-screens.jsx';
+import {
+  AttentionPanel, CopyScreen, DesignSheet, FileTreeSheet, LearnScreen, PasteScreen, RetainScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen, UploadScreen,
+} from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
 // shorter); from then on it stays mounted, so MUI runs its closing animation and gives the focus back as usual.
@@ -110,14 +112,14 @@ export function App({ ui }) {
       {/* The Learn page (Learn.jsx): beside the rail on a computer, above the bottom navigation on a phone. */}
       <Lazy open={open.learn}><Part ui={ui} keys={LEARN_KEYS} part={LearnScreen} /></Lazy>
       <Lazy open={open.menu}><Part ui={ui} keys={TERM_MENU_KEYS} part={TermMenu} /></Lazy>
-      <Lazy open={open.copy}><Part ui={ui} keys={COPY_KEYS} part={CopyDialog} /></Lazy>
+      <Lazy open={open.copy}><Part ui={ui} keys={COPY_KEYS} part={CopyScreen} /></Lazy>
       {/* The file tree comes first: a file opened from it lies over it (a modal sheet opened after it). */}
       <Lazy open={open.files}><Part ui={ui} keys={SHEET_KEYS} part={FileTreeSheet} /></Lazy>
       <Lazy open={open.design}><Part ui={ui} keys={SHEET_KEYS} part={DesignSheet} /></Lazy>
       <Lazy open={open.attention}><Part ui={ui} keys={ATTENTION_KEYS} part={AttentionPanel} /></Lazy>
-      <Lazy open={open.upload}><Part ui={ui} keys={UPLOAD_KEYS} part={UploadDialog} /></Lazy>
-      <Lazy open={open.retain}><Part ui={ui} keys={RETAIN_KEYS} part={RetainDialog} /></Lazy>
-      <Lazy open={open.paste}><Part ui={ui} keys={PASTE_KEYS} part={PasteDialog} /></Lazy>
+      <Lazy open={open.upload}><Part ui={ui} keys={UPLOAD_KEYS} part={UploadScreen} /></Lazy>
+      <Lazy open={open.retain}><Part ui={ui} keys={RETAIN_KEYS} part={RetainScreen} /></Lazy>
+      <Lazy open={open.paste}><Part ui={ui} keys={PASTE_KEYS} part={PasteScreen} /></Lazy>
       <Lazy open={open.taskDialog}><Part ui={ui} keys={TASK_DIALOG_KEYS} part={TaskDialogScreen} /></Lazy>
       {/* The two create dialogs: they lie over the task sheet of a phone, outside it, so it closing after a create does not take them away mid-animation. */}
       <Lazy open={open.naming}><Part ui={ui} keys={NEW_SESSION_KEYS} part={NewSessionDialog} /></Lazy>

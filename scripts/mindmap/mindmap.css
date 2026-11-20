@@ -21,16 +21,18 @@
 .mm-row-open:hover { background: rgba(255, 255, 255, .06); }
 .mm-row-title { max-width: 100%; font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mm-row-meta { font-size: 12px; color: rgba(255, 255, 255, .6); }
+/* The second line of a row: the engine tag (several services listed; the pill of the task list, colour from the device's instance id) and the time. */
+.mm-row-line { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
+.mm-row-line > .mm-row-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-row-tag { flex: none; box-sizing: border-box; max-width: 104px; height: 18px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mm-file { display: none; }
-/* One list of several services: a small header per service (as in the task list), and "Create on" under the top bar when more than one can take a map. */
-.mm-source { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 12px 8px 4px; font-size: 12px; line-height: 1.3; font-weight: 600; color: rgba(255, 255, 255, .7); border-top: 1px solid rgba(255, 255, 255, .12); }
-.mm-section:first-child .mm-source { padding-top: 4px; border-top: 0; }
-.mm-section:not(:last-child) .mm-section-rows > .mm-row:last-child { border-bottom: 0; } /* the next header's line is the divider */
-.mm-source-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One list of the maps of every service; under it one line per service that cannot list its maps now (its name and "Loading...", "Offline" or the
+   error), and "Create on" under the top bar when more than one can take a map. */
+.mm-source { display: flex; align-items: baseline; gap: 8px; margin: 0; padding: 10px 8px; font-size: 13px; line-height: 1.3; color: rgba(255, 255, 255, .7); }
+.mm-source-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.mm-source-state { flex: 0 1 auto; min-width: 0; }
 .mm-source-offline { flex: none; color: #ffa726; }
-.mm-note-small { margin: 8px 12px 12px; text-align: left; font-size: 13px; }
-.mm-retry { margin: 0 12px 12px; }
-.mm-section > .mm-retry:only-child { margin-top: 12px; }
+.mm-retry { margin: 0 8px 12px; }
 .mm-list > .mm-on { flex: none; display: flex; align-items: center; gap: 12px; padding: 6px 16px; font-size: 14px; color: rgba(255, 255, 255, .7); border-bottom: 1px solid rgba(255, 255, 255, .08); }
 .mm-list > .mm-on[hidden] { display: none; }
 .mm-on-label { white-space: nowrap; }
@@ -93,7 +95,8 @@
   .mm-split .mm-row .mm-icon { visibility: hidden; }
   .mm-split .mm-row:hover .mm-icon, .mm-split .mm-row:focus-within .mm-icon { visibility: visible; }
 }
-.mm-split .mm-source { padding: 12px 16px 4px; }
+.mm-split .mm-source { padding: 10px 16px; }
+.mm-split .mm-retry { margin: 0 16px 12px; }
 .mm-top-gap { display: none; }
 .mm-empty { display: none; }
 .mm-editor[data-empty] .mm-title, .mm-editor[data-empty] .mm-status, .mm-editor[data-empty] #mm-export, .mm-editor[data-empty] #mm-more,

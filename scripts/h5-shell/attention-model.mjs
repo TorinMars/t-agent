@@ -25,7 +25,7 @@ export function parseKey(ref) {
   if (!text || !Number.isFinite(id)) return null;
   return { engine: cut < 0 ? 'local' : text.slice(0, cut), id };
 }
-// The engines whose items the list shows, from `state.sources` of h5.js (the devices of the one task list, in list order, this machine first): the ones
+// The engines whose items the list shows, from `state.sources` of h5.js (the devices of the one task list, in the one order of devices, by name): the ones
 // listed there (not hidden by "Show in task list"), and of those the remote ones only when online and advertising REMOTE_CAPABILITY. Before h5.js has
 // said what is listed (or on a page without it), and whenever nothing would be left, this machine alone.
 export function attentionEngines(sources) {
@@ -92,7 +92,7 @@ export function compareItems(a, b) {
   return (Number(a.id) || 0) - (Number(b.id) || 0);
 }
 
-// The order of the engine blocks inside a group: `engines` (keys, this machine first), an engine that is not in it after them. Without `engines`:
+// The order of the engine blocks inside a group: `engines` (keys, by name), an engine that is not in it after them. Without `engines`:
 // this machine first, the others together.
 const engineRank = engines => {
   const at = new Map((engines || ['local']).map((key, index) => [key, index]));
@@ -100,7 +100,7 @@ const engineRank = engines => {
 };
 
 // [{ key, label, folded, items }] in GROUPS order; empty groups are left out unless `keepEmpty`. Inside a group the items of one engine are one block,
-// in the order of `engines` (this machine first), each block in the order of `compareItems`.
+// in the order of `engines` (by name), each block in the order of `compareItems`.
 export function groupItems(items, { keepEmpty = false, engines = null } = {}) {
   const buckets = Object.fromEntries(GROUPS.map(group => [group.key, []]));
   for (const item of items || []) if (item && item.id != null) buckets[groupOf(item)].push(item);
@@ -162,7 +162,7 @@ export const HOME_SECTIONS = attentionHome.HOME_SECTIONS.map(section => ({ key: 
 
 // The phone list (lib/attention-home.js `homeView`, the grouping of `t-attention list --tree`): every section (an empty one too) with whole trees, a
 // tree in the section of its most urgent open task, each row with its own status; finished tasks only counted (`done`), except a finished parent
-// that keeps an open sub-task under it. Inside a section the trees of one engine keep the order of `engines` (this machine first) after the status
+// that keeps an open sub-task under it. Inside a section the trees of one engine keep the order of `engines` (by name) after the status
 // order of the shared rules, and `compareItems` decides between equals. Nodes have the shape of `buildTree` ({ item, depth, indent, parent: null,
 // children }), so they draw (and collapse) the same way. An older server (no `parent_id`) gives one row per task, in the section of its status.
 // -> { sections: [{ key, label, statuses, nodes }], done }

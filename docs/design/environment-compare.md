@@ -11,7 +11,7 @@
 **The page** (`scripts/h5-shell/EnvironmentCompare.jsx`, model `environment-compare.mjs`; in the Settings chunk, nothing in the first screen):
 
 - The part `environment` has the scope `all` in `settings-tabs.mjs`: the same table in Shared, this device's tab and every linked device's tab (under "Show in task list" in Shared, under the device list in a device tab).
-- Columns are ordered by name (numbers by value), so T01's page and K01's page draw the same table; machine names and versions are `translate="no"`.
+- Columns are ordered by name (numbers by value; the shared helper `device-order.mjs` of every device list, [entry-symmetry.md](entry-symmetry.md)), so T01's page and K01's page draw the same table; machine names and versions are `translate="no"`.
 - The newest version is the reference and every other found version is orange; for a value that is not a version (a shell name) the most common one is the reference. A machine without the tool is red "not installed" with "K01 · Codex: <hint>" under the table. "not needed" and "unknown" are grey and count as nothing.
 - A column that cannot tell says so under the machine's name: "Offline" (not online, or the link answered `REMOTE_OFFLINE` / `REMOTE_TIMEOUT` / `ENGINE_OFFLINE`), "Update K01 first" (no `settings:device`, no `environment:tools`, or 501 `DEVICE_SETTINGS_UNSUPPORTED`), "Could not be read" (another error). Such a device is not asked when the device list already says it cannot answer.
 - Under the table: the summary ("2 differences · 1 missing", "The same on every machine") and "Check again", which POSTs to every machine; old values stay in the table until the new ones arrive.

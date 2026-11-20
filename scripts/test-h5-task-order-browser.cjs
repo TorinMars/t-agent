@@ -222,7 +222,7 @@ async function testFlatList(browser, wide) {
   await t.waitTitles(FIRST);
   assert.equal(await page.locator('.h5-source-header, .h5-source, #h5-task-list h3').count(), 0, `${label}: no section or group headers`);
   assert.deepEqual(await page.locator('#h5-task-list .h5-task .h5-device-tag').allTextContents(), ['MacBook', 'VPS', 'MacBook', 'VPS', 'MacBook'], `${label}: each task has its device tag`);
-  assert.equal(await t.row('Beta').locator('.h5-device-tag').getAttribute('title'), 'MacBook · This machine', `${label}: the full name is the title`);
+  assert.equal(await t.row('Beta').locator('.h5-device-tag').getAttribute('title'), 'MacBook', `${label}: the full name is the title`);
   // The colour: the same for every row of a device, from its instance id.
   const colours = await page.locator('#h5-task-list .h5-device-tag').evaluateAll(nodes => nodes.map(node => [node.dataset.source, node.dataset.color, getComputedStyle(node).color, getComputedStyle(node).backgroundColor]));
   for (const [source, index] of colours) assert.equal(Number(index), tagColorIndex(source === 'local' ? LOCAL_ID : VPS_ID), `${label}: ${source} colour from its id`);

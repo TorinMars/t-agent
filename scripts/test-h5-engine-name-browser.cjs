@@ -157,14 +157,14 @@ async function testNamesShown(browser) {
   await t.sheet();
   await t.waitHeader('local', 'MacBook');
   assert.equal(await t.headerName('local'), 'MacBook', 'list: the tag of this machine is its name');
-  assert.equal(await t.header('local').getAttribute('title'), 'MacBook \u00B7 This machine', 'list: the full text, with the hint, is the title');
-  assert.deepEqual(await t.tagTitles(), ['MacBook \u00B7 This machine', 'VPS', 'Old box', 'Peer'], 'list: each device by its name');
+  assert.equal(await t.header('local').getAttribute('title'), 'MacBook', 'list: the full name is the title; no "This machine" hint outside Settings → Devices');
+  assert.deepEqual(await t.tagTitles(), ['MacBook', 'Old box', 'Peer', 'VPS'], 'list: each device by its name, the devices in the one order (by name)');
   assert.equal(await t.header('remote:7').getAttribute('title'), 'VPS', 'list: a remote device has no hint');
   if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.locator('#h5-tasks').screenshot({ path: path.join(SHOTS, 'engine-name-list-390.png') }); }
 
   await page.locator('#h5-add-task').tap();
   await page.locator('#h5-new-task-on').waitFor();
-  assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['MacBook \u00B7 This machine', 'VPS', 'Old box', 'Peer'], 'Create on: the names');
+  assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['MacBook', 'Old box', 'Peer', 'VPS'], 'Create on: the names, by name');
   await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now
   await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
 
@@ -189,7 +189,7 @@ async function testNamesShown(browser) {
   await page.waitForFunction(() => (document.querySelector('.h5-engine-row[data-engine="local"] .h5-engine-name') || {}).textContent === 'MacBook');
   assert.equal(await t.engineRow('local').locator('.h5-engine-hint').textContent(), '\u00B7 This machine', 'Engines: the hint');
   assert.equal(await page.locator('#h5-engine-local-version').textContent(), 'v2.99.0', 'Engines: the version stays');
-  assert.deepEqual(await page.locator('.h5-engine-row .h5-engine-name').allTextContents(), ['MacBook', 'VPS', 'Old box', 'Peer'], 'Engines: the names');
+  assert.deepEqual(await page.locator('.h5-engine-row .h5-engine-name').allTextContents(), ['MacBook', 'Old box', 'Peer', 'VPS'], 'Engines: the names, by name');
   for (const key of ['local', 7, 8, 9]) assert.ok((await engineActions(page, key)).includes('h5-engine-rename'), `Engines: Rename on every row, this machine and the linked one too (${key})`);
   assert.equal((await engineActions(page, 9)).includes('h5-engine-edit'), false, 'Engines: a linked row still cannot edit its connection');
   assert.equal(await page.locator('.h5-engine-row .h5-engine-visible').count(), 4, 'Engines: "Show in task list" on every row');
@@ -235,7 +235,7 @@ async function testRenameLocal(browser) {
   await t.sheet();
   await t.waitHeader('local', '\u5DE5\u4F5C\u7AD9 Mac');
   await page.locator('#h5-add-task').tap();
-  assert.equal(await page.locator('#h5-new-task-on option').first().textContent(), '\u5DE5\u4F5C\u7AD9 Mac \u00B7 This machine', 'Create on follows');
+  assert.ok((await page.locator('#h5-new-task-on option').allTextContents()).includes('\u5DE5\u4F5C\u7AD9 Mac'), 'Create on follows');
   await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now
   await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
 
@@ -301,7 +301,7 @@ async function testRenameRemote(browser) {
   await page.waitForFunction(() => document.getElementById('h5-task-service').textContent === '\u4E1C\u4EAC VPS');
   await t.sheet();
   await page.waitForFunction(() => [...document.querySelectorAll('#h5-task-list .h5-device-tag')].some(node => node.title === 'Peer two'));
-  assert.deepEqual(await t.tagTitles(), ['MacBook \u00B7 This machine', '\u4E1C\u4EAC VPS', 'Old box 2', 'Peer two'], 'the list follows every rename');
+  assert.deepEqual([...await t.tagTitles()].sort(), ['MacBook', 'Old box 2', 'Peer two', '\u4E1C\u4EAC VPS'].sort(), 'the list follows every rename');
   assert.equal(await t.headerName('remote:8'), 'Old box\u2026', 'a name longer than 8 characters is cut on the tag');
 
   // An engine that keeps its own name goes back to its default (an empty name).
@@ -399,7 +399,7 @@ async function testLongNames(browser) {
   const inside = (inner, outer) => page.evaluate(([a, b]) => { const r = document.querySelector(a).getBoundingClientRect(); const o = document.querySelector(b).getBoundingClientRect(); return r.width > 0 && r.right <= o.right + 0.5; }, [inner, outer]);
   assert.equal(await t.headerName('local'), `${Array.from(long).slice(0, 7).join('')}\u2026`, 'list: the name is cut to 8 characters');
   assert.equal(await inside('.h5-task[data-source="local"] .h5-device-tag', '.h5-task[data-source="local"] .h5-task-item'), true, 'list: the tag stays inside its row');
-  assert.equal(await t.header('local').getAttribute('title'), `${long} \u00B7 This machine`);
+  assert.equal(await t.header('local').getAttribute('title'), long);
   assert.equal(await t.headerName('remote:7'), `${Array.from(long).slice(0, 7).join('')}\u2026`, 'list: a long remote name is cut');
   if (SHOTS) await page.locator('#h5-tasks').screenshot({ path: path.join(SHOTS, 'engine-name-long-list-320.png') });
   await t.openEngines();
@@ -428,7 +428,7 @@ async function testOlderServer(browser) {
   assert.equal(await t.headerName('local'), 'This machine', 'older: the tag says "This machine"');
   assert.equal(await t.header('local').getAttribute('title'), 'This machine', 'older: no hint next to "This machine"');
   await page.locator('#h5-add-task').tap();
-  assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['This machine', 'VPS', 'Old box', 'Peer'], 'older: Create on as today');
+  assert.deepEqual(await page.locator('#h5-new-task-on option').allTextContents(), ['Old box', 'Peer', 'This machine', 'VPS'], 'older: Create on by name, this machine as "This machine"');
   await page.locator('#h5-new-task-cancel').tap(); // New task is a dialog now
   await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
   await t.openEngines();

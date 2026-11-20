@@ -28,6 +28,7 @@
     ['h5-design-outline', 'local', 'cache-of-shared-state', 'the outline column of the file sheet shown or folded', false],
     ['h5-attention-collapsed', 'local', 'cache-of-shared-state', 'the collapsed T-Attention parents', false],
     ['h5-attention-add-on', 'local', 'cache-of-shared-state', 'the engine a new T-Attention task goes to', false],
+    ['h5-create-on', 'local', 'cache-of-shared-state', 'the machine "Create on" starts with (new task, new mind map): the one chosen last', false],
     ['ta-saved-commands-used', 'local', 'cache-of-shared-state', 'the recency of saved commands', false],
     ['h5-mindmap-list-folded', 'local', 'cache-of-shared-state', 'the folded list of the Mind maps tab', false],
     ['word-translate', 'local', 'cache-of-shared-state', 'tap to translate on or off', false],

@@ -214,9 +214,9 @@ async function testTabs(browser) {
   await openSheet(page);
   const tabs = await page.locator('#h5-settings-tabs [role="tab"]').evaluateAll(nodes => nodes.map(node => [node.dataset.tab, node.innerText.replace(/\s+/g, ' ').trim(), node.getAttribute('aria-disabled') === 'true' || node.disabled]));
   assert.deepEqual(tabs, [
-    ['shared', 'Shared', false], ['local', 'T01 This device', false], ['2', 'K01', false],
-    ['3', 'Old Mac Update Old Mac first', true], ['4', 'Away Offline', true], ['5', 'Sleeping Offline', false],
-  ]);
+    ['shared', 'Shared', false], ['4', 'Away Offline', true], ['2', 'K01', false],
+    ['3', 'Old Mac Update Old Mac first', true], ['5', 'Sleeping Offline', false], ['local', 'T01 This device', false],
+  ], 'Shared, then every device by name, this one among them');
   assert.equal(await page.locator('#h5-settings-tabs [role="tablist"]').getAttribute('aria-label'), 'Settings for');
   assert.equal(await page.getAttribute('#h5-settings-tab-3', 'title'), 'Old Mac is too old to be changed from here. Update Old Mac first.');
   assert.equal(await chosenTab(page), 'shared');
@@ -317,9 +317,9 @@ async function testSyncOff(browser) {
   await openSheet(page);
   const tabs = await page.locator('#h5-settings-tabs [role="tab"]').evaluateAll(nodes => nodes.map(node => [node.dataset.tab, node.innerText.replace(/\s+/g, ' ').trim(), node.getAttribute('aria-disabled') === 'true' || node.disabled]));
   assert.deepEqual(tabs, [
-    ['local', 'T01 This device', false], ['2', 'K01', false], ['3', 'Old Mac Update Old Mac first', true], ['4', 'Away Offline', true], ['5', 'Sleeping Offline', false],
+    ['4', 'Away Offline', true], ['2', 'K01', false], ['3', 'Old Mac Update Old Mac first', true], ['5', 'Sleeping Offline', false], ['local', 'T01 This device', false],
   ], 'no Shared tab without the sync');
-  assert.equal(await chosenTab(page), 'local', 'this device is the first tab');
+  assert.equal(await chosenTab(page), 'local', 'this device\'s tab is chosen at first (it holds every part then), wherever its name places it');
   assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'Changes here are saved on this device');
   assert.equal(await page.getAttribute('#h5-settings-tab-local', 'title'), 'Changes here are saved on this device');
   // This device's tab draws every part (the shared ones are this device's own now); no status line of the sync and no pill.
@@ -377,7 +377,7 @@ async function testNarrow(browser, zh) {
   await assertFits(page, `320${zh ? ' zh' : ''} folded`);
   if (zh) {
     const tabs = await page.locator('#h5-settings-tabs [role="tab"]').allInnerTexts();
-    assert.deepEqual(tabs.map(text => text.replace(/\s+/g, ' ').trim()), ['\u5171\u4eab', 'T01 \u672c\u673a', 'K01', 'Old Mac \u8bf7\u5148\u5347\u7ea7 Old Mac', 'Away \u79bb\u7ebf', 'Sleeping \u79bb\u7ebf']);
+    assert.deepEqual(tabs.map(text => text.replace(/\s+/g, ' ').trim()), ['\u5171\u4eab', 'Away \u79bb\u7ebf', 'K01', 'Old Mac \u8bf7\u5148\u5347\u7ea7 Old Mac', 'Sleeping \u79bb\u7ebf', 'T01 \u672c\u673a']);
     assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), '\u8fd9\u91cc\u7684\u4fee\u6539\u4f1a\u590d\u5236\u5230\u6240\u6709\u5173\u8054\u8bbe\u5907');
     await chooseTab(page, 'local');
     assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), '\u53ea\u6709\u672c\u673a\u4f7f\u7528\u8fd9\u4e9b\u8bbe\u7f6e');

@@ -534,8 +534,11 @@ const TaskRow = React.memo(function TaskRow({ task, ui, drag, sessionDrag, menu 
 const slug = title => title.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9\u4e00-\u9fff\-_.]/g, '').replace(/^-+|-+$/g, '') || 'task';
 
 // The New task dialog, opened by "New task" at the end of the task list (h5.js `openNewTask`; `newTaskOpen` in the store). Every opening starts empty, on
-// this machine. Create makes the task (h5.js `createTask`); the dialog closes once it is made and the new task is opened. While it is being made nothing can
-// be pressed and the dialog does not close; a failure is a notice and an inline Alert, and with a working directory the field says so instead.
+// the machine a task was last made on (`h5-create-on`, the shared page state: the same on every device and engine), else the first device in the one
+// order of devices; never "the engine of this page" ("Create on" in docs/design/entry-symmetry.md). Create makes the task (h5.js `createTask`); the dialog
+// closes once it is made and the new task is opened. While it is being made nothing can be pressed and the dialog does not close; a failure is a notice
+// and an inline Alert, and with a working directory the field says so instead.
+const CREATE_ON_KEY = 'h5-create-on';
 export function NewTaskDialog({ state, ui }) {
   const open = Boolean(state.newTaskOpen);
   const phone = useMediaQuery(theme => theme.breakpoints.down('sm'));
@@ -544,12 +547,15 @@ export function NewTaskDialog({ state, ui }) {
   const [dirError, setDirError] = useState('');
   const [failed, setFailed] = useState(false); // the task was not created (no working directory to blame)
   const [base, setBase] = useState(null); // the folder new tasks of this machine go under (the user's setting, TASKS_BASE_DIR, else ~/tasks)
-  const [on, setOn] = useState('local'); // "Create on": the service a new task is made on; this machine unless chosen
+  const [on, setOn] = useState(null); // "Create on": the service chosen in this dialog; null: the one chosen last time
+  const last = useShared(CREATE_ON_KEY);
   useFocusedInView(open);
-  useEffect(() => { if (open) { setTitle(''); setWorkDir(''); setDirError(''); setFailed(false); setOn('local'); } }, [open]);
-  // The services a task can be made on: online and in the list. A choice that went offline or was hidden meanwhile falls back to this machine, or the first that is left.
+  useEffect(() => { if (open) { setTitle(''); setWorkDir(''); setDirError(''); setFailed(false); setOn(null); } }, [open]);
+  // The services a task can be made on: online and in the list, in the one order of devices (h5.js). A choice that went offline or was hidden meanwhile
+  // falls back to the first that is left.
   const targets = state.sources.filter(source => !source.offline && !source.hidden);
-  const picked = targets.find(source => source.key === on) || targets.find(source => source.key === 'local') || targets[0];
+  const remembered = on === null ? targets.find(source => source.key === last) : null;
+  const picked = targets.find(source => source.key === on) || remembered || targets[0];
   const onKey = picked ? picked.key : 'local';
   const target = ui.actions.newTaskTarget ? ui.actions.newTaskTarget(onKey) : { local: true };
   useEffect(() => {
@@ -568,7 +574,8 @@ export function NewTaskDialog({ state, ui }) {
     if (dir && ui.actions.isAbsolutePath && !ui.actions.isAbsolutePath(dir)) { setDirError('Enter an absolute path'); return; }
     setDirError('');
     setFailed(false);
-    if (!(await ui.actions.createTask(value, dir, onKey))) { if (dir) setDirError('The task was not created. Check the working directory.'); else setFailed(true); }
+    if (await ui.actions.createTask(value, dir, onKey)) { if (state.sources.length > 1) writeShared(CREATE_ON_KEY, onKey); } // the start of the next "Create on", here and on every other device
+    else if (dir) setDirError('The task was not created. Check the working directory.'); else setFailed(true);
   };
   const busy = state.creatingTask;
   const close = () => ui.actions.closeNewTask();
@@ -585,6 +592,7 @@ export function NewTaskDialog({ state, ui }) {
           {state.sources.length > 1 ? (
             <TextField
               id="h5-new-task-on" className="h5-new-task-on-row" select size="small" fullWidth label={t('Create on')} value={onKey} onChange={event => setOn(event.target.value)}
+              helperText={remembered ? <span id="h5-new-task-on-help">{t('The machine you chose last time')}</span> : null}
               slotProps={{ inputLabel: { shrink: true }, htmlInput: { 'aria-label': t('Create on') } }}
             >
               {targets.map(source => <option key={source.key} value={source.key}>{deviceText(source)}</option>)}

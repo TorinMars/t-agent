@@ -12,6 +12,7 @@ import { onShared, readShared, writeShared } from './shared-store.mjs';
 import { localGet } from './local-keys.mjs';
 import { RAW_KINDS, kindOf } from './file-kinds.mjs';
 import { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget } from './task-order.mjs';
+import { orderDevices } from './device-order.mjs';
 import { RECENT_MAX, editRecent, noteRecent, parseRecent, pruneRecent, recentKey } from './recent-sessions.mjs';
 import { startColumns } from './Columns.jsx';
 // T-Attention settings slots: the modules of other T-Attention parts that register Settings content (attention-slots.mjs) are imported by the Settings
@@ -40,6 +41,7 @@ ui.media = { wideQuery, inputMode };
 ui.fileKinds = { kindOf, isRaw: kind => RAW_KINDS.has(kind) };
 // The rules of the shared task order (task-order.mjs), for h5.js: where each task goes, and the whole order to save after a move.
 ui.taskOrder = { arrangeTasks, mergeOrder, moveKey, sameOrder, stepTarget };
+ui.orderDevices = orderDevices; // the one order of devices on every page (device-order.mjs): h5.js sorts its services with it
 // The recent sessions of the session switcher (recent-sessions.mjs), for h5.js, which notes every session it shows.
 ui.recent = { max: RECENT_MAX, key: recentKey, note: noteRecent, prune: pruneRecent, parse: parseRecent, edit: editRecent }; // parse: the old per-browser list, imported once (h5.js)
 let notices = 0;

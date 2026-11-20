@@ -28,12 +28,13 @@ import { MacAppSection, compareVersions } from './MacApp.jsx';
 import { EnvironmentSection } from './EnvironmentCompare.jsx';
 import { ADVANCED_SECTIONS } from './settings-target.mjs';
 import { ScopeLabel, SettingsSyncStatus, SyncNote, refreshSettingsSync, useSyncAfterSave } from './ScopeLabel.jsx';
+import { orderDevices } from './device-order.mjs';
 import { InTab, LocalOnly, refreshDeviceTargets, useDeviceTargets, useSettingsTab } from './DeviceTarget.jsx';
 import { tierBlock, tierCaption, tierHome } from './device-target.mjs';
 import { errorLabel } from './engine-errors.mjs';
 
 // Settings "Devices" (until the sheet was tidied up the groups "Engines", "Linked services", "Rules and skills sync" and "Remote service"), top to
-// bottom: the device list (this machine first, then every remote Engine this Client is connected to, linked ones included), "Link a device"
+// bottom: the device list (this machine and every remote Engine this Client is connected to, linked ones included, by name), "Link a device"
 // (ServiceLinks.jsx, the recommended way to add one), the peer file access switch (PeerFs.jsx), "Rules and skills sync" (RuleSync.jsx), and the
 // folded "Advanced" part with the one-way options: "Connect a remote engine" (the connect form below) and "Let other clients connect to this one"
 // (RemoteAccess.jsx). The device list was ported from the old desktop page's engine tabs in 2.87.13.
@@ -394,8 +395,9 @@ function CompanySwitch({ device, checked, disabled, caption, onChange }) {
 const CompanyPill = () => <Pill className="h5-engine-company-pill" tone="warning" label={t('Company computer')} sx={{ flexShrink: 0 }} />;
 
 // "Show in task list" in the Shared tab: the name of each device and its switch, one switch row each (the device list itself is in the device tabs).
-function ShownDevices({ servers, localName, showProps, children }) {
-  const rows = [{ key: 'local', source: { key: 'local', name: localName ? localName.name : '' } }, ...servers.map(server => ({ key: `remote:${server.id}`, source: { key: `remote:${server.id}`, label: server.name } }))];
+// `placed`: the devices in the one order of devices (device-order.mjs), this machine among them.
+function ShownDevices({ placed, localName, showProps, children }) {
+  const rows = placed.map(({ key, server }) => ({ key, source: server ? { key, label: server.name } : { key: 'local', name: localName ? localName.name : '' } }));
   return (
     <Section id="task-list-devices" title="Show in task list" aside={<ScopeLabel id="task-list-devices" scope="shared" />}>
       <Hint>{t('Which devices the task list shows. One choice for all linked devices.')}</Hint>
@@ -659,28 +661,44 @@ export function DevicesGroup({ state, ui, request = null }) {
   const listShown = tabScope !== 'shared';
   const status = <><Feedback id="h5-engines-feedback" feedback={feedback} /><SyncNote id="h5-engines-sync" note={shownSynced} /></>;
   const shownList = tabScope === 'shared' && switches;
-  const sourceName = ((state.sources || []).find(source => source.key === 'local') || {}).name || (localName ? localName.name : '');
+  const localSource = (state.sources || []).find(source => source.key === 'local') || {};
+  const sourceName = localSource.name || (localName ? localName.name : '');
+  // The rows in the one order of devices, by name (device-order.mjs; "Devices in one order" in docs/design/entry-symmetry.md): this machine has no
+  // place of its own, only its small label. The remote rows before and after it.
+  const placed = orderDevices([
+    { key: 'local', name: (localName && localName.name) || sourceName || 'This machine', instanceId: localSource.instanceId || null },
+    ...servers.map(server => ({ key: `remote:${server.id}`, name: server.name, instanceId: server.instance_id || null, server })),
+  ]);
+  const localAt = placed.findIndex(entry => entry.key === 'local');
+  const engineRow = server => (
+    <EngineRow
+      key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} older={isOlder(server.remote_version, versions)} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
+      onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
+      onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
+    />
+  );
   const environment = <InTab part="environment"><EnvironmentSection opened={opened} localName={sourceName} /></InTab>;
   return (
     <Group id="devices" title="Devices" request={request} onOpen={() => { void load(); setTierShown({}); setOpened(count => count + 1); }}>
       <InTab part="settings-sync"><SettingsSyncStatus opened={opened} /></InTab>
-      {shownList ? <ShownDevices servers={servers} localName={localName} showProps={showProps}>{status}</ShownDevices> : null}
+      {shownList ? <ShownDevices placed={placed} localName={localName} showProps={showProps}>{status}</ShownDevices> : null}
       {listShown ? (
         <>
-          {/* The device list: one card, one row per device (this machine first), each with its "more" menu. */}
+          {/* The device list: one card, one row per device (by name), each with its "more" menu. */}
           <Section id="engine-name">
-            <Hint>{t('The machines whose tasks and terminals this page shows, this one first. To add one, link it below.')}</Hint>
+            <Hint>{t('The machines whose tasks and terminals this page shows, by name. To add one, link it below.')}</Hint>
             {/* What the list changes: the names (and Restart) are this device's own; which devices the task list shows is one set for all linked devices. */}
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, '&:empty': { display: 'none' } }}>
               <ScopeLabel id="engine-name" subject="Device names" follow={false} />
               {rowSwitches ? <ScopeLabel id="task-list-devices" scope="shared" subject="Show in task list" /> : null}
             </Box>
             <Box component="ul" id="h5-engine-list" sx={{ display: 'flex', flexDirection: 'column', m: 0, p: 0, '& > li + li': { borderTop: 1, borderColor: 'divider' } }}>
+              {placed.slice(0, localAt).map(entry => engineRow(entry.server))}
               <DeviceRow
                 engine="local" show={rowSwitches ? showProps('local') : null} tier={localTierRow}
                 menu={<RowMenu engine="local" name={localName ? localName.name : t('This machine')} actions={localName ? [{ key: 'rename', className: 'h5-engine-rename', label: t('Rename'), onClick: () => setRenaming({ kind: 'local', current: localName }) }] : []} />}
                 title={<>
-                  <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" /></Box>
+                  <Box component="strong" sx={NAME}><DeviceName source={{ key: 'local', name: localName ? localName.name : '' }} className="h5-engine-name" hintClassName="h5-engine-hint" hint /></Box>
                   <Pill tone="success" label={t('Local')} sx={{ flexShrink: 0 }} />
                   {localTierRow && localTierRow.checked ? <CompanyPill /> : null}
                   {isOlder(localVersion, versions) ? <OlderPill /> : null}
@@ -691,13 +709,7 @@ export function DevicesGroup({ state, ui, request = null }) {
                 {restartHere ? <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 0.5 }}><RestartButton restart={localRestart} bootId={localRestart.bootId} /></Box> : null}
                 <Feedback feedback={rowFeedback.local || { message: '', error: false }} />
               </DeviceRow>
-              {servers.map(server => (
-                <EngineRow
-                  key={server.id} server={server} link={linkOf(server)} busy={checking === server.id} older={isOlder(server.remote_version, versions)} show={rowSwitches ? showProps(`remote:${server.id}`) : null} tier={tierProps(server)} feedback={rowFeedback[server.id] || { message: '', error: false }}
-                  onCheck={() => void check(server)} onUpdate={() => setUpdating(server)} onEdit={() => setEditing(server)} onRemove={() => void remove(server)}
-                  onRename={server.can_rename ? () => setRenaming({ kind: 'remote', server }) : null}
-                />
-              ))}
+              {placed.slice(localAt + 1).map(entry => engineRow(entry.server))}
             </Box>
             {servers.length ? null : <Hint id="h5-engine-empty">{t('No other devices yet')}</Hint>}
             {status}

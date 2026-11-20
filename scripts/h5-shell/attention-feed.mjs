@@ -69,7 +69,7 @@ export function playSound() {
 export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl, passive = false } = {}) {
   const ES = passive ? null : EventSourceImpl || (typeof EventSource === 'undefined' ? null : EventSource);
   const own = new Map(); // item key -> time until which a 'user' change of it is this page's own
-  let entries = new Map(); // engine key -> its entry, in the order of the list (this machine first)
+  let entries = new Map(); // engine key -> its entry, in the order of the list (the one order of devices, by name)
   const unsupported = new Map(); // engine key -> its capabilities when it answered 501: left out until they change
   let sourcesSeen; // the `state.sources` the entries were made from
   let stopped = false;
@@ -152,8 +152,9 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
   function remind(change, entry) {
     const note = reminderFor(change);
     if (passive || !note || isOwn(change)) return;
-    // An item of another engine names it: "<Status>: <title> (K01) — <reason>".
-    const head = `${t(note.label)}: ${note.title}${entry.local ? '' : ` (${nameOf(entry)})`}`;
+    // With more than one engine every item names its engine, this machine's too, so a reminder reads the same on every engine's page: "<Status>:
+    // <title> (K01) — <reason>".
+    const head = `${t(note.label)}: ${note.title}${entries.size > 1 ? ` (${nameOf(entry)})` : ''}`;
     if (showsNotice(change)) ui.notify(note.reason ? `${head} — ${note.reason}` : head, note.status === 'failed' ? 'error' : 'info');
     if (prefs().sound) playSound();
   }

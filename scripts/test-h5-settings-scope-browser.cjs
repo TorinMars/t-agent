@@ -227,7 +227,7 @@ async function testLinkedPhone(browser) {
   assert.deepEqual(parts, ['h5-sec-settings-sync', 'h5-sec-task-list-devices', 'h5-sec-environment'], 'the status line is at the top of Devices');
   assert.deepEqual(await page.locator('.h5-settings-sync-peer').allInnerTexts(), ['K01 · Online · Synced 2 min ago', 'K02 · Offline · Synced 2 h ago · Error: REMOTE_TIMEOUT']);
   assert.deepEqual(await labelsOf(page, 'devices'), DEVICES);
-  assert.deepEqual(await page.locator('#h5-shown-devices .h5-engine-visible-input').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))), ['Show Home Mac · This machine in task list', 'Show K01 in task list']);
+  assert.deepEqual(await page.locator('#h5-shown-devices .h5-engine-visible-input').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label'))), ['Show Home Mac in task list', 'Show K01 in task list'], 'by name; the "This machine" hint is only on the device list');
   const posts = () => page.evaluate(() => window.calls.filter(call => call.url === '/api/settings-sync/now').length);
   assert.equal(await posts(), 0);
   await press(page.locator('#h5-settings-sync-now'));

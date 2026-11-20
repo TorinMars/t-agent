@@ -14,6 +14,7 @@ import './shared-store.mjs';
 import './local-keys.mjs';
 import './file-kinds.mjs';
 import './task-order.mjs';
+import './device-order.mjs';
 import './recent-sessions.mjs';
 import './Columns.jsx';
 import './lazy-screens.jsx';

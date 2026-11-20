@@ -7,7 +7,7 @@ const express = require('express');
 //   POST  /api/learn/cards { kind, en, zh?, source, context? } -> { card, created }
 //   POST  /api/learn/cards/:id/answer { mode, grade, correct, answer? } -> { card }
 //   PATCH /api/learn/cards/:id { zh?, en?, suspended? }  -> { card }
-//   GET   /api/learn/cards?kind=word|sentence&q=&limit=50&offset=0 -> { cards, total }
+//   GET   /api/learn/cards?kind=word|sentence&source=&q=&limit=50&offset=0 -> { cards, total }  (every card has `context_zh`)
 //   POST  /api/learn/meaning { word }                   -> { zh }   (the configured translator; 503 when there is none)
 //   POST  /api/learn/starter { list: 'dev' }            -> { added }
 //   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter?, audio_*? } -> settings
@@ -18,9 +18,15 @@ const express = require('express');
 //   POST  /api/learn/reports { lang }                 -> { report }   (asks the translation model; 503 without one, 409 while one runs)
 //   POST  /api/learn/cards/find { refs: [{ kind, en }] } -> { cards }  (the cards of a report's findings on this engine)
 // ("Mistakes" and "Mistake reports" in docs/design/learn-english.md; services/learn-analysis.js.)
+//   GET   /api/learn/level                            -> { level: { level, label, reason, answers, mistakes, report_at, updated_at } | null,
+//                                                          picking: { enabled, picked, skipped, sentences, pending, running }, translator }
+//   POST  /api/learn/level/check                      -> the same after a new estimate (503 without a model, 409 while one runs, 502 for a bad answer)
+// ("Your level" and "Picking words from translations" in docs/design/learn-english.md; services/learn-pick.js.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
+
+const LEVEL_OFFLINE = 'Your level is kept on a normal computer, which cannot be reached right now';
 
 // The meaning of one word through the translator the person set up, by the same path as POST /api/translate/word: this Client's own translator, or the
 // linked service that shares one (services/linked-capabilities.js).
@@ -38,7 +44,8 @@ function translatorLookup() {
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
-function createLearnRouter({ service = null, lookupWord = null, sync, analysis, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+// `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`).
+function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
   let syncService = sync === undefined ? (service ? null : undefined) : sync;
@@ -53,6 +60,16 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     if (analysisService === undefined) analysisService = require('../services/learn-analysis').getLearnAnalysis();
     if (!analysisService) throw Object.assign(new Error('Mistake analysis is not available'), { statusCode: 503 });
     return analysisService;
+  };
+  let pickService = pick === undefined ? (service ? null : undefined) : pick;
+  const picker = () => {
+    if (pickService === undefined) pickService = require('../services/learn-pick').getLearnPick();
+    return pickService;
+  };
+  const mustPicker = () => {
+    const current = picker();
+    if (!current) throw Object.assign(new Error('Level estimate is not available'), { statusCode: 503 });
+    return current;
   };
   // A company computer reads through its home: the cards here are brought up to date first (a few seconds at most; offline, the cache as it is).
   const fresh = async () => { if (cacheOnly()) await learnSync().refresh(); };
@@ -78,7 +95,14 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
   router.get('/status', handle(() => status()));
   router.get('/queue', handle(async req => { await fresh(); return learn().queue(owner(req), req.query.mode, req.query.limit); }));
   router.get('/cards', handle(async req => { await fresh(); return learn().list(owner(req), req.query); }));
-  router.post('/cards', handle(req => learn().addCard(owner(req), req.body)));
+  router.post('/cards', handle(req => {
+    const result = learn().addCard(owner(req), req.body);
+    // A new translated sentence: its words are picked a moment later, in the background (on a company computer by its home, once handed over).
+    if (result.created && result.card && result.card.kind === 'sentence' && result.card.source === 'translation' && !cacheOnly()) {
+      try { const current = picker(); if (current) current.afterSentence(owner(req)); } catch { /* the hourly check picks it */ }
+    }
+    return result;
+  }));
   router.post('/cards/:id/answer', handle(req => learn().answer(owner(req), req.params.id, req.body)));
   router.patch('/cards/:id', handle(req => learn().updateCard(owner(req), req.params.id, req.body)));
   router.post('/meaning', handle(req => learn().meaning(owner(req), req.body && req.body.word)));
@@ -110,7 +134,29 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
   }));
   router.post('/cards/find', handle(async req => { await fresh(); return learn().findCards(owner(req), req.body); }));
   router.get('/settings', handle(req => learn().settings(owner(req))));
-  router.put('/settings', handle(req => (cacheOnly() ? learnSync().viaHome('settings', req.body) : learn().saveSettings(owner(req), req.body))));
+  router.put('/settings', handle(req => {
+    if (cacheOnly()) return learnSync().viaHome('settings', req.body);
+    const saved = learn().saveSettings(owner(req), req.body);
+    // Picking turned on: the sentences waiting are picked in the background.
+    if (req.body && req.body.pick_words === true) { try { const current = picker(); if (current) current.kick(owner(req)); } catch { /* the hourly check */ } }
+    return saved;
+  }));
+  // ---- The level and the words from translations: on a company computer read and estimated on its home (the copy here while it is away) ----
+  router.get('/level', handle(async req => {
+    if (!cacheOnly()) return mustPicker().view(owner(req));
+    try { return await learnSync().askHome('level', { offline: LEVEL_OFFLINE }); } catch (error) {
+      // Away (503) or an older version without the level (404): the synced copy here, said as such.
+      if (error.statusCode !== 503 && error.statusCode !== 404) throw error;
+      return { ...mustPicker().view(owner(req)), translator: false, offline: error.statusCode === 503, home_older: error.statusCode === 404 };
+    }
+  }));
+  router.post('/level/check', handle(async req => {
+    if (!cacheOnly()) return mustPicker().check(owner(req));
+    try { return await learnSync().askHome('level-check', { method: 'POST', body: {}, timeout: 100_000, offline: LEVEL_OFFLINE }); } catch (error) {
+      if (error.statusCode === 404) throw Object.assign(new Error('The normal computer that keeps your learning data needs an update first'), { statusCode: 409 });
+      throw error;
+    }
+  }));
   return router;
 }
 

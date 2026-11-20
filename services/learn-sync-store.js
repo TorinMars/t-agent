@@ -14,15 +14,18 @@ const listeners = new Set();
 // The sync columns of schema 14 on an older database (13 had learn_cards and learn_reviews without them), and the indexes on them. Safe to run on
 // every start: a column or an index that is there is left alone. Rows from before get: a content clock of 0 (they never beat a real edit), the
 // time of the last answer as the review-state clock (so on the first merge the side answered last keeps its schedule), a random review id, and
-// change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way, and
-// schema 17 the detail of a wrong answer (`expected`, `tag`, `hinted`) and the table `learn_reports`.
+// change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way,
+// schema 17 the detail of a wrong answer (`expected`, `tag`, `hinted`) and the table `learn_reports`, and schema 19 the pick of a sentence
+// (`picked_level`, `picked_skipped`, `picked_at`; not picked yet).
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
   if (!cards.length) return;
   const addCard = [];
   for (const [name, type] of [['content_at', 'INTEGER NOT NULL DEFAULT 0'], ['content_by', "TEXT NOT NULL DEFAULT ''"], ['state_at', 'INTEGER NOT NULL DEFAULT 0'],
-    ['state_by', "TEXT NOT NULL DEFAULT ''"], ['sync_seq', 'INTEGER NOT NULL DEFAULT 0'], ['phonetic', "TEXT NOT NULL DEFAULT ''"]]) {
+    ['state_by', "TEXT NOT NULL DEFAULT ''"], ['sync_seq', 'INTEGER NOT NULL DEFAULT 0'], ['phonetic', "TEXT NOT NULL DEFAULT ''"],
+    // Schema 19: the pick of a sentence card (the level it was picked at, the known words it met, the clock of the pick).
+    ['picked_level', "TEXT NOT NULL DEFAULT ''"], ['picked_skipped', 'INTEGER NOT NULL DEFAULT 0'], ['picked_at', 'INTEGER NOT NULL DEFAULT 0']]) {
     if (!cards.includes(name)) addCard.push(`ALTER TABLE learn_cards ADD COLUMN ${name} ${type}`);
   }
   const reviews = columns('learn_reviews');
@@ -81,6 +84,9 @@ function stamp(db, now = Date.now()) {
   return state.clock;
 }
 const nextSeq = db => { const state = stateOf(db); state.seq += 1; return state.seq; };
+// A change number stored outside the tables (the version of the settings and of the level in system_state): the counter never goes behind it, so a
+// row written after a restart never reuses a number a peer already has.
+const observeSeq = (db, value) => { const state = stateOf(db); if (Number.isSafeInteger(value) && value > state.seq) state.seq = value; };
 const maxSeq = db => stateOf(db).seq;
 const reviewId = () => crypto.randomUUID();
 
@@ -94,4 +100,4 @@ function onLearnChanged(listener) {
   return () => listeners.delete(listener);
 }
 
-module.exports = { ensureSyncSchema, observe, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };
+module.exports = { ensureSyncSchema, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };

@@ -206,6 +206,7 @@ function createLearnAnalysis({
 
   // The weekly report, checked every hour. Returns the reason it did not run, or 'done'.
   let reported = null;
+  const afterWeekly = new Set(); // called with the owner after a weekly report was saved
   async function checkWeekly() {
     if (isCompany()) return 'company';
     const name = owner();
@@ -229,6 +230,8 @@ function createLearnAnalysis({
     if (learn.hasReport(name, `auto-${weekKey(now())}`)) return 'too-soon';
     try {
       await analyze(name, { lang: settings.report_lang }, { auto: true });
+      // The level is estimated again with the new report (services/learn-pick.js), in the background.
+      for (const listener of afterWeekly) { try { listener(name); } catch { /* the next check */ } }
       if (reported) { (log.info || log.warn).call(log, '[learn-analysis] the weekly report works again'); reported = null; }
       return 'done';
     } catch (error) {
@@ -256,7 +259,8 @@ function createLearnAnalysis({
     interval = null;
   }
 
-  const api = { view, analyze, checkWeekly, start, stop, running: name => running.has(name) };
+  const onWeeklyReport = listener => { afterWeekly.add(listener); return () => afterWeekly.delete(listener); };
+  const api = { view, analyze, checkWeekly, start, stop, onWeeklyReport, running: name => running.has(name) };
   // A company computer's page asks its home through the sync (services/learn-sync.js engineHome).
   if (sync && typeof sync.setAnalysis === 'function') sync.setAnalysis({ analyze: (name, body) => analyze(name, body), view });
   return api;

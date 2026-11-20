@@ -228,6 +228,9 @@ function infoHandler(req, res) {
       // learn:reports: the detail of wrong answers and the mistake reports travel with the learning data, and the home routes of the reports
       // (/v1/learn-sync/mistakes, /reports, /report, /analyze) answer; the weekly report is made by one of the engines that list it.
       ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').REPORTS_CAPABILITY] : []),
+      // learn:pick: the estimated level and the picks of the translated sentences travel with the learning data, the home routes of the level
+      // (/v1/learn-sync/level, /level-check) answer, and the backlog of sentences is picked by one of the engines that list it.
+      ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').PICK_CAPABILITY] : []),
       // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
       // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
       ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),

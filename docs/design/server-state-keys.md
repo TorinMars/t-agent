@@ -7,7 +7,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 ## Scopes
 
 - `shared`: synced to every linked engine, company computers included. The registry names the sync that carries it: a settings sync group ([settings-sync.md](settings-sync.md)), the shared page state ([shared-page-state.md](shared-page-state.md)), the shared task order, the Telegram sender choice.
-- `personal`: the person's own data. Kept on the normal machines and synced between them; a company computer keeps only a cache and a hand-over queue ("Company computer" in [linked-device-settings.md](linked-device-settings.md)). Today: the learning settings (the Learn sync, [learn-english.md](learn-english.md)) and the clear mark of the usage data (the usage data sync, [usage-data.md](usage-data.md)).
+- `personal`: the person's own data. Kept on the normal machines and synced between them; a company computer keeps only a cache and a hand-over queue ("Company computer" in [linked-device-settings.md](linked-device-settings.md)). Today: the learning settings and the estimated level (the Learn sync, [learn-english.md](learn-english.md)) and the clear mark of the usage data (the usage data sync, [usage-data.md](usage-data.md)).
 - `device`: this machine only, with the reason: its connections and tokens, its identity, its tunnels, a choice made for this machine, the data of its own tasks (which other engines reach through the link with the task), ids that mean something only here.
 - `runtime`: the state of a process, a sync's bookkeeping (clocks, hashes, what each peer has seen) or a cache that is rebuilt.
 
@@ -42,6 +42,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `telegram_sender` | system_state | shared | the Telegram sender choice, sent to every linked device (`PUT /v1/attention/notify-relay/sender`), newest wins | `services/attention-relay.js` |
 | `learn_v1:<owner>` | system_state | personal | the Learn sync: the learning settings | `services/learn.js` |
 | `learn_v1_sync:<owner>` | system_state | personal | the Learn sync: the version clock of the learning settings | `services/learn.js` |
+| `learn_level_v1:<owner>` | system_state | personal | the Learn sync: the estimated English level with its version clock (the newest estimate wins; a company computer keeps a read-only copy) | `services/learn.js` |
 | `ui_usage_clear_v1` | system_state | personal | the usage data sync (`services/ui-events-sync.js`): the last Clear of the merged usage data, which every engine applies | `services/ui-events.js` |
 | `attention_widget_settings_v1` | system_state | device | the desktop window of this Mac: its switch and window preferences; its `language` field alone is shared (settings sync, group widget-language) | `services/attention-widget.js` |
 | `task_list_hidden_devices_v1` | system_state | device | hidden devices named by page-relative keys (`local`, `remote:<row id>`) whose engine instance id is not known: they mean something only here | `routes/task-list-prefs.js` |

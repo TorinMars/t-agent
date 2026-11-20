@@ -6,6 +6,8 @@
 //   settings and the starter list live on the normal machines); the same answers as /api/learn.
 //   GET  /v1/learn-sync/mistakes?limit=&before=, GET /v1/learn-sync/reports, GET /v1/learn-sync/report?uid=, POST /v1/learn-sync/analyze { lang }:
 //   the wrong answers and the mistake reports of the home for a company computer's page (an analysis runs on the home).
+//   GET  /v1/learn-sync/level, POST /v1/learn-sync/level-check: the estimated level and the picking of the home for a company computer's page (an
+//   estimate runs on the home; the same answers as GET /api/learn/level and POST /api/learn/level/check).
 // Only a token issued for a live service link gets in (403 LINKED_ONLY for any other Engine token), like /v1/settings-sync. Rows only ever travel
 // inside the sealed envelopes. 404 with the sync turned off; 409 LEARN_COMPANY_COMPUTER on a company computer, which takes part only through its home.
 const express = require('express');
@@ -47,6 +49,8 @@ function createEngineLearnSyncRouter(options = {}) {
   router.get('/reports', handle(req => service().engineHome(req.serviceLink, 'reports')));
   router.get('/report', handle(req => service().engineHome(req.serviceLink, 'report', { uid: req.query.uid })));
   router.post('/analyze', handle(req => service().engineHome(req.serviceLink, 'analyze', req.body)));
+  router.get('/level', handle(req => service().engineHome(req.serviceLink, 'level')));
+  router.post('/level-check', handle(req => service().engineHome(req.serviceLink, 'level-check')));
   return router;
 }
 

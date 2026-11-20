@@ -606,6 +606,33 @@ test('a schema 17 database gets the T-Attention schedule columns (schema 18), wi
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
+test('a schema 18 database gets the pick columns of learn_cards (schema 19), with a copy taken first; cards are kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: learn_cards without picked_level, picked_skipped and picked_at, user_version 18.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  for (const column of ['picked_level', 'picked_skipped', 'picked_at']) old.exec(`ALTER TABLE learn_cards DROP COLUMN ${column}`);
+  old.prepare("INSERT INTO learn_cards (owner, kind, en, norm, zh, source, created_at, due_at, content_at, sync_seq) VALUES ('owner', 'sentence', 'Please fix the login page.', 'please fix the login page.', 'z', 'translation', 1, 2, 5, 3)").run();
+  old.pragma('user_version = 18');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 18 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const card = after.prepare('SELECT * FROM learn_cards').get();
+  assert.deepEqual([card.en, card.content_at, card.sync_seq, card.picked_level, card.picked_skipped, card.picked_at], ['Please fix the login page.', 5, 3, '', 0, 0], 'kept, not picked yet');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-18-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
 test('a database of this schema is refused by a version that knows the one before at most', t => {
   // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);

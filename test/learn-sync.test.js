@@ -21,6 +21,7 @@ const { createLearn } = require('../services/learn');
 const { createLearnRouter } = require('../routes/learn');
 const { createLearnSync, CAPABILITY, REPORTS_CAPABILITY } = require('../services/learn-sync');
 const { createLearnAnalysis } = require('../services/learn-analysis');
+const { createLearnPick } = require('../services/learn-pick');
 const { createEngineLearnSyncRouter } = require('../routes/learn-sync');
 const { createSettingsSync } = require('../services/settings-sync');
 const { createDeviceTier, CAPABILITY: TIER_CAPABILITY } = require('../services/device-tier');
@@ -235,9 +236,21 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
         return JSON.stringify({ summary: `Made on ${name}.`, findings: [{ title: 'All of them', cause: 'c', action: 'a', items: ids }] });
       },
     });
+    // The level and the picking with a stubbed model too: the level B1, and the second word of every sentence.
+    side.pickQuestions = [];
+    side.pick = createLearnPick({
+      db, learn: side.learn, sync: side.sync, owner: () => 'me', isConfigured: () => true, company: () => tier.isCompany(), afterSentenceMs: 10, log: { warn() {}, info() {} },
+      chat: async (owner, system, user) => {
+        const message = JSON.parse(user);
+        side.pickQuestions.push(message);
+        if (!message.sentences) return JSON.stringify({ level: 'B1', label: 'intermediate', reason: `Estimated on ${name}.` });
+        return JSON.stringify({ sentences: message.sentences.map(item => ({ id: item.id, words: [{ word: item.text.split(' ')[1], zh: ZH }] })) });
+      },
+    });
+    t.after(() => side.pick.stop());
     const app = express();
     app.use(express.json({ limit: '32mb' }));
-    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
+    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     app.use('/api/device-tier', createDeviceTierRouter({ tier: () => tier }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -512,6 +525,54 @@ test('a company computer: its history is handed over once, answers go to the hom
   assert.equal(reviewsOf(T).length, 6);
   assert.ok(cardsOf(T).some(card => card.norm === 'throughput'));
   assert.equal((await K.page('GET', '/learn/status')).body.waiting, 0);
+});
+
+test('the level and the words from translations: a company computer reads and checks the level on its home, and the home picks the sentences it hands over', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  await noStarter(T);
+  await noStarter(K);
+  for (const en of ['merge', 'branch', 'commit', 'rebase', 'release']) {
+    const made = (await T.page('POST', '/learn/cards', word(en, { zh: ZH }))).body.card;
+    for (const correct of [true, false]) await T.page('POST', `/learn/cards/${made.id}/answer`, { mode: 'spell', grade: correct ? 'good' : 'again', correct });
+  }
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+  // K's page reads the home's level, and "Check again" runs on the home with its model.
+  let level = (await K.page('GET', '/learn/level')).body;
+  assert.deepEqual([level.level, level.translator, level.picking.enabled], [null, true, true]);
+  const checked = await K.page('POST', '/learn/level/check');
+  assert.equal(checked.status, 200, JSON.stringify(checked.body));
+  assert.equal(checked.body.level.reason, 'Estimated on T.');
+  assert.equal(K.pickQuestions.length, 0, 'the company computer never asks a model');
+  assert.equal((await T.page('GET', '/learn/level')).body.level.level, 'B1');
+  await K.sync.syncAll();
+  assert.equal(K.learn.level('me').level, 'B1', 'a copy of the level on the company computer');
+  await assert.rejects(K.pick.check('me'), error => error.statusCode === 409);
+
+  // A sentence collected on K goes to T at once and is picked there; the word comes back to K asked inside its sentence.
+  K.sync.start();
+  T.sync.start();
+  const text = 'Please rollback the deploy now.';
+  await K.page('POST', '/learn/cards', { kind: 'sentence', en: text, zh: ZH2, source: 'translation' });
+  await until(() => cardsOf(T).some(card => card.norm === 'rollback'), 'the home picks the handed-over sentence');
+  await K.sync.syncAll();
+  const spell = (await K.page('GET', '/learn/queue?mode=spell&limit=50')).body.cards.find(card => card.en === 'rollback');
+  assert.deepEqual([spell.context, spell.context_zh, spell.source], [text, ZH2, 'translation']);
+  assert.equal(K.pickQuestions.length, 0);
+  level = (await K.page('GET', '/learn/level')).body;
+  assert.deepEqual([level.picking.picked, level.picking.sentences, level.picking.pending], [1, 1, 0]);
+
+  // The home away: the copy here, said as such; Check again cannot run.
+  K.sync.stop();
+  T.sync.stop();
+  setOnline(K, 'T', false);
+  const away = (await K.page('GET', '/learn/level')).body;
+  assert.deepEqual([away.offline, away.level.level, away.translator, away.picking.picked], [true, 'B1', false, 1]);
+  const refused = await K.page('POST', '/learn/level/check');
+  assert.equal(refused.status, 503);
+  assert.equal(refused.body.error, 'Your level is kept on a normal computer, which cannot be reached right now');
 });
 
 test('every machine marked as a company computer: nothing moves and nothing is lost', async t => {

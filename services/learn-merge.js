@@ -4,14 +4,18 @@
 // made it: the content (en, zh, phonetic, source, context, suspended), changed by an edit, and the review state (due_at, interval_days, ease, reps, lapses,
 // last_result, last_at, last_correct), changed by an answer. Each half goes to the later version on its own, a tie to the greater instance id, so an
 // answer on one device and a meaning edit on another both survive. A meaning or a phonetic transcription is never replaced by an empty one (an older
-// peer, schema 14, sends none), and created_at is the earliest.
-const { normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, REPORT_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED } = require('./learn');
+// peer, schema 14, sends none), and created_at is the earliest. Schema 19: the pick of a sentence (picked_level, picked_skipped, picked_at) is a third
+// part with its own clock: the later pick wins, and a peer without it (older) sends none, so it never undoes one.
+const {
+  normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED, LEVELS, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON,
+} = require('./learn');
 const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
 
 const CONTENT = ['en', 'zh', 'phonetic', 'source', 'context', 'suspended'];
 const STATE = ['due_at', 'interval_days', 'ease', 'reps', 'lapses', 'last_result', 'last_at', 'last_correct'];
-const FIELDS = ['created_at', ...CONTENT, 'content_at', 'content_by', ...STATE, 'state_at', 'state_by'];
+const PICKED = ['picked_level', 'picked_skipped', 'picked_at'];
+const FIELDS = ['created_at', ...CONTENT, 'content_at', 'content_by', ...STATE, 'state_at', 'state_by', ...PICKED];
 const INSTANCE_ID = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_ZH = 500;
 const MAX_CONTEXT = 120;
@@ -30,6 +34,9 @@ function mergeCard(local, incoming, { follow = false } = {}) {
   const stateFromPeer = later(incoming.state_at, incoming.state_by, local.state_at, local.state_by);
   const content = contentFromPeer ? incoming : local;
   const other = contentFromPeer ? local : incoming;
+  // The pick of a moved card was that of its old text: it never comes over.
+  const pickedFromPeer = !follow && (int(incoming.picked_at) !== int(local.picked_at) ? int(incoming.picked_at) > int(local.picked_at)
+    : String(incoming.picked_level || '') > String(local.picked_level || ''));
   const card = {
     created_at: Math.min(local.created_at, incoming.created_at),
     ...pick(content, [...CONTENT, 'content_at', 'content_by']),
@@ -37,9 +44,18 @@ function mergeCard(local, incoming, { follow = false } = {}) {
     // A moved card's transcription is that of its old text: it never comes over.
     phonetic: content.phonetic || (follow ? '' : other.phonetic) || '',
     ...pick(stateFromPeer ? incoming : local, [...STATE, 'state_at', 'state_by']),
+    ...pickedOf(pickedFromPeer ? incoming : local),
   };
-  return { card, changed: FIELDS.some(field => card[field] !== local[field]) };
+  // The same content version with a longer context that starts with the one here: an older version (before schema 19) cut a picked word's sentence to
+  // 120 characters; the whole sentence comes back when the version that has it is read again.
+  if (!follow && incoming.content_at === local.content_at && incoming.content_by === local.content_by && local.context
+    && typeof incoming.context === 'string' && incoming.context.length > local.context.length && incoming.context.startsWith(local.context)) card.context = incoming.context;
+  const before = { ...local, ...pickedOf(local) };
+  return { card, changed: FIELDS.some(field => card[field] !== before[field]) };
 }
+
+const int = value => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
+const pickedOf = row => ({ picked_level: LEVELS.includes(row.picked_level) ? row.picked_level : '', picked_skipped: int(row.picked_skipped), picked_at: int(row.picked_at) });
 
 function pick(row, fields) {
   const out = {};
@@ -58,7 +74,8 @@ function cardFromPeer(raw, sender) {
   let en;
   try { en = checkEnglish(raw.kind, raw.en); } catch { return null; }
   const zh = raw.zh === undefined || raw.zh === null ? '' : text(raw.zh, MAX_ZH);
-  const context = raw.context === undefined || raw.context === null ? '' : text(raw.context, MAX_CONTEXT);
+  // A word picked from a translation has its whole sentence as context (schema 19); other contexts keep the shorter limit.
+  const context = raw.context === undefined || raw.context === null ? '' : text(raw.context, raw.kind === 'word' ? MAX_PICK_CONTEXT : MAX_CONTEXT);
   if (zh === null || context === null || !SOURCES.includes(raw.source) || typeof raw.suspended !== 'boolean') return null;
   if (![raw.created_at, raw.content_at, raw.state_at, raw.due_at].every(time) || !(raw.last_at === null || time(raw.last_at))) return null;
   if (!Number.isFinite(raw.interval_days) || raw.interval_days < 0 || raw.interval_days > 400) return null;
@@ -71,6 +88,8 @@ function cardFromPeer(raw, sender) {
     due_at: raw.due_at, interval_days: raw.interval_days, ease: raw.ease, reps: raw.reps, lapses: raw.lapses,
     last_result: raw.last_result, last_at: raw.last_at, last_correct: raw.last_correct === null ? null : (raw.last_correct ? 1 : 0),
     state_at: raw.state_at, state_by: by(raw.state_by),
+    // Schema 19: a peer without the pick (an older version) sends none: '' at clock 0, which never wins over a pick here.
+    ...(raw.kind === 'sentence' && time(raw.picked_at) ? pickedOf(raw) : { picked_level: '', picked_skipped: 0, picked_at: 0 }),
   };
 }
 
@@ -83,6 +102,7 @@ function cardToPeer(row, me) {
     last_result: row.last_result || null, last_at: row.last_at === null || row.last_at === undefined ? null : row.last_at,
     last_correct: row.last_correct === null || row.last_correct === undefined ? null : Boolean(row.last_correct),
     state_at: row.state_at, state_by: row.state_by || me,
+    picked_level: row.picked_level || '', picked_skipped: int(row.picked_skipped), picked_at: int(row.picked_at),
   };
 }
 // A local row with its versions' devices filled in, for mergeCard.
@@ -171,12 +191,23 @@ function settingsFromPeer(value, starterLists) {
   if (value.starter !== undefined) { if (value.starter !== null && !Object.hasOwn(starterLists, value.starter)) invalid(); out.starter = value.starter; }
   // The audio settings: a value this version does not know is left out (the default here), so a newer peer's choice never stops the sync.
   for (const [key, field] of Object.entries(AUDIO_SETTINGS)) if (field.values.includes(value[key])) out[key] = value[key];
-  for (const [key, field] of Object.entries(REPORT_SETTINGS)) if (value[key] !== undefined && field.check(value[key])) out[key] = value[key];
+  for (const [key, field] of Object.entries(CHECKED_SETTINGS)) if (value[key] !== undefined && field.check(value[key])) out[key] = value[key];
   return out;
 }
 
+// The estimated level of a peer ("Your level" in docs/design/learn-english.md): { level, label, reason, answers, mistakes, report_at, updated_at }
+// checked, or null when it is not one (it is then not applied).
+function levelFromPeer(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !LEVELS.includes(value.level)) return null;
+  const label = typeof value.label === 'string' ? value.label.replace(/\s+/g, ' ').trim().slice(0, MAX_LEVEL_LABEL) : '';
+  const reason = typeof value.reason === 'string' ? value.reason.replace(/\s+/g, ' ').trim().slice(0, MAX_LEVEL_REASON) : '';
+  if (!label || !reason || !count(value.answers) || !count(value.mistakes) || !time(value.updated_at)) return null;
+  if (!(value.report_at === null || value.report_at === undefined || time(value.report_at))) return null;
+  return { level: value.level, label, reason, answers: value.answers, mistakes: value.mistakes, report_at: time(value.report_at) ? value.report_at : null, updated_at: value.updated_at };
+}
+
 module.exports = {
-  later, mergeCard, cardFromPeer, cardToPeer, resolved, reviewFromPeer, reviewToPeer, moveFromPeer, moveToPeer, settingsFromPeer,
+  later, mergeCard, cardFromPeer, cardToPeer, resolved, reviewFromPeer, reviewToPeer, moveFromPeer, moveToPeer, settingsFromPeer, levelFromPeer,
   reportBody, reportFromPeer, reportToPeer, reportWins,
-  CONTENT, STATE, FIELDS,
+  CONTENT, STATE, PICKED, FIELDS,
 };

@@ -1,5 +1,6 @@
 // The rules of the Learn page that need no DOM (pure functions with unit tests): which exercise a card gets, the word tiles of "Build the sentence",
-// the gap of "Fill the gap", the time estimate of the home, the order of a mixed session, the keys of a computer. See "The Learn page" in
+// the gap of "Fill the gap", a word asked inside its sentence in Spell, the notes of "MY LEVEL" and "WORDS FROM MY TRANSLATIONS" in Learn settings,
+// the time estimate of the home, the order of a mixed session, the keys of a computer. See "The Learn page" in
 // docs/design/learn-english-page.md.
 import { normWord, wordsOf } from './learn-grade.mjs';
 
@@ -112,6 +113,83 @@ export function maskedContext(card) {
   if (!word) return context;
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return context.replace(new RegExp(`\\b${escaped}\\w*`, 'gi'), '___');
+}
+
+// Where a word stands in a sentence as a whole word, whatever the case: the index of its first letter, or -1. A curly apostrophe or a typographic
+// dash counts as the straight one. Next to the match there is no letter or digit, nor an apostrophe or hyphen that joins it to one ("session" is not
+// in "session's" or "sessions"; "'expires'" in quotes is found).
+const unifyChar = char => (/[\u2018\u2019\u02bc]/.test(char) ? "'" : /[\u2010\u2011\u2012\u2013]/.test(char) ? '-' : char);
+const letterLike = char => Boolean(char) && /[\p{L}\p{N}]/u.test(char);
+const joiner = char => char === "'" || char === '-';
+export function findWholeWord(text, word) {
+  const source = [...String(text || '')].map(unifyChar);
+  const want = [...String(word || '').trim()].map(unifyChar).map(char => char.toLowerCase());
+  if (!want.length || want.length > source.length) return -1;
+  // Indexes into the original string (a character outside the BMP is two code units there).
+  const offsets = [];
+  let offset = 0;
+  for (const char of String(text || '')) { offsets.push(offset); offset += char.length; }
+  for (let i = 0; i + want.length <= source.length; i += 1) {
+    if (!want.every((char, k) => source[i + k].toLowerCase() === char)) continue;
+    const before = source[i - 1];
+    const after = source[i + want.length];
+    const openBefore = !letterLike(before) && !(joiner(before) && letterLike(source[i - 2]));
+    const openAfter = !letterLike(after) && !(joiner(after) && letterLike(source[i + want.length + 1]));
+    if (openBefore && openAfter) return offsets[i];
+  }
+  return -1;
+}
+
+// Spell asks a word from the person's translations inside its sentence ("Spell" in docs/design/learn-english-page.md): exactly when the card has
+// the Chinese of that sentence (`context_zh`, from the server) and the word stands in its `context` as a whole word. Returns the sentence split at
+// the word, { before, word (as written in the sentence), after, zh }, with the punctuation around the word kept outside it; else null (the meaning
+// layout of today, with "Used in" for any other context).
+export function sentenceGap(card) {
+  if (!card || card.kind === 'sentence') return null;
+  const zh = String(card.context_zh || '').trim();
+  const context = String(card.context || '').trim();
+  const word = String(card.en || '').trim();
+  if (!zh || !context || !word) return null;
+  const at = findWholeWord(context, word);
+  if (at < 0) return null;
+  return { before: context.slice(0, at), word: context.slice(at, at + word.length), after: context.slice(at + word.length), zh };
+}
+
+// "11-21 09:00" in the browser's time zone ('' for a missing or broken time).
+export function shortDateTime(iso) {
+  const date = new Date(iso || '');
+  if (!iso || Number.isNaN(date.getTime())) return '';
+  const two = n => String(n).padStart(2, '0');
+  return `${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+const monthDay = iso => shortDateTime(iso).slice(0, 5);
+
+// The caption under the estimated level in Learn settings ("MY LEVEL"): what it was estimated from and when, as translated templates with their
+// values, joined with " · " by the page. `level`: the `level` of GET /api/learn/level.
+export function levelNote(level) {
+  if (!level) return [];
+  const answers = Number(level.answers) || 0;
+  const mistakes = Number(level.mistakes) || 0;
+  const report = monthDay(level.report_at);
+  const parts = [report
+    ? { template: 'From {1} answers, {2} mistakes and the report of {3}', values: [answers, mistakes, report] }
+    : { template: 'From {1} answers and {2} mistakes', values: [answers, mistakes] }];
+  const updated = shortDateTime(level.updated_at);
+  if (updated) parts.push({ template: 'updated {1}', values: [updated] });
+  return parts;
+}
+
+// The line under "Picked so far" ("WORDS FROM MY TRANSLATIONS"): "57 words from 91 sentences · 12 skipped (you know them)", and "· 3 waiting" while
+// sentences wait to be picked at the current level. `picking`: the `picking` of GET /api/learn/level.
+export function pickedNote(picking) {
+  if (!picking) return [];
+  const n = key => Math.max(0, Number(picking[key]) || 0);
+  const parts = [
+    { template: '{1} words from {2} sentences', values: [n('picked'), n('sentences')] },
+    { template: '{1} skipped (you know them)', values: [n('skipped')] },
+  ];
+  if (n('pending') > 0) parts.push({ template: '{1} waiting', values: [n('pending')] });
+  return parts;
 }
 
 // The letter slots of Spell on one line: at the normal size (36px wide, a gap of 8px, a 24px letter) while the word fits the width; else the slots, the

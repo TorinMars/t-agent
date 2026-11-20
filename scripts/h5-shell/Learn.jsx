@@ -6,6 +6,7 @@ import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
 import Card from '@mui/material/Card';
 import CardActionArea from '@mui/material/CardActionArea';
+import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
@@ -28,7 +29,7 @@ import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
 import { AUTO_CHECK_MS, diffWords, hintText, mistakeTag, normWord, spellCheck, suggestedGrade, typedInFull } from './learn-grade.mjs';
-import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, maskedContext, minutesFor, mixCards, modeOf, slotLayout, tilesFor } from './learn-model.mjs';
+import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
@@ -197,8 +198,8 @@ function ViewBody({ view, phone, back, open, data, ...common }) {
   // A report opened from the Mistakes page (or the list of reports) goes back there (`parent`); every other view back to the home.
   const frame = title => ({ phone, title, onBack: view.parent ? () => open(view.parent) : back });
   if (view.kind === 'session') return <Session mode={view.mode} preset={view.preset} phone={phone} onBack={back} onRestart={mode => open({ kind: 'session', mode })} onDone={data.reload} settings={data.settings} {...common} />;
-  if (view.kind === 'material') return <MaterialView frame={frame(t('Your material'))} ui={common.ui} />;
-  if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} />;
+  if (view.kind === 'material') return <MaterialView frame={frame(t('Your material'))} ui={common.ui} source={view.source || ''} />;
+  if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} open={open} />;
   if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} open={open} openTranslator={common.openTranslator} />;
   if (view.kind === 'reports') return <ReportsView frame={frame(t('Mistake reports'))} ui={common.ui} open={open} />;
   if (view.kind === 'report') return <ReportView frame={frame(t('Mistake report'))} view={view} ui={common.ui} open={open} data={data} />;
@@ -560,10 +561,11 @@ function SentenceResult({ card, result }) {
     </>
   );
 }
-function Prompt({ label, children, footer = null }) {
+function Prompt({ label, badge = null, children, footer = null }) {
+  const title = <Typography variant="body2" color="text.secondary">{label}</Typography>;
   return (
     <Card className="h5-learn-prompt" sx={{ p: 2 }}>
-      <Typography variant="body2" color="text.secondary">{label}</Typography>
+      {badge ? <Box sx={{ display: 'flex', alignItems: 'center', columnGap: 1, flexWrap: 'wrap' }}>{title}{badge}</Box> : title}
       {children}
       {footer}
     </Card>
@@ -685,11 +687,13 @@ function Phonetic({ text, id, sx }) {
   return <Typography component="span" variant="body2" color="text.secondary" translate="no" lang="en-US-fonipa" id={id} className="h5-learn-phonetic" sx={{ whiteSpace: 'nowrap', ...sx }}>{text}</Typography>;
 }
 // A word with its transcription after it on the same line when there is room.
-function WordLine({ word, phonetic, variant = 'body1', className, sx, phoneticId }) {
+// `children`: more on the same line (the meaning, in Spell's sentence layout).
+function WordLine({ word, phonetic, variant = 'body1', className, sx, phoneticId, children = null }) {
   return (
     <Box sx={{ display: 'flex', alignItems: 'baseline', columnGap: 1, flexWrap: 'wrap', minWidth: 0 }}>
       <Typography variant={variant} component="p" translate="no" className={className} sx={{ overflowWrap: 'break-word', minWidth: 0, ...sx }}>{word}</Typography>
       <Phonetic text={phonetic} id={phoneticId} />
+      {children}
     </Box>
   );
 }
@@ -801,7 +805,11 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
   const giveUp = () => { if (!result) setResult({ ...spellCheck(word, value), ok: false, correct: false, helped: true, gaveUp: true }); };
   const showFirst = () => { setHelped(true); setValue(now => (now ? now : word.slice(0, 1))); if (input.current) input.current.focus({ preventScroll: true }); };
-  const context = maskedContext(card);
+  // A word from the person's translations is asked inside its sentence (sentenceGap: the card has the Chinese of the sentence and the word is in it):
+  // the sentence with a gap, its Chinese, then the word's meaning; after Check the word fills the gap. Any other card keeps the meaning first, with its
+  // context as a hint ("Used in"). See "Spell the word" in docs/design/learn-english-page.md.
+  const cloze = sentenceGap(card);
+  const context = cloze ? '' : maskedContext(card);
   // The letter slots on one line (slotLayout): the width of the box is measured, and the slots shrink together for a long word.
   const letters = useRef(null);
   const [room, setRoom] = useState(0);
@@ -835,22 +843,44 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       })}>{shown}</Box>
     );
   };
+  const helpers = (
+    <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
+      {tts ? <AudioButton audio={audio} text={word} field={input} /> : null}
+      <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>
+    </Box>
+  );
+  const meaningState = <>
+    {meaning.state === 'loading' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t('Looking up the meaning…')}</Typography> : null}
+    {meaning.state === 'none' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{tts ? t('No meaning found. Listen to the word instead.') : t('No meaning found for this word.')}</Typography> : null}
+    {meaning.state === 'no-translator' ? <TranslatorNotice onOpen={openTranslator} sx={{ mt: 1 }} /> : null}
+  </>;
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
-      <Prompt label={t('Meaning')} footer={(
-        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
-          {tts ? <AudioButton audio={audio} text={word} field={input} /> : null}
-          <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>
-        </Box>
-      )}>
+      {cloze ? (
+        <Prompt label={t('Fill in the word')} badge={<Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? null : helpers}>
+          <SentenceWithGap cloze={cloze} result={result} />
+          <Typography variant="body2" color="text.secondary" component="p" lang="zh" translate="no" id="h5-learn-sentence-zh" sx={{ mt: 1, overflowWrap: 'break-word' }}>{cloze.zh}</Typography>
+          <Divider sx={{ my: 1.5 }} />
+          {result ? (
+            <WordLine word={word} phonetic={meaning.phonetic} className="h5-learn-word" phoneticId="h5-learn-feedback-phonetic">
+              {meaning.zh ? <Typography variant="body1" component="span" lang="zh" translate="no" id="h5-learn-meaning" sx={{ overflowWrap: 'break-word', minWidth: 0 }}>{meaning.zh}</Typography> : null}
+            </WordLine>
+          ) : meaning.zh ? (
+            <Typography variant="body2" color="text.secondary" component="p" id="h5-learn-word-meaning" sx={{ overflowWrap: 'break-word' }}>
+              {t('The word:')}{' '}<Box component="span" lang="zh" translate="no" id="h5-learn-meaning" sx={{ typography: 'body1', color: 'text.primary' }}>{meaning.zh}</Box>
+            </Typography>
+          ) : null}
+          {result ? null : meaningState}
+        </Prompt>
+      ) : (
+      <Prompt label={t('Meaning')} footer={helpers}>
         {meaning.zh ? <Typography variant="h5" component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography> : null}
         {/* The transcription next to Hear it: the sound is offered there already, so it gives nothing more away. */}
         {tts && meaning.phonetic ? <Box sx={{ mt: 0.5 }}><Phonetic text={meaning.phonetic} id="h5-learn-phonetic" /></Box> : null}
-        {meaning.state === 'loading' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t('Looking up the meaning…')}</Typography> : null}
-        {meaning.state === 'none' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{tts ? t('No meaning found. Listen to the word instead.') : t('No meaning found for this word.')}</Typography> : null}
-        {meaning.state === 'no-translator' ? <TranslatorNotice onOpen={openTranslator} sx={{ mt: 1 }} /> : null}
+        {meaningState}
         {context ? <Typography variant="caption" component="p" color="text.secondary" sx={{ mt: 0.75 }}><Fmt template={'Used in "{1}"'} values={[context]} /></Typography> : null}
       </Prompt>
+      )}
       <Box>
         <Box ref={letters} className="h5-learn-letters" translate="no" data-rows={layout.rows.length} onClick={() => { if (input.current) input.current.focus(); kb.show(); }}
           sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', rowGap: 1, py: 1 }}>
@@ -864,12 +894,21 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
             inputProps={{ id: 'h5-learn-spell-input', 'aria-label': t('Type the word'), maxLength: word.length, readOnly: Boolean(result), ...fieldProps, ...kb.inputProps }}
             sx={{ position: 'absolute', inset: 0, opacity: 0, '& input': { height: '100%', cursor: 'text', p: 0 } }} />
         </Box>
-        <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
-          <Fmt template="{1} letters · type with the keyboard" values={[word.length]} />
-        </Typography>
-        {phone || result ? null : <Box sx={{ mt: 2 }}>{actions}</Box>}
+        {cloze && result ? (
+          // The sentence layout says the result under the letters (the word is in the sentence already); a computer grades right under it.
+          <Box id="h5-learn-feedback" data-correct={result.correct ? 'true' : 'false'} role="status" sx={{ mt: 1, textAlign: 'center' }}>
+            <Typography variant="body2" sx={{ color: result.correct ? 'success.light' : 'error.light', fontWeight: 'fontWeightMedium' }}>{result.correct ? t('Correct') : t('Not quite')}</Typography>
+            {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
+            {!result.correct && !result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[result.right, result.total]} /></Typography> : null}
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
+            <Fmt template="{1} letters · type with the keyboard" values={[word.length]} />
+          </Typography>
+        )}
+        {phone || (result && !cloze) ? null : <Box sx={{ mt: 2 }}>{actions}</Box>}
       </Box>
-      {result ? (
+      {result && !cloze ? (
         <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
           <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
           {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
@@ -880,9 +919,27 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   );
 }
 
-function TranslatorNotice({ onOpen, sx }) {
+// The small "your translation" chip of the sentence layout: the primary colour on its 12% tint (MD2 chip, caption type).
+const CHIP_SX = theme => ({ height: 20, typography: 'caption', fontWeight: 'fontWeightMedium', color: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.12), '& .MuiChip-label': { px: 1 } });
+// The gap is about as wide as the word (its letters are counted in the slots anyway).
+const gapWidth = word => `${Math.min(12, Math.max(2.5, [...word].length * 0.55)).toFixed(2)}em`;
+// The sentence of Spell's sentence layout, in the h6 size: a primary underline where the word goes; after Check the word in it (the success colour
+// when right, the error colour when wrong: the right word either way).
+function SentenceWithGap({ cloze, result }) {
+  const tone = result && result.correct ? 'success.light' : 'error.light';
   return (
-    <Alert severity="info" id="h5-learn-no-translator" sx={sx} action={<Button color="inherit" size="small" id="h5-learn-open-translator" onClick={onOpen}>{t('Open Settings')}</Button>}>
+    <Typography variant="h6" component="p" lang="en" translate="no" id="h5-learn-sentence" sx={{ mt: 1, fontWeight: 'fontWeightRegular', lineHeight: 1.6, overflowWrap: 'break-word' }}>
+      {cloze.before}
+      {result ? <Box component="span" id="h5-learn-sentence-word" data-correct={result.correct ? 'true' : 'false'} sx={{ color: tone, fontWeight: 'fontWeightMedium', borderBottom: 2, borderColor: tone }}>{cloze.word}</Box>
+        : <Box component="span" id="h5-learn-gap" role="img" aria-label={t('blank')} sx={{ display: 'inline-block', width: gapWidth(cloze.word), height: 0, mx: 0.25, borderBottom: 2, borderColor: 'primary.main', verticalAlign: '-0.15em' }} />}
+      {cloze.after}
+    </Typography>
+  );
+}
+
+function TranslatorNotice({ onOpen, sx, id = 'h5-learn-no-translator' }) {
+  return (
+    <Alert severity="info" id={id} sx={sx} action={<Button color="inherit" size="small" id="h5-learn-open-translator" onClick={onOpen}>{t('Open Settings')}</Button>}>
       {t('Word meanings need a translator. Set one up in Settings → Voice and translation.')}
     </Alert>
   );
@@ -1149,14 +1206,18 @@ const EXERCISES = { spell: SpellExercise, build: BuildExercise, dictation: Dicta
 // ── Your material ──
 
 const PAGE = 50;
-function MaterialView({ frame, ui }) {
+// `source`: opened from "Picked so far" in Learn settings, the words picked from the person's translations (GET /cards?source=translation&kind=word),
+// shown as a chip that clears the filter.
+function MaterialView({ frame, ui, source: from = '' }) {
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState('all');
+  const [source, setSource] = useState(from);
+  const [kind, setKind] = useState(from ? 'word' : 'all');
   const [list, setList] = useState({ cards: [], total: 0, loading: true });
   const [editing, setEditing] = useState(null); // { id, zh }
   const load = useCallback(async (offset = 0) => {
     const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
     if (kind !== 'all') params.set('kind', kind);
+    if (source) params.set('source', source);
     if (query.trim()) params.set('q', query.trim());
     try {
       const data = await api('GET', `/api/learn/cards?${params}`);
@@ -1166,7 +1227,7 @@ function MaterialView({ frame, ui }) {
       setList(now => ({ ...now, loading: false }));
       ui.notify(errorText(failure), 'error');
     }
-  }, [kind, query, ui]);
+  }, [kind, query, source, ui]);
   useEffect(() => {
     const timer = setTimeout(() => { void load(0); }, query ? 250 : 0);
     return () => clearTimeout(timer);
@@ -1195,6 +1256,8 @@ function MaterialView({ frame, ui }) {
           <ToggleButton value="sentence">{t('Sentences')}</ToggleButton>
         </ToggleButtonGroup>
       </Box>
+      {source ? <Box><Chip id="h5-learn-source-filter" label={t('From your translations')} onDelete={() => setSource('')}
+        deleteIcon={<Box component="span" sx={{ display: 'inline-flex' }}><Icon name="close" size={16} /></Box>} /></Box> : null}
       <Typography variant="body2" color="text.secondary" id="h5-learn-total">{count(list.total, 'card', 'cards')}</Typography>
       {list.loading ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : null}
       {!list.loading && !list.cards.length ? <Typography variant="body2" color="text.secondary" id="h5-learn-material-empty">{query ? t('Nothing matches your search.') : t('No study cards yet')}</Typography> : null}
@@ -1236,7 +1299,7 @@ function MaterialView({ frame, ui }) {
 
 // ── Learn settings ──
 
-function SettingsView({ frame, ui, data, openTranslator }) {
+function SettingsView({ frame, ui, data, openTranslator, open }) {
   const { settings, setSettings, reload } = data;
   const [goal, setGoal] = useState(String((settings && settings.daily_goal) || 20));
   useEffect(() => { if (settings && settings.daily_goal) setGoal(String(settings.daily_goal)); }, [settings && settings.daily_goal]); // eslint-disable-line react-hooks/exhaustive-deps -- the stored goal
@@ -1288,6 +1351,9 @@ function SettingsView({ frame, ui, data, openTranslator }) {
   return (
     <ViewFrame {...frame}>
       {failed ? <Alert severity="error" id="h5-learn-settings-error" role="alert">{failed}</Alert> : null}
+      <LevelSettings current={current} settings={settings} busy={busy} save={save} fail={fail} clearFailed={() => setFailed('')} openTranslator={openTranslator}
+        openPicked={() => open({ kind: 'material', source: 'translation', parent: { kind: 'settings' } })} />
+      <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('Practice')}</Typography>
       {!settings ? <Typography variant="body2" color="text.secondary">{t('Loading…')}</Typography> : (
         <Card id="h5-learn-settings-card" sx={{ px: 2, py: 1 }}>
           <SwitchRow inputId="h5-learn-collect" label={t('Collect study material')} disabled={busy} checked={current.collect !== false} onChange={on => save({ collect: on })}
@@ -1315,6 +1381,93 @@ function SettingsView({ frame, ui, data, openTranslator }) {
   );
 }
 
+// A section title of Learn settings (MD2 overline) over its card.
+const SECTION_SX = { mt: 1, mb: -1 };
+
+// "MY LEVEL" and "WORDS FROM MY TRANSLATIONS" of Learn settings ("Learn settings" in docs/design/learn-english-page.md). GET /api/learn/level gives
+// the estimated level (shared by the linked engines), the counts of the picking and whether a translation model is set up; Check again / Check now
+// is POST /api/learn/level/check (503 without a model, 409 while a run is going, 502 for an unreadable answer: shown like the other failed changes).
+// The switch is `pick_words` of the learning settings (PUT /settings, shared); View opens Your material on the picked words.
+function useLevel() {
+  const [state, setState] = useState({ loading: true, data: null, error: '' });
+  useEffect(() => {
+    let live = true;
+    api('GET', '/api/learn/level').then(
+      data => { if (live) setState({ loading: false, data: data || {}, error: '' }); },
+      failure => { if (live) setState({ loading: false, data: null, error: errorText(failure) || t('Operation failed') }); },
+    );
+    return () => { live = false; };
+  }, []);
+  return [state, setState];
+}
+const Parts = ({ parts }) => parts.map((part, index) => <span key={part.template}>{index ? ' · ' : ''}<Fmt template={part.template} values={part.values} /></span>);
+function LevelSettings({ current, settings, busy, save, fail, clearFailed, openTranslator, openPicked }) {
+  const [state, setState] = useLevel();
+  const [checking, setChecking] = useState(false);
+  const data = state.data || {};
+  const level = data.level || null;
+  const picking = data.picking || null;
+  const ready = !state.loading && !state.error;
+  const check = async () => {
+    setChecking(true);
+    clearFailed();
+    try {
+      const next = await api('POST', '/api/learn/level/check', {});
+      setState(now => ({ loading: false, data: next || now.data, error: '' }));
+    } catch (failure) {
+      // 503: no translation model (any more); the card shows the notice instead of the button.
+      if (failure && failure.status === 503) setState(now => ({ ...now, data: { ...(now.data || {}), translator: false } }));
+      fail(failure);
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <>
+      <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('My level')}</Typography>
+      <Card id="h5-learn-level-card" aria-busy={checking ? 'true' : undefined} sx={{ p: 2 }}>
+        <Typography variant="body2" color="text.secondary">{t('Your level (estimated)')}</Typography>
+        {state.loading ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{t('Loading…')}</Typography> : null}
+        {state.error ? <Typography variant="body2" color="text.secondary" id="h5-learn-level-error" sx={{ mt: 0.5 }}>{state.error}</Typography> : null}
+        {ready && level ? (
+          <>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', columnGap: 1.5, flexWrap: 'wrap', mt: 0.5 }}>
+              <Typography variant="h4" component="p" translate="no" id="h5-learn-level">{level.level}</Typography>
+              {level.label ? <Typography variant="body2" color="text.secondary" translate="no" id="h5-learn-level-label">{level.label}</Typography> : null}
+            </Box>
+            {level.reason ? <Typography variant="body2" translate="no" id="h5-learn-level-reason" sx={{ mt: 1, overflowWrap: 'break-word' }}>{level.reason}</Typography> : null}
+            <Typography variant="caption" component="p" color="text.secondary" id="h5-learn-level-note" sx={{ mt: 1 }}><Parts parts={levelNote(level)} /></Typography>
+          </>
+        ) : null}
+        {ready && !level ? <Typography variant="h6" component="p" id="h5-learn-level-none" sx={{ mt: 0.5 }}>{t('Not estimated yet')}</Typography> : null}
+        {checking ? <LinearProgress id="h5-learn-level-busy" aria-label={t('Checking your level…')} sx={{ mt: 1.5 }} /> : null}
+        {ready && data.translator === false ? <TranslatorNotice id="h5-learn-level-no-translator" onOpen={openTranslator} sx={{ mt: 1.5 }} /> : null}
+        {ready && data.translator !== false ? (
+          <Button id="h5-learn-level-check" sx={{ mt: 1, ml: -1 }} disabled={checking} onClick={check}>{checking ? t('Checking…') : level ? t('Check again') : t('Check now')}</Button>
+        ) : null}
+      </Card>
+      <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('Words from my translations')}</Typography>
+      <Card id="h5-learn-pick-card" sx={{ px: 2, py: 1 }}>
+        <SwitchRow inputId="h5-learn-pick-words" label={t('Pick words from my translations')} disabled={busy || !settings} checked={current.pick_words !== false}
+          onChange={on => save({ pick_words: on })} secondary={t('Less common words above your level become Spell cards, asked inside their sentence')} />
+        <Divider sx={{ mx: -2 }} />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minHeight: 56, py: 1 }}>
+          <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+            <Typography variant="body1">{t('Picked so far')}</Typography>
+            <Typography variant="body2" color="text.secondary" id="h5-learn-picked">
+              {picking ? <Parts parts={pickedNote(picking)} /> : state.loading ? t('Loading…') : '—'}
+            </Typography>
+          </Box>
+          <Button id="h5-learn-picked-view" sx={{ flexShrink: 0 }} onClick={openPicked}>{t('View')}</Button>
+        </Box>
+      </Card>
+      <Typography variant="caption" component="p" color="text.secondary" id="h5-learn-pick-privacy" sx={{ mt: -1 }}>
+        {t('Your sentences and a summary of your answers go to the translation model you set up (the same one that translated them). Nothing else is sent.')}
+      </Typography>
+    </>
+  );
+}
+
 // The Audio part of Learn settings: shared like the other learning settings (learn_v1 on the server, synced to every linked engine; on a company
 // computer changed on its home). Each choice is saved at once, so the rows are switches and toggle buttons, not a form.
 function ChoiceRow({ id, label, secondary = null, value, choices, disabled = false, onChange }) {
@@ -1335,7 +1488,7 @@ function AudioSettings({ current, busy, save }) {
   const options = audioOptions(current);
   return (
     <>
-      <Typography variant="overline" component="h3" color="text.secondary" sx={{ mt: 1, mb: -1 }}>{t('Audio')}</Typography>
+      <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('Audio')}</Typography>
       <Card id="h5-learn-audio-card" sx={{ px: 2, py: 1 }}>
         <SwitchRow inputId="h5-learn-audio-words" label={t('Play words automatically')} disabled={busy} checked={options.words} onChange={on => save({ audio_words: on })}
           secondary={t('When a word card appears, and once more after the answer')} />

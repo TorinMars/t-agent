@@ -121,3 +121,63 @@ test('the letter slots of Spell stay on one line, shrinking together; a longer w
   }
   assert.deepEqual(slotLayout(10, 0).rows, [10], 'before the width is known: one line');
 });
+
+test('a word is found in a sentence as a whole word, whatever the case, with curly apostrophes and dashes', async () => {
+  const { findWholeWord } = await load();
+  assert.equal(findWholeWord('The session cookie expires after thirty minutes.', 'expires'), 19);
+  assert.equal(findWholeWord('Expires soon', 'expires'), 0, 'case does not count');
+  assert.equal(findWholeWord('It expired, then it expires.', 'expires'), 20, 'the first whole match');
+  assert.equal(findWholeWord('The session\u2019s cookie', 'session'), -1, "not inside session's");
+  assert.equal(findWholeWord('All sessions end', 'session'), -1, 'not inside a longer word');
+  assert.equal(findWholeWord('Please log-in again', 'log'), -1, 'not inside a hyphenated word');
+  assert.equal(findWholeWord("We don\u2019t merge", "don't"), 3, 'a curly apostrophe matches the straight one');
+  assert.equal(findWholeWord("It says 'expires' here", 'expires'), 9, 'a quote is not a joiner');
+  assert.equal(findWholeWord('re-run the tests', 're-run'), 0);
+  assert.equal(findWholeWord('expire', 'expires'), -1);
+  assert.equal(findWholeWord('anything', ''), -1);
+});
+
+test('Spell asks a word inside its sentence only with the Chinese of the sentence and the word found in it', async () => {
+  const { sentenceGap } = await load();
+  const zh = '\u4f1a\u8bdd cookie \u4e09\u5341\u5206\u949f\u540e\u8fc7\u671f\u3002';
+  const word = extra => ({ id: 1, kind: 'word', en: 'expires', zh: 'x', source: 'translation', context: 'The session cookie expires after thirty minutes, so please log in again.', context_zh: zh, ...extra });
+  assert.deepEqual(sentenceGap(word()), { before: 'The session cookie ', word: 'expires', after: ' after thirty minutes, so please log in again.', zh });
+  // The punctuation around the word stays outside the gap; the word keeps the case of the sentence.
+  assert.deepEqual(sentenceGap(word({ context: 'Expires, then logs out.' })), { before: '', word: 'Expires', after: ', then logs out.', zh });
+  assert.deepEqual(sentenceGap(word({ en: 'API', context: 'Call the "API".' })), { before: 'Call the "', word: 'API', after: '".', zh });
+  const one = sentenceGap(word({ context: '  It expires.  ' }));
+  assert.equal(one.before + one.word + one.after, 'It expires.', 'the context is trimmed');
+  assert.equal(sentenceGap(word({ context_zh: '' })), null, 'no Chinese of the sentence: the meaning layout');
+  assert.equal(sentenceGap(word({ context_zh: undefined })), null, 'an older server without the field');
+  assert.equal(sentenceGap(word({ context: 'Programmer English' })), null, 'the word is not in its context (a starter list title)');
+  assert.equal(sentenceGap(word({ context: 'It expired yesterday.' })), null, 'another form is not the word');
+  assert.equal(sentenceGap(word({ en: '' })), null);
+  assert.equal(sentenceGap(word({ kind: 'sentence' })), null, 'sentences are never asked this way');
+  assert.equal(sentenceGap(null), null);
+});
+
+test('the notes of MY LEVEL and WORDS FROM MY TRANSLATIONS', async () => {
+  const { levelNote, pickedNote, shortDateTime } = await load();
+  const updated = new Date(2026, 10, 21, 9, 5).toISOString();
+  const report = new Date(2026, 10, 16, 23, 30).toISOString();
+  assert.equal(shortDateTime(updated), '11-21 09:05', 'in the browser time zone');
+  assert.equal(shortDateTime(''), '');
+  assert.equal(shortDateTime('not a date'), '');
+  assert.deepEqual(levelNote({ level: 'B1', answers: 155, mistakes: 43, report_at: report, updated_at: updated }), [
+    { template: 'From {1} answers, {2} mistakes and the report of {3}', values: [155, 43, '11-16'] },
+    { template: 'updated {1}', values: ['11-21 09:05'] },
+  ]);
+  assert.deepEqual(levelNote({ level: 'A2', answers: 3, mistakes: 0, report_at: null, updated_at: updated }), [
+    { template: 'From {1} answers and {2} mistakes', values: [3, 0] },
+    { template: 'updated {1}', values: ['11-21 09:05'] },
+  ]);
+  assert.deepEqual(levelNote({ level: 'C1' }), [{ template: 'From {1} answers and {2} mistakes', values: [0, 0] }], 'no time: no "updated"');
+  assert.deepEqual(levelNote(null), []);
+  assert.deepEqual(pickedNote({ enabled: true, picked: 57, skipped: 12, sentences: 91, pending: 0, running: false }), [
+    { template: '{1} words from {2} sentences', values: [57, 91] },
+    { template: '{1} skipped (you know them)', values: [12] },
+  ]);
+  assert.deepEqual(pickedNote({ picked: 4, skipped: 0, sentences: 10, pending: 6 }).map(part => part.template).pop(), '{1} waiting');
+  assert.deepEqual(pickedNote({ picked: 'x', sentences: -2 })[0].values, [0, 0], 'bad numbers read as 0');
+  assert.deepEqual(pickedNote(null), []);
+});

@@ -50,6 +50,24 @@
     person's. **One line** (`slotLayout` in `learn-model.mjs`): the slots stay on one line at 36px with 8px gaps while the word fits the measured width
     (ResizeObserver); else slots, gaps and letters shrink together down to 18px slots with a 14px letter; only a longer word wraps, in rows of even
     length (`.h5-learn-letter-row`; 16 letters: one line at 390px, 8 + 8 at 320px), each row as large as it fits.
+    **Spell the word inside its sentence** (a word picked from the person's translations, "Words from your translations" in
+    [learn-english.md](learn-english.md); Spell, Review and Mistakes alike, since all of them use `SpellExercise`): exactly when the card's
+    `context_zh` (the Chinese of the sentence card whose English is the card's `context`) is not empty and the word stands in `context` as a whole
+    word (`sentenceGap` / `findWholeWord` in `learn-model.mjs`: case-insensitive, a curly apostrophe or dash counts as the straight one, no letter,
+    digit or joining apostrophe / hyphen next to it, the punctuation around it outside the gap; the first such place). The prompt card then shows
+    "Fill in the word" with a small chip "your translation" (`#h5-learn-from-translation`: caption type, the primary colour on its 12% tint), the
+    sentence in the h6 size at the regular weight (`#h5-learn-sentence`, `translate="no"`) with a gap where the word goes (`#h5-learn-gap`: a 2px
+    primary underline about as wide as the word, 0.55em a letter, 2.5em to 12em; `aria-label` "blank"), the Chinese under it (body2,
+    text.secondary, `lang="zh"`, `#h5-learn-sentence-zh`), a divider, "The word: <meaning>" (`#h5-learn-word-meaning`; or the lookup's states as in
+    the meaning layout), Hear it and Show first letter. The letter slots, the page's keyboard, the automatic check and the audio are the same. The
+    transcription waits for the answer here (frame 1 of the design has none next to Hear it). After Check the word as written in the sentence fills
+    the gap (`#h5-learn-sentence-word`, medium weight, underlined, success light when right, error light when wrong or given up: the right word
+    either way), the helpers go, under the divider the word with its transcription and its meaning on one line (`WordLine` with the meaning as its
+    child, `#h5-learn-feedback-phonetic`, `#h5-learn-meaning`), and under the letters, instead of the Feedback card, the result (`#h5-learn-feedback`,
+    `role="status"`, centred: "Correct" in success light or "Not quite" in error light, then "You wrote: …" and "N of M letters right" for a wrong
+    answer); the grades stay pinned at the bottom on a phone and come right under the result on a computer. Every other word card (a starter word,
+    whose context is the list's title; a word whose form is not in its context; an older server without `context_zh`) keeps the meaning layout with
+    its context as "Used in" (`maskedContext`).
   - Build the sentence: the Chinese and where it came from, the English words as tiles shuffled with up to three distractors from the other
     sentences of the session (`tilesFor`, seeded by the card id); tap to place, tap a placed tile to take it back, or type after the tiles
     (Backspace in the empty field takes the last tile back); Hint places the next word in order (taking back wrong tiles first); Skip (computer).
@@ -96,10 +114,32 @@
 - **A report** (`#h5-learn-report`): "11-13 – 11-20 · 38 mistakes in 212 answers", the summary (subtitle1), the kinds as rows of label, determinate bar (relative to the largest) and count; then per finding its title, "Cause · …", "What to do · …" and the first three cards "+N"; "Practise these N cards" (`POST /cards/find` with the findings' cards, then a session in the Mistakes mode). The model's text is `translate="no"`. All reports lists them (range, count, Weekly / Asked for, two lines of summary). A report opened from Mistakes goes back there (`parent` of the view). Opening an automatic report sets `report_seen` (`PUT /settings`), so the home's line goes away on every device.
 - **Home line**: while `summary.new_report` is set, an info Alert under the numbers "Your weekly mistake report is ready (38 mistakes)." with View (`#h5-learn-new-report`).
 - **Report language**: after `GET /settings`, when the server has `report_lang` and it differs from the page's language (`I18n.get()`), the page sets it, so the weekly report is written in the language the person reads.
-- **Your material**: `GET /cards?kind=&q=&limit=50&offset=` with a search field (250 ms), All / Words / Sentences, "N cards", Show more; each
+- **Your material**: `GET /cards?kind=&q=&source=&limit=50&offset=` with a search field (250 ms), All / Words / Sentences, "N cards", Show more; each
   row: the English, the meaning or "No meaning yet", kind and source; Edit meaning (`PATCH { zh }`) and Suspend / Restore (`PATCH { suspended }`).
-  Nothing is deleted from here.
-- **Learn settings**: Collect study material (`PUT { collect }`, then `window.LearnCollect.set(on)` so the page stops or starts collecting at
+  Nothing is deleted from here. Opened from "Picked so far" in Learn settings (`{ kind: 'material', source: 'translation', parent: settings }`) it
+  starts on Words with `source=translation` and shows the chip "From your translations" (`#h5-learn-source-filter`, the library `close` icon as its
+  delete icon) that clears the source filter; its back arrow returns to Learn settings. Words that were already cards (a starter word that got a
+  sentence as its context) keep their source, so they are counted in "Picked so far" but not in this filtered list.
+- **Learn settings**, top to bottom: MY LEVEL, WORDS FROM MY TRANSLATIONS, PRACTICE, AUDIO and the translator card. The section titles are MD2
+  overlines in text.secondary like the rest of the Learn page (the design drew them in the primary colour).
+  - **MY LEVEL** (`LevelSettings`, `GET /api/learn/level` when the settings open: `{ level: { level, label, reason, answers, mistakes, report_at,
+    updated_at } | null, picking: { enabled, picked, skipped, sentences, pending, running }, translator }`): a card `#h5-learn-level-card` with "Your
+    level (estimated)", the level in h4 (`#h5-learn-level`) with its label (body2, text.secondary), the reason (body2), and the caption
+    `#h5-learn-level-note` "From 155 answers, 43 mistakes and the report of 11-16 · updated 11-21 09:00" (without a report "From N answers and M
+    mistakes"; `levelNote` in `learn-model.mjs`, dates in the browser's time zone). The label and the reason are the model's English, drawn with
+    `translate="no"`. Without a level "Not estimated yet" (h6, `#h5-learn-level-none`). The text button `#h5-learn-level-check` "Check again" (or
+    "Check now" without a level) posts `POST /api/learn/level/check`; while it waits the button is off and says "Checking…", an indeterminate bar
+    shows (`#h5-learn-level-busy`) and the card is `aria-busy`; the answer replaces level and counts. A failure (409 a run going on, 502 an
+    unreadable answer, 503 no translator) is shown like the other failed changes (`#h5-learn-settings-error` and a toast); a 503 also turns the
+    button into the translator notice. With `translator: false` the existing translator notice (`#h5-learn-level-no-translator`, Open Settings)
+    stands where the button was; a level synced from another engine is still shown. An engine without the route (an older version) says the
+    server's message in the card (`#h5-learn-level-error`) and the rest of the settings work.
+  - **WORDS FROM MY TRANSLATIONS** (`#h5-learn-pick-card`): the switch "Pick words from my translations" (`#h5-learn-pick-words`, `PUT /settings
+    { pick_words }`, on unless the stored value is `false`; shared like the other learning settings), "Picked so far" with `#h5-learn-picked` "57
+    words from 91 sentences · 12 skipped (you know them)" and "· 3 waiting" while `pending` > 0 (`pickedNote`; "—" when the counts could not be
+    read) and the text button View (`#h5-learn-picked-view`, Your material on these words, above), then the caption `#h5-learn-pick-privacy` "Your
+    sentences and a summary of your answers go to the translation model you set up (the same one that translated them). Nothing else is sent."
+  - **PRACTICE**: Collect study material (`PUT { collect }`, then `window.LearnCollect.set(on)` so the page stops or starts collecting at
   once), Daily goal 1 to 200 (saved on Enter or blur), Starter list: Programmer English (on: `POST /starter` then `PUT { starter: 'dev' }`; off:
   `PUT { starter: null }`, which hides the starter words not practised yet), Analyze my mistakes every week (`#h5-learn-analysis-auto`, `PUT { analysis_auto }`, shared), and where word meanings come from, with Open Settings.
 - Card text (English and Chinese) is user content: drawn with `translate="no"`, so the Chinese interface never translates a word of a card
@@ -157,6 +197,16 @@
   browser offers, the estimate, tiles and distractors, Hint, the gap, the masked context, a mixed session, the keys), `test/h5-columns.test.js`
   (the destination in `railDestinations` / `phoneDestinations`, `railView` / `phoneView`), `test/page-bundles.test.js` (the chunk, not in the
   first screen).
+- `scripts/test-h5-learn-pick-browser.cjs` (mocked `/api/learn` as in "Words from your translations" of [learn-english.md](learn-english.md), Asia/Taipei
+  time zone; 390x844 touch and 1440x900): Spell inside the sentence (chip, sentence and gap width, Chinese, divider, "The word:", helpers, no
+  transcription before the answer, the letters and the page keyboard), the automatic check filling the gap in the success colour with the word, its
+  transcription and meaning, "Correct" and the pinned grades; a word whose meaning is looked up, given up (error colour, "Not quite"); a starter word
+  and a word not in its sentence in the meaning layout with "Used in"; Learn settings: the level card and its caption, Check again (busy, the new
+  level, "waiting"), a 409 in the error Alert, the switch's `PUT`, View with `source=translation&kind=word`, the chip that clears it and back to
+  the settings, the privacy caption, no sideways scroll, the 16px gutter; no level yet and Check now; no translator; a 503 from Check; an engine
+  without the route; on a computer a wrong answer typed with the keys, the grades under the result and Enter, Review using the layout, View in the
+  pane. `H5_SHOT_DIR` saves `learn-pick-spell.png`, `learn-pick-checked.png`, `learn-pick-settings.png` (frames 1, 2 and 4 of the design) and
+  `learn-pick-desktop.png`. Unit: `test/h5-learn-model.test.js` (`findWholeWord`, `sentenceGap`, `levelNote`, `pickedNote`, `shortDateTime`).
 - `scripts/test-h5-learn-browser.cjs` (mocked `/api/learn`; 1440x900 and 390x844 touch): the destination on the rail and the bottom navigation,
   the home numbers, every mode answered right and wrong with the diff and the hints, the bodies posted for Again / Hard / Good, the keys, Hint,
   Skip, the end of a session, no translator and its link, Mistakes, the material list (search, kind, edit, suspend, restore), the settings

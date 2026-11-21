@@ -119,6 +119,7 @@
 | Spell the word / Build the sentence / Dictation / Fill the gap / Mistakes (the Learn page's modes) | font-size / align-left / customerservice / border / close-circle | 4767081 / 4767064 / 4766762 / 4766265 / 4765725 | `learnSpell` / `learnBuild` / `learnDictation` / `learnFill` / `learnMistakes` in `learn-icons.mjs`, 22px in a 40px tinted tile |
 | Say it (the Learn page's mode and its microphone) | audio | 5756281 | `voice`, the voice input icon, 22px in the mode tile, 26px in the 56px microphone button |
 | Ask (the text button of every Learn practice card, "Ask about this question") | message | 4765866 | `learnAsk` (20px start icon) in `learn-icons.mjs`; the sheet's send button uses `send` (22px) |
+| English chat (the Learn home card, 22px in its tile; the new chat's mark, 32px) / Earlier chats / New chat / the chat's menu | message / reload time (Ant Design's history) / plus / ellipsis | 4765866 / 4765853 / 7834345 / 4767094 | `learnAsk` and `learnHistory` (22px) in `learn-icons.mjs`; `add` (22px in the phone's app bar, 18px start icon of the computer's "New chat") and `taskMore` (22px) in `Icons.jsx`; Send uses `send` (22px) |
 | Streak, How learning works, Learn settings (the Learn page's home) | fire / question-circle / setting | 4936460 / 4765736 / 4765891 | `learnStreak` (16px, warning colour), `learnHow` (18px start icon) in `learn-icons.mjs`; `setting` (18px start icon) |
 | Edit meaning, Search your material (the Learn page's material list) | edit / search | 4766959 / 6598347 | `edit` 20px, `search` 18px |
 

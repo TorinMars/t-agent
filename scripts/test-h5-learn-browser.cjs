@@ -45,7 +45,7 @@ const SENTENCES = [
   card(11, 'sentence', 'Run the tests again before you merge.', ZH_TESTS, 'translation'),
   card(12, 'sentence', 'Deploy the staging server tonight.', ZH_DEPLOY, 'manual'),
 ];
-const SUMMARY = { due: 18, new_today: 2, done_today: 7, goal: 20, streak: 5, words: 42, sentences: 26, mistakes: 3, collecting: true, starter: 'dev' };
+const SUMMARY = { due: 18, new_today: 2, done_today: 7, goal: 20, streak: 5, words: 42, sentences: 26, mistakes: 3, chats: 2, collecting: true, starter: 'dev' };
 const pageErrors = [];
 
 function learnMock() {
@@ -242,8 +242,8 @@ async function toTerminal(page) {
       assert.equal(await text(page, '#h5-learn-estimate'), 'cards due today · about 6 min');
       assert.equal(await text(page, '#h5-learn-streak'), '5-day streak · 7 of 20 done');
       assert.equal(await page.locator('#h5-learn-goal').getAttribute('aria-valuenow'), '35', '7 of 20');
-      assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '26 sentences', '26 sentences', '26 sentences', '26 sentences', '3 cards']);
-      assert.deepEqual(await page.locator('.h5-learn-mode .MuiTypography-subtitle1').allTextContents(), ['Spell the word', 'Build the sentence', 'Dictation', 'Say it', 'Fill the gap', 'Mistakes']);
+      assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '26 sentences', '26 sentences', '26 sentences', '26 sentences', '3 cards', '2 chats']);
+      assert.deepEqual(await page.locator('.h5-learn-mode .MuiTypography-subtitle1').allTextContents(), ['Spell the word', 'Build the sentence', 'Dictation', 'Say it', 'Fill the gap', 'Mistakes', 'English chat']);
       assert.match(await text(page, '#h5-learn-material'), /From your translations · 26 sentences, 42 words/);
       assert.equal(await page.locator('#h5-learn-home-away').count(), 0, 'a normal machine has no banner');
       await page.locator('#h5-learn-how-card').waitFor({ state: 'visible' });

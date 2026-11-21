@@ -173,6 +173,23 @@ const reportToPeer = (row, me) => {
 // kept everywhere, a tie to the smaller engine id. True when `incoming` should replace `local`.
 const reportWins = (incoming, local) => (incoming.created_at !== local.created_at ? incoming.created_at < local.created_at : String(incoming.by) < String(local.by));
 
+// ---- The questions about a card (schema 20; "Ask about a question" in docs/design/learn-english.md) ----
+// A message is made once and never changed: a union by uid. Its card is named by kind and normalized text, like an answer's.
+const CHAT_UID = /^[A-Za-z0-9-]{8,64}$/;
+const MAX_QUESTION = 500;
+const MAX_CHAT_TEXT = 2000;
+// A message as a peer sent it: { uid, kind, norm, role, text, at, by }, or null (a question is cut to 500 characters, an answer to 2000).
+function chatFromPeer(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid) || !KINDS.includes(raw.kind) || !normOk(raw.norm)) return null;
+  if (raw.role !== 'user' && raw.role !== 'assistant') return null;
+  if (typeof raw.text !== 'string' || !raw.text.trim() || !time(raw.at)) return null;
+  return {
+    uid: raw.uid, kind: raw.kind, norm: raw.norm, role: raw.role, text: raw.text.trim().slice(0, raw.role === 'user' ? MAX_QUESTION : MAX_CHAT_TEXT), at: raw.at,
+    by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
+  };
+}
+const chatToPeer = (row, me) => ({ uid: row.uid, kind: row.kind, norm: row.norm, role: row.role, text: row.text, at: row.at, by: row.by || me });
+
 // A move as a peer sent it: { kind, norm, moved_to, at, by }, or null.
 function moveFromPeer(raw, sender) {
   if (!raw || typeof raw !== 'object' || !KINDS.includes(raw.kind) || !normOk(raw.norm) || !normOk(raw.moved_to) || raw.norm === raw.moved_to || !time(raw.at)) return null;
@@ -208,6 +225,6 @@ function levelFromPeer(value) {
 
 module.exports = {
   later, mergeCard, cardFromPeer, cardToPeer, resolved, reviewFromPeer, reviewToPeer, moveFromPeer, moveToPeer, settingsFromPeer, levelFromPeer,
-  reportBody, reportFromPeer, reportToPeer, reportWins,
+  reportBody, reportFromPeer, reportToPeer, reportWins, chatFromPeer, chatToPeer, MAX_QUESTION, MAX_CHAT_TEXT,
   CONTENT, STATE, PICKED, FIELDS,
 };

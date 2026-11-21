@@ -44,6 +44,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 // schema.sql runs, because schema.sql makes indexes on them (services/learn-sync-store.js; a database without learn_cards gets it all from schema.sql).
 // Schema 15: learn_cards.phonetic, added there too. Schema 17: learn_reviews.expected, tag and hinted, and the table learn_reports, the same way.
 // Schema 19: learn_cards.picked_level, picked_skipped and picked_at (the pick of a translated sentence), the same way.
+// Schema 20: the table learn_chats (the questions about a card and their answers), the same way.
 require('../services/learn-sync-store').ensureSyncSchema(db);
 // Schema 16: the sync columns of ui_events and ui_controls (the usage data of every linked engine as one set), added the same way
 // (services/ui-events.js ensureSchema; a database without the usage data tables gets them from schema.sql).

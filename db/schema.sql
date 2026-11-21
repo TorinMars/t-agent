@@ -442,3 +442,21 @@ CREATE TABLE IF NOT EXISTS learn_reports (
   PRIMARY KEY (owner, uid)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_reports_seq ON learn_reports (owner, sync_seq);
+
+-- Schema 20: the questions the person asked the model about a card and its answers ("Ask about a question" in docs/design/learn-english.md;
+-- services/learn-ask.js). A card's messages go with it; on every engine they are the same card's by its kind and normalized text (the sync joins
+-- learn_cards), a union by uid, and only the newest 20 of a card are kept (services/learn-sync-store.js pruneChats). Personal data like the answers:
+-- a company computer keeps none (its page asks its home).
+CREATE TABLE IF NOT EXISTS learn_chats (
+  owner    TEXT    NOT NULL,
+  uid      TEXT    NOT NULL,                     -- a random UUID, the same on every engine
+  card_id  INTEGER NOT NULL REFERENCES learn_cards(id) ON DELETE CASCADE,
+  role     TEXT    NOT NULL,                     -- user (the question, at most 500 characters) | assistant (the answer, at most 2000)
+  text     TEXT    NOT NULL,
+  at       INTEGER NOT NULL,                     -- the hybrid clock of the learning sync (ms): the order of a card's messages, then uid
+  by       TEXT    NOT NULL DEFAULT '',          -- the engine that stored it ('' is this one)
+  sync_seq INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_chats_card ON learn_chats (card_id, at);
+CREATE INDEX IF NOT EXISTS idx_learn_chats_seq ON learn_chats (owner, sync_seq);

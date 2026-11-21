@@ -22,16 +22,25 @@ const express = require('express');
 //                                                          picking: { enabled, picked, skipped, sentences, pending, running }, translator }
 //   POST  /api/learn/level/check                      -> the same after a new estimate (503 without a model, 409 while one runs, 502 for a bad answer)
 // ("Your level" and "Picking words from translations" in docs/design/learn-english.md; services/learn-pick.js.)
+//   GET   /api/learn/cards/:id/ask                    -> { messages: [{ uid, role: 'user'|'assistant', text, at }], translator }  (oldest first)
+//   POST  /api/learn/cards/:id/ask { question, mode, state: { checked, answer?, correct?, helped?, expected? } }
+//         -> application/x-ndjson: {"delta":"..."} lines, then {"done":true,"messages":[question, answer]} or {"error":"...","status":N} (nothing stored);
+//            a refusal before the first piece is the usual JSON error (400, 404, 409 busy, 429, 503 no translator, 502 the model). On a company computer
+//            the home answers it in one piece: plain JSON { messages }.
+// ("Ask about a question" in docs/design/learn-english.md; services/learn-ask.js.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
 
 const LEVEL_OFFLINE = 'Your level is kept on a normal computer, which cannot be reached right now';
+const ASK_OFFLINE = 'Questions about a card are answered on a normal computer, which cannot be reached right now';
+const HOME_OLDER = 'The normal computer that keeps your learning data needs an update first';
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
-// `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`).
-function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+// `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`). `ask`: the questions about a card
+// (services/learn-ask.js), or null for none (like `analysis`).
+function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
   let syncService = sync === undefined ? (service ? null : undefined) : sync;
@@ -55,6 +64,12 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
   const picker = () => {
     if (pickService === undefined) pickService = require('../services/learn-pick').getLearnPick();
     return pickService;
+  };
+  let askService = ask === undefined ? (service ? null : undefined) : ask;
+  const asker = () => {
+    if (askService === undefined) askService = require('../services/learn-ask').getLearnAsk();
+    if (!askService) throw Object.assign(new Error('Asking about a card is not available'), { statusCode: 503 });
+    return askService;
   };
   const mustPicker = () => {
     const current = picker();
@@ -147,6 +162,66 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
       throw error;
     }
   }));
+  // ---- Questions about a card: on a company computer asked of its home (the conversations are personal data, like the answers) ----
+  // The card named on the home by its kind and normalized text (ids differ per engine).
+  const homeRef = req => { const ref = learn().cardRef(owner(req), req.params.id); return { kind: ref.kind, norm: ref.norm }; };
+  router.get('/cards/:id/ask', handle(async req => {
+    if (!cacheOnly()) return asker().history(owner(req), req.params.id);
+    await fresh();
+    const ref = homeRef(req);
+    try { return await learnSync().askHome(`ask?kind=${encodeURIComponent(ref.kind)}&norm=${encodeURIComponent(ref.norm)}`, { offline: ASK_OFFLINE }); } catch (error) {
+      // Away: no messages and no model, said as such; a home without this version (404 that is not "Card not found") the same with home_older.
+      if (error.statusCode === 503) return { messages: [], translator: false, offline: true };
+      if (error.statusCode === 404 && error.message !== 'Card not found') return { messages: [], translator: false, home_older: true };
+      throw error;
+    }
+  }));
+  async function companyAsk(req) {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const send = () => learnSync().askHome('ask', {
+      method: 'POST', body: { ...homeRef(req), question: body.question, mode: body.mode, state: body.state }, timeout: 100_000, offline: ASK_OFFLINE,
+    });
+    try { return await send(); } catch (error) {
+      if (error.statusCode !== 404) throw error;
+      if (error.message !== 'Card not found') throw Object.assign(new Error(HOME_OLDER), { statusCode: 409 });
+      // A card made here a moment ago may not be on the home yet: one round, then once more.
+      await learnSync().refresh();
+      return send();
+    }
+  }
+  router.post('/cards/:id/ask', async (req, res) => {
+    if (cacheOnly()) {
+      try { res.set('Cache-Control', 'no-store').json(await companyAsk(req)); } catch (error) { fail(res, error); }
+      return;
+    }
+    let service;
+    try { service = asker(); } catch (error) { fail(res, error); return; }
+    // The page closed the request (or went away): the model's call is cancelled and nothing is stored.
+    const controller = new AbortController();
+    res.on('close', () => { if (!res.writableFinished) controller.abort(); });
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' });
+      res.flushHeaders();
+    };
+    const line = value => res.write(`${JSON.stringify(value)}\n`);
+    try {
+      const result = await service.ask(owner(req), req.params.id, req.body, { onDelta: text => { start(); line({ delta: text }); }, signal: controller.signal });
+      start();
+      line({ done: true, messages: result.messages });
+      res.end();
+    } catch (error) {
+      if (controller.signal.aborted) { if (!res.writableEnded) res.end(); return; }
+      if (!started) { fail(res, error); return; }
+      // The model failed after the first piece: said in the stream, with the status the JSON error would have had.
+      const status = error && error.statusCode;
+      if (Number.isInteger(status) && status >= 400 && status <= 599) line({ error: error.message, status });
+      else { console.warn(`Learn: ${error && error.message}`); line({ error: 'Learning data is not available right now', status: 500 }); }
+      res.end();
+    }
+  });
   return router;
 }
 

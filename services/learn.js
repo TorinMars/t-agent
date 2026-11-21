@@ -733,6 +733,8 @@ function createLearn({
 
   return {
     settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter, storedLevel, saveLevel,
+    // The identity of a card on every engine (its id is local): { id, kind, norm }, or 404 (services/learn-ask.js asks a company computer's home by it).
+    cardRef: (owner, id) => { const row = mustCard(owner, id); return { id: row.id, kind: row.kind, norm: row.norm }; },
     level: owner => levelJson(storedLevel(owner)),
     settle: () => background, // the queue's background fill has ended (tests)
     mistakes, sinceReport, mistakesSince, reports, report, hasReport, saveReport, findCards, newReport, lastReport, lastAutoReport,

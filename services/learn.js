@@ -38,6 +38,9 @@ const MEANING_CONCURRENCY = 4;
 // in the background, so a list of new words does not wait for the translator once per word ("Practice queues load fast" in
 // docs/design/learn-english.md).
 const QUEUE_HEAD = 2;
+// The word cards translated ahead of time in one call of prefill() (services/learn-prefill.js calls it batch after batch; "Meanings are translated
+// ahead of time" in docs/design/learn-english.md).
+const PREFILL_BATCH = 40;
 // The audio of the practice ("Audio" in docs/design/learn-english-page.md): each field with its default and its allowed values. Shared like the other
 // learning settings (the same on every device and linked engine).
 const AUDIO_SETTINGS = {
@@ -199,12 +202,19 @@ const settingsVersionKey = owner => `learn_v1_sync:${owner}`;
 
 // `cacheOnly()`: this machine is a company computer whose learning data lives on a normal machine (services/learn-sync.js); it then imports no
 // starter list of its own (the cards come from that machine). `lookupPhonetic(word)`: the dictionary's transcription or '' (tests hand in a fixture).
-function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false, lookupPhonetic = phonetics.lookupPhonetic } = {}) {
+// `onNewWords(owner)`: new word cards were stored (a starter list, an added word, a word with another text); by default the background translation
+// of services/learn-prefill.js is told, which does nothing unless the server started it.
+function createLearn({
+  db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false, lookupPhonetic = phonetics.lookupPhonetic,
+  onNewWords = owner => require('./learn-prefill').afterNewWords(owner),
+} = {}) {
   const meanings = new Map(); // `${owner}|${word}` -> zh, least recently used first
   const askedPhonetic = new Set(); // `${owner}|${norm}` the translator was asked for a transcription (once per word while the server runs)
   const lookingUp = new Map(); // `${owner}|${norm}` -> the meaning lookup in progress, so the queue's background fill and the page's /meaning ask once
   let translatorDown = false; // the last meaning lookup failed: until one works again, a queue leaves out words that have no meaning yet
   let background = Promise.resolve(); // the queue's last background fill (tests wait for it with settle())
+  const unreadableWords = new Set(); // `${owner}|${norm}` whose translator answer could not be read: prefill() leaves them to the queue while the server runs
+  const newWords = owner => { try { onNewWords(owner); } catch { /* the hourly run translates them */ } };
   const stamp = () => syncStore.stamp(db, now());
   const seq = () => syncStore.nextSeq(db);
   const changed = () => syncStore.learnChanged(db);
@@ -310,6 +320,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, phonetic, source, context, at, at, review.EASE_START, stamp(), seq());
     })();
     changed();
+    if (body.kind === 'word' && (!zh || !phonetic)) newWords(owner);
     return { card: oneCard(owner, getCard(owner, lastInsertRowid)), created: true };
   }
 
@@ -345,6 +356,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       }
     })();
     changed();
+    if (row.kind === 'word' && next.norm !== row.norm && (!next.zh || !next.phonetic)) newWords(owner);
     return { card: oneCard(owner, getCard(owner, row.id)) };
   }
 
@@ -447,7 +459,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     if (db.prepare("UPDATE learn_cards SET phonetic = ?, sync_seq = ? WHERE owner = ? AND kind = 'word' AND norm = ? AND phonetic = ''").run(phonetic, seq(), owner, norm).changes) changed();
   }
   // Fills the transcriptions of word cards from the dictionary. `ask`: a word the dictionary does not have is asked of the translator once while the
-  // server runs (a few at a time; stops after the first failure); a word nobody knows keeps ''.
+  // server runs (a few at a time; stops after the first failure); a word nobody knows keeps ''. Returns the first failure of the translator or null.
   async function fillPhonetics(owner, rows, { ask = false } = {}) {
     const todo = [];
     for (const row of rows) {
@@ -455,19 +467,24 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       const found = lookupPhonetic(row.en);
       if (found) { row.phonetic = found; storePhonetic(owner, row.norm, found); } else if (ask && lookupWord && !askedPhonetic.has(`${owner}|${row.norm}`)) todo.push(row);
     }
-    let failed = false;
+    let failed = null;
     const worker = async () => {
       while (todo.length && !failed) {
         const row = todo.shift();
-        askedPhonetic.add(`${owner}|${row.norm}`);
-        if (askedPhonetic.size > MEANING_CACHE_SIZE) askedPhonetic.delete(askedPhonetic.values().next().value);
+        markAsked(owner, row.norm);
         try {
           const found = translatorPhonetic(row.en, await lookupWord(owner, row.en));
           if (found) { row.phonetic = found; storePhonetic(owner, row.norm, found); }
-        } catch { failed = true; }
+        } catch (error) { failed = failed || error || new Error('failed'); }
       }
     };
     await Promise.all(Array.from({ length: Math.min(MEANING_CONCURRENCY, todo.length) }, worker));
+    return failed;
+  }
+  // The translator was asked about this word while the server runs (for its transcription, or with its meaning, whose answer carries one).
+  function markAsked(owner, norm) {
+    askedPhonetic.add(`${owner}|${norm}`);
+    if (askedPhonetic.size > MEANING_CACHE_SIZE) askedPhonetic.delete(askedPhonetic.values().next().value);
   }
 
   // Fills the empty meanings of word cards, a few at a time. Stops asking after the first failure (no translator, the service away): those cards keep ''.
@@ -481,6 +498,54 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
       }
     };
     await Promise.all(Array.from({ length: Math.min(MEANING_CONCURRENCY, todo.length) }, worker));
+  }
+
+  // ---- Translated ahead of time ("Meanings are translated ahead of time" in docs/design/learn-english.md; services/learn-prefill.js runs it) ----
+  // The word cards of the owner that still miss something this service can fill: a meaning (unless its answer could not be read), or a transcription
+  // the dictionary has or the translator was not asked for yet. In practice order: the cards shown first, due first (oldest due first), then the one
+  // practised least recently (or never), like the spell queue; hidden ones (suspended, an untouched starter word with no list chosen) last.
+  function prefillRows(owner) {
+    const rows = db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND kind = 'word' AND (zh = '' OR phonetic = '')
+      ORDER BY (${visible}) DESC, (due_at <= @now) DESC, CASE WHEN due_at <= @now THEN due_at END ASC, last_at ASC NULLS FIRST, id ASC`)
+      .all({ owner, starter: settings(owner).starter, now: now() });
+    return rows.filter(row => {
+      const key = `${owner}|${row.norm}`;
+      if (!row.zh) return Boolean(lookupWord) && !unreadableWords.has(key);
+      return Boolean(lookupPhonetic(row.en)) || (Boolean(lookupWord) && !askedPhonetic.has(key));
+    });
+  }
+  // How many word cards of the owner have no meaning yet (for the log of services/learn-prefill.js).
+  const missingMeanings = owner => Number(db.prepare("SELECT COUNT(*) FROM learn_cards WHERE owner = ? AND kind = 'word' AND zh = ''").pluck().get(owner)) || 0;
+  // Translates up to `max` of those cards now: the meanings through meaning() (its cache, its one lookup per word and its update that keeps the
+  // content clock, so a filled meaning reaches every linked engine: an empty one never wins in the merge), MEANING_CONCURRENCY at a time, then the
+  // transcriptions (the dictionary, else the translator). Stops at the first failure of the translator; a word whose answer could not be read is
+  // left for the queue and the page and the others go on. Nothing on a company computer (its cards come filled from its home).
+  // Returns { tried, filled, left, failed, error }: the cards taken, those that got a meaning or a transcription, the cards still to do, and
+  // whether it stopped at a failure (with that error).
+  async function prefill(owner, { max = PREFILL_BATCH } = {}) {
+    if (cacheOnly()) return { tried: 0, filled: 0, left: 0, failed: false, error: null };
+    const rows = prefillRows(owner).slice(0, Math.max(0, max));
+    const before = rows.map(row => `${row.zh}|${row.phonetic}`);
+    const todo = rows.filter(row => !row.zh);
+    let error = null;
+    const worker = async () => {
+      while (todo.length && !error) {
+        const row = todo.shift();
+        try {
+          const found = await meaning(owner, row.en);
+          row.zh = found.zh;
+          if (found.phonetic && !row.phonetic) row.phonetic = found.phonetic;
+          markAsked(owner, row.norm);
+        } catch (failure) {
+          if (failure instanceof LearnError && failure.statusCode === 502) unreadableWords.add(`${owner}|${row.norm}`);
+          else error = failure || new Error('failed');
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(MEANING_CONCURRENCY, todo.length) }, worker));
+    if (!error) error = await fillPhonetics(owner, rows, { ask: true });
+    const filled = rows.filter((row, index) => `${row.zh}|${row.phonetic}` !== before[index]).length;
+    return { tried: rows.length, filled, left: prefillRows(owner).length, failed: Boolean(error), error };
   }
 
   async function queue(owner, mode, limitValue) {
@@ -557,7 +622,7 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
         added += insert.run(owner, word, word.toLowerCase(), list.title, at, due, review.EASE_START, seq()).changes;
       });
     })();
-    if (added) changed();
+    if (added) { changed(); newWords(owner); }
     return added;
   }
   function starter(owner, body) {
@@ -671,11 +736,33 @@ function createLearn({ db = require('../db'), now = Date.now, timeZone, lookupWo
     level: owner => levelJson(storedLevel(owner)),
     settle: () => background, // the queue's background fill has ended (tests)
     mistakes, sinceReport, mistakesSince, reports, report, hasReport, saveReport, findCards, newReport, lastReport, lastAutoReport,
+    prefill, missingMeanings,
   };
 }
 
+// The meaning of one word through the translator the person set up, by the same path as POST /api/translate/word: this Client's own translator, or the
+// linked service that shares one (services/linked-capabilities.js).
+function translatorLookup() {
+  const { createTranslator, TIMEOUT_MS } = require('./translator');
+  const { getLinkedCapabilities, TIMEOUT_MARGIN_MS } = require('./linked-capabilities');
+  const translator = createTranslator({ db: require('../db'), sessionSecret: require('../config').sessionSecret });
+  const linked = getLinkedCapabilities();
+  return (owner, word) => linked.run('translate', {
+    configured: () => translator.isConfigured(owner),
+    local: () => translator.translateWord(owner, { word }),
+    route: '/translate/word', body: { word, context: '' }, timeoutMs: TIMEOUT_MS + TIMEOUT_MARGIN_MS,
+  });
+}
+// The learning service of this server's database with the translator, shared by the routes (routes/learn.js) and the translation ahead of time
+// (services/learn-prefill.js), so a word both want is asked of the translator once and the meanings they found are one cache.
+let shared = null;
+function sharedLearn() {
+  if (!shared) shared = createLearn({ lookupWord: translatorLookup(), cacheOnly: () => Boolean(require('./learn-sync').getLearnSync().cacheOnly()) });
+  return shared;
+}
+
 module.exports = {
-  createLearn, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
+  createLearn, sharedLearn, translatorLookup, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
   MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
-  LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse,
+  LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse, PREFILL_BATCH,
 };

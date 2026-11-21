@@ -700,6 +700,9 @@ server.listen(config.port, config.host, () => {
   // The level estimate and the words picked from translations of Learn (services/learn-pick.js; never on a company computer, the backlog on one normal
   // engine of the links).
   require('./services/learn-pick').getLearnPick().start();
+  // The meanings and transcriptions of the Learn word cards, translated ahead of time (services/learn-prefill.js; never on a company computer, on one
+  // normal engine of the links).
+  require('./services/learn-prefill').getLearnPrefill().start();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
   if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
   // Moves of tasks to other engines stopped by a crash are finished or undone, and the trash of moved folders is swept (services/task-move.js).
@@ -759,5 +762,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

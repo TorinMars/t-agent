@@ -59,7 +59,10 @@
     sentence in the h6 size at the regular weight (`#h5-learn-sentence`, `translate="no"`) with a gap where the word goes (`#h5-learn-gap`: a 2px
     primary underline about as wide as the word, 0.55em a letter, 2.5em to 12em; `aria-label` "blank"), the Chinese under it (body2,
     text.secondary, `lang="zh"`, `#h5-learn-sentence-zh`), a divider, "The word: <meaning>" (`#h5-learn-word-meaning`; or the lookup's states as in
-    the meaning layout), Hear it and Show first letter. The letter slots, the page's keyboard, the automatic check and the audio are the same. The
+    the meaning layout), Hear it and Show first letter. The letter slots, the page's keyboard and the automatic check are the same. **Sound**: every
+    sound of this card is the whole English sentence (its `context`), not the word alone: the automatic play when it appears and once more after
+    Check (as for any word: Play words automatically, the repeat, the pause, the speed and Stop when I start typing apply), and Hear it, which keeps
+    its label and look ("Playing 1 of 2" with Stop while the sentence plays). Any other word card plays the word. The
     transcription waits for the answer here (frame 1 of the design has none next to Hear it). After Check the word as written in the sentence fills
     the gap (`#h5-learn-sentence-word`, medium weight, underlined, success light when right, error light when wrong or given up: the right word
     either way), the helpers go, under the divider the word with its transcription and its meaning on one line (`WordLine` with the meaning as its
@@ -169,7 +172,7 @@
   Sentences play After the answer / When the card appears (`#h5-learn-audio-when`, off with the sentences), Repeat 1× 2× 3× 5×, Pause between
   repeats 1 s 2 s 3 s, Speed Slow / Normal, Stop when I start typing. Switches and MUI toggle button groups in list rows, each saved at once.
 - When a card plays by itself (`autoPlays` in `learn-audio.mjs`): a word (Spell, a word in Review or Mistakes) when it appears, with the repeat, and
-  once more after the answer; Dictation always at the start (listening is the task); Say it the model at the start; Build the sentence, Fill the
+  once more after the answer (a word asked inside its sentence plays that whole sentence instead, Hear it too; see "Spell the word"); Dictation always at the start (listening is the task); Say it the model at the start; Build the sentence, Fill the
   gap and a sentence in Review as chosen (after the answer by default, because hearing it first gives the answer away).
 - The player (`createPlayer`, pure, with fake timers in `test/h5-learn-audio.test.js`; one per session, `useAudio` / `useCardAudio` in `Learn.jsx`)
   reads with `speakOnce` (learn-speech.mjs) and waits for each reading's end, then the pause. While it plays, Hear it / Play shows "Playing 1 of 2"
@@ -199,9 +202,10 @@
   first screen).
 - `scripts/test-h5-learn-pick-browser.cjs` (mocked `/api/learn` as in "Words from your translations" of [learn-english.md](learn-english.md), Asia/Taipei
   time zone; 390x844 touch and 1440x900): Spell inside the sentence (chip, sentence and gap width, Chinese, divider, "The word:", helpers, no
-  transcription before the answer, the letters and the page keyboard), the automatic check filling the gap in the success colour with the word, its
+  transcription before the answer, the letters and the page keyboard), its sound the whole sentence at the start, on Hear it ("Playing 1 of 2", Stop)
+  and once after Check, never the word alone, the automatic check filling the gap in the success colour with the word, its
   transcription and meaning, "Correct" and the pinned grades; a word whose meaning is looked up, given up (error colour, "Not quite"); a starter word
-  and a word not in its sentence in the meaning layout with "Used in"; Learn settings: the level card and its caption, Check again (busy, the new
+  (its sound the word, at the start and on Hear it) and a word not in its sentence in the meaning layout with "Used in"; Learn settings: the level card and its caption, Check again (busy, the new
   level, "waiting"), a 409 in the error Alert, the switch's `PUT`, View with `source=translation&kind=word`, the chip that clears it and back to
   the settings, the privacy caption, no sideways scroll, the 16px gutter; no level yet and Check now; no translator; a 503 from Check; an engine
   without the route; on a computer a wrong answer typed with the keys, the grades under the result and Enter, Review using the layout, View in the

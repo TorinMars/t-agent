@@ -799,7 +799,11 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     register, onAnswer, answerText: () => value,
     check: set => { if (!value.trim()) return; const check = spellCheck(word, value); set({ ...check, correct: check.ok, helped }); },
   });
-  useCardAudio(audio, exercise, word, result);
+  // A word asked inside its sentence (the sentence layout below) is heard in that whole sentence, at the start, after Check and on Hear it; any
+  // other word card plays the word. See "Spell the word" in docs/design/learn-english-page.md.
+  const cloze = sentenceGap(card);
+  const spoken = cloze ? `${cloze.before}${cloze.word}${cloze.after}` : word;
+  useCardAudio(audio, exercise, spoken, result);
   useAutoCheck({ register, ready: typedInFull(value, word), value, result });
   const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '').slice(0, word.length)); } };
   const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
@@ -808,7 +812,6 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   // A word from the person's translations is asked inside its sentence (sentenceGap: the card has the Chinese of the sentence and the word is in it):
   // the sentence with a gap, its Chinese, then the word's meaning; after Check the word fills the gap. Any other card keeps the meaning first, with its
   // context as a hint ("Used in"). See "Spell the word" in docs/design/learn-english-page.md.
-  const cloze = sentenceGap(card);
   const context = cloze ? '' : maskedContext(card);
   // The letter slots on one line (slotLayout): the width of the box is measured, and the slots shrink together for a long word.
   const letters = useRef(null);
@@ -845,7 +848,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   };
   const helpers = (
     <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
-      {tts ? <AudioButton audio={audio} text={word} field={input} /> : null}
+      {tts ? <AudioButton audio={audio} text={spoken} field={input} /> : null}
       <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>
     </Box>
   );

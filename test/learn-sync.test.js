@@ -23,6 +23,7 @@ const { createLearnSync, CAPABILITY, REPORTS_CAPABILITY } = require('../services
 const { createLearnAnalysis } = require('../services/learn-analysis');
 const { createLearnPick } = require('../services/learn-pick');
 const { createLearnAsk } = require('../services/learn-ask');
+const { createLearnChat } = require('../services/learn-chat');
 const { createEngineLearnSyncRouter } = require('../routes/learn-sync');
 const { createSettingsSync } = require('../services/settings-sync');
 const { createDeviceTier, CAPABILITY: TIER_CAPABILITY } = require('../services/device-tier');
@@ -260,9 +261,20 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
         return pieces.join('');
       },
     });
+    // The English chats with a stubbed model too: it names the engine that answered, with a meta line (streamed in two pieces).
+    side.chatQuestions = [];
+    side.chat = createLearnChat({
+      db, learn: side.learn, sync: side.sync, isConfigured: () => true, timeZone: TZ,
+      converse: async (owner, system, messages, options) => {
+        side.chatQuestions.push(messages);
+        const pieces = ['Chatted ', `on ${name}.\n<<meta>>{"cards":[],"mistakes":[],"journal":false,"title":"From ${name}"}`];
+        if (options.onDelta) for (const piece of pieces) options.onDelta(piece);
+        return pieces.join('');
+      },
+    });
     const app = express();
     app.use(express.json({ limit: '32mb' }));
-    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
+    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, chat: side.chat, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     app.use('/api/device-tier', createDeviceTierRouter({ tier: () => tier }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -625,6 +637,62 @@ test('questions about a card: a company computer asks its home, which answers wi
   assert.deepEqual((await K.page('GET', `/learn/cards/${onK.id}/ask`)).body, { messages: [], translator: false, offline: true });
   const away = await K.page('POST', `/learn/cards/${onK.id}/ask`, { question: 'Away?', mode: 'spell' });
   assert.deepEqual([away.status, away.body], [503, { error: 'Questions about a card are answered on a normal computer, which cannot be reached right now' }]);
+});
+
+test('English chats: a company computer chats on its home, which answers with its model and keeps the chats; away, it says so', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  await noStarter(T);
+  await noStarter(K);
+  await T.page('POST', '/learn/cards', word('deploy', { zh: ZH }));
+  // A chat K had from before it was marked is handed over and leaves it.
+  const before = await fetch(`${K.base}/api/learn/chats/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: null, question: 'Before the flag' }) });
+  const beforeUid = JSON.parse((await before.text()).split('\n')[0]).chat.uid;
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+  assert.equal(K.db.prepare('SELECT COUNT(*) FROM learn_convos').pluck().get(), 0, 'handed over');
+  assert.equal(K.db.prepare('SELECT COUNT(*) FROM learn_convo_messages').pluck().get(), 0);
+  assert.equal(T.db.prepare('SELECT COUNT(*) FROM learn_convo_messages').pluck().get(), 2);
+
+  // A normal engine streams; the company computer's page gets the home's answer as one JSON { chat, messages }.
+  const streamed = await fetch(`${T.base}/api/learn/chats/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat: null, question: 'On T' }) });
+  assert.match(streamed.headers.get('content-type'), /application\/x-ndjson/);
+  const lines = (await streamed.text()).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  assert.ok(lines[0].chat);
+  assert.deepEqual(lines.slice(1, 3), [{ delta: 'Chatted' }, { delta: ' on T.' }], 'trailing white space waits for the next piece');
+  const asked = await K.page('POST', '/learn/chats/send', { chat: lines[0].chat.uid, question: 'On K' });
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  assert.equal(asked.body.chat.uid, lines[0].chat.uid);
+  assert.equal(asked.body.chat.count, 4);
+  assert.deepEqual(asked.body.messages.map(item => [item.role, item.text]), [['user', 'On K'], ['assistant', 'Chatted on T.']]);
+  assert.equal(K.chatQuestions.length, 1, 'the company computer asked no model after the flag');
+  assert.deepEqual(T.chatQuestions[T.chatQuestions.length - 1].map(item => item.content), ['On T', 'Chatted on T.', 'On K'], 'the home has the whole chat');
+  const listed = (await K.page('GET', '/learn/chats')).body;
+  assert.equal(listed.translator, true);
+  assert.deepEqual(listed.chats.map(item => item.title), ['From T', 'From K']);
+  const opened = (await K.page('GET', `/learn/chats/${lines[0].chat.uid}`)).body;
+  assert.equal(opened.messages.length, 4);
+  assert.equal((await K.page('PATCH', `/learn/chats/${lines[0].chat.uid}`, { title: 'Renamed on K', journal: true })).body.chat.title, 'Renamed on K');
+  assert.deepEqual([...T.db.prepare('SELECT title, journal, journal_by FROM learn_convos WHERE uid = ?').all(lines[0].chat.uid).map(row => [row.title, row.journal, row.journal_by])], [['Renamed on K', 1, 'person']]);
+  assert.equal((await K.page('GET', '/learn/summary')).body.chats, 2, 'the summary is the home\'s');
+  assert.equal(listed.chats[1].uid, beforeUid);
+  assert.deepEqual((await K.page('DELETE', `/learn/chats/${beforeUid}`)).body, { ok: true });
+  assert.equal(T.db.prepare('SELECT deleted FROM learn_convos WHERE uid = ?').pluck().get(beforeUid), 1);
+  assert.equal(K.db.prepare('SELECT COUNT(*) FROM learn_convos').pluck().get(), 0, 'kept on the home only');
+  // Refusals of the home come through with their status.
+  const refused = await K.page('POST', '/learn/chats/send', { chat: null, question: '' });
+  assert.deepEqual([refused.status, refused.body], [400, { error: 'Enter your question' }]);
+  assert.equal((await K.page('GET', '/learn/chats/aaaaaaaa-0000')).status, 404);
+  // The home away: no chats and no model, said as such; the rest is 503.
+  setOnline(K, 'T', false);
+  assert.deepEqual((await K.page('GET', '/learn/chats')).body, { chats: [], translator: false, offline: true });
+  const offline = 'Your English chats are kept on a normal computer, which cannot be reached right now';
+  for (const [method, route, body] of [['POST', '/learn/chats/send', { chat: null, question: 'Away?' }], ['GET', `/learn/chats/${lines[0].chat.uid}`], ['DELETE', `/learn/chats/${lines[0].chat.uid}`]]) {
+    const away = await K.page(method, route, body);
+    assert.deepEqual([away.status, away.body], [503, { error: offline }], route);
+  }
 });
 
 test('every machine marked as a company computer: nothing moves and nothing is lost', async t => {

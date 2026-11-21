@@ -415,6 +415,8 @@ function createLearn({
       collecting: current.collect,
       starter: current.starter,
       new_report: newReport(owner, current),
+      // The English chats that are not deleted ("English chat" in docs/design/learn-english-chat.md).
+      chats: count('SELECT COUNT(*) FROM learn_convos WHERE owner = @owner AND deleted = 0'),
     };
   }
 

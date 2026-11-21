@@ -31,11 +31,11 @@ const REPORTS_CAPABILITY = 'learn:reports';
 // learn:pick: the peer picks words from the translated sentences and keeps the estimated level (schema 19); the backlog of sentences is picked by the
 // normal engine with the smallest instance id among the online ones that have it ("Picking words from translations" in docs/design/learn-english.md).
 const PICK_CAPABILITY = 'learn:pick';
-// The kind of pull a normal machine keeps its `have` for. It was 'full' before schema 16, 'full-16' before schema 19 and 'full-19' before schema 20:
-// a new name makes every link read the other side once from the start after the update, so what an older version left out (the reports and the
-// detail of wrong answers; the level, the picks of the sentences and the whole sentence of a picked word; the questions about a card) comes over
-// (rows that change nothing are not applied again).
-const FULL = 'full-20';
+// The kind of pull a normal machine keeps its `have` for. It was 'full' before schema 16, 'full-16' before schema 19, 'full-19' before schema 20 and
+// 'full-20' before schema 21: a new name makes every link read the other side once from the start after the update, so what an older version left
+// out (the reports and the detail of wrong answers; the level, the picks of the sentences and the whole sentence of a picked word; the questions
+// about a card; the English chats) comes over (rows that change nothing are not applied again).
+const FULL = 'full-21';
 const ROUTE = '/v1/learn-sync';
 const PEERS_KEY = 'learn_sync_peers_v1';
 const HOME_KEY = 'learn_home_v1';
@@ -175,6 +175,9 @@ function createLearnSync(options) {
     // The questions about a card and their answers: personal too.
     const chats = reviews ? db.prepare(`SELECT m.*, c.kind AS kind, c.norm AS norm FROM learn_chats m JOIN learn_cards c ON c.id = m.card_id
       WHERE m.owner = ? AND m.sync_seq > ? ORDER BY m.sync_seq LIMIT ?`).all(name, after, limit) : [];
+    // The English chats and their messages: personal too.
+    const convos = reviews ? db.prepare('SELECT * FROM learn_convos WHERE owner = ? AND sync_seq > ? ORDER BY sync_seq LIMIT ?').all(name, after, limit) : [];
+    const convoMessages = reviews ? db.prepare('SELECT * FROM learn_convo_messages WHERE owner = ? AND sync_seq > ? ORDER BY sync_seq LIMIT ?').all(name, after, limit) : [];
     const version = settingsVersion(name);
     const settingsValue = version.seq > after ? readState(db, learnModule.settingsKey(name)) : null;
     // The estimated level: a read-only copy for a company computer too, like the settings.
@@ -186,27 +189,38 @@ function createLearnSync(options) {
       ...moves.map(row => ({ type: 'move', seq: row.sync_seq, row })),
       ...reports.map(row => ({ type: 'report', seq: row.sync_seq, row })),
       ...chats.map(row => ({ type: 'chat', seq: row.sync_seq, row })),
+      ...convos.map(row => ({ type: 'convo', seq: row.sync_seq, row })),
+      ...convoMessages.map(row => ({ type: 'convo_message', seq: row.sync_seq, row })),
       ...(settingsValue !== null ? [{ type: 'settings', seq: version.seq }] : []),
       ...(level ? [{ type: 'level', seq: int(level.seq) }] : []),
     ].sort((a, b) => a.seq - b.seq);
     const taken = rows.slice(0, limit);
-    const more = rows.length > limit || [cards, answers, moves, reports, chats].some(list => list.length >= limit);
-    const page = { cards: [], reviews: [], moves: [], reports: [], chats: [], settings: null, level: null, after, next: more ? taken[taken.length - 1].seq : Math.max(newest, after), more };
+    const more = rows.length > limit || [cards, answers, moves, reports, chats, convos, convoMessages].some(list => list.length >= limit);
+    const page = {
+      cards: [], reviews: [], moves: [], reports: [], chats: [], convos: [], convo_messages: [], settings: null, level: null, after,
+      next: more ? taken[taken.length - 1].seq : Math.max(newest, after), more,
+    };
     const ids = new Set();
     const self = me();
     const addCard = row => { if (row && !ids.has(row.id)) { ids.add(row.id); page.cards.push(merge.cardToPeer(row, self)); } };
+    const convoIds = new Set();
+    const addConvo = row => { if (row && !convoIds.has(row.uid)) { convoIds.add(row.uid); page.convos.push(merge.convoToPeer(row, self)); } };
     for (const entry of taken) {
       if (entry.type === 'card') addCard(entry.row);
       else if (entry.type === 'review') page.reviews.push(merge.reviewToPeer(entry.row));
       else if (entry.type === 'move') page.moves.push(merge.moveToPeer(entry.row, self));
       else if (entry.type === 'report') page.reports.push(merge.reportToPeer(entry.row, self));
       else if (entry.type === 'chat') page.chats.push(merge.chatToPeer(entry.row, self));
+      else if (entry.type === 'convo') addConvo(entry.row);
+      else if (entry.type === 'convo_message') page.convo_messages.push(merge.convoMessageToPeer(entry.row, self));
       else if (entry.type === 'level') page.level = { value: merge.levelFromPeer(level), at: int(level.at), by: level.by || self };
       else page.settings = { value: settingsValue, at: version.at, by: version.by || self };
     }
     for (const entry of taken) {
       if (entry.type === 'review' || entry.type === 'chat') addCard(db.prepare('SELECT * FROM learn_cards WHERE id = ?').get(entry.row.card_id));
       if (entry.type === 'move') addCard(cardFollowing(entry.row.kind, entry.row.moved_to));
+      // A message goes with its chat, so the receiver always has the chat first.
+      if (entry.type === 'convo_message') addConvo(db.prepare('SELECT * FROM learn_convos WHERE owner = ? AND uid = ?').get(name, entry.row.convo_uid));
     }
     return page;
   }
@@ -217,7 +231,8 @@ function createLearnSync(options) {
   function applyPage(payload, sender, { bump = true } = {}) {
     if (!isPlainObject(payload)) throw fault('INVALID_LEARN_SYNC', 400);
     const list = key => (Array.isArray(payload[key]) ? payload[key] : []);
-    if (list('cards').length + list('reviews').length + list('moves').length + list('reports').length + list('chats').length > MAX_PAGE * 5) throw fault('LEARN_SYNC_TOO_LARGE', 413);
+    if (list('cards').length + list('reviews').length + list('moves').length + list('reports').length + list('chats').length + list('convos').length
+      + list('convo_messages').length > MAX_PAGE * 7) throw fault('LEARN_SYNC_TOO_LARGE', 413);
     prepare();
     const self = me();
     const name = o();
@@ -340,6 +355,52 @@ function createLearnSync(options) {
       if (db.prepare('SELECT 1 FROM learn_chats WHERE owner = ? AND uid = ?').get(name, message.uid)) applied += 1;
     }
 
+    // An English chat ("Sync" in docs/design/learn-english-chat.md): merged part by part (services/learn-merge.js mergeConvo); a chat that ends deleted
+    // loses its messages. When the peer had it deleted but it stays here (a message here is newer than its tombstone, or a prune met a journal
+    // chat), the messages here get new change numbers, so the peer, which removed them, gets them back.
+    let convosTouched = false;
+    function applyConvo(raw) {
+      const value = merge.convoFromPeer(raw, sender);
+      if (!value) return;
+      for (const time of [value.title_at, value.journal_at, value.deleted_at, value.updated_at]) syncStore.observe(db, time);
+      const local = db.prepare('SELECT * FROM learn_convos WHERE owner = ? AND uid = ?').get(name, value.uid) || null;
+      const { convo, changed } = merge.mergeConvo(local, value);
+      if (bump && local && value.deleted && !convo.deleted) {
+        for (const uid of db.prepare('SELECT uid FROM learn_convo_messages WHERE owner = ? AND convo_uid = ? ORDER BY at, uid').pluck().all(name, value.uid)) {
+          db.prepare('UPDATE learn_convo_messages SET sync_seq = ? WHERE owner = ? AND uid = ?').run(syncStore.nextSeq(db), name, uid);
+        }
+      }
+      if (!changed) return;
+      const row = { ...convo, owner: name, uid: value.uid };
+      if (local) {
+        db.prepare(`UPDATE learn_convos SET title = @title, title_at = @title_at, journal = @journal, journal_by = @journal_by, journal_at = @journal_at,
+          created_at = @created_at, updated_at = @updated_at, deleted = @deleted, deleted_at = @deleted_at, deleted_by = @deleted_by, sync_seq = @sync_seq
+          WHERE owner = @owner AND uid = @uid`).run({ ...row, sync_seq: seqFor(local.sync_seq) });
+      } else {
+        db.prepare(`INSERT INTO learn_convos (owner, uid, title, title_at, journal, journal_by, journal_at, created_at, updated_at, deleted, deleted_at, deleted_by,
+          by, sync_seq) VALUES (@owner, @uid, @title, @title_at, @journal, @journal_by, @journal_at, @created_at, @updated_at, @deleted, @deleted_at, @deleted_by,
+          @by, @sync_seq)`).run({ ...row, by: own(value.by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
+      }
+      if (convo.deleted) db.prepare('DELETE FROM learn_convo_messages WHERE owner = ? AND convo_uid = ?').run(name, value.uid);
+      convosTouched = true;
+      applied += 1;
+    }
+    // A message of a chat: a new uid is stored when its chat is here and not deleted (it comes with its chat in the same page); the chat's last time
+    // follows it.
+    function applyConvoMessage(raw) {
+      const message = merge.convoMessageFromPeer(raw, sender);
+      if (!message) return;
+      syncStore.observe(db, message.at);
+      if (db.prepare('SELECT 1 FROM learn_convo_messages WHERE owner = ? AND uid = ?').get(name, message.uid)) return;
+      const convo = db.prepare('SELECT deleted, updated_at FROM learn_convos WHERE owner = ? AND uid = ?').get(name, message.convo_uid);
+      if (!convo || convo.deleted) return;
+      db.prepare(`INSERT INTO learn_convo_messages (owner, uid, convo_uid, role, text, at, meta, by, sync_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(name, message.uid, message.convo_uid, message.role, message.text, message.at, message.meta, own(message.by), bump ? syncStore.nextSeq(db) : 0);
+      if (message.at > convo.updated_at) db.prepare('UPDATE learn_convos SET updated_at = ? WHERE owner = ? AND uid = ?').run(message.at, name, message.convo_uid);
+      convosTouched = true;
+      applied += 1;
+    }
+
     function applySettings(raw) {
       if (!isPlainObject(raw) || !Number.isSafeInteger(raw.at) || raw.at < 0) return;
       let value;
@@ -374,6 +435,10 @@ function createLearnSync(options) {
       for (const raw of list('reviews')) applyReview(raw);
       for (const raw of list('reports')) applyReport(raw);
       for (const raw of list('chats')) applyChat(raw);
+      for (const raw of list('convos')) applyConvo(raw);
+      for (const raw of list('convo_messages')) applyConvoMessage(raw);
+      // The newest 50 chats that are not journal chats, the same on every engine after the merge.
+      if (convosTouched && bump) syncStore.pruneConvos(db, name);
       if (payload.settings) applySettings(payload.settings);
       if (payload.level) applyLevel(payload.level);
     })();
@@ -386,7 +451,10 @@ function createLearnSync(options) {
     if (!cacheOnly() || !acked) return 0;
     const reports = db.prepare('DELETE FROM learn_reports WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
     const chats = db.prepare('DELETE FROM learn_chats WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
-    return reports + chats + db.prepare('DELETE FROM learn_reviews WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
+    // The English chats it had from before it was marked (its page chats on the home since).
+    const convos = db.prepare('DELETE FROM learn_convo_messages WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes
+      + db.prepare('DELETE FROM learn_convos WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
+    return reports + chats + convos + db.prepare('DELETE FROM learn_reviews WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
   }
   // How many changes of this company computer wait for a normal machine: its answers, and the cards it added or edited and the moves it made that the
   // home has not got (an answer's new review state goes with the answer and is not counted again).
@@ -494,6 +562,16 @@ function createLearnSync(options) {
       if (!card) throw new learnModule.LearnError('Card not found', 404);
       return action === 'ask-history' ? asker.history(name, card.id) : asker.ask(name, card.id, given);
     }
+    // The English chats (services/learn-chat.js): kept and answered here; the chat named by its uid, the same on every engine.
+    if (['chats', 'chat', 'chat-send', 'chat-update', 'chat-delete'].includes(action)) {
+      if (!chatter) throw fault('NOT_FOUND', 404);
+      const given = isPlainObject(body) ? body : {};
+      if (action === 'chats') return chatter.list(name);
+      if (action === 'chat') return chatter.get(name, given.uid);
+      if (action === 'chat-send') return chatter.send(name, { chat: given.chat, question: given.question, topic: given.topic });
+      if (action === 'chat-update') { const { uid, ...change } = given; return chatter.update(name, uid, change); }
+      return chatter.remove(name, given.uid);
+    }
     throw fault('NOT_FOUND', 404);
   }
   // services/learn-analysis.js hands in how it answers a company computer's page: the reports with the analysis state, and an analysis.
@@ -506,6 +584,9 @@ function createLearnSync(options) {
   // services/learn-ask.js hands in the questions about a card: { history(owner, cardId), ask(owner, cardId, body) } (the answer as one JSON).
   let asker = null;
   function setAsk(value) { asker = value; }
+  // services/learn-chat.js hands in the English chats: { list, get, send (the answer as one JSON), update, remove }.
+  let chatter = null;
+  function setChat(value) { chatter = value; }
 
   // ---- Failures in the log (as in services/settings-sync.js: once per reason, once when it works again, codes only) ----
   const reported = new Map();
@@ -766,7 +847,7 @@ function createLearnSync(options) {
   }
 
   return {
-    start, stop, syncAll, syncPeer, refresh, status, cacheOnly, companySummary, viaHome, waiting, askHome, reportPeers, pickPeers, setAnalysis, setPicker, setAsk, me, company,
+    start, stop, syncAll, syncPeer, refresh, status, cacheOnly, companySummary, viaHome, waiting, askHome, reportPeers, pickPeers, setAnalysis, setPicker, setAsk, setChat, me, company,
     engineDescribe, enginePull, enginePush, engineHome, exportPage, applyPage, peerStates: readPeers, service,
   };
 }

@@ -10,6 +10,9 @@
 //   estimate runs on the home; the same answers as GET /api/learn/level and POST /api/learn/level/check).
 //   GET  /v1/learn-sync/ask?kind=&norm=, POST /v1/learn-sync/ask { kind, norm, question, mode, state }: the questions about a card for a company
 //   computer's page (the card named by kind and normalized text; the model is asked on the home, and the answer comes as one JSON { messages }).
+//   GET  /v1/learn-sync/chats, GET /v1/learn-sync/chat?uid=, POST /v1/learn-sync/chat-send { chat, question, topic }, POST /v1/learn-sync/chat-update
+//   { uid, title?, journal? }, POST /v1/learn-sync/chat-delete { uid }: the English chats for a company computer's page (kept and answered on the home;
+//   the same answers as /api/learn/chats, the send as one JSON { chat, messages }).
 // Only a token issued for a live service link gets in (403 LINKED_ONLY for any other Engine token), like /v1/settings-sync. Rows only ever travel
 // inside the sealed envelopes. 404 with the sync turned off; 409 LEARN_COMPANY_COMPUTER on a company computer, which takes part only through its home.
 const express = require('express');
@@ -55,6 +58,11 @@ function createEngineLearnSyncRouter(options = {}) {
   router.post('/level-check', handle(req => service().engineHome(req.serviceLink, 'level-check')));
   router.get('/ask', handle(req => service().engineHome(req.serviceLink, 'ask-history', { kind: req.query.kind, norm: req.query.norm })));
   router.post('/ask', handle(req => service().engineHome(req.serviceLink, 'ask', req.body)));
+  router.get('/chats', handle(req => service().engineHome(req.serviceLink, 'chats')));
+  router.get('/chat', handle(req => service().engineHome(req.serviceLink, 'chat', { uid: req.query.uid })));
+  router.post('/chat-send', handle(req => service().engineHome(req.serviceLink, 'chat-send', req.body)));
+  router.post('/chat-update', handle(req => service().engineHome(req.serviceLink, 'chat-update', req.body)));
+  router.post('/chat-delete', handle(req => service().engineHome(req.serviceLink, 'chat-delete', req.body)));
   return router;
 }
 

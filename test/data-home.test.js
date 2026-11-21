@@ -666,6 +666,40 @@ test('a schema 19 database gets the table learn_chats (schema 20), with a copy t
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
+test('a schema 20 database gets the tables learn_convos and learn_convo_messages (schema 21), with a copy taken first; a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: no chat tables, user_version 20, with a card and a question about it.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE learn_convo_messages; DROP TABLE learn_convos');
+  const card = old.prepare("INSERT INTO learn_cards (owner, kind, en, norm, zh, source, created_at, due_at, content_at, sync_seq) VALUES ('owner', 'word', 'deploy', 'deploy', 'z', 'manual', 1, 2, 5, 3)").run().lastInsertRowid;
+  old.prepare("INSERT INTO learn_chats (owner, uid, card_id, role, text, at, sync_seq) VALUES ('owner', 'u-0001', ?, 'user', 'Why?', 9, 4)").run(card);
+  old.pragma('user_version = 20');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 20 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.deepEqual(after.prepare('SELECT en, sync_seq FROM learn_cards').get(), { en: 'deploy', sync_seq: 3 }, 'kept');
+  assert.equal(after.prepare('SELECT text FROM learn_chats').pluck().get(), 'Why?', 'kept');
+  const columns = table => after.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
+  assert.deepEqual(columns('learn_convos'), ['owner', 'uid', 'title', 'title_at', 'journal', 'journal_by', 'journal_at', 'created_at', 'updated_at', 'deleted', 'deleted_at', 'deleted_by', 'by', 'sync_seq']);
+  assert.deepEqual(columns('learn_convo_messages'), ['owner', 'uid', 'convo_uid', 'role', 'text', 'at', 'meta', 'by', 'sync_seq']);
+  const indexes = after.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_learn_convo%' ORDER BY name").pluck().all();
+  assert.deepEqual(indexes, ['idx_learn_convo_messages_convo', 'idx_learn_convo_messages_seq', 'idx_learn_convos_seq', 'idx_learn_convos_updated']);
+  after.prepare("INSERT INTO learn_convos (owner, uid, created_at, updated_at) VALUES ('owner', 'c-0001', 1, 2)").run();
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-20-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
 test('a database of this schema is refused by a version that knows the one before at most', t => {
   // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);

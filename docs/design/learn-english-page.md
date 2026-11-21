@@ -55,7 +55,8 @@
     (`.h5-learn-letter-got`), each letter in the same column, both with `data-kind` same / wrong / missing / extra (`.h5-learn-letters` gets
     `data-aligned="true"`). The rows are lined up by the closest match, not by position (`alignSpelling` in `learn-grade.mjs`: an edit-distance
     alignment; on a tie a substitution first, so words of the same length line up by position; gaps land as late as the matches allow), so one
-    missing letter does not turn the rest red. Top row: an agreeing letter in the text colour over a quiet line, a differing or missing one in
+    missing letter does not turn the rest red; "N of M letters right" on the result counts the columns the rows agree on (10 of 11 for one
+    missing letter, not the positional count). Top row: an agreeing letter in the text colour over a quiet line, a differing or missing one in
     success light over a success-light line, an empty dashed quiet slot above an extra letter. Bottom row: right letters success light, wrong and
     extra ones error light, an empty error-light dashed slot for a missing letter. The column count (it can exceed the word's length; the typed
     answer is still cut to the word's length) goes to `slotLayout`, and a long word wraps the two rows as pairs (`.h5-learn-letter-pair`) so the

@@ -882,6 +882,8 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   // closest match (alignSpelling), so the column count can exceed the word's length; a long word wraps the two rows as pairs. See "Spell the word" in
   // docs/design/learn-english-page.md.
   const aligned = result && !result.correct && !result.gaveUp ? alignSpelling(word, value) : null;
+  // "N of M letters right" counts the letters the two rows agree on, so it says the same as the rows (one missing letter is 10 of 11, not 6).
+  const rightLetters = aligned ? aligned.columns.filter(column => column.kind === 'same').length : result ? result.right : 0;
   const note = aligned ? spellingNote(aligned) : null;
   const layout = slotLayout(aligned ? aligned.columns.length : word.length, room);
   const rows = [];
@@ -978,7 +980,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
           <Box id="h5-learn-feedback" data-correct={result.correct ? 'true' : 'false'} role="status" sx={{ mt: 1, textAlign: 'center' }}>
             <Typography variant="body2" sx={{ color: result.correct ? 'success.light' : 'error.light', fontWeight: 'fontWeightMedium' }}>{result.correct ? t('Correct') : t('Not quite')}</Typography>
             {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
-            {!result.correct && !result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[result.right, result.total]} /></Typography> : null}
+            {!result.correct && !result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[rightLetters, result.total]} /></Typography> : null}
           </Box>
         ) : note ? (
           <Typography variant="body2" color="text.secondary" align="center" id="h5-learn-spell-note" sx={{ mt: 1 }}>
@@ -995,7 +997,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
         <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
           <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
           {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
-          {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[result.right, result.total]} /></Typography> : null}
+          {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[rightLetters, result.total]} /></Typography> : null}
         </Feedback>
       ) : null}
       {ask.panel}

@@ -980,7 +980,7 @@ async function toTerminal(page) {
       assert.equal(missingRows.got.kinds, 'ssssssmssss', 'one missing letter does not turn the rest red');
       assert.deepEqual(missingRows.want.lefts, missingRows.got.lefts);
       assert.equal(missingRows.note, '1 letter missing');
-      assert.match(await text(page, '#h5-learn-feedback'), /environment.*You wrote: enviroment/);
+      assert.match(await text(page, '#h5-learn-feedback'), /environment.*You wrote: enviroment.*10 of 11 letters right/, 'counted as the rows show, not by position');
       assert.equal(await page.locator('.h5-learn-letter-want').first().getAttribute('aria-hidden'), 'true', 'the rows are hidden from screen readers; the card says it');
       await shot(page, 'learn-phone-spell-wrong-390.png');
       await page.locator('#h5-learn-back').tap();

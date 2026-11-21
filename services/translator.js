@@ -111,51 +111,103 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
 
   const wordCache = new Map(); // insertion order = least recently used first
 
+  // The provider in use for an owner: { all, config, label }, or the 409 "Translation service not configured yet" while it is off or has no key.
+  function activeProvider(owner) {
+    const all = read(owner);
+    const config = { ...all.providers[all.provider], enabled: all.enabled };
+    if (!config.enabled || !config.apiKey) throw new TranslatorError('Translation service not configured yet', 409);
+    return { all, config, label: PROVIDERS[all.provider].label };
+  }
+
+  // One call of the provider's chat endpoint with these messages (after the system message). Answers the response when it is ok; every failure is a
+  // TranslatorError with the provider's own reason. `signal` aborts the call (a timeout or the caller); the caller maps the abort.
+  async function post({ all, config, label }, system, messages, { temperature, json = false, stream = false, maxTokens = 0 }, signal) {
+    const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+      body: JSON.stringify({
+        model: config.model, temperature, stream,
+        ...glmReasoning(all.provider, config.model),
+        ...(json ? { response_format: { type: 'json_object' } } : {}),
+        ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}),
+        messages: [{ role: 'system', content: system }, ...messages],
+      }),
+      signal,
+    });
+    if (!response.ok) { // Prefer reporting the provider's own error unchanged (for example GLM's 1113 insufficient balance) so it is not hidden behind a generic status-code message
+      const raw = await response.text().catch(() => '');
+      let detail = null;
+      try { const data = JSON.parse(raw); detail = data && typeof data === 'object' ? (data.error && typeof data.error === 'object' ? data.error : data) : null; } catch { /* not JSON: use a snippet of the raw text */ }
+      const reason = detail && text(detail.message || detail.msg || detail.error_description || '');
+      const code = detail && (detail.code || detail.type);
+      if (reason) throw new TranslatorError(`${label} returned an error: ${reason.slice(0, 200)} (HTTP ${response.status}${code ? `, error code ${code}` : ''})`, 502);
+      if (!detail && raw.trim()) throw new TranslatorError(`${label} returned an error (HTTP ${response.status}): ${text(raw).replace(/\s+/g, ' ').slice(0, 200)}`, 502);
+    }
+    if (response.status === 401 || response.status === 403) throw new TranslatorError(`The ${label} API key is invalid or lacks permission`, 502);
+    if (response.status === 402) throw new TranslatorError(`The ${label} account balance is insufficient`, 502);
+    if (response.status === 429) throw new TranslatorError(`${label} rate limit reached; please retry later`, 502);
+    if (!response.ok) throw new TranslatorError(`${label} returned an error (HTTP ${response.status})`, 502);
+    return response;
+  }
+  const contentOf = data => (data && data.choices && data.choices[0] && data.choices[0].message && typeof data.choices[0].message.content === 'string' ? data.choices[0].message.content : '');
+  // A failure that is not the provider's answer: a TranslatorError as it is, an abort as a timeout (or, when `cancelled`, as the caller's), else the network.
+  function callFailure(error, cancelled = false) {
+    if (error instanceof TranslatorError) return error;
+    if (error && error.name === 'AbortError') return cancelled ? new TranslatorError('The question was cancelled', 499) : new TranslatorError('Translation timed out; please retry', 504);
+    return new TranslatorError('Cannot reach the translation service; check the network and endpoint address', 502);
+  }
+
   // Sends one system + user message to the chosen provider and returns the text of its answer. Every failure is a TranslatorError with the provider's own reason.
   // `options` (the Learn mistake analysis): `timeoutMs` instead of TIMEOUT_MS, `json` asks for a JSON object (response_format, which DeepSeek and GLM
   // both take), `temperature`.
   async function complete(owner, system, user, { timeoutMs = TIMEOUT_MS, json = false, temperature = 0 } = {}) {
-    const all = read(owner);
-    const config = { ...all.providers[all.provider], enabled: all.enabled };
-    const label = PROVIDERS[all.provider].label;
-    if (!config.enabled || !config.apiKey) throw new TranslatorError('Translation service not configured yet', 409);
+    const provider = activeProvider(owner);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({
-          model: config.model, temperature, stream: false,
-          ...glmReasoning(all.provider, config.model),
-          ...(json ? { response_format: { type: 'json_object' } } : {}),
-          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) { // Prefer reporting the provider's own error unchanged (for example GLM's 1113 insufficient balance) so it is not hidden behind a generic status-code message
-        const raw = await response.text().catch(() => '');
-        let detail = null;
-        try { const data = JSON.parse(raw); detail = data && typeof data === 'object' ? (data.error && typeof data.error === 'object' ? data.error : data) : null; } catch { /* not JSON: use a snippet of the raw text */ }
-        const reason = detail && text(detail.message || detail.msg || detail.error_description || '');
-        const code = detail && (detail.code || detail.type);
-        if (reason) throw new TranslatorError(`${label} returned an error: ${reason.slice(0, 200)} (HTTP ${response.status}${code ? `, error code ${code}` : ''})`, 502);
-        if (!detail && raw.trim()) throw new TranslatorError(`${label} returned an error (HTTP ${response.status}): ${text(raw).replace(/\s+/g, ' ').slice(0, 200)}`, 502);
-      }
-      if (response.status === 401 || response.status === 403) throw new TranslatorError(`The ${label} API key is invalid or lacks permission`, 502);
-      if (response.status === 402) throw new TranslatorError(`The ${label} account balance is insufficient`, 502);
-      if (response.status === 429) throw new TranslatorError(`${label} rate limit reached; please retry later`, 502);
-      if (!response.ok) throw new TranslatorError(`${label} returned an error (HTTP ${response.status})`, 502);
-      const data = await response.json();
-      const output = text(data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content)
-        .replace(/^```[a-z]*\n?|\n?```$/gi, '').trim();
+      const response = await post(provider, system, [{ role: 'user', content: user }], { temperature, json }, controller.signal);
+      const output = text(contentOf(await response.json())).replace(/^```[a-z]*\n?|\n?```$/gi, '').trim();
       if (!output) throw new TranslatorError('Translation result is empty', 502);
       return output;
     } catch (error) {
-      if (error instanceof TranslatorError) throw error;
-      if (error && error.name === 'AbortError') throw new TranslatorError('Translation timed out; please retry', 504);
-      throw new TranslatorError('Cannot reach the translation service; check the network and endpoint address', 502);
+      throw callFailure(error);
     } finally { clearTimeout(timer); }
+  }
+
+  // A conversation ("Ask about a question" in docs/design/learn-english.md): the system message, then `messages` ([{ role: 'user' | 'assistant',
+  // content }], the last one the person's new question), to the same provider, key, URL and model as `complete`, with the same errors. Returns the
+  // whole answer. With `onDelta(text)` it asks for a stream (`stream: true`) and reads the OpenAI-compatible server-sent events (`data: {...}` lines
+  // with choices[0].delta.content, then `data: [DONE]`), calling onDelta once per piece; a provider that answers with one JSON body instead is read
+  // as one piece. `signal` (the caller went away) and `timeoutMs` (the whole answer) abort the call: 499 "The question was cancelled" and 504.
+  async function converse(owner, system, messages, { timeoutMs = TIMEOUT_MS, temperature = 0.3, maxTokens = 0, onDelta = null, signal = null } = {}) {
+    if (!Array.isArray(messages) || !messages.length || messages.some(item => !item || !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string')) {
+      throw new TranslatorError('Invalid conversation');
+    }
+    const provider = activeProvider(owner);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const cancel = () => controller.abort();
+    if (signal) { if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true }); }
+    const stream = typeof onDelta === 'function';
+    try {
+      const response = await post(provider, system, messages.map(item => ({ role: item.role, content: item.content })), { temperature, stream, maxTokens }, controller.signal);
+      const type = String((response.headers && typeof response.headers.get === 'function' && response.headers.get('content-type')) || '');
+      let output = '';
+      if (!stream || !response.body || /application\/json/i.test(type)) {
+        output = contentOf(await response.json());
+        if (stream && output) onDelta(output);
+      } else {
+        await readStream(response.body, piece => { output += piece; onDelta(piece); });
+      }
+      output = output.trim();
+      if (!output) throw new TranslatorError('The model gave no answer', 502);
+      return output;
+    } catch (error) {
+      throw callFailure(error, Boolean(signal && signal.aborted));
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', cancel);
+    }
   }
 
   // One piece (at most CHUNK_CHARS) keeps its lines: line N of the result is line N of the piece, blank lines stay blank and a line without Chinese is
@@ -198,6 +250,8 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
     // Server side only (the Learn mistake analysis, services/learn-analysis.js): one question to the provider and model the person uses for translation,
     // with the same checks and errors as a translation (409 "Translation service not configured yet" while it is off or has no key).
     chat: (owner, system, user, options) => complete(owner, system, user, options),
+    // Server side only (Learn's "Ask about a question", services/learn-ask.js): a conversation, streamed when `onDelta` is given (see converse above).
+    converse: (owner, system, messages, options) => converse(owner, system, messages, options),
     // The label and model of the provider in use, for a page that names it (never the key).
     activeModel(owner) {
       const all = read(owner);
@@ -266,6 +320,46 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
   };
 }
 
+// Reads an OpenAI-compatible server-sent event stream (a web ReadableStream of bytes): every `data: {...}` line with choices[0].delta.content calls
+// `piece(text)`; `data: [DONE]` or the end of the body ends it. An error object in the stream ({"error": {...}}) is the provider's error. Comments,
+// `event:` lines, keep-alives and a reasoning model's `reasoning_content` are skipped. The body is cancelled at the end, also after a failure.
+async function readStream(body, piece) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let done = false;
+  const line = raw => {
+    const value = raw.replace(/\r$/, '');
+    if (!value.startsWith('data:')) return;
+    const data = value.slice(5).trim();
+    if (!data) return;
+    if (data === '[DONE]') { done = true; return; }
+    let event;
+    try { event = JSON.parse(data); } catch { return; }
+    if (event && event.error) {
+      const detail = typeof event.error === 'object' ? event.error : { message: String(event.error) };
+      throw new TranslatorError(`The model returned an error: ${text(String(detail.message || detail.msg || 'unknown')).slice(0, 200)}`, 502);
+    }
+    const delta = event && event.choices && event.choices[0] && event.choices[0].delta;
+    if (delta && typeof delta.content === 'string' && delta.content) piece(delta.content);
+  };
+  try {
+    while (!done) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      let index;
+      while (!done && (index = buffer.indexOf('\n')) >= 0) {
+        line(buffer.slice(0, index));
+        buffer = buffer.slice(index + 1);
+      }
+    }
+    if (!done) { buffer += decoder.decode(); if (buffer) line(buffer); }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
 // Whether `translate` would call a provider for this input. Refused input and text with no Chinese are answered without one, so they never need a linked service.
 function needsProvider(input) {
   const source = typeof input === 'string' ? input.trim() : '';
@@ -313,4 +407,4 @@ const SYNC_GROUP = 'translate';
 const exportForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `translator:${owner}`, sessionSecret);
 const importFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `translator:${owner}`, syncStore.objectOrNull(value), sessionSecret);
 
-module.exports = { SYNC_GROUP, exportForSync, importFromSync, PROVIDERS, glmReasoning, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, PROVIDERS, glmReasoning, readStream, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };

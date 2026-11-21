@@ -389,3 +389,110 @@ test('Word translation: the HTTP route needs the same-origin proof and returns t
     assert.equal((await fetch(`${base}/word`, { method: 'POST', body: '{"word":"run"}', headers: { 'Content-Type': 'application/json' } })).status, 403, 'needs same-origin proof');
   } finally { server.close(); }
 });
+
+// ---- converse: a conversation, streamed or in one piece (Learn's "Ask about a question"; never a real model) ----
+// A fake streamed answer: the byte chunks of a ReadableStream body, as a server-sent event stream; `hold` keeps the stream open after the chunks.
+function streamReply(chunks, { hold = false, type = 'text/event-stream' } = {}) {
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      if (!hold) controller.close();
+    },
+    cancel() { cancelled = true; },
+  });
+  return { ok: true, status: 200, headers: new Headers({ 'content-type': type }), body, json: async () => { throw new Error('a stream'); }, text: async () => '', cancelled: () => cancelled };
+}
+const sse = (content, extra = {}) => `data: ${JSON.stringify({ choices: [{ delta: { content, ...extra } }] })}\n\n`;
+
+test('converse: the system message, the earlier messages and the question go to the provider; without onDelta the answer comes in one piece', async () => {
+  const { service, calls } = setup(() => reply(200, { choices: [{ message: { content: '  A **hint**: it starts with d.\n' } }] }));
+  service.saveConfig('owner', { apiKey: 'sk-1' });
+  const messages = [{ role: 'user', content: 'Give me a hint' }, { role: 'assistant', content: 'It is a verb.' }, { role: 'user', content: 'Another one?' }];
+  assert.equal(await service.converse('owner', 'You are a tutor.', messages, { maxTokens: 800, temperature: 0.3 }), 'A **hint**: it starts with d.');
+  const body = calls[0].body;
+  assert.equal(calls[0].url, 'https://api.deepseek.com/chat/completions');
+  assert.deepEqual(body.messages, [{ role: 'system', content: 'You are a tutor.' }, ...messages]);
+  assert.deepEqual([body.stream, body.max_tokens, body.temperature, body.model], [false, 800, 0.3, 'deepseek-flash']);
+  assert.equal(body.response_format, undefined, 'plain text, not JSON');
+  // The same checks and errors as a translation.
+  await assert.rejects(service.converse('other', 'S', messages), error => error.statusCode === 409 && /not configured/.test(error.message));
+  await assert.rejects(service.converse('owner', 'S', []), /Invalid conversation/);
+  await assert.rejects(service.converse('owner', 'S', [{ role: 'system', content: 'x' }]), /Invalid conversation/);
+  for (const [status, pattern] of [[401, /invalid/], [402, /balance/], [429, /rate limit/], [500, /HTTP 500/]]) {
+    const failing = setup(() => reply(status, {}));
+    failing.service.saveConfig('o', { apiKey: 'k' });
+    await assert.rejects(failing.service.converse('o', 'S', messages), pattern);
+  }
+  const glm = setup(() => reply(200, { choices: [{ message: { content: 'ok' } }] }));
+  glm.service.saveConfig('o', { provider: 'glm', apiKey: 'k', model: 'glm-5.3-flash' });
+  await glm.service.converse('o', 'S', messages);
+  assert.equal(glm.calls[0].body.reasoning_effort, 'low', 'the GLM thinking switch as for a translation');
+  const empty = setup(() => reply(200, { choices: [{ message: { content: ' ' } }] }));
+  empty.service.saveConfig('o', { apiKey: 'k' });
+  await assert.rejects(empty.service.converse('o', 'S', messages), error => error.statusCode === 502 && error.message === 'The model gave no answer');
+});
+
+test('converse: with onDelta the answer is streamed: pieces cut anywhere are read, reasoning and keep-alives skipped, [DONE] ends it', async () => {
+  const pieces = [];
+  const answer = streamReply([
+    ': keep-alive\n\n', 'event: message\n',
+    sse('', { reasoning_content: 'thinking' }),
+    sse('It is '), `${sse('a verb').slice(0, 17)}`, `${sse('a verb').slice(17)}${sse(' (动词)')}`, 'data: {"choices":[]}\n\n',
+    'data: [DONE]\n\n', sse(' never read'),
+  ]);
+  const { service, calls } = setup(() => answer);
+  service.saveConfig('owner', { apiKey: 'sk-1' });
+  const text = await service.converse('owner', 'S', [{ role: 'user', content: 'Q' }], { onDelta: piece => pieces.push(piece) });
+  assert.equal(text, 'It is a verb (动词)');
+  assert.deepEqual(pieces, ['It is ', 'a verb', ' (动词)']);
+  assert.equal(calls[0].body.stream, true);
+  assert.equal(answer.cancelled(), true, 'the body is let go after [DONE]');
+  // A stream that just ends (no [DONE]), with CRLF lines and a last line without a line break.
+  const plain = setup(() => streamReply(['data: {"choices":[{"delta":{"content":"one"}}]}\r\n\r\n', 'data: {"choices":[{"delta":{"content":" two"}}]}']));
+  plain.service.saveConfig('o', { apiKey: 'k' });
+  assert.equal(await plain.service.converse('o', 'S', [{ role: 'user', content: 'Q' }], { onDelta() {} }), 'one two');
+  // A provider that answers a stream request with one JSON body: one piece.
+  const whole = setup(() => ({ ...reply(200, { choices: [{ message: { content: 'All at once.' } }] }), headers: new Headers({ 'content-type': 'application/json' }), body: {} }));
+  whole.service.saveConfig('o', { apiKey: 'k' });
+  const got = [];
+  assert.equal(await whole.service.converse('o', 'S', [{ role: 'user', content: 'Q' }], { onDelta: piece => got.push(piece) }), 'All at once.');
+  assert.deepEqual(got, ['All at once.']);
+});
+
+test('converse: an error inside the stream, an empty stream, the caller cancelling and the timeout are clear errors', async () => {
+  const messages = [{ role: 'user', content: 'Q' }];
+  const failing = setup(() => streamReply([sse('Half'), 'data: {"error":{"message":"overloaded","code":"1305"}}\n\n']));
+  failing.service.saveConfig('o', { apiKey: 'k' });
+  const seen = [];
+  await assert.rejects(failing.service.converse('o', 'S', messages, { onDelta: piece => seen.push(piece) }), error => error.statusCode === 502 && /overloaded/.test(error.message));
+  assert.deepEqual(seen, ['Half']);
+  const empty = setup(() => streamReply(['data: [DONE]\n\n']));
+  empty.service.saveConfig('o', { apiKey: 'k' });
+  await assert.rejects(empty.service.converse('o', 'S', messages, { onDelta() {} }), /no answer/);
+
+  // The fake fetch honours the abort signal like a real one: the open body errors with an AbortError.
+  const open = (signal) => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(sse('Start')));
+        signal.addEventListener('abort', () => controller.error(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+      },
+    });
+    return { ok: true, status: 200, headers: new Headers({ 'content-type': 'text/event-stream' }), body };
+  };
+  const cancelSide = createTranslatorWith(open);
+  const controller = new AbortController();
+  const cancelled = cancelSide.converse('o', 'S', messages, { signal: controller.signal, onDelta: () => controller.abort() });
+  await assert.rejects(cancelled, error => error.statusCode === 499 && error.message === 'The question was cancelled');
+  const timeoutSide = createTranslatorWith(open);
+  await assert.rejects(timeoutSide.converse('o', 'S', messages, { timeoutMs: 30, onDelta() {} }), error => error.statusCode === 504);
+});
+
+function createTranslatorWith(answer) {
+  const service = createTranslator({ db: makeDb(), sessionSecret: SECRET, fetchImpl: async (url, options) => answer(options.signal) });
+  service.saveConfig('o', { apiKey: 'k' });
+  return service;
+}

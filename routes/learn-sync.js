@@ -8,6 +8,8 @@
 //   the wrong answers and the mistake reports of the home for a company computer's page (an analysis runs on the home).
 //   GET  /v1/learn-sync/level, POST /v1/learn-sync/level-check: the estimated level and the picking of the home for a company computer's page (an
 //   estimate runs on the home; the same answers as GET /api/learn/level and POST /api/learn/level/check).
+//   GET  /v1/learn-sync/ask?kind=&norm=, POST /v1/learn-sync/ask { kind, norm, question, mode, state }: the questions about a card for a company
+//   computer's page (the card named by kind and normalized text; the model is asked on the home, and the answer comes as one JSON { messages }).
 // Only a token issued for a live service link gets in (403 LINKED_ONLY for any other Engine token), like /v1/settings-sync. Rows only ever travel
 // inside the sealed envelopes. 404 with the sync turned off; 409 LEARN_COMPANY_COMPUTER on a company computer, which takes part only through its home.
 const express = require('express');
@@ -51,6 +53,8 @@ function createEngineLearnSyncRouter(options = {}) {
   router.post('/analyze', handle(req => service().engineHome(req.serviceLink, 'analyze', req.body)));
   router.get('/level', handle(req => service().engineHome(req.serviceLink, 'level')));
   router.post('/level-check', handle(req => service().engineHome(req.serviceLink, 'level-check')));
+  router.get('/ask', handle(req => service().engineHome(req.serviceLink, 'ask-history', { kind: req.query.kind, norm: req.query.norm })));
+  router.post('/ask', handle(req => service().engineHome(req.serviceLink, 'ask', req.body)));
   return router;
 }
 

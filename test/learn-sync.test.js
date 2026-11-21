@@ -22,6 +22,7 @@ const { createLearnRouter } = require('../routes/learn');
 const { createLearnSync, CAPABILITY, REPORTS_CAPABILITY } = require('../services/learn-sync');
 const { createLearnAnalysis } = require('../services/learn-analysis');
 const { createLearnPick } = require('../services/learn-pick');
+const { createLearnAsk } = require('../services/learn-ask');
 const { createEngineLearnSyncRouter } = require('../routes/learn-sync');
 const { createSettingsSync } = require('../services/settings-sync');
 const { createDeviceTier, CAPABILITY: TIER_CAPABILITY } = require('../services/device-tier');
@@ -248,9 +249,20 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
       },
     });
     t.after(() => side.pick.stop());
+    // The questions about a card with a stubbed model too: it names the engine that answered (streamed in two pieces).
+    side.askQuestions = [];
+    side.ask = createLearnAsk({
+      db, learn: side.learn, sync: side.sync, isConfigured: () => true,
+      converse: async (owner, system, messages, options) => {
+        side.askQuestions.push(messages);
+        const pieces = ['Answered ', `on ${name}.`];
+        if (options.onDelta) for (const piece of pieces) options.onDelta(piece);
+        return pieces.join('');
+      },
+    });
     const app = express();
     app.use(express.json({ limit: '32mb' }));
-    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
+    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     app.use('/api/device-tier', createDeviceTierRouter({ tier: () => tier }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -573,6 +585,46 @@ test('the level and the words from translations: a company computer reads and ch
   const refused = await K.page('POST', '/learn/level/check');
   assert.equal(refused.status, 503);
   assert.equal(refused.body.error, 'Your level is kept on a normal computer, which cannot be reached right now');
+});
+
+test('questions about a card: a company computer asks its home, which answers with its model and keeps the messages; away, it says so', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  await noStarter(T);
+  await noStarter(K);
+  await T.page('POST', '/learn/cards', word('deploy', { zh: ZH }));
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+  const onK = cardsOf(K).find(card => card.norm === 'deploy');
+  // A normal engine streams; the company computer's page gets the home's answer as one JSON.
+  const streamed = await fetch(`${T.base}/api/learn/cards/${cardsOf(T).find(card => card.norm === 'deploy').id}/ask`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: 'On T', mode: 'spell', state: { checked: false } }),
+  });
+  assert.match(streamed.headers.get('content-type'), /application\/x-ndjson/);
+  const lines = (await streamed.text()).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  assert.deepEqual(lines.slice(0, 2), [{ delta: 'Answered ' }, { delta: 'on T.' }]);
+  const asked = await K.page('POST', `/learn/cards/${onK.id}/ask`, { question: 'On K', mode: 'spell', state: { checked: true, answer: 'deplot', correct: false } });
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  assert.deepEqual(asked.body.messages.map(item => [item.role, item.text]), [['user', 'On K'], ['assistant', 'Answered on T.']]);
+  assert.equal(K.askQuestions.length, 0, 'the company computer never asks a model');
+  assert.deepEqual(T.askQuestions[1].map(item => item.content), ['On T', 'Answered on T.', 'On K'], 'the home has the whole conversation');
+  const history = (await K.page('GET', `/learn/cards/${onK.id}/ask`)).body;
+  assert.deepEqual([history.translator, history.messages.map(item => item.text)], [true, ['On T', 'Answered on T.', 'On K', 'Answered on T.']]);
+  assert.equal(K.db.prepare('SELECT COUNT(*) FROM learn_chats').pluck().get(), 0, 'kept on the home only');
+  // A card made on the company computer a moment ago: the home gets it first.
+  const made = (await K.page('POST', '/learn/cards', word('rollback', { zh: ZH }))).body.card;
+  const fresh = await K.page('POST', `/learn/cards/${made.id}/ask`, { question: 'New card', mode: 'spell' });
+  assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+  assert.ok(cardsOf(T).some(card => card.norm === 'rollback'));
+  // Refusals of the home come through with their status.
+  const refused = await K.page('POST', `/learn/cards/${onK.id}/ask`, { question: '', mode: 'spell' });
+  assert.deepEqual([refused.status, refused.body], [400, { error: 'Enter your question' }]);
+  // The home away: no messages and no model, said as such; asking is 503.
+  setOnline(K, 'T', false);
+  assert.deepEqual((await K.page('GET', `/learn/cards/${onK.id}/ask`)).body, { messages: [], translator: false, offline: true });
+  const away = await K.page('POST', `/learn/cards/${onK.id}/ask`, { question: 'Away?', mode: 'spell' });
+  assert.deepEqual([away.status, away.body], [503, { error: 'Questions about a card are answered on a normal computer, which cannot be reached right now' }]);
 });
 
 test('every machine marked as a company computer: nothing moves and nothing is lost', async t => {

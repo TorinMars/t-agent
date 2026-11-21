@@ -31,10 +31,11 @@ const REPORTS_CAPABILITY = 'learn:reports';
 // learn:pick: the peer picks words from the translated sentences and keeps the estimated level (schema 19); the backlog of sentences is picked by the
 // normal engine with the smallest instance id among the online ones that have it ("Picking words from translations" in docs/design/learn-english.md).
 const PICK_CAPABILITY = 'learn:pick';
-// The kind of pull a normal machine keeps its `have` for. It was 'full' before schema 16 and 'full-16' before schema 19: a new name makes every link
-// read the other side once from the start after the update, so what an older version left out (the reports and the detail of wrong answers; the
-// level, the picks of the sentences and the whole sentence of a picked word) comes over (rows that change nothing are not applied again).
-const FULL = 'full-19';
+// The kind of pull a normal machine keeps its `have` for. It was 'full' before schema 16, 'full-16' before schema 19 and 'full-19' before schema 20:
+// a new name makes every link read the other side once from the start after the update, so what an older version left out (the reports and the
+// detail of wrong answers; the level, the picks of the sentences and the whole sentence of a picked word; the questions about a card) comes over
+// (rows that change nothing are not applied again).
+const FULL = 'full-20';
 const ROUTE = '/v1/learn-sync';
 const PEERS_KEY = 'learn_sync_peers_v1';
 const HOME_KEY = 'learn_home_v1';
@@ -171,6 +172,9 @@ function createLearnSync(options) {
     const moves = db.prepare('SELECT * FROM learn_card_moves WHERE owner = ? AND sync_seq > ? ORDER BY sync_seq LIMIT ?').all(name, after, limit);
     // The mistake reports are personal like the answers: a company computer gets none.
     const reports = reviews ? db.prepare('SELECT * FROM learn_reports WHERE owner = ? AND sync_seq > ? ORDER BY sync_seq LIMIT ?').all(name, after, limit) : [];
+    // The questions about a card and their answers: personal too.
+    const chats = reviews ? db.prepare(`SELECT m.*, c.kind AS kind, c.norm AS norm FROM learn_chats m JOIN learn_cards c ON c.id = m.card_id
+      WHERE m.owner = ? AND m.sync_seq > ? ORDER BY m.sync_seq LIMIT ?`).all(name, after, limit) : [];
     const version = settingsVersion(name);
     const settingsValue = version.seq > after ? readState(db, learnModule.settingsKey(name)) : null;
     // The estimated level: a read-only copy for a company computer too, like the settings.
@@ -181,12 +185,13 @@ function createLearnSync(options) {
       ...answers.map(row => ({ type: 'review', seq: row.sync_seq, row })),
       ...moves.map(row => ({ type: 'move', seq: row.sync_seq, row })),
       ...reports.map(row => ({ type: 'report', seq: row.sync_seq, row })),
+      ...chats.map(row => ({ type: 'chat', seq: row.sync_seq, row })),
       ...(settingsValue !== null ? [{ type: 'settings', seq: version.seq }] : []),
       ...(level ? [{ type: 'level', seq: int(level.seq) }] : []),
     ].sort((a, b) => a.seq - b.seq);
     const taken = rows.slice(0, limit);
-    const more = rows.length > limit || [cards, answers, moves, reports].some(list => list.length >= limit);
-    const page = { cards: [], reviews: [], moves: [], reports: [], settings: null, level: null, after, next: more ? taken[taken.length - 1].seq : Math.max(newest, after), more };
+    const more = rows.length > limit || [cards, answers, moves, reports, chats].some(list => list.length >= limit);
+    const page = { cards: [], reviews: [], moves: [], reports: [], chats: [], settings: null, level: null, after, next: more ? taken[taken.length - 1].seq : Math.max(newest, after), more };
     const ids = new Set();
     const self = me();
     const addCard = row => { if (row && !ids.has(row.id)) { ids.add(row.id); page.cards.push(merge.cardToPeer(row, self)); } };
@@ -195,11 +200,12 @@ function createLearnSync(options) {
       else if (entry.type === 'review') page.reviews.push(merge.reviewToPeer(entry.row));
       else if (entry.type === 'move') page.moves.push(merge.moveToPeer(entry.row, self));
       else if (entry.type === 'report') page.reports.push(merge.reportToPeer(entry.row, self));
+      else if (entry.type === 'chat') page.chats.push(merge.chatToPeer(entry.row, self));
       else if (entry.type === 'level') page.level = { value: merge.levelFromPeer(level), at: int(level.at), by: level.by || self };
       else page.settings = { value: settingsValue, at: version.at, by: version.by || self };
     }
     for (const entry of taken) {
-      if (entry.type === 'review') addCard(db.prepare('SELECT * FROM learn_cards WHERE id = ?').get(entry.row.card_id));
+      if (entry.type === 'review' || entry.type === 'chat') addCard(db.prepare('SELECT * FROM learn_cards WHERE id = ?').get(entry.row.card_id));
       if (entry.type === 'move') addCard(cardFollowing(entry.row.kind, entry.row.moved_to));
     }
     return page;
@@ -211,7 +217,7 @@ function createLearnSync(options) {
   function applyPage(payload, sender, { bump = true } = {}) {
     if (!isPlainObject(payload)) throw fault('INVALID_LEARN_SYNC', 400);
     const list = key => (Array.isArray(payload[key]) ? payload[key] : []);
-    if (list('cards').length + list('reviews').length + list('moves').length + list('reports').length > MAX_PAGE * 4) throw fault('LEARN_SYNC_TOO_LARGE', 413);
+    if (list('cards').length + list('reviews').length + list('moves').length + list('reports').length + list('chats').length > MAX_PAGE * 5) throw fault('LEARN_SYNC_TOO_LARGE', 413);
     prepare();
     const self = me();
     const name = o();
@@ -273,6 +279,8 @@ function createLearnSync(options) {
         const result = merge.mergeCard(merge.resolved(target, self), merge.resolved(card, self), { follow: true });
         if (result.changed) writeCard(target.id, result.card, target.sync_seq);
         db.prepare('UPDATE learn_reviews SET card_id = ? WHERE card_id = ?').run(target.id, card.id);
+        // The questions about the old text go with the card; the newest 20 of both are kept.
+        if (db.prepare('UPDATE learn_chats SET card_id = ? WHERE card_id = ?').run(target.id, card.id).changes) syncStore.pruneChats(db, target.id);
         db.prepare('DELETE FROM learn_cards WHERE id = ?').run(card.id);
       }
       db.prepare(`INSERT INTO learn_card_moves (owner, kind, norm, moved_to, at, by, sync_seq) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -317,6 +325,21 @@ function createLearnSync(options) {
       applied += 1;
     }
 
+    // A question or an answer about a card: a new uid is stored with the card it names now (following moves), and the card keeps its newest 20; one
+    // that is older than those 20 is not kept (it changed nothing).
+    function applyChat(raw) {
+      const message = merge.chatFromPeer(raw, sender);
+      if (!message) return;
+      syncStore.observe(db, message.at);
+      if (db.prepare('SELECT 1 FROM learn_chats WHERE owner = ? AND uid = ?').get(name, message.uid)) return;
+      const card = cardFollowing(message.kind, message.norm);
+      if (!card) return;
+      db.prepare('INSERT INTO learn_chats (owner, uid, card_id, role, text, at, by, sync_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(name, message.uid, card.id, message.role, message.text, message.at, own(message.by), bump ? syncStore.nextSeq(db) : 0);
+      syncStore.pruneChats(db, card.id);
+      if (db.prepare('SELECT 1 FROM learn_chats WHERE owner = ? AND uid = ?').get(name, message.uid)) applied += 1;
+    }
+
     function applySettings(raw) {
       if (!isPlainObject(raw) || !Number.isSafeInteger(raw.at) || raw.at < 0) return;
       let value;
@@ -350,6 +373,7 @@ function createLearnSync(options) {
       for (const raw of list('moves')) applyMove(raw);
       for (const raw of list('reviews')) applyReview(raw);
       for (const raw of list('reports')) applyReport(raw);
+      for (const raw of list('chats')) applyChat(raw);
       if (payload.settings) applySettings(payload.settings);
       if (payload.level) applyLevel(payload.level);
     })();
@@ -361,7 +385,8 @@ function createLearnSync(options) {
   function dropHandedOver(acked) {
     if (!cacheOnly() || !acked) return 0;
     const reports = db.prepare('DELETE FROM learn_reports WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
-    return reports + db.prepare('DELETE FROM learn_reviews WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
+    const chats = db.prepare('DELETE FROM learn_chats WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
+    return reports + chats + db.prepare('DELETE FROM learn_reviews WHERE owner = ? AND sync_seq <= ?').run(o(), acked).changes;
   }
   // How many changes of this company computer wait for a normal machine: its answers, and the cards it added or edited and the moves it made that the
   // home has not got (an answer's new review state goes with the answer and is not counted again).
@@ -461,6 +486,14 @@ function createLearnSync(options) {
       if (!analyzer) throw fault('NOT_FOUND', 404);
       return analyzer(name, isPlainObject(body) ? body : {});
     }
+    // The questions about a card (services/learn-ask.js): the card is named by kind and text, as ids differ per engine; the model is asked here.
+    if (action === 'ask-history' || action === 'ask') {
+      if (!asker) throw fault('NOT_FOUND', 404);
+      const given = isPlainObject(body) ? body : {};
+      const card = typeof given.kind === 'string' && typeof given.norm === 'string' ? cardFollowing(given.kind, given.norm) : null;
+      if (!card) throw new learnModule.LearnError('Card not found', 404);
+      return action === 'ask-history' ? asker.history(name, card.id) : asker.ask(name, card.id, given);
+    }
     throw fault('NOT_FOUND', 404);
   }
   // services/learn-analysis.js hands in how it answers a company computer's page: the reports with the analysis state, and an analysis.
@@ -470,6 +503,9 @@ function createLearnSync(options) {
   // services/learn-pick.js hands in the level and the picking: { view, check, afterSentence, kick } for a company computer's page and for what it hands over.
   let picker = null;
   function setPicker(value) { picker = value; }
+  // services/learn-ask.js hands in the questions about a card: { history(owner, cardId), ask(owner, cardId, body) } (the answer as one JSON).
+  let asker = null;
+  function setAsk(value) { asker = value; }
 
   // ---- Failures in the log (as in services/settings-sync.js: once per reason, once when it works again, codes only) ----
   const reported = new Map();
@@ -730,7 +766,7 @@ function createLearnSync(options) {
   }
 
   return {
-    start, stop, syncAll, syncPeer, refresh, status, cacheOnly, companySummary, viaHome, waiting, askHome, reportPeers, pickPeers, setAnalysis, setPicker, me, company,
+    start, stop, syncAll, syncPeer, refresh, status, cacheOnly, companySummary, viaHome, waiting, askHome, reportPeers, pickPeers, setAnalysis, setPicker, setAsk, me, company,
     engineDescribe, enginePull, enginePush, engineHome, exportPage, applyPage, peerStates: readPeers, service,
   };
 }

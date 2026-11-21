@@ -50,6 +50,20 @@
     person's. **One line** (`slotLayout` in `learn-model.mjs`): the slots stay on one line at 36px with 8px gaps while the word fits the measured width
     (ResizeObserver); else slots, gaps and letters shrink together down to 18px slots with a 14px letter; only a longer word wraps, in rows of even
     length (`.h5-learn-letter-row`; 16 letters: one line at 390px, 8 + 8 at 320px), each row as large as it fits.
+    **The right spelling above yours** (after a wrong answer only; a right answer stays one green row and "I don't know" shows the word in one
+    primary row): the slots become two rows, the right spelling on top (`.h5-learn-letter-want`) and what was typed under it
+    (`.h5-learn-letter-got`), each letter in the same column, both with `data-kind` same / wrong / missing / extra (`.h5-learn-letters` gets
+    `data-aligned="true"`). The rows are lined up by the closest match, not by position (`alignSpelling` in `learn-grade.mjs`: an edit-distance
+    alignment; on a tie a substitution first, so words of the same length line up by position; gaps land as late as the matches allow), so one
+    missing letter does not turn the rest red. Top row: an agreeing letter in the text colour over a quiet line, a differing or missing one in
+    success light over a success-light line, an empty dashed quiet slot above an extra letter. Bottom row: right letters success light, wrong and
+    extra ones error light, an empty error-light dashed slot for a missing letter. The column count (it can exceed the word's length; the typed
+    answer is still cut to the word's length) goes to `slotLayout`, and a long word wraps the two rows as pairs (`.h5-learn-letter-pair`) so the
+    columns stay aligned. Under the rows `#h5-learn-spell-note` replaces "N letters · type with the keyboard" (the meaning layout only; the
+    sentence layout says the result there): "3 letters different", "1 letter missing", "2 extra letters", combined as one sentence with only
+    the first part naming the letters ("1 extra letter, 1 missing"; order different, extra, missing; `spellingNote`, every template in
+    `i18n-zh-extra.js`). The rows are `aria-hidden` like the slots; the result card still says the right word and "You wrote: …". The same on
+    the phone and the computer.
     **Spell the word inside its sentence** (a word picked from the person's translations, "Words from your translations" in
     [learn-english.md](learn-english.md); Spell, Review and Mistakes alike, since all of them use `SpellExercise`): exactly when the card's
     `context_zh` (the Chinese of the sentence card whose English is the card's `context`) is not empty and the word stands in `context` as a whole
@@ -278,7 +292,9 @@ English journal entries and their journaling habit (the server side, the prompt,
   that starts the sentence or a clause: "after the session cookie expires") and a plural -s otherwise; past tense -ed (also -ied and a doubled
   consonant); a spelling slip (edit distance 1, or 2 for words longer than 7; not for words of 3 letters or fewer); the word order (the same
   words in another order, or a word missing in one place and extra in another).
-- `spellCheck` compares a spelled word letter by letter; `suggestedGrade` offers the grade.
+- `spellCheck` compares a spelled word letter by letter (the stored answer, the "N of M letters right" line and the mistake tag use it);
+  `alignSpelling` lines the right spelling up above a wrong one by the closest match and counts the different, missing and extra letters, and
+  `spellingNote` turns the counts into the line under the two rows (see "Spell the word"); `suggestedGrade` offers the grade.
 - `mistakeTag` gives a wrong answer its first tag (see "Mistakes" in [learn-english.md](learn-english.md)); the session sends it with `expected` and `hinted` for a wrong answer only.
 
 ## Audio
@@ -321,7 +337,7 @@ English journal entries and their journaling habit (the server side, the prompt,
 
 - `scripts/test-h5-learn-mistakes-browser.cjs` (mocked API, 1440x900 and 390x844 touch): the home line and View, a report (range, summary, bars, findings), marked seen, Practise these N cards, the Mistakes list with chips, Show more, Analyze (the body, the wait, the report), a model error, All reports, the weekly switch, the language told once, the page without a model, no sideways scroll at 390px; `H5_SHOT_DIR` saves `mistakes-*.png`.
 - Unit: `test/h5-learn-grade.test.js` also has `mistakeTag`. `test/h5-learn-audio.test.js` (the settings, `autoPlays`, the player: repeat and pause, Stop, a new play, typing, a lost end, a refusal),
-  `test/h5-learn-grade.test.js` (tolerance, the diff, each hint, letters, grades, `typedInFull`), `test/h5-learn-model.test.js` (`slotLayout`, modes and what a
+  `test/h5-learn-grade.test.js` (tolerance, the diff, each hint, letters, the alignment and its line, grades, `typedInFull`), `test/h5-learn-model.test.js` (`slotLayout`, modes and what a
   browser offers, the estimate, tiles and distractors, Hint, the gap, the masked context, a mixed session, the keys), `test/h5-columns.test.js`
   (the destination in `railDestinations` / `phoneDestinations`, `railView` / `phoneView`), `test/page-bundles.test.js` (the chunk, not in the
   first screen).
@@ -357,7 +373,8 @@ English journal entries and their journaling habit (the server side, the prompt,
   `test/h5-learn-chat.test.js` (chips and `chipFill`, `chatTopic`, `visibleAnswer`, `answerParts`, `cardContext`, `chatLine`, the merges,
   `enterSends`).
 - `scripts/test-h5-learn-browser.cjs` (mocked `/api/learn`; 1440x900 and 390x844 touch): the destination on the rail and the bottom navigation,
-  the home numbers, every mode answered right and wrong with the diff and the hints, the bodies posted for Again / Hard / Good, the keys, Hint,
+  the home numbers, every mode answered right and wrong with the diff and the hints (Spell's two rows of a wrong answer: by position, a missing
+  letter at 390px, an extra and a missing letter wrapped as two pairs at 320px, their kinds, colours, lines and the line under them), the bodies posted for Again / Hard / Good, the keys, Hint,
   Skip, the end of a session, no translator and its link, Mistakes, the material list (search, kind, edit, suspend, restore), the settings
   (`PUT` bodies, `window.LearnCollect`), Escape, Sessions and another destination leaving the page, the back button, the empty states, a browser
   without speech, the focus kept by Hear it, Show first letter, Hint and Slow (computer and phone), no page keyboard on a computer; on a phone the

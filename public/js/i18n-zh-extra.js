@@ -171,4 +171,20 @@ I18n.add({
   '{1} must be a number': '{1}必须是数字',
   '{1} is out of range': '{1}超出范围',
   'Test failed: {1}': '测试失败：{1}',
+
+  // ---- Learn, Spell: the line under the right spelling and a wrong one (spellingNote in scripts/h5-shell/learn-grade.mjs) ----
+  '1 letter different': '1 个字母不同',
+  '{1} letters different': '{1} 个字母不同',
+  '1 extra letter': '多了 1 个字母',
+  '{1} extra letters': '多了 {1} 个字母',
+  '1 letter missing': '少了 1 个字母',
+  '{1} letters missing': '少了 {1} 个字母',
+  '1 letter different, {1} extra': '1 个字母不同，多了 {1} 个',
+  '{1} letters different, {2} extra': '{1} 个字母不同，多了 {2} 个',
+  '1 letter different, {1} missing': '1 个字母不同，少了 {1} 个',
+  '{1} letters different, {2} missing': '{1} 个字母不同，少了 {2} 个',
+  '1 extra letter, {1} missing': '多了 1 个字母，少了 {1} 个',
+  '{1} extra letters, {2} missing': '多了 {1} 个字母，少了 {2} 个',
+  '1 letter different, {1} extra, {2} missing': '1 个字母不同，多了 {1} 个，少了 {2} 个',
+  '{1} letters different, {2} extra, {3} missing': '{1} 个字母不同，多了 {2} 个，少了 {3} 个',
 });

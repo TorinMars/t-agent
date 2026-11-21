@@ -28,7 +28,7 @@ import { SwitchRow } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
-import { AUTO_CHECK_MS, diffWords, hintText, mistakeTag, normWord, spellCheck, suggestedGrade, typedInFull } from './learn-grade.mjs';
+import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, normWord, spellCheck, spellingNote, suggestedGrade, typedInFull } from './learn-grade.mjs';
 import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
@@ -878,7 +878,12 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     watch.observe(el);
     return () => watch.disconnect();
   }, []);
-  const layout = slotLayout(word.length, room);
+  // After a wrong answer (not "I don't know") the slots become two rows, the right spelling above what was typed, lined up letter by letter by the
+  // closest match (alignSpelling), so the column count can exceed the word's length; a long word wraps the two rows as pairs. See "Spell the word" in
+  // docs/design/learn-english-page.md.
+  const aligned = result && !result.correct && !result.gaveUp ? alignSpelling(word, value) : null;
+  const note = aligned ? spellingNote(aligned) : null;
+  const layout = slotLayout(aligned ? aligned.columns.length : word.length, room);
   const rows = [];
   layout.rows.reduce((at, size) => { rows.push([at, size]); return at + size; }, 0);
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
@@ -886,18 +891,30 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     <Box sx={{ flex: '1 1 auto' }} />
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
   </>);
+  const cell = ({ key, shown, tone, line = 'text.disabled', dashed = false, className = '', kind }) => (
+    <Box key={key} className={`h5-learn-letter${className ? ` ${className}` : ''}`} data-kind={kind} aria-hidden="true" sx={theme => ({
+      ...theme.typography.h5, fontSize: layout.font, width: layout.slot, height: layout.height, flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: tone, borderBottom: 2, borderBottomStyle: dashed ? 'dashed' : 'solid', borderColor: line,
+    })}>{shown}</Box>
+  );
   const slot = at => {
     const char = word[at];
     const shown = result && result.gaveUp ? char : value[at] || '';
     const tone = !result ? 'text.primary' : result.gaveUp ? 'primary.main' : result.letters[at].ok ? 'success.light' : 'error.light';
     const caret = !result && focused && at === Math.min(value.length, word.length - 1);
-    return (
-      <Box key={at} className="h5-learn-letter" aria-hidden="true" sx={theme => ({
-        ...theme.typography.h5, fontSize: layout.font, width: layout.slot, height: layout.height, flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: tone, borderBottom: 2, borderColor: caret ? 'primary.main' : 'text.disabled',
-      })}>{shown}</Box>
-    );
+    return cell({ key: at, shown, tone, line: caret ? 'primary.main' : 'text.disabled' });
   };
+  // The two rows of a wrong answer. Top: an agreeing letter in the text colour over a quiet line, a differing (or missing) one in green over a green
+  // line, an empty dashed slot over an extra letter. Bottom: right letters green, wrong and extra ones red, a missing letter an empty red dashed slot.
+  const WANT = { same: { tone: 'text.primary' }, wrong: { tone: 'success.light', line: 'success.light' }, missing: { tone: 'success.light', line: 'success.light' }, extra: { dashed: true } };
+  const GOT = { same: { tone: 'success.light' }, wrong: { tone: 'error.light' }, extra: { tone: 'error.light' }, missing: { line: 'error.light', dashed: true } };
+  const pairRow = (from, size, side) => (
+    <Box className={`h5-learn-letter-row h5-learn-letter-row-${side}`} sx={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', columnGap: `${layout.gap}px` }}>
+      {aligned.columns.slice(from, from + size).map((column, offset) => cell({
+        key: from + offset, shown: column[side], kind: column.kind, className: `h5-learn-letter-${side}`, ...(side === 'want' ? WANT : GOT)[column.kind],
+      }))}
+    </Box>
+  );
   const helpers = (
     <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
       {tts ? <AudioButton audio={audio} text={spoken} field={input} /> : null}
@@ -939,12 +956,18 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       )}
       <Box>
         <Box ref={letters} className="h5-learn-letters" translate="no" data-rows={layout.rows.length} onClick={() => { if (input.current) input.current.focus(); kb.show(); }}
-          sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', rowGap: 1, py: 1 }}>
-          {rows.map(([from, size]) => (
+          data-aligned={aligned ? 'true' : undefined}
+          sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', rowGap: aligned ? 2 : 1, py: 1 }}>
+          {rows.map(([from, size]) => (aligned ? (
+            <Box key={from} className="h5-learn-letter-pair" sx={{ display: 'flex', flexDirection: 'column', rowGap: 0.5 }}>
+              {pairRow(from, size, 'want')}
+              {pairRow(from, size, 'got')}
+            </Box>
+          ) : (
             <Box key={from} className="h5-learn-letter-row" sx={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', columnGap: `${layout.gap}px` }}>
               {Array.from({ length: size }, (_, offset) => slot(from + offset))}
             </Box>
-          ))}
+          )))}
           <InputBase inputRef={input} value={value} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
             onChange={event => change(event.target.value)}
             inputProps={{ id: 'h5-learn-spell-input', 'aria-label': t('Type the word'), maxLength: word.length, readOnly: Boolean(result), ...fieldProps, ...kb.inputProps }}
@@ -957,6 +980,10 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
             {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
             {!result.correct && !result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[result.right, result.total]} /></Typography> : null}
           </Box>
+        ) : note ? (
+          <Typography variant="body2" color="text.secondary" align="center" id="h5-learn-spell-note" sx={{ mt: 1 }}>
+            <Fmt template={note.template} values={note.values} />
+          </Typography>
         ) : (
           <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
             <Fmt template="{1} letters · type with the keyboard" values={[word.length]} />

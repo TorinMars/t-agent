@@ -266,6 +266,8 @@ async function openSettings(page, touch) {
       assert.equal(await color(page, '#h5-learn-sentence-word'), error, 'the right word in the error colour');
       assert.notEqual(error, success);
       assert.equal(await text(page, '#h5-learn-feedback'), 'Not quite');
+      assert.equal(await page.locator('.h5-learn-letter-pair').count(), 0, '"I don\'t know": the word in one row, not the two rows of a wrong answer');
+      assert.equal(await page.locator('.h5-learn-letter').count(), 5);
       await page.locator('#h5-learn-grade-again').tap();
       await waitFor(() => lastAnswer(mock).id === '32', 'the second answer');
       assert.equal(lastAnswer(mock).correct, false);
@@ -288,6 +290,10 @@ async function openSettings(page, touch) {
       assert.deepEqual(await spoken(page), ['latency']);
       await page.locator('#h5-learn-stop').tap();
       await page.locator('#h5-learn-dont-know').tap();
+      await page.locator('#h5-learn-grade-again').waitFor();
+      assert.equal(await page.locator('.h5-learn-letter-pair').count(), 0, '"I don\'t know" in the meaning layout: one row');
+      assert.equal(await page.locator('.h5-learn-letter').evaluateAll(list => list.map(el => el.textContent).join('')), 'latency', 'the word in the slots');
+      assert.equal(await page.locator('#h5-learn-spell-note').count(), 0);
       await page.locator('#h5-learn-grade-again').tap();
       // A word whose form is not in the sentence: the meaning layout too, its context as the hint.
       await waitFor(async () => (await text(page, '#h5-learn-mode .h5-learn-subtitle')).startsWith('4 / 4'), 'the fourth card');

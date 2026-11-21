@@ -16,7 +16,8 @@ const listeners = new Set();
 // time of the last answer as the review-state clock (so on the first merge the side answered last keeps its schedule), a random review id, and
 // change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way,
 // schema 17 the detail of a wrong answer (`expected`, `tag`, `hinted`) and the table `learn_reports`, schema 19 the pick of a sentence
-// (`picked_level`, `picked_skipped`, `picked_at`; not picked yet), and schema 20 the table `learn_chats` (the questions about a card).
+// (`picked_level`, `picked_skipped`, `picked_at`; not picked yet), schema 20 the table `learn_chats` (the questions about a card), and schema 21
+// the tables `learn_convos` and `learn_convo_messages` (the English chats).
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
@@ -60,6 +61,19 @@ function ensureSyncSchema(db) {
       at INTEGER NOT NULL, by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_chats_card ON learn_chats (card_id, at)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_chats_seq ON learn_chats (owner, sync_seq)');
+    // Schema 21: the English chats (db/schema.sql has the comments).
+    db.exec(`CREATE TABLE IF NOT EXISTS learn_convos (
+      owner TEXT NOT NULL, uid TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', title_at INTEGER NOT NULL DEFAULT 0, journal INTEGER NOT NULL DEFAULT 0,
+      journal_by TEXT NOT NULL DEFAULT '', journal_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0, deleted_by TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT '',
+      sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convos_seq ON learn_convos (owner, sync_seq)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convos_updated ON learn_convos (owner, deleted, updated_at)');
+    db.exec(`CREATE TABLE IF NOT EXISTS learn_convo_messages (
+      owner TEXT NOT NULL, uid TEXT NOT NULL, convo_uid TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL,
+      meta TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_convo ON learn_convo_messages (owner, convo_uid, at)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_seq ON learn_convo_messages (owner, sync_seq)');
   })();
 }
 
@@ -72,15 +86,34 @@ function pruneChats(db, cardId) {
     .run(cardId, cardId, MAX_CHAT_MESSAGES).changes;
 }
 
+// The English chats ("Storage and limits" in docs/design/learn-english-chat.md): at most MAX_CONVO_MESSAGES messages a chat (a send past it is
+// refused; messages are never pruned), and the newest MAX_CONVOS chats that are not journal chats are kept. An older one becomes a tombstone made
+// by a prune (`deleted_by` 'prune') at its own last time + 1, so the same chats are pruned the same way on every engine, and a message written to
+// it elsewhere later brings it back (the newer message wins over the older tombstone). Journal chats are never pruned. Returns how many were pruned.
+const MAX_CONVOS = 50;
+const MAX_CONVO_MESSAGES = 100;
+function pruneConvos(db, owner) {
+  const old = db.prepare(`SELECT uid, updated_at, deleted_at FROM learn_convos WHERE owner = ? AND deleted = 0 AND journal = 0
+    ORDER BY updated_at DESC, uid DESC LIMIT -1 OFFSET ?`).all(owner, MAX_CONVOS);
+  for (const row of old) {
+    db.prepare(`UPDATE learn_convos SET deleted = 1, deleted_at = ?, deleted_by = 'prune', sync_seq = ? WHERE owner = ? AND uid = ?`)
+      .run(Math.max(row.deleted_at, row.updated_at + 1), nextSeq(db), owner, row.uid);
+    db.prepare('DELETE FROM learn_convo_messages WHERE owner = ? AND convo_uid = ?').run(owner, row.uid);
+  }
+  return old.length;
+}
+
 function stateOf(db) {
   let state = clocks.get(db);
   if (state) return state;
   ensureSyncSchema(db);
   const max = sql => Number(db.prepare(sql).pluck().get()) || 0;
   state = {
-    clock: Math.max(max('SELECT MAX(MAX(content_at), MAX(state_at)) FROM learn_cards'), max('SELECT MAX(at) FROM learn_card_moves'), max('SELECT MAX(at) FROM learn_chats')),
+    clock: Math.max(max('SELECT MAX(MAX(content_at), MAX(state_at)) FROM learn_cards'), max('SELECT MAX(at) FROM learn_card_moves'), max('SELECT MAX(at) FROM learn_chats'),
+      max('SELECT MAX(MAX(title_at), MAX(journal_at), MAX(deleted_at), MAX(updated_at)) FROM learn_convos'), max('SELECT MAX(at) FROM learn_convo_messages')),
     seq: Math.max(max('SELECT MAX(sync_seq) FROM learn_cards'), max('SELECT MAX(sync_seq) FROM learn_reviews'), max('SELECT MAX(sync_seq) FROM learn_card_moves'),
-      max('SELECT MAX(sync_seq) FROM learn_reports'), max('SELECT MAX(sync_seq) FROM learn_chats')),
+      max('SELECT MAX(sync_seq) FROM learn_reports'), max('SELECT MAX(sync_seq) FROM learn_chats'), max('SELECT MAX(sync_seq) FROM learn_convos'),
+      max('SELECT MAX(sync_seq) FROM learn_convo_messages')),
   };
   clocks.set(db, state);
   return state;
@@ -114,4 +147,4 @@ function onLearnChanged(listener) {
   return () => listeners.delete(listener);
 }
 
-module.exports = { MAX_CHAT_MESSAGES, pruneChats, ensureSyncSchema, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };
+module.exports = { MAX_CHAT_MESSAGES, pruneChats, MAX_CONVOS, MAX_CONVO_MESSAGES, pruneConvos, ensureSyncSchema, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };

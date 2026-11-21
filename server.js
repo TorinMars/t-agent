@@ -705,6 +705,8 @@ server.listen(config.port, config.host, () => {
   require('./services/learn-prefill').getLearnPrefill().start();
   // The questions about a Learn card (services/learn-ask.js): made now, so a company computer's page can ask this engine through the sync at once.
   require('./services/learn-ask').getLearnAsk();
+  // The English chats of Learn (services/learn-chat.js): made now too, for the same reason.
+  require('./services/learn-chat').getLearnChat();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
   if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
   // Moves of tasks to other engines stopped by a crash are finished or undone, and the trash of moved folders is swept (services/task-move.js).

@@ -2,7 +2,7 @@ const express = require('express');
 
 // English learning ("API" in docs/design/learn-english.md; services/learn.js). Behind the page login and the same-origin check like every /api route
 // (server.js), and again here, so the router is safe wherever it is mounted. Every card belongs to the login of the page.
-//   GET   /api/learn/summary                          -> { due, new_today, done_today, goal, streak, words, sentences, mistakes, collecting, starter }
+//   GET   /api/learn/summary                          -> { due, new_today, done_today, goal, streak, words, sentences, mistakes, collecting, starter, new_report, chats }
 //   GET   /api/learn/queue?mode=review|spell|build|dictation|say|fill|mistakes&limit=20 -> { cards }
 //   POST  /api/learn/cards { kind, en, zh?, source, context? } -> { card, created }
 //   POST  /api/learn/cards/:id/answer { mode, grade, correct, answer? } -> { card }
@@ -28,6 +28,14 @@ const express = require('express');
 //            a refusal before the first piece is the usual JSON error (400, 404, 409 busy, 429, 503 no translator, 502 the model). On a company computer
 //            the home answers it in one piece: plain JSON { messages }.
 // ("Ask about a question" in docs/design/learn-english.md; services/learn-ask.js.)
+//   GET   /api/learn/chats                            -> { chats: [{ uid, title, journal, journal_by, created_at, updated_at, count }], translator }
+//   GET   /api/learn/chats/:uid                       -> { chat, messages: [{ uid, role, text, at, cards: [{ kind, en, zh, added }], mistakes }] }
+//   POST  /api/learn/chats/send { chat: uid | null, question, topic?: 'journal' | 'mistakes' }
+//         -> application/x-ndjson: {"chat":{...}} first, {"delta":"..."} lines, then {"done":true,"chat":{...},"messages":[question, answer]} or
+//            {"error":"...","status":N} (nothing stored); a refusal before the first piece is the usual JSON error. On a company computer the home
+//            answers it in one piece: plain JSON { chat, messages }.
+//   PATCH /api/learn/chats/:uid { title?, journal? }  -> { chat };  DELETE /api/learn/chats/:uid -> { ok: true }
+// ("English chat" in docs/design/learn-english-chat.md; services/learn-chat.js.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
@@ -35,12 +43,13 @@ const express = require('express');
 const LEVEL_OFFLINE = 'Your level is kept on a normal computer, which cannot be reached right now';
 const ASK_OFFLINE = 'Questions about a card are answered on a normal computer, which cannot be reached right now';
 const HOME_OLDER = 'The normal computer that keeps your learning data needs an update first';
+const CHAT_OFFLINE = 'Your English chats are kept on a normal computer, which cannot be reached right now';
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
 // `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`). `ask`: the questions about a card
-// (services/learn-ask.js), or null for none (like `analysis`).
-function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+// (services/learn-ask.js), or null for none (like `analysis`). `chat`: the English chats (services/learn-chat.js), or null for none (like `analysis`).
+function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, chat, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
   let syncService = sync === undefined ? (service ? null : undefined) : sync;
@@ -70,6 +79,12 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     if (askService === undefined) askService = require('../services/learn-ask').getLearnAsk();
     if (!askService) throw Object.assign(new Error('Asking about a card is not available'), { statusCode: 503 });
     return askService;
+  };
+  let chatService = chat === undefined ? (service ? null : undefined) : chat;
+  const chatter = () => {
+    if (chatService === undefined) chatService = require('../services/learn-chat').getLearnChat();
+    if (!chatService) throw Object.assign(new Error('The English chat is not available'), { statusCode: 503 });
+    return chatService;
   };
   const mustPicker = () => {
     const current = picker();
@@ -196,21 +211,28 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     }
     let service;
     try { service = asker(); } catch (error) { fail(res, error); return; }
-    // The page closed the request (or went away): the model's call is cancelled and nothing is stored.
+    await streamed(req, res, ({ onDelta, signal }) => service.ask(owner(req), req.params.id, req.body, { onDelta, signal }), result => ({ done: true, messages: result.messages }));
+  });
+
+  // An answer streamed as application/x-ndjson ("Ask about a question" and "English chat"): the response starts with the first piece (after the
+  // `head()` lines), so a refusal or a model that fails before it is the usual JSON error; a failure after it is an error line. When the page closes
+  // the request (or goes away) the model's call is cancelled and nothing is stored.
+  async function streamed(req, res, run, doneLine, head = () => []) {
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableFinished) controller.abort(); });
     let started = false;
+    const line = value => res.write(`${JSON.stringify(value)}\n`);
     const start = () => {
       if (started) return;
       started = true;
       res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no', 'X-Content-Type-Options': 'nosniff' });
       res.flushHeaders();
+      for (const value of head()) line(value);
     };
-    const line = value => res.write(`${JSON.stringify(value)}\n`);
     try {
-      const result = await service.ask(owner(req), req.params.id, req.body, { onDelta: text => { start(); line({ delta: text }); }, signal: controller.signal });
+      const result = await run({ onDelta: text => { start(); line({ delta: text }); }, signal: controller.signal });
       start();
-      line({ done: true, messages: result.messages });
+      line(doneLine(result));
       res.end();
     } catch (error) {
       if (controller.signal.aborted) { if (!res.writableEnded) res.end(); return; }
@@ -221,6 +243,46 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
       else { console.warn(`Learn: ${error && error.message}`); line({ error: 'Learning data is not available right now', status: 500 }); }
       res.end();
     }
+  }
+
+  // ---- The English chats: on a company computer kept and answered on its home (personal data, like the answers) ----
+  // A refusal of the home: a 404 that is not "Chat not found" means a home without this version.
+  const homeChat = async (route, options = {}) => {
+    try { return await learnSync().askHome(route, { offline: CHAT_OFFLINE, ...options }); } catch (error) {
+      if (error.statusCode === 404 && error.message !== 'Chat not found') throw Object.assign(new Error(HOME_OLDER), { statusCode: 409 });
+      throw error;
+    }
+  };
+  const chatBody = req => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
+  router.get('/chats', handle(async req => {
+    if (!cacheOnly()) return chatter().list(owner(req));
+    try { return await learnSync().askHome('chats', { offline: CHAT_OFFLINE }); } catch (error) {
+      // Away: no chats and no model, said as such; a home without this version the same with home_older.
+      if (error.statusCode === 503) return { chats: [], translator: false, offline: true };
+      if (error.statusCode === 404) return { chats: [], translator: false, home_older: true };
+      throw error;
+    }
+  }));
+  router.get('/chats/:uid', handle(req => (cacheOnly() ? homeChat(`chat?uid=${encodeURIComponent(req.params.uid)}`) : chatter().get(owner(req), req.params.uid))));
+  router.patch('/chats/:uid', handle(req => (cacheOnly()
+    ? homeChat('chat-update', { method: 'POST', body: { ...chatBody(req), uid: req.params.uid } })
+    : chatter().update(owner(req), req.params.uid, req.body))));
+  router.delete('/chats/:uid', handle(req => (cacheOnly()
+    ? homeChat('chat-delete', { method: 'POST', body: { uid: req.params.uid } })
+    : chatter().remove(owner(req), req.params.uid))));
+  router.post('/chats/send', async (req, res) => {
+    if (cacheOnly()) {
+      const body = chatBody(req);
+      try {
+        res.set('Cache-Control', 'no-store').json(await homeChat('chat-send', { method: 'POST', body: { chat: body.chat, question: body.question, topic: body.topic }, timeout: 130_000 }));
+      } catch (error) { fail(res, error); }
+      return;
+    }
+    let service;
+    try { service = chatter(); } catch (error) { fail(res, error); return; }
+    let chatLine = null;
+    await streamed(req, res, ({ onDelta, signal }) => service.send(owner(req), req.body, { onChat: value => { chatLine = value; }, onDelta, signal }),
+      result => ({ done: true, chat: result.chat, messages: result.messages }), () => (chatLine ? [{ chat: chatLine }] : []));
   });
   return router;
 }

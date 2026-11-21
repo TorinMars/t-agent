@@ -384,7 +384,7 @@ test('the summary: due, new and done today, the goal, the streak in the server\'
   await call('POST', `/cards/${w.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
   await call('POST', `/cards/${old.id}/answer`, { mode: 'review', grade: 'hard', correct: true });
   assert.deepEqual((await call('GET', '/summary')).body, {
-    due: 0, new_today: 2, done_today: 3, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1, collecting: true, starter: null, new_report: null,
+    due: 0, new_today: 2, done_today: 3, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1, collecting: true, starter: null, new_report: null, chats: 0,
     // Where the data is kept (services/learn-sync.js): a normal machine, nothing waiting.
     device: { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0, offline_copy_at: null },
   });

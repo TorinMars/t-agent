@@ -460,3 +460,40 @@ CREATE TABLE IF NOT EXISTS learn_chats (
 );
 CREATE INDEX IF NOT EXISTS idx_learn_chats_card ON learn_chats (card_id, at);
 CREATE INDEX IF NOT EXISTS idx_learn_chats_seq ON learn_chats (owner, sync_seq);
+
+-- Schema 21: the English chats ("English chat" in docs/design/learn-english-chat.md; services/learn-chat.js): the person's own conversations with the
+-- model about English, their journal entries and their learning habits. A chat and its messages are the same on every engine by their uids. Personal
+-- data like the answers: a company computer keeps none (its page asks its home). A deleted or pruned chat stays as a tombstone without its messages.
+CREATE TABLE IF NOT EXISTS learn_convos (
+  owner      TEXT    NOT NULL,
+  uid        TEXT    NOT NULL,                   -- a random UUID, the same on every engine
+  title      TEXT    NOT NULL DEFAULT '',        -- at most 60 characters; '' until named
+  title_at   INTEGER NOT NULL DEFAULT 0,         -- the hybrid clock of the title (the newer wins)
+  journal    INTEGER NOT NULL DEFAULT 0,         -- 1: a journal chat (never pruned)
+  journal_by TEXT    NOT NULL DEFAULT '',        -- model | person | '': who set the flag (the person's choice always wins)
+  journal_at INTEGER NOT NULL DEFAULT 0,         -- the hybrid clock of the flag
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,                   -- the time of the last message (the order of the list)
+  deleted    INTEGER NOT NULL DEFAULT 0,         -- 1: a tombstone (no messages)
+  deleted_at INTEGER NOT NULL DEFAULT 0,         -- the hybrid clock of the newest delete or prune, kept after a later message brings the chat back
+  deleted_by TEXT    NOT NULL DEFAULT '',        -- person | prune | '': what made that tombstone (a prune never removes a journal chat)
+  by         TEXT    NOT NULL DEFAULT '',        -- the engine that started it ('' is this one)
+  sync_seq   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_convos_seq ON learn_convos (owner, sync_seq);
+CREATE INDEX IF NOT EXISTS idx_learn_convos_updated ON learn_convos (owner, deleted, updated_at);
+CREATE TABLE IF NOT EXISTS learn_convo_messages (
+  owner     TEXT    NOT NULL,
+  uid       TEXT    NOT NULL,                    -- a random UUID, the same on every engine
+  convo_uid TEXT    NOT NULL,                    -- learn_convos.uid
+  role      TEXT    NOT NULL,                    -- user (at most 4000 characters) | assistant (at most 6000)
+  text      TEXT    NOT NULL,
+  at        INTEGER NOT NULL,                    -- the hybrid clock: the order of a chat's messages, then uid
+  meta      TEXT    NOT NULL DEFAULT '',         -- assistant only, JSON { cards: [{ kind, en, zh }], mistakes: [tag], journal? }
+  by        TEXT    NOT NULL DEFAULT '',
+  sync_seq  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_convo ON learn_convo_messages (owner, convo_uid, at);
+CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_seq ON learn_convo_messages (owner, sync_seq);

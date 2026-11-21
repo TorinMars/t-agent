@@ -8,6 +8,7 @@
 // part with its own clock: the later pick wins, and a peer without it (older) sends none, so it never undoes one.
 const {
   normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED, LEVELS, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON,
+  MAX_ZH: MAX_CARD_ZH,
 } = require('./learn');
 const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
@@ -190,6 +191,121 @@ function chatFromPeer(raw, sender) {
 }
 const chatToPeer = (row, me) => ({ uid: row.uid, kind: row.kind, norm: row.norm, role: row.role, text: row.text, at: row.at, by: row.by || me });
 
+// ---- The English chats (schema 21; "Sync" in docs/design/learn-english-chat.md) ----
+// A chat (learn_convos) has three parts with their own clocks: the title (the newer wins, a tie to the greater title), the journal flag (the person's
+// choice always wins over the model's, then the newer, then on), and the tombstone (the newer delete or prune). updated_at is the newest message,
+// created_at the earliest. The chat is deleted while its newest tombstone is newer than its newest message, except that a prune never removes a
+// journal chat: so a message written elsewhere after a delete or a prune brings the chat back, and nothing newer than a tombstone is lost.
+// Messages are made once and never changed: a union by uid.
+const MAX_CONVO_QUESTION = 4000;
+const MAX_CONVO_ANSWER = 6000;
+const MAX_CONVO_TITLE = 60;
+const MAX_META_CARDS = 5;
+const MAX_META_MISTAKES = 5;
+const MAX_META_EN = 300;
+const MAX_MISTAKE_TAG = 80;
+const JOURNAL_BY = ['', 'model', 'person'];
+const DELETED_BY = ['', 'prune', 'person'];
+const collapseText = value => String(value).replace(/\s+/g, ' ').trim();
+const straight = value => String(value).replace(/[\u2018\u2019]/g, "'").toLowerCase();
+
+// A title as it is kept: one line, 1..60 characters, else ''.
+function convoTitle(value) {
+  if (typeof value !== 'string') return '';
+  const title = collapseText(value);
+  return title.length <= MAX_CONVO_TITLE ? title : '';
+}
+
+// The meta of an answer, checked against the answer's `text`: { cards: [{ kind, en, zh }], mistakes: [tag], journal? }. A card: kind word | sentence,
+// `en` as written (one line, 1..300 characters) that the card rules accept (services/learn.js checkEnglish: the word rule for a word) and that is in
+// the answer (ignoring case), `zh` 1..500 characters, each card once, at most 5. A mistake tag: one line of 1..80 characters, each once, at most 5.
+// What does not check is dropped; anything that is not an object is no meta at all.
+function cleanMeta(raw, text) {
+  const out = { cards: [], mistakes: [] };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const answer = straight(text || '');
+  const seen = new Set();
+  for (const card of Array.isArray(raw.cards) ? raw.cards : []) {
+    if (out.cards.length >= MAX_META_CARDS) break;
+    if (!card || typeof card !== 'object' || !KINDS.includes(card.kind) || typeof card.en !== 'string' || typeof card.zh !== 'string') continue;
+    const en = collapseText(card.en);
+    const zh = card.zh.trim();
+    if (!en || en.length > MAX_META_EN || !zh || zh.length > MAX_CARD_ZH || !answer.includes(straight(en))) continue;
+    let norm;
+    try { norm = normalize(checkEnglish(card.kind, en)); } catch { continue; }
+    if (seen.has(`${card.kind}|${norm}`)) continue;
+    seen.add(`${card.kind}|${norm}`);
+    out.cards.push({ kind: card.kind, en, zh });
+  }
+  for (const tag of Array.isArray(raw.mistakes) ? raw.mistakes : []) {
+    if (out.mistakes.length >= MAX_META_MISTAKES) break;
+    if (typeof tag !== 'string') continue;
+    const value = collapseText(tag);
+    if (value && value.length <= MAX_MISTAKE_TAG && !out.mistakes.includes(value)) out.mistakes.push(value);
+  }
+  if (raw.journal === true) out.journal = true;
+  return out;
+}
+
+// Whether a chat with these fields is deleted (see above).
+const convoDeleted = convo => convo.deleted_at > 0 && convo.deleted_at > convo.updated_at && !(convo.deleted_by === 'prune' && convo.journal);
+
+// A chat as a peer sent it, checked, or null: { uid, title, title_at, journal (0 / 1), journal_by, journal_at, created_at, updated_at, deleted_at,
+// deleted_by, by } (`deleted` is computed by mergeConvo).
+function convoFromPeer(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid)) return null;
+  if (![raw.title_at, raw.journal_at, raw.created_at, raw.updated_at, raw.deleted_at].every(time) || typeof raw.journal !== 'boolean') return null;
+  if (!JOURNAL_BY.includes(raw.journal_by) || !DELETED_BY.includes(raw.deleted_by) || typeof raw.title !== 'string') return null;
+  return {
+    uid: raw.uid, title: convoTitle(raw.title), title_at: raw.title_at, journal: raw.journal ? 1 : 0, journal_by: raw.journal_by, journal_at: raw.journal_at,
+    created_at: raw.created_at, updated_at: raw.updated_at, deleted: raw.deleted === true, deleted_at: raw.deleted_at, deleted_by: raw.deleted_by,
+    by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
+  };
+}
+const convoToPeer = (row, me) => ({
+  uid: row.uid, title: row.title, title_at: row.title_at, journal: Boolean(row.journal), journal_by: row.journal_by, journal_at: row.journal_at,
+  created_at: row.created_at, updated_at: row.updated_at, deleted: Boolean(row.deleted), deleted_at: row.deleted_at, deleted_by: row.deleted_by, by: row.by || me,
+});
+
+const CONVO_FIELDS = ['title', 'title_at', 'journal', 'journal_by', 'journal_at', 'created_at', 'updated_at', 'deleted', 'deleted_at', 'deleted_by'];
+// The merge of a local chat (or null) and one from a peer: { convo, changed }, the merged fields of CONVO_FIELDS.
+function mergeConvo(local, incoming) {
+  const base = local || { ...incoming, title: '', title_at: -1, journal: 0, journal_by: '', journal_at: -1, deleted_at: 0, deleted_by: '' };
+  const titleFromPeer = later(incoming.title_at, incoming.title, base.title_at, base.title);
+  const rank = convo => JOURNAL_BY.indexOf(convo.journal_by);
+  const journalFromPeer = rank(incoming) !== rank(base) ? rank(incoming) > rank(base)
+    : incoming.journal_at !== base.journal_at ? incoming.journal_at > base.journal_at : incoming.journal > base.journal;
+  const tombFromPeer = incoming.deleted_at !== base.deleted_at ? incoming.deleted_at > base.deleted_at
+    : DELETED_BY.indexOf(incoming.deleted_by) > DELETED_BY.indexOf(base.deleted_by);
+  const convo = {
+    ...pick(titleFromPeer ? incoming : base, ['title', 'title_at']),
+    ...pick(journalFromPeer ? incoming : base, ['journal', 'journal_by', 'journal_at']),
+    ...pick(tombFromPeer ? incoming : base, ['deleted_at', 'deleted_by']),
+    created_at: local ? Math.min(local.created_at, incoming.created_at) : incoming.created_at,
+    updated_at: local ? Math.max(local.updated_at, incoming.updated_at) : incoming.updated_at,
+  };
+  if (convo.title_at < 0) { convo.title = ''; convo.title_at = 0; }
+  if (convo.journal_at < 0) convo.journal_at = 0;
+  convo.deleted = convoDeleted(convo) ? 1 : 0;
+  return { convo, changed: !local || CONVO_FIELDS.some(field => convo[field] !== local[field]) };
+}
+
+// A message of a chat as a peer sent it, checked, or null: { uid, convo_uid, role, text, at, meta (JSON text, '' for a question), by }.
+function convoMessageFromPeer(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid) || typeof raw.convo_uid !== 'string' || !CHAT_UID.test(raw.convo_uid)) return null;
+  if ((raw.role !== 'user' && raw.role !== 'assistant') || typeof raw.text !== 'string' || !raw.text.trim() || !time(raw.at)) return null;
+  const text = raw.text.trim().slice(0, raw.role === 'user' ? MAX_CONVO_QUESTION : MAX_CONVO_ANSWER);
+  return {
+    uid: raw.uid, convo_uid: raw.convo_uid, role: raw.role, text, at: raw.at,
+    meta: raw.role === 'assistant' ? JSON.stringify(cleanMeta(raw.meta, text)) : '',
+    by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
+  };
+}
+const parseMeta = value => { try { return value ? JSON.parse(value) : null; } catch { return null; } };
+const convoMessageToPeer = (row, me) => ({
+  uid: row.uid, convo_uid: row.convo_uid, role: row.role, text: row.text, at: row.at, meta: row.role === 'assistant' ? parseMeta(row.meta) : null, by: row.by || me,
+});
+
 // A move as a peer sent it: { kind, norm, moved_to, at, by }, or null.
 function moveFromPeer(raw, sender) {
   if (!raw || typeof raw !== 'object' || !KINDS.includes(raw.kind) || !normOk(raw.norm) || !normOk(raw.moved_to) || raw.norm === raw.moved_to || !time(raw.at)) return null;
@@ -226,5 +342,7 @@ function levelFromPeer(value) {
 module.exports = {
   later, mergeCard, cardFromPeer, cardToPeer, resolved, reviewFromPeer, reviewToPeer, moveFromPeer, moveToPeer, settingsFromPeer, levelFromPeer,
   reportBody, reportFromPeer, reportToPeer, reportWins, chatFromPeer, chatToPeer, MAX_QUESTION, MAX_CHAT_TEXT,
+  cleanMeta, convoTitle, convoDeleted, convoFromPeer, convoToPeer, mergeConvo, convoMessageFromPeer, convoMessageToPeer, parseMeta,
+  MAX_CONVO_QUESTION, MAX_CONVO_ANSWER, MAX_CONVO_TITLE, MAX_META_CARDS, MAX_META_MISTAKES, MAX_MISTAKE_TAG,
   CONTENT, STATE, PICKED, FIELDS,
 };

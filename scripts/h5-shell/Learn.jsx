@@ -34,12 +34,13 @@ import { attachVoice, canSpeak, speakOnce, stopSpeaking, voiceWay } from './lear
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
+import { ChatView, EarlierChats } from './LearnChat.jsx';
 
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
 // docs/design/learn-english.md), plus an optional starter list.
 // - Computer: a page right of the rail (like Settings): the home on the left (today's due cards, the goal, the streak, Start review, the practice modes
-//   with their counts, Mistakes, Your material, Learn settings) and the open mode on the right ("How learning works" while none is open). Escape closes
+//   with their counts, Mistakes, English chat, Your material, Learn settings) and the open mode on the right ("How learning works" while none is open). Escape closes
 //   the open mode, then the page; the back button closes the page (entry.jsx).
 // - Phone: a full-screen page above the bottom navigation (a modal, so back.mjs closes it), and each mode a page over it with a back arrow. Both end
 //   at the bottom navigation and, while the system keyboard is up, at the top of the keyboard (`--h5-height`, h5.js `fitViewport`), so the answer
@@ -121,7 +122,7 @@ function Learn({ state, ui }) {
   const keys = state.input === 'pointer' || Boolean(state.hasKeyboard);
   const data = useLearnData();
   const speech = useSpeech();
-  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how', mode?, preset?, uid?, seq }
+  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats', mode?, preset?, uid?, seq }
   const viewRef = useRef(null);
   viewRef.current = view;
   const close = () => ui.actions.closeLearn();
@@ -152,6 +153,8 @@ function Learn({ state, ui }) {
 
   const home = <Home {...common} modes={modes} current={view && view.kind === 'session' ? view.mode : view && view.kind} />;
   if (!phone) {
+    // English chat fills the pane (its chats list and the conversation, LearnChat.jsx); Earlier chats is a phone's screen, on a computer the list is there.
+    const chat = view && (view.kind === 'chat' || view.kind === 'chats');
     return (
       <Box ref={root} id="h5-learn" role="region" aria-labelledby="h5-learn-title" data-layout="wide"
         sx={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: state.pane ? 0 : NAV_WIDTH, zIndex: 1255, display: 'flex', bgcolor: 'background.default', color: 'text.primary' }}>
@@ -163,11 +166,17 @@ function Learn({ state, ui }) {
           {home}
         </Box>
         {/* The Ask side panel (LearnAsk.jsx) lies at the right of the window; on a window wide enough the card makes room for it, else the panel covers its right part. */}
-        <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', px: 4, py: 3, '@media (min-width: 1200px)': { '&:has(#h5-learn-ask[data-layout="side"])': { pr: `${ASK_WIDTH + 32}px` } } }}>
-          <Box sx={{ maxWidth: 880 }}>
-            {view ? <ViewBody key={view.seq} view={view} {...common} /> : <HowView frame={{ phone: false, title: t('How learning works') }} />}
+        {chat ? (
+          <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex' }}>
+            <ChatView key={view.seq} view={view.kind === 'chats' ? (view.parent || { kind: 'chat' }) : view} {...common} />
           </Box>
-        </Box>
+        ) : (
+          <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', px: 4, py: 3, '@media (min-width: 1200px)': { '&:has(#h5-learn-ask[data-layout="side"])': { pr: `${ASK_WIDTH + 32}px` } } }}>
+            <Box sx={{ maxWidth: 880 }}>
+              {view ? <ViewBody key={view.seq} view={view} {...common} /> : <HowView frame={{ phone: false, title: t('How learning works') }} />}
+            </Box>
+          </Box>
+        )}
       </Box>
     );
   }
@@ -177,6 +186,8 @@ function Learn({ state, ui }) {
 function PhoneLearn({ view, close, home, back, ...common }) {
   const last = useRef(null);
   if (view) last.current = view;
+  // Back (and Escape) on Earlier chats returns to the chat it was opened from; every other view goes back to the home.
+  const leave = () => (view && view.kind === 'chats' ? common.open(view.parent || { kind: 'chat' }) : back());
   return (
     <>
       <Dialog id="h5-learn" open fullScreen onClose={close} aria-labelledby="h5-learn-title" sx={PHONE_ROOT} slotProps={{ paper: { className: 'h5-learn-page', sx: PAPER } }}>
@@ -188,7 +199,7 @@ function PhoneLearn({ view, close, home, back, ...common }) {
         </AppBar>
         <Box className="h5-learn-home" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', p: 2, display: 'flex', flexDirection: 'column', gap: 1.5, '& > *': { flexShrink: 0 } }}>{home}</Box>
       </Dialog>
-      <Dialog id="h5-learn-mode" open={Boolean(view)} fullScreen onClose={back} aria-labelledby="h5-learn-view-title" sx={PHONE_ROOT}
+      <Dialog id="h5-learn-mode" open={Boolean(view)} fullScreen onClose={leave} aria-labelledby="h5-learn-view-title" sx={PHONE_ROOT}
         slots={{ transition: Slide }} slotProps={{ transition: { direction: 'left', onExited: () => { last.current = null; } }, paper: { className: 'h5-learn-mode-page', sx: PAPER } }}>
         {last.current ? <ViewBody key={last.current.seq} view={last.current} back={back} {...common} /> : null}
       </Dialog>
@@ -205,6 +216,8 @@ function ViewBody({ view, phone, back, open, data, ...common }) {
   if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} open={open} openTranslator={common.openTranslator} />;
   if (view.kind === 'reports') return <ReportsView frame={frame(t('Mistake reports'))} ui={common.ui} open={open} />;
   if (view.kind === 'report') return <ReportView frame={frame(t('Mistake report'))} view={view} ui={common.ui} open={open} data={data} />;
+  if (view.kind === 'chat') return <ChatView view={view} phone={phone} back={back} open={open} {...common} />;
+  if (view.kind === 'chats') return <EarlierChats parent={view.parent} open={open} />;
   return <HowView frame={frame(t('How learning works'))} />;
 }
 
@@ -266,6 +279,7 @@ function HomeAway({ device }) {
 function Home({ ui, phone, data, modes, current, open }) {
   const { summary, error, reload, settings, setSettings } = data;
   const [busy, setBusy] = useState(false);
+  const chats = useChatCount(summary);
   if (error && !summary) {
     return <Alert severity="error" id="h5-learn-error" action={<Button color="inherit" size="small" onClick={() => reload()}>{t('Retry')}</Button>}>{error}</Alert>;
   }
@@ -340,6 +354,9 @@ function Home({ ui, phone, data, modes, current, open }) {
       ))}
       <ModeCard id="h5-learn-mode-mistakes" icon="learnMistakes" title={t('Mistakes')} note={t('Words and sentences you got wrong')}
         count={count(mistakes, 'card', 'cards')} selected={current === 'mistakes' || current === 'report' || current === 'reports'} onClick={() => open({ kind: 'mistakes' })} />
+      <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Ask')}</Typography>
+      <ModeCard id="h5-learn-mode-chat" icon="learnAsk" title={t('English chat')} note={t('Ask anything about English: words, grammar, how to say something')}
+        count={chats === null ? '' : count(chats, 'chat', 'chats')} selected={current === 'chat' || current === 'chats'} onClick={() => open({ kind: 'chat' })} />
       <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Your material')}</Typography>
       <Card sx={theme => (current === 'material' ? { bgcolor: alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) } : {})}>
         <CardActionArea id="h5-learn-material" onClick={() => open({ kind: 'material' })} sx={{ p: 2 }}>
@@ -357,6 +374,21 @@ function Home({ ui, phone, data, modes, current, open }) {
       </Box>
     </>
   );
+}
+
+// The count of English chats on the home: `chats` of the summary when the server sends it, else read from GET /api/learn/chats when the home opens
+// (null while unknown or on a failure: the card shows no count).
+function useChatCount(summary) {
+  const given = summary && typeof summary.chats === 'number' ? summary.chats : null;
+  const [read, setRead] = useState(null);
+  // Read again with each new summary (the home reloads it when a view closes).
+  useEffect(() => {
+    if (!summary || given !== null) return undefined;
+    let live = true;
+    api('GET', '/api/learn/chats').then(result => { if (live) setRead(Array.isArray(result && result.chats) ? result.chats.length : null); }, () => {});
+    return () => { live = false; };
+  }, [summary, given]);
+  return given !== null ? given : read;
 }
 
 function ModeCard({ id, icon, title, note, count, selected, onClick }) {

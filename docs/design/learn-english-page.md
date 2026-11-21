@@ -230,8 +230,13 @@ A conversation with the translation model about the card on screen (the server s
 
 ## Speech
 
-- Reading aloud (`learn-speech.mjs`): `speechSynthesis` with an en-US voice when there is one (else any English voice; while the voices are not
-  listed yet, `lang = 'en-US'`); `canSpeak()` decides whether Hear it, Play / Slow and the Dictation mode are shown at all.
+- Reading aloud (`learn-speech.mjs`): `speechSynthesis`, always American English (the user's rule, 2026-11-21: American pronunciation). Every
+  utterance has `lang = 'en-US'`; `pickVoice` takes, among the en-US voices only, a natural one by name first (Samantha, Ava, Allison, Susan, Tom,
+  Alex, Google US English, Microsoft Aria / Jenny / Guy / Ava / Andrew / Emma / Brian), then the browser's default en-US voice, then one on this
+  device, then any en-US voice, and never a macOS novelty voice (Albert, Bells, Zarvox, ...). It never sets a British, Australian or Indian voice:
+  without an en-US voice the utterance keeps only its language and the browser picks. `canSpeak()` (any English voice, or none listed yet) decides
+  whether Hear it, Play / Slow and the Dictation mode are shown at all. The transcriptions are American IPA too (see "Phonetic transcription" in
+  learn-english.md), and the Ask tutor is told to use American spelling, usage and pronunciation. Tests: `test/h5-learn-speech.test.js`.
 - Say it hears the person in one of two ways, decided when the page opens (`voiceWay`): the page's own voice input (`window.VoiceInput.attach`
   with the box and the microphone, click to start and stop, the text typed into the box) while it is turned on in Settings; else the browser's
   `SpeechRecognition` / `webkitSpeechRecognition` in en-US (one phrase per press, the text replaces the box). When the server has no speech

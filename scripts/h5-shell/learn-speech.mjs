@@ -4,12 +4,21 @@
 
 const synth = () => (typeof window !== 'undefined' && window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function' ? window.speechSynthesis : null);
 
-// The voice to read with: en-US first, then any English voice. Null while the browser has not listed its voices yet (the language is still set).
+// The voice to read with: always American English (the user's rule: American pronunciation). Among the en-US voices the browser lists, a natural
+// one by name first (Apple's Samantha / Ava / Allison / Tom, Google US English, Microsoft's natural Aria / Jenny / Guy), then the browser's default
+// en-US voice, then any on this device, then any other en-US voice; the macOS novelty voices (Bells, Zarvox, ...) never. Never a British,
+// Australian or Indian voice: without an en-US voice it is null and the utterance keeps lang en-US, so the browser picks its own American voice if
+// it has one. Null as well while the browser has not listed its voices yet. See "Speech" in docs/design/learn-english-page.md.
+const NATURAL_US = [/^samantha/i, /^ava\b/i, /^allison/i, /^susan/i, /^tom\b/i, /^alex\b/i, /google us english/i, /microsoft (aria|jenny|guy|ava|andrew|emma|brian)/i];
+const NOVELTY = /^(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|deranged|hysterical|pipe organ|junior|ralph|fred|kathy)\b/i;
 export function pickVoice(voices) {
   const list = Array.isArray(voices) ? voices : [];
-  const lang = voice => String(voice.lang || '').replace('_', '-').toLowerCase();
-  return list.find(voice => lang(voice) === 'en-us' && voice.localService) || list.find(voice => lang(voice) === 'en-us')
-    || list.find(voice => lang(voice).startsWith('en')) || null;
+  const us = list.filter(voice => String(voice.lang || '').replace('_', '-').toLowerCase() === 'en-us' && !NOVELTY.test(String(voice.name || '')));
+  for (const pattern of NATURAL_US) {
+    const found = us.find(voice => pattern.test(String(voice.name || '')));
+    if (found) return found;
+  }
+  return us.find(voice => voice.default) || us.find(voice => voice.localService) || us[0] || null;
 }
 
 // Whether the page can read aloud: the API is there and, once the voices are known, one of them is English.
@@ -17,7 +26,8 @@ export function canSpeak() {
   const speech = synth();
   if (!speech) return false;
   const voices = typeof speech.getVoices === 'function' ? speech.getVoices() : [];
-  return !voices.length || Boolean(pickVoice(voices));
+  // Any English voice may read: with lang en-US the browser uses its American voice when it has one.
+  return !voices.length || voices.some(voice => String(voice.lang || '').toLowerCase().startsWith('en'));
 }
 
 // Reads `text` aloud; `slow` reads it at about two thirds of the normal rate (Dictation's "Slow"). Stops what was being read first.

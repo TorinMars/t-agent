@@ -152,11 +152,13 @@ function parsePicks(raw, sentences) {
 const pickRunner = (me, peers) => !peers.some(peer => typeof peer.instance_id === 'string' && peer.instance_id < me);
 
 // `learn`: the learning service of this database; `chat(owner, system, user, options)`, `isConfigured(owner)`: the translator; `sync`: the learning
-// sync (me(), pickPeers(), setPicker()) or null; `company()`: the company computer flag.
+// sync (me(), pickPeers(), setPicker()) or null; `company()`: the company computer flag; `onNewWords(owner)`: new word cards were picked (by default
+// the translation ahead of time of services/learn-prefill.js is told: a picked word has its meaning, maybe not its transcription).
 function createLearnPick({
   db, learn, chat, isConfigured, sync = null, company = null, owner = () => require('./single-user').ensureSingleUser().login,
   now = Date.now, log = console, timeoutMs = MODEL_TIMEOUT_MS, checkEveryMs = CHECK_EVERY_MS, firstCheckMs = FIRST_CHECK_MS,
   afterSentenceMs = AFTER_SENTENCE_MS, random = Math.random, lookupPhonetic = phonetics.lookupPhonetic,
+  onNewWords = name => require('./learn-prefill').afterNewWords(name),
 }) {
   const estimating = new Map(); // owner -> the estimate in progress
   const picking = new Map(); // owner -> the pick run in progress
@@ -269,6 +271,7 @@ function createLearnPick({
     const getWord = db.prepare("SELECT * FROM learn_cards WHERE owner = ? AND kind = 'word' AND norm = ?");
     const rightOf = db.prepare('SELECT COUNT(*) FROM learn_reviews WHERE card_id = ? AND correct = 1').pluck();
     const sentenceOf = db.prepare("SELECT id, created_at FROM learn_cards WHERE owner = ? AND kind = 'sentence' AND en = ?");
+    let added = 0;
     let waiting = Number(db.prepare("SELECT COUNT(*) FROM learn_cards WHERE owner = ? AND kind = 'word' AND source = 'translation' AND reps = 0 AND suspended = 0").pluck().get(name)) || 0;
     db.transaction(() => {
       for (const item of batch) {
@@ -280,6 +283,7 @@ function createLearnPick({
             // A new word card, asked inside its sentence; due PICK_PER_DAY a day after the ones still waiting.
             const due = at + Math.floor(waiting / PICK_PER_DAY) * DAY;
             waiting += 1;
+            added += 1;
             db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
               VALUES (?, 'word', ?, ?, ?, ?, 'translation', ?, ?, ?, 0, ?, ?, ?)`)
               .run(name, word.en, word.norm, word.zh, lookupPhonetic(word.en) || '', row.en, at, due, review.EASE_START, stamp(), seq());
@@ -299,6 +303,7 @@ function createLearnPick({
       }
     })();
     syncStore.learnChanged(db);
+    if (added) { try { onNewWords(name); } catch { /* the hourly run translates them */ } }
   }
 
   // One run over the pending sentences of the owner: batch after batch until none is left (at most MAX_BATCHES_PER_RUN), estimating the level

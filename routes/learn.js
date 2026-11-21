@@ -28,20 +28,6 @@ const express = require('express');
 
 const LEVEL_OFFLINE = 'Your level is kept on a normal computer, which cannot be reached right now';
 
-// The meaning of one word through the translator the person set up, by the same path as POST /api/translate/word: this Client's own translator, or the
-// linked service that shares one (services/linked-capabilities.js).
-function translatorLookup() {
-  const { createTranslator, TIMEOUT_MS } = require('../services/translator');
-  const { getLinkedCapabilities, TIMEOUT_MARGIN_MS } = require('../services/linked-capabilities');
-  const translator = createTranslator({ db: require('../db'), sessionSecret: require('../config').sessionSecret });
-  const linked = getLinkedCapabilities();
-  return (owner, word) => linked.run('translate', {
-    configured: () => translator.isConfigured(owner),
-    local: () => translator.translateWord(owner, { word }),
-    route: '/translate/word', body: { word, context: '' }, timeoutMs: TIMEOUT_MS + TIMEOUT_MARGIN_MS,
-  });
-}
-
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
 // `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`).
@@ -54,7 +40,11 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     return syncService;
   };
   const cacheOnly = () => { const current = learnSync(); return Boolean(current && current.cacheOnly()); };
-  const learn = () => service || (service = require('../services/learn').createLearn({ lookupWord: lookupWord || translatorLookup(), cacheOnly }));
+  // The server's own router shares the learning service with the translation ahead of time (services/learn.js sharedLearn); the meaning of a word comes
+  // from the translator the person set up, by the same path as POST /api/translate/word (services/learn.js translatorLookup).
+  const learn = () => service || (service = lookupWord || sync !== undefined
+    ? require('../services/learn').createLearn({ lookupWord: lookupWord || require('../services/learn').translatorLookup(), cacheOnly })
+    : require('../services/learn').sharedLearn());
   let analysisService = analysis === undefined ? (service ? null : undefined) : analysis;
   const analyzer = () => {
     if (analysisService === undefined) analysisService = require('../services/learn-analysis').getLearnAnalysis();

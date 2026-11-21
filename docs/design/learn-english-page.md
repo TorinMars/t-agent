@@ -9,7 +9,7 @@
   (`#h5-bnav-learn`), library icon `read` (an open book). `state.learnOpen` (store), `ui.actions.openLearn()` / `closeLearn()` (h5.js);
   `railView` / `phoneView` in `columns.mjs` mark it current; any other destination (or Settings) closes it first; Sessions returns. See
   [page-navigation.md](page-navigation.md).
-- **Chunk**: `Learn.jsx` with `learn-grade.mjs`, `learn-model.mjs`, `learn-speech.mjs` and `learn-icons.mjs` is the lazy chunk
+- **Chunk**: `Learn.jsx` with `LearnAsk.jsx`, `learn-grade.mjs`, `learn-model.mjs`, `learn-speech.mjs` and `learn-icons.mjs` is the lazy chunk
   `screen-learn.jsx` (`LearnScreen` in `lazy-screens.jsx`, preloaded from the two destination buttons). The first screen only got the two
   destinations, the `learn` icon, the store key and the back layer: 775,336 -> 777,246 bytes (budget 778,240, `test/page-bundles.test.js`, which
   also checks that the page is not in the first download). The page's keyboard (below) reuses the terminal's `Keyboard` of `Osk.jsx`, which is in
@@ -151,6 +151,52 @@
   caption, overline section titles), palette tokens (success / error light for the diff, warning for the streak), 40px tiles (44px in touch
   mode), 44px targets in touch mode.
 
+## Ask about this question
+
+A conversation with the translation model about the card on screen (the server side, the prompt and the storage are "Ask about a card" in
+[learn-english.md](learn-english.md)). `LearnAsk.jsx` (in the Learn chunk; the pure parts in `learn-model.mjs`), `useAsk` in `Learn.jsx`.
+
+- **Ask** (`#h5-learn-ask-open`): a text button with the library icon `message` (`learnAsk`) at the end of the card's button row, right-aligned:
+  Spell's helper row (after Check, in the sentence layout, alone), Dictation's Play / Slow row, and a row at the bottom of the prompt card in Build,
+  Say it and Fill the gap. Review and Mistakes use the same exercises. It keeps the field's focus like the other helpers (`keepFocus`). It always
+  says "Ask"; the earlier messages are shown inside.
+- **Phone**: an MD2 modal bottom sheet (MUI `Drawer` anchor bottom, `#h5-learn-ask`, `data-layout="sheet"`, `role="dialog"`): top at
+  `min(150px, 18vh)`, bottom at the bottom of `--h5-height` (so above the system keyboard), 8px top corners, a 32% black scrim, a handle, over
+  the Learn pages (`zIndex.modal + 1`). A back layer by itself (a modal); Escape and the scrim close it.
+- **Computer** (the wide layout): a 380px side panel at the right of the window (`data-layout="side"`, `role="complementary"`, fixed inside
+  `#h5-learn`, no scrim). On a window at least 1200px wide the pane makes room for it (`:has()` padding), so the card stays fully usable; on a
+  narrower one it covers the card's right part. Its input gets the focus when it opens (hardware keyboard only); Escape closes the panel before
+  Learn closes the mode.
+- **Content** (both the same): title "Ask about this question" (h6), a caption (`askCaption`: before Check "The sentence with the gap · your
+  answer is not shown yet" for Fill the gap and Spell inside its sentence, else "Not checked yet: hints only"; after it "Your answer: expiers ·
+  wrong" / "· right", "—" for an empty answer), Close (text button), "Try one, or type your own (Chinese or English):", the chips (`askChips`,
+  outlined MUI Chips sent at once with their shown, possibly Chinese, text: before Check "Give me a hint", "What part of speech fits?" (word)
+  or "Explain the grammar" (sentence), "Other example sentences", "How do I remember it?"; after Check "Why was my answer wrong?" (when wrong)
+  first, then "Explain the grammar", "Other example sentences", "How do I remember it?"), "N earlier questions" (overline, the questions stored
+  when the panel first opened for this card), the conversation (`role="log"`), before Check the caption "Before you check, the answer is not given
+  away, only hints.", and the input ("Ask about this word or sentence", after Check "Ask a follow-up"; at most 500 characters, Enter sends,
+  Shift+Enter a new line) with the send icon button (`aria-label` "Send"; it never takes the focus from the input).
+- **Bubbles** (`.h5-learn-ask-msg`, `data-role`): the person's on the right (primary at 16%), the model's on the left (the 8dp surface overlay),
+  body2, 8px radius, `lang` from the text (`textLang`: a CJK character makes it `zh`), `translate="no"`, `white-space: pre-wrap`; `**bold**`
+  (`boldParts`) is the only markup, the rest is React text.
+- **Requests**: `GET /api/learn/cards/:id/ask` each time it opens (not while an answer is on its way), merged into what is shown
+  (`mergeMessages`: union by uid, ordered by the ISO `at` then uid, newest 20). `POST` with `{ question, mode: <the exercise>, state }`
+  (`askState`: `{ checked: false }` before Check; after it `answer`, `correct`, `helped`; plus `expected`, at most 300 characters, when the
+  exercise asks for something other than the card's English: Fill the gap's word). An `application/x-ndjson` answer is read as it comes
+  (`ndjsonLines`): the `delta`s grow a temporary model bubble (`data-streaming`), the `done` line's stored messages replace it; any other answer
+  is read as JSON `{ messages }` (a company computer asking its home). Closing the sheet or panel aborts the request (nothing is stored).
+- **Errors**: a JSON error before the stream (a model failure before its first text: 502 / 504; 409 another question about the card runs; 429
+  too many in a minute; any other 503, such as a company computer whose home went away) or an `{"error"}` line half way: the question stays,
+  an error Alert with the server's message (translated by the server dictionary) and Try again (`#h5-learn-ask-retry`, asks the same question).
+  The 503 "Translation service not configured yet" (or `translator: false` from GET) shows the translator notice with Open Settings ("Asking
+  about a question needs a translator…"), puts a typed question back into the input and turns off the chips and Send. GET with `offline: true`
+  says "Questions are answered by your normal computer, which cannot be reached right now.", with `home_older: true` "Your normal computer needs
+  an update to answer questions." (a short line, `#h5-learn-ask-away`, instead of the notice; chips and Send off). A failed GET shows an error
+  Alert with Try again.
+- **Keys and focus**: typing in the panel never reaches the exercise (its own input; Session's keys skip `.h5-learn-ask`, and while the phone's
+  sheet is open the card's keys are off altogether). Closing gives the focus back to the exercise field (on a touch screen only to a field with
+  `inputmode="none"`, so the system keyboard does not open); the sheet's own focus restore is off.
+
 ## Grading
 
 - `scripts/h5-shell/learn-grade.mjs` (pure, `test/h5-learn-grade.test.js`): `wordsOf` drops the punctuation around words and compares in lower
@@ -211,6 +257,14 @@
   without the route; on a computer a wrong answer typed with the keys, the grades under the result and Enter, Review using the layout, View in the
   pane. `H5_SHOT_DIR` saves `learn-pick-spell.png`, `learn-pick-checked.png`, `learn-pick-settings.png` (frames 1, 2 and 4 of the design) and
   `learn-pick-desktop.png`. Unit: `test/h5-learn-model.test.js` (`findWholeWord`, `sentenceGap`, `levelNote`, `pickedNote`, `shortDateTime`).
+- `scripts/test-h5-learn-ask-browser.cjs` (mocked `/api/learn/cards/:id/ask`, a fetch stand-in feeding the stream piece by piece; 390x844 touch
+  and 1440x900): Ask in Spell's helper row and in Build's prompt card; the sheet (top, bottom, corners, scrim, title, caption, Close, the hint
+  chips, the earlier messages with `lang` and bold, the hints note, Send's name); typing in the sheet not reaching the letters; a chip streamed
+  into a growing bubble then replaced by the stored messages; Close returning the focus; after Check the caption, the chips and a follow-up
+  answered as JSON with its `state`; a JSON 502 before the stream, a 429, a company computer's 503 and an error half way, each with Try again; the
+  translator notice; the card's keys off while the sheet is open; the side panel (380px, the card making room and staying usable, Enter sending
+  without checking, Escape closing only the panel and the focus back); Fill the gap's `expected`; the offline and home-too-old lines.
+  `H5_SHOT_DIR` saves `learn-ask-sheet.png`, `learn-ask-checked.png`, `learn-ask-desktop.png`. Unit: `test/h5-learn-ask.test.js`.
 - `scripts/test-h5-learn-browser.cjs` (mocked `/api/learn`; 1440x900 and 390x844 touch): the destination on the rail and the bottom navigation,
   the home numbers, every mode answered right and wrong with the diff and the hints, the bodies posted for Again / Hard / Good, the keys, Hint,
   Skip, the end of a session, no translator and its link, Mistakes, the material list (search, kind, edit, suspend, restore), the settings

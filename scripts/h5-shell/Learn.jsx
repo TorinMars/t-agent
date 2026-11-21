@@ -33,6 +33,7 @@ import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgr
 import { attachVoice, canSpeak, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
+import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
@@ -161,7 +162,8 @@ function Learn({ state, ui }) {
           </Box>
           {home}
         </Box>
-        <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', px: 4, py: 3 }}>
+        {/* The Ask side panel (LearnAsk.jsx) lies at the right of the window; on a window wide enough the card makes room for it, else the panel covers its right part. */}
+        <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', px: 4, py: 3, '@media (min-width: 1200px)': { '&:has(#h5-learn-ask[data-layout="side"])': { pr: `${ASK_WIDTH + 32}px` } } }}>
           <Box sx={{ maxWidth: 880 }}>
             {view ? <ViewBody key={view.seq} view={view} {...common} /> : <HowView frame={{ phone: false, title: t('How learning works') }} />}
           </Box>
@@ -418,6 +420,8 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
     const onKey = event => {
       if (event.defaultPrevented || event.isComposing || !register.current) return;
       const target = event.target || document.body;
+      // Keys typed in "Ask about this question" are its own; while the phone's sheet is open the card's keys are off.
+      if ((target.closest && target.closest('.h5-learn-ask')) || document.querySelector('#h5-learn-ask[data-layout="sheet"]')) return;
       const tag = target.tagName;
       if (event.key === 'Enter' && (tag === 'BUTTON' || tag === 'A')) return; // the focused button answers Enter itself
       if (event.key === 'Enter' && tag === 'TEXTAREA' && event.shiftKey) return;
@@ -611,6 +615,21 @@ const keepFocus = field => ({
     if (event.detail > 0 && el && event.currentTarget.dataset.field === '1' && document.activeElement !== el) el.focus({ preventScroll: true });
   },
 });
+
+// "Ask about this question" (LearnAsk.jsx): the text button Ask at the end of the card's button row (it keeps the field's focus like the other helper
+// buttons) and the sheet or side panel it opens. `answer()`: the person's answer; `expected`: what is asked for when it is not the card's English
+// (Fill the gap's word); `gap`: the card shows a sentence with a gap.
+function useAsk({ card, exercise, result, answer, expected = '', gap = false, field, phone, keys, openTranslator }) {
+  const [open, setOpen] = useState(false);
+  const button = (
+    <Button id="h5-learn-ask-open" startIcon={<Icon name="learnAsk" size={20} />} onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open ? 'true' : 'false'} {...keepFocus(field)}
+      sx={{ flexShrink: 0, ml: 'auto' }}>
+      {t('Ask')}
+    </Button>
+  );
+  const panel = <AskPanel open={open} onClose={() => setOpen(false)} phone={phone} card={card} exercise={exercise} result={result} answer={answer} expected={expected} gap={gap} field={field} keys={keys} openTranslator={openTranslator} />;
+  return { button, panel, row: <Box className="h5-learn-ask-row" sx={{ display: 'flex', mt: 1, mr: -1 }}>{button}</Box> };
+}
 
 // ── Audio ("Audio" in docs/design/learn-english-page.md) ──
 // One player per session (learn-audio.mjs): a card plays by itself as the Learn settings say (`autoPlays`), Hear it / Play plays again with the same
@@ -807,6 +826,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   useAutoCheck({ register, ready: typedInFull(value, word), value, result });
   const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '').slice(0, word.length)); } };
   const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
+  const ask = useAsk({ card, exercise, result, answer: () => value, gap: Boolean(cloze), field: input, phone, keys, openTranslator });
   const giveUp = () => { if (!result) setResult({ ...spellCheck(word, value), ok: false, correct: false, helped: true, gaveUp: true }); };
   const showFirst = () => { setHelped(true); setValue(now => (now ? now : word.slice(0, 1))); if (input.current) input.current.focus({ preventScroll: true }); };
   // A word from the person's translations is asked inside its sentence (sentenceGap: the card has the Chinese of the sentence and the word is in it):
@@ -850,6 +870,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
       {tts ? <AudioButton audio={audio} text={spoken} field={input} /> : null}
       <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>
+      {ask.button}
     </Box>
   );
   const meaningState = <>
@@ -860,7 +881,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
       {cloze ? (
-        <Prompt label={t('Fill in the word')} badge={<Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? null : helpers}>
+        <Prompt label={t('Fill in the word')} badge={<Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? ask.row : helpers}>
           <SentenceWithGap cloze={cloze} result={result} />
           <Typography variant="body2" color="text.secondary" component="p" lang="zh" translate="no" id="h5-learn-sentence-zh" sx={{ mt: 1, overflowWrap: 'break-word' }}>{cloze.zh}</Typography>
           <Divider sx={{ my: 1.5 }} />
@@ -918,6 +939,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
           {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[result.right, result.total]} /></Typography> : null}
         </Feedback>
       ) : null}
+      {ask.panel}
     </ViewFrame>
   );
 }
@@ -940,10 +962,11 @@ function SentenceWithGap({ cloze, result }) {
   );
 }
 
-function TranslatorNotice({ onOpen, sx, id = 'h5-learn-no-translator' }) {
+// `text`: what needs the translator (an English dictionary key); word meanings unless told otherwise.
+export function TranslatorNotice({ onOpen, sx, id = 'h5-learn-no-translator', text = 'Word meanings need a translator. Set one up in Settings → Voice and translation.' }) {
   return (
     <Alert severity="info" id={id} sx={sx} action={<Button color="inherit" size="small" id="h5-learn-open-translator" onClick={onOpen}>{t('Open Settings')}</Button>}>
-      {t('Word meanings need a translator. Set one up in Settings → Voice and translation.')}
+      {t(text)}
     </Alert>
   );
 }
@@ -964,7 +987,7 @@ function Tile({ used = false, className, children, ...props }) {
   );
 }
 
-function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise }) {
+function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
   const tiles = useMemo(() => tilesFor(card, cards), [card, cards]);
   const [placed, setPlaced] = useState([]);
   const [typed, setTyped] = useState('');
@@ -981,6 +1004,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
   const takeBack = () => { if (placed.length && !result) setPlaced(now => now.slice(0, -1)); };
   const type = next => { if (!result) { audio.typed(); setTyped(next); } };
   const kb = useLearnKeys({ ui, keys, field, change: type, atStart: false, emptyBack: takeBack });
+  const ask = useAsk({ card, exercise, result, answer: () => answer, field, phone, keys, openTranslator });
   const place = id => { if (!result) setPlaced(now => (now.includes(id) ? now : [...now, id])); };
   const remove = id => { if (!result) setPlaced(now => now.filter(item => item !== id)); };
   // The next word in order; tiles placed wrongly after the right start are taken back first.
@@ -1022,7 +1046,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
   );
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
-      <Prompt label={t('Chinese')}>
+      <Prompt label={t('Chinese')} footer={ask.row}>
         <ChineseText card={card} id="h5-learn-chinese" />
         <Origin card={card} />
       </Prompt>
@@ -1037,13 +1061,14 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
+      {ask.panel}
     </ViewFrame>
   );
 }
 
 // ── Dictation ──
 
-function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAnswer, onSkip, audio, exercise }) {
+function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
   const [value, setValue] = useState('');
   const field = useRef(null);
   useEffect(() => { focusOnStart(field, true); }, [card]); // eslint-disable-line react-hooks/exhaustive-deps -- one card
@@ -1054,6 +1079,7 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
   useCardAudio(audio, exercise, card.en, result); // Dictation always plays at the start: listening is the task
   const change = next => { if (!result) { audio.typed(); setValue(next); } };
   const kb = useLearnKeys({ ui, keys, field, change });
+  const ask = useAsk({ card, exercise, result, answer: () => value, field, phone, keys, openTranslator });
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
     <Box sx={{ flex: '1 1 auto' }} />
@@ -1065,6 +1091,7 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
         <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', ml: -1 }}>
           <AudioButton audio={audio} text={card.en} field={field} id="h5-learn-play" label="Play" />
           <Button id="h5-learn-slow" onClick={() => audio.play(card.en, { slow: true })} {...keepFocus(field)}>{t('Slow')}</Button>
+          {ask.button}
         </Box>
       )}>
         {result ? <ChineseText card={card} id="h5-learn-chinese" /> : null}
@@ -1079,13 +1106,14 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
+      {ask.panel}
     </ViewFrame>
   );
 }
 
 // ── Say it ──
 
-function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise }) {
+function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
   const [value, setValue] = useState('');
   const [listening, setListening] = useState(false);
   const box = useRef(null);
@@ -1100,6 +1128,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
     check: set => { if (!value.trim()) return; set({ ...diffWords(card.en, value), helped: false }); },
   });
   useCardAudio(audio, exercise, card.en, result); // the model at the start
+  const ask = useAsk({ card, exercise, result, answer: () => value, field: box, phone, keys, openTranslator });
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
     {tts ? <AudioButton audio={audio} text={card.en} phone={phone} field={box} /> : null}
     <Box sx={{ flex: '1 1 auto' }} />
@@ -1108,7 +1137,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
   </>);
   return (
     <ViewFrame {...frame} footer={phone ? actions : null}>
-      <Prompt label={t('Read this aloud')}>
+      <Prompt label={t('Read this aloud')} footer={ask.row}>
         <Typography variant="h5" component="p" translate="no" id="h5-learn-say-text" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.en}</Typography>
         {card.zh ? <Typography variant="body2" color="text.secondary" lang="zh" translate="no" sx={{ mt: 0.5 }}>{card.zh}</Typography> : null}
       </Prompt>
@@ -1131,13 +1160,14 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
+      {ask.panel}
     </ViewFrame>
   );
 }
 
 // ── Fill the gap ──
 
-function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise }) {
+function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
   const gap = useMemo(() => gapFor(card), [card]);
   const [value, setValue] = useState('');
   const [helped, setHelped] = useState(false);
@@ -1159,6 +1189,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   useAutoCheck({ register, ready: Boolean(gap) && typedInFull(value, gap.word), value, result });
   const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '')); } };
   const kb = useLearnKeys({ ui, keys, field, change, letters: true });
+  const ask = useAsk({ card, exercise, result, answer: () => value, expected: gap ? gap.word : '', gap: true, field, phone, keys, openTranslator });
   if (!gap) {
     return (
       <ViewFrame {...frame}>
@@ -1177,7 +1208,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   </>);
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
-      <Prompt label={t('Chinese')}>
+      <Prompt label={t('Chinese')} footer={ask.row}>
         <ChineseText card={card} id="h5-learn-chinese" />
         <Origin card={card} />
       </Prompt>
@@ -1198,6 +1229,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
+      {ask.panel}
     </ViewFrame>
   );
 }

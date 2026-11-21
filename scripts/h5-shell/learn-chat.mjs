@@ -34,8 +34,13 @@ export function chipFill(chip, translate = text => text) {
 // Chinese words for diary and habit) or the mistakes (mistake, wrong, keep getting, and the Chinese for mistake); null for anything else.
 const JOURNAL_RE = /journal|diary|habit|\u65e5\u8bb0|\u4e60\u60ef/i;
 const MISTAKES_RE = /mistake|wrong|keep getting|\u9519/i;
+// Like the server (services/learn-chat.js): a long text or a journal entry sent for review is never a question about the habit or the mistakes,
+// even when it contains those words, so a review does not pull in the journal summary.
+const MAX_TOPIC_QUESTION = 500;
+const REVIEW_PREFIX = /^\s*please review my journal entry\s*:?\s*/i;
 export function chatTopic(question) {
   const text = String(question || '');
+  if (text.length > MAX_TOPIC_QUESTION || REVIEW_PREFIX.test(text)) return null;
   if (JOURNAL_RE.test(text)) return 'journal';
   if (MISTAKES_RE.test(text)) return 'mistakes';
   return null;

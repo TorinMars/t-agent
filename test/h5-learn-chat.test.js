@@ -40,6 +40,9 @@ test('a typed question names the journal or the mistakes topic only when it is a
   assert.equal(chatTopic('\u6211\u6700\u5e38\u9519\u7684\u5355\u8bcd'), 'mistakes');
   assert.equal(chatTopic('What does "slot" mean?'), null);
   assert.equal(chatTopic(''), null);
+  // A journal entry sent for review, or any long text, names no topic even with those words in it (the server's rule too).
+  assert.equal(chatTopic('Please review my journal entry:\nToday I wrote in my journal and got the tests wrong.'), null);
+  assert.equal(chatTopic(`My diary habit. ${'word '.repeat(120)}`), null);
 });
 
 test('the meta line never shows: cut when complete, held back while it may be starting', async () => {

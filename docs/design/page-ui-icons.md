@@ -118,6 +118,7 @@
 | Hear it, Play (the Learn page) | sound | 4766907 | `learnSound` in `learn-icons.mjs`, 20px in a text button, 22px as the icon-only "Hear it" of a phone |
 | Spell the word / Build the sentence / Dictation / Fill the gap / Mistakes (the Learn page's modes) | font-size / align-left / customerservice / border / close-circle | 4767081 / 4767064 / 4766762 / 4766265 / 4765725 | `learnSpell` / `learnBuild` / `learnDictation` / `learnFill` / `learnMistakes` in `learn-icons.mjs`, 22px in a 40px tinted tile |
 | Say it (the Learn page's mode and its microphone) | audio | 5756281 | `voice`, the voice input icon, 22px in the mode tile, 26px in the 56px microphone button |
+| Ask (the text button of every Learn practice card, "Ask about this question") | message | 4765866 | `learnAsk` (20px start icon) in `learn-icons.mjs`; the sheet's send button uses `send` (22px) |
 | Streak, How learning works, Learn settings (the Learn page's home) | fire / question-circle / setting | 4936460 / 4765736 / 4765891 | `learnStreak` (16px, warning colour), `learnHow` (18px start icon) in `learn-icons.mjs`; `setting` (18px start icon) |
 | Edit meaning, Search your material (the Learn page's material list) | edit / search | 4766959 / 6598347 | `edit` 20px, `search` 18px |
 

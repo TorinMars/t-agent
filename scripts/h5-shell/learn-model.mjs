@@ -1,6 +1,7 @@
 // The rules of the Learn page that need no DOM (pure functions with unit tests): which exercise a card gets, the word tiles of "Build the sentence",
 // the gap of "Fill the gap", a word asked inside its sentence in Spell, the notes of "MY LEVEL" and "WORDS FROM MY TRANSLATIONS" in Learn settings,
-// the time estimate of the home, the order of a mixed session, the keys of a computer. See "The Learn page" in
+// the time estimate of the home, the order of a mixed session, the keys of a computer, and the parts of "Ask about this question" (chips, caption,
+// the state sent, the language and **bold** of a message, the NDJSON stream). See "The Learn page" and "Ask about this question" in
 // docs/design/learn-english-page.md.
 import { normWord, wordsOf } from './learn-grade.mjs';
 
@@ -238,4 +239,84 @@ export function exerciseKey({ key, checked, inField = false, modifiers = false }
   if (!checked || inField) return null;
   const grade = { 1: 'again', 2: 'hard', 3: 'good' }[key];
   return grade ? { action: 'grade', grade } : null;
+}
+
+// ── Ask about this question ("Ask about this question" in docs/design/learn-english-page.md) ──
+
+export const ASK_QUESTION_MAX = 500;
+const SENTENCE_EXERCISES = new Set(['build', 'dictation', 'say', 'fill']);
+// The quick questions (chips), English dictionary keys: the page shows them translated and sends the text shown. Before Check: hints only; after:
+// "Why was my answer wrong?" first when it was wrong.
+export function askChips({ kind = 'word', checked = false, correct = false } = {}) {
+  if (!checked) {
+    return ['Give me a hint', kind === 'sentence' ? 'Explain the grammar' : 'What part of speech fits?', 'Other example sentences', 'How do I remember it?'];
+  }
+  return [...(correct ? [] : ['Why was my answer wrong?']), 'Explain the grammar', 'Other example sentences', 'How do I remember it?'];
+}
+
+// The caption under the title as [template, ...values] (a translated template with the person's answer put in as user content): before Check
+// "The sentence with the gap · your answer is not shown yet" for a card with a gap (Fill the gap, Spell inside its sentence), else "Not checked
+// yet: hints only"; after it "Your answer: <answer> · right" or "· wrong" (an empty answer, given up with I don't know, as "—").
+export function askCaption({ checked = false, gap = false, answer = '', correct = false } = {}) {
+  if (!checked) return [gap ? 'The sentence with the gap · your answer is not shown yet' : 'Not checked yet: hints only'];
+  return [correct ? 'Your answer: {1} · right' : 'Your answer: {1} · wrong', String(answer || '').trim() || '\u2014'];
+}
+
+// The `state` of POST /api/learn/cards/:id/ask: `{ checked: false }` before Check (the model gives hints only), after it the answer (at most 500
+// characters), whether it was right and whether help was used. `expected`: what the exercise asks for when that is not the card's English (the
+// gap word of Fill the gap; the server cannot know it), at most 300 characters, before and after Check.
+export const ASK_EXPECTED_MAX = 300;
+export function askState(result, answer, expected = '') {
+  const want = String(expected || '').trim().slice(0, ASK_EXPECTED_MAX);
+  const extra = want ? { expected: want } : {};
+  if (!result) return { checked: false, ...extra };
+  return { checked: true, answer: String(answer || '').slice(0, ASK_QUESTION_MAX), correct: Boolean(result.correct), helped: Boolean(result.helped), ...extra };
+}
+
+// The `mode` sent with a question: the exercise shown (Review, Mistakes and free practice draw one of the five).
+export const askKind = (card, exercise) => (card && card.kind === 'sentence') || SENTENCE_EXERCISES.has(exercise) ? 'sentence' : 'word';
+
+// The language of a message for its `lang` attribute: Chinese when it has a CJK character (so a Chinese question with English words in it is read
+// as Chinese), else English.
+export const textLang = text => (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/.test(String(text || '')) ? 'zh' : 'en');
+
+// A message split into plain and **bold** parts ([{ text, bold }]); nothing else is markup (line breaks are kept by the bubble's CSS). An unclosed
+// "**" stays as written, so a stream that has sent only the first half of a bold run shows the stars for a moment, never a broken layout.
+export function boldParts(text) {
+  const out = [];
+  const source = String(text || '');
+  const re = /\*\*([^*\n](?:[^*]*?[^*\n])?)\*\*/g;
+  let at = 0;
+  for (let match = re.exec(source); match; match = re.exec(source)) {
+    if (match.index > at) out.push({ text: source.slice(at, match.index), bold: false });
+    out.push({ text: match[1], bold: true });
+    at = match.index + match[0].length;
+  }
+  if (at < source.length) out.push({ text: source.slice(at), bold: false });
+  return out;
+}
+
+// The NDJSON answer of a streamed ask, read piece by piece: the complete lines of `buffer` parsed (a broken line is skipped), and the unfinished
+// rest kept for the next piece. Returns { items, rest }.
+export function ndjsonLines(buffer) {
+  const parts = String(buffer || '').split('\n');
+  const rest = parts.pop();
+  const items = [];
+  for (const line of parts) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try { items.push(JSON.parse(trimmed)); } catch { /* not a line of the stream */ }
+  }
+  return { items, rest };
+}
+
+// The stored messages of a card after an answer arrived or the list was read again: a union by `uid` (nothing lost), oldest first (`at`, an ISO
+// time from the server, then `uid`), the newest 20 kept as the server does.
+export const ASK_KEEP = 20;
+const timeOf = at => (typeof at === 'number' ? at : Date.parse(at || '') || 0);
+export function mergeMessages(...lists) {
+  const byUid = new Map();
+  for (const list of lists) for (const item of list || []) if (item && item.uid && !byUid.has(item.uid)) byUid.set(item.uid, item);
+  const out = [...byUid.values()].sort((a, b) => timeOf(a.at) - timeOf(b.at) || String(a.uid).localeCompare(String(b.uid)));
+  return out.slice(-ASK_KEEP);
 }

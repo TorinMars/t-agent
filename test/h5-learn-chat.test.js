@@ -64,6 +64,7 @@ test('corrections markup: deletions, insertions and bold in the rest', async () 
   assert.deepEqual(answerParts('It was [-very-] slow'), [{ text: 'It was ' }, { text: 'very', del: true }, { text: ' slow' }]);
   // Unclosed markers (a stream half way) and markers across a line break stay as written.
   assert.deepEqual(answerParts('It was [-ver'), [{ text: 'It was [-ver' }]);
+  assert.deepEqual(answerParts('Why: with a past time (*on Friday*) use the simple past.'), [{ text: 'Why: with a past time (' }, { text: 'on Friday', italic: true }, { text: ') use the simple past.' }]);
   assert.deepEqual(answerParts('[-a\nb-]'), [{ text: '[-a\nb-]' }]);
   assert.deepEqual(answerParts(''), []);
   assert.equal(correctedText('the tests [-was-]{+were+} **flaky**'), 'the tests were flaky');

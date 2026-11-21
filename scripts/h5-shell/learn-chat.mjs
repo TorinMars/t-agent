@@ -62,13 +62,13 @@ export function visibleAnswer(text, { streaming = false } = {}) {
 }
 
 // An answer split into its parts for drawing: [{ text, bold?, del?, ins? }]. `[-wrong-]` is a deletion and `{+right+}` an insertion of a reviewed
-// journal entry (never across a line break); **bold** is read in the rest. An unclosed marker stays as written (a stream that has sent only half of
+// journal entry (never across a line break); **bold** and *italic* are read in the rest. An unclosed marker stays as written (a stream that has sent only half of
 // it shows the characters for a moment, never a broken layout).
 const MARK_RE = /\[-([^\n]+?)-\]|\{\+([^\n]+?)\+\}/g;
 export function answerParts(text) {
   const source = String(text || '');
   const out = [];
-  const plain = piece => { for (const part of boldParts(piece)) out.push(part.bold ? { text: part.text, bold: true } : { text: part.text }); };
+  const plain = piece => { for (const part of boldParts(piece)) out.push(part.bold ? { text: part.text, bold: true } : part.italic ? { text: part.text, italic: true } : { text: part.text }); };
   let at = 0;
   MARK_RE.lastIndex = 0;
   for (let match = MARK_RE.exec(source); match; match = MARK_RE.exec(source)) {

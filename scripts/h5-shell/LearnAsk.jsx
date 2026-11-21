@@ -79,7 +79,10 @@ function Bubble({ role, text, streaming = false }) {
         whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: 'text.primary',
         ...(mine ? { bgcolor: alpha(theme.palette.primary.main, 0.16) } : { bgcolor: 'background.paper', backgroundImage: overlay(8) }),
       })}>
-      {boldParts(text).map((part, index) => (part.bold ? <Box key={index} component="strong" sx={{ fontWeight: 'fontWeightBold' }}>{part.text}</Box> : <span key={index}>{part.text}</span>))}
+      {boldParts(text).map((part, index) => {
+        if (part.bold) return <Box key={index} component="strong" sx={{ fontWeight: 'fontWeightBold' }}>{part.text}</Box>;
+        return part.italic ? <em key={index}>{part.text}</em> : <span key={index}>{part.text}</span>;
+      })}
       {streaming && !text ? <Box component="span" sx={{ color: 'text.secondary' }}>…</Box> : null}
     </Box>
   );

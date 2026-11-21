@@ -113,6 +113,7 @@ function Bubble({ role, text, streaming = false }) {
         if (part.del) return <Box key={index} component="del" className="h5-learn-chat-del" sx={{ color: 'error.light', textDecorationColor: 'currentColor', mr: parts[index + 1] && parts[index + 1].ins ? 0.5 : 0 }}>{part.text}</Box>;
         if (part.ins) return <Box key={index} component="ins" className="h5-learn-chat-ins" sx={{ color: 'success.light', textDecoration: 'underline', textUnderlineOffset: '2px' }}>{part.text}</Box>;
         if (part.bold) return <Box key={index} component="strong" sx={{ fontWeight: 'fontWeightBold' }}>{part.text}</Box>;
+        if (part.italic) return <em key={index}>{part.text}</em>;
         return <span key={index}>{part.text}</span>;
       })}
       {streaming && !shown ? <Box component="span" sx={{ color: 'text.secondary' }}>…</Box> : null}

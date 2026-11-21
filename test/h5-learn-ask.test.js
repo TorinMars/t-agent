@@ -56,6 +56,11 @@ test('**bold** is the only markup; anything else stays text', async () => {
   assert.deepEqual(boldParts('add **-s**: **e**.'), [{ text: 'add ', bold: false }, { text: '-s', bold: true }, { text: ': ', bold: false }, { text: 'e', bold: true }, { text: '.', bold: false }]);
   assert.deepEqual(boldParts('half **open'), [{ text: 'half **open', bold: false }], 'an unclosed run while it streams');
   assert.deepEqual(boldParts('<b>x</b>\nline'), [{ text: '<b>x</b>\nline', bold: false }]);
+  // *italic* (models use it for examples): drawn in italics, not shown with its stars; not inside a word, not with spaces at its ends.
+  assert.deepEqual(boldParts('with a past time (*on Friday*) use'), [{ text: 'with a past time (', bold: false }, { text: 'on Friday', bold: false, italic: true }, { text: ') use', bold: false }]);
+  assert.deepEqual(boldParts('**bold** and *it*'), [{ text: 'bold', bold: true }, { text: ' and ', bold: false }, { text: 'it', bold: false, italic: true }]);
+  assert.deepEqual(boldParts('2*3*4 and a * b * c'), [{ text: '2*3*4 and a * b * c', bold: false }]);
+  assert.deepEqual(boldParts('half *open'), [{ text: 'half *open', bold: false }]);
   assert.deepEqual(boldParts('a ** b'), [{ text: 'a ** b', bold: false }]);
   assert.deepEqual(boldParts(''), []);
 });

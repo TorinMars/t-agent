@@ -280,16 +280,18 @@ export const askKind = (card, exercise) => (card && card.kind === 'sentence') ||
 // as Chinese), else English.
 export const textLang = text => (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3000-\u303f\uff00-\uffef]/.test(String(text || '')) ? 'zh' : 'en');
 
-// A message split into plain and **bold** parts ([{ text, bold }]); nothing else is markup (line breaks are kept by the bubble's CSS). An unclosed
-// "**" stays as written, so a stream that has sent only the first half of a bold run shows the stars for a moment, never a broken layout.
+// A message split into plain, **bold** and *italic* parts ([{ text, bold }], an italic part also has `italic: true`); nothing else is markup (line
+// breaks are kept by the bubble's CSS). Models write *italic* for examples although the prompt asks for bold only, so a single-star run is drawn in
+// italics instead of showing its stars; a star inside a word (2*3*4) or with a space inside its ends (a * b) is not one. An unclosed "**" or "*"
+// stays as written, so a stream that has sent only the first half of a run shows the stars for a moment, never a broken layout.
 export function boldParts(text) {
   const out = [];
   const source = String(text || '');
-  const re = /\*\*([^*\n](?:[^*]*?[^*\n])?)\*\*/g;
+  const re = /\*\*([^*\n](?:[^*]*?[^*\n])?)\*\*|(?<![*\w])\*([^*\s](?:[^*\n]*?[^*\s])?)\*(?![*\w])/g;
   let at = 0;
   for (let match = re.exec(source); match; match = re.exec(source)) {
     if (match.index > at) out.push({ text: source.slice(at, match.index), bold: false });
-    out.push({ text: match[1], bold: true });
+    out.push(match[1] !== undefined ? { text: match[1], bold: true } : { text: match[2], bold: false, italic: true });
     at = match.index + match[0].length;
   }
   if (at < source.length) out.push({ text: source.slice(at), bold: false });

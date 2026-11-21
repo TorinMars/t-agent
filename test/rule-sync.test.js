@@ -186,7 +186,7 @@ test('a receiver writes the rules, the import line, Codex and the skills with ma
   write(b.paths.codexAgents, 'Local Codex rule.\n');
   b.service.update({ role: 'receive' });
   const answer = b.service.receive(bundle);
-  assert.deepEqual(answer, { revision: bundle.revision, applied: { rules: true, codex: true, skills: ['deploy'], removed: [], conflicts: [], claude_settings: [], statusline_files: [] } });
+  assert.deepEqual(answer, { revision: bundle.revision, applied: { rules: true, codex: true, skills: ['deploy'], removed: [], replaced: [], conflicts: [], claude_settings: [], statusline_files: [] } });
   assert.equal(read(b.paths.sharedRules), `${HOME_NOTICE}\n\nUse short sentences.\n`, 'the notice on top says where to edit');
   assert.match(read(b.paths.claudeMd), /^<!-- Managed by T-Agent/);
   assert.equal(read(b.paths.codexAgents), `${CODEX_BEGIN}\n${HOME_NOTICE}\nUse short sentences.\n${CODEX_END}\n\nLocal Codex rule.\n`, 'the same notice is the first line in the block');
@@ -238,6 +238,144 @@ test('an unmarked local skill is a conflict and never overwritten; only marked f
   assert.equal(exists(local), true, 'the unmarked folder is never removed');
   assert.equal(exists(path.join(outside, 'keep.md')), true, 'a symlinked folder is never followed');
   assert.equal(exists(path.join(b.paths.skillsDir, 'linked')), true);
+});
+
+// ---- T-Agent's own skills (services/agent-skills.js SKILLS) are never shared ----
+
+// The real installer of T-Agent's own skills, writing into the throwaway home of a machine.
+const agentSkillsLib = require('../services/agent-skills');
+const ownInstaller = home => agentSkillsLib.createAgentSkills({ env: {}, homedir: () => home, terminalUser: () => ({ user: null }), dataDir: path.join(home, 'tagent-data') });
+const BUNDLED_TEXT = name => fs.readFileSync(agentSkillsLib.SKILLS.find(skill => skill.name === name).sourceFile, 'utf8');
+
+test("own skills: the bundle leaves them out, also when an older saved choice names them, and the view marks them", t => {
+  const a = machine(t, { id: SOURCE_ID });
+  assert.deepEqual(sync.BUNDLED_SKILLS, ['t-attention', 'tcli', 'browser']);
+  write(a.paths.sharedRules, 'Rules.\n');
+  for (const name of ['deploy', 'browser', 'tcli']) write(path.join(a.paths.skillsDir, name, 'SKILL.md'), `# ${name}\n`);
+  // A choice saved by an older version, before T-Agent's own skills were left out.
+  a.db.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run(STATE_KEY, JSON.stringify({ role: 'source', skills: ['browser', 'deploy', 't-attention', 'tcli'] }));
+  const built = buildBundle({ paths: a.paths, skills: ['browser', 'deploy', 'tcli'], source: { instance_id: SOURCE_ID, name: 'Home Mac' } });
+  assert.deepEqual(built.bundle.skills.map(skill => skill.name), ['deploy'], 'buildBundle itself never takes them');
+  const view = a.service.overview();
+  assert.deepEqual(view.skills, [
+    { name: 'browser', synced: false, shared: false, bundled: true }, { name: 'deploy', synced: false, shared: true },
+    { name: 't-attention', shared: false, bundled: true, missing: true }, { name: 'tcli', synced: false, shared: false, bundled: true },
+  ]);
+  assert.deepEqual(view.warnings, [], 'an old choice of an own skill that is not on disk is not "not found" either');
+  assert.equal(view.revision, revisionOf('Rules.\n', [{ name: 'deploy', files: built.bundle.skills[0].files }]));
+  // Any save drops the old names; choosing one again is ignored.
+  a.service.update({ skills: ['deploy', 'tcli'] });
+  assert.deepEqual(JSON.parse(a.db.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY).value).skills, ['deploy']);
+});
+
+test('own skills: a receiver with its own local copies reports no conflict, also for a bundle of an older source that still sends them', t => {
+  const b = machine(t, { id: RECEIVER_ID, agentSkills: ownInstaller(tempHome(t)) });
+  b.service.update({ role: 'receive' });
+  for (const name of ['browser', 't-attention', 'tcli']) write(path.join(b.paths.skillsDir, name, 'SKILL.md'), `own ${name}\n`);
+  // An older source: its bundle still has them (built by hand, as buildBundle no longer does).
+  const deploy = { name: 'deploy', files: [{ path: 'SKILL.md', text: '# Deploy\n' }] };
+  const old = handBundle([{ name: 'browser', files: [{ path: 'SKILL.md', text: 'theirs' }] }, deploy, { name: 'tcli', files: [{ path: 'SKILL.md', text: 'theirs' }] }]);
+  const answer = b.service.receive(old);
+  assert.deepEqual(answer.applied.conflicts, []);
+  assert.deepEqual(answer.applied.skills, ['deploy']);
+  assert.deepEqual(answer.applied.replaced, [], 'folders without the marker are the person\'s');
+  assert.deepEqual(b.service.receiverStatus().conflicts, []);
+  for (const name of ['browser', 't-attention', 'tcli']) {
+    assert.equal(read(path.join(b.paths.skillsDir, name, 'SKILL.md')), `own ${name}\n`, `${name} is untouched`);
+    assert.equal(exists(path.join(b.paths.skillsDir, name, MARKER)), false);
+  }
+  // A status kept by an older version still names them: they are not shown any more.
+  const row = JSON.parse(b.db.prepare('SELECT value FROM system_state WHERE key = ?').get(STATE_KEY).value);
+  row.received.conflicts = [{ skill: 'browser', reason: 'local' }, { skill: 'company', reason: 'local' }];
+  b.db.prepare('UPDATE system_state SET value = ? WHERE key = ?').run(JSON.stringify(row), STATE_KEY);
+  assert.deepEqual(b.service.receiverStatus().conflicts, [{ skill: 'company', reason: 'local' }]);
+  assert.deepEqual(b.service.overview().received.conflicts, [{ skill: 'company', reason: 'local' }]);
+  // The guard does not keep them either.
+  const applied = JSON.parse(read(path.join(b.dataDir, 'rule-sync', 'applied-bundle.json')));
+  assert.deepEqual(applied.skills.map(skill => skill.name), ['deploy']);
+});
+
+test('own skills: a copy received before is replaced with this machine\'s own install when the source stops sending it', t => {
+  const src = tempHome(t);
+  const b = machine(t, { id: RECEIVER_ID });
+  b.service.update({ role: 'receive' });
+  // Received from an older source: browser and tcli with the marker, as a receiver of an older version wrote them.
+  const first = handBundle([
+    { name: 'browser', files: [{ path: 'SKILL.md', text: 'browser from Home Mac' }, { path: 'extra.md', text: 'x' }] },
+    { name: 'deploy', files: [{ path: 'SKILL.md', text: '# Deploy\n' }] },
+    { name: 'tcli', files: [{ path: 'SKILL.md', text: 'tcli from Home Mac' }] },
+  ]);
+  const marker = { source: { instance_id: SOURCE_ID, name: 'Home Mac' }, revision: first.revision, synced_at: '2026-11-20T00:00:00.000Z', skill_hash: 'x' };
+  for (const skill of first.skills) {
+    for (const file of skill.files) write(path.join(b.paths.skillsDir, skill.name, file.path), Buffer.from(file.content_base64, 'base64'));
+    write(path.join(b.paths.skillsDir, skill.name, MARKER), JSON.stringify(marker));
+  }
+  // The person's own t-attention folder (no marker) must stay as it is.
+  write(path.join(b.paths.skillsDir, 't-attention', 'SKILL.md'), 'mine\n');
+
+  // Now the installer exists (this version): the next bundle, without them, replaces the received copies.
+  const installs = [];
+  const real = ownInstaller(b.home);
+  const service = createRuleSync({ db: b.db, env: {}, home: b.home, dataDir: b.dataDir, identity: () => ({ instance_id: RECEIVER_ID, name: 'Office' }), log: quiet, timing: { pollMs: 0, retryMs: 0, guardPollMs: 0 }, agentSkills: { skillStatus: name => real.skillStatus(name), installSkill: name => { installs.push(name); return real.installSkill(name); } } });
+  t.after(() => service.stop());
+  const next = sourceBundle(src, { skills: { deploy: { 'SKILL.md': '# Deploy\n' } } }).bundle;
+  const answer = service.receive(next);
+  assert.deepEqual(installs, ['tcli', 'browser'], 'installed with the same installer as Settings -> Agent skills');
+  assert.deepEqual(answer.applied.replaced, ['browser', 'tcli']);
+  assert.deepEqual(answer.applied.removed, [], 'nothing is left as a gap');
+  for (const name of ['browser', 'tcli']) {
+    const dir = path.join(b.paths.skillsDir, name);
+    assert.equal(exists(path.join(dir, MARKER)), false, `${name}: no marker, so it is this machine's own`);
+    assert.equal(exists(path.join(dir, 'extra.md')), false, `${name}: the received copy is gone`);
+    assert.equal(read(path.join(dir, 'SKILL.md')), agentSkillsLib.renderSkill(name, BUNDLED_TEXT(name), agentSkillsLib.SKILLS.find(skill => skill.name === name).cliPath));
+    assert.equal(exists(path.join(b.home, '.codex', 'skills', name, 'SKILL.md')), true, `${name}: installed for Codex too, as in Settings`);
+  }
+  assert.equal(read(path.join(b.paths.skillsDir, 't-attention', 'SKILL.md')), 'mine\n', 'a folder without the marker is never touched');
+  assert.deepEqual(real.list().skills.filter(skill => skill.name !== 't-attention').map(skill => skill.claude.conflict), [null, null], 'Settings -> Agent skills sees no sync conflict');
+  assert.deepEqual(fs.readdirSync(b.paths.skillsDir).sort(), ['browser', 'deploy', 't-attention', 'tcli'], 'no temporary folder is left');
+});
+
+test('own skills: when the install fails, the received copy stays; a link at that name is never followed', t => {
+  const b = machine(t, { id: RECEIVER_ID, agentSkills: { skillStatus: name => ({ claude: { path: path.join(b.paths.skillsDir, name, 'SKILL.md') } }), installSkill: () => { throw new Error('disk full'); } } });
+  b.service.update({ role: 'receive' });
+  const marker = JSON.stringify({ source: { instance_id: SOURCE_ID, name: 'Home Mac' }, revision: 'r', skill_hash: 'x' });
+  write(path.join(b.paths.skillsDir, 'tcli', 'SKILL.md'), 'received tcli');
+  write(path.join(b.paths.skillsDir, 'tcli', MARKER), marker);
+  const outside = path.join(b.home, 'elsewhere', 'browser');
+  write(path.join(outside, 'SKILL.md'), 'linked');
+  write(path.join(outside, MARKER), marker);
+  fs.symlinkSync(outside, path.join(b.paths.skillsDir, 'browser'));
+  const answer = b.service.receive(handBundle([]));
+  assert.deepEqual(answer.applied.replaced, []);
+  assert.deepEqual(answer.applied.removed, [], 'a received own skill that could not be replaced is not removed either');
+  assert.equal(read(path.join(b.paths.skillsDir, 'tcli', 'SKILL.md')), 'received tcli', 'put back after the failed install');
+  assert.equal(exists(path.join(b.paths.skillsDir, 'tcli', MARKER)), true);
+  assert.equal(read(path.join(outside, 'SKILL.md')), 'linked', 'a link is never followed');
+  assert.equal(fs.lstatSync(path.join(b.paths.skillsDir, 'browser')).isSymbolicLink(), true);
+  assert.deepEqual(fs.readdirSync(b.paths.skillsDir).sort(), ['browser', 'tcli']);
+});
+
+test('own skills: a receiver replaces received copies at start, and the guard never puts one back', async t => {
+  const b = machine(t, { id: RECEIVER_ID });
+  b.service.update({ role: 'receive' });
+  // An applied bundle of an older version that still owns tcli.
+  const old = handBundle([{ name: 'tcli', files: [{ path: 'SKILL.md', text: 'tcli from Home Mac' }] }]);
+  b.service.receive(old);
+  assert.equal(exists(path.join(b.paths.skillsDir, 'tcli')), false, 'this version never writes it');
+  write(path.join(b.paths.skillsDir, 'tcli', 'SKILL.md'), 'tcli from Home Mac');
+  write(path.join(b.paths.skillsDir, 'tcli', MARKER), JSON.stringify({ source: { instance_id: SOURCE_ID, name: 'Home Mac' }, revision: old.revision, skill_hash: 'x' }));
+  const appliedFile = path.join(b.dataDir, 'rule-sync', 'applied-bundle.json');
+  const applied = JSON.parse(read(appliedFile));
+  applied.skills = [{ name: 'tcli', hash: 'x', files: [{ path: 'SKILL.md', mode: 0o644, content_base64: Buffer.from('tcli from Home Mac').toString('base64'), sha256: 'not-this' }] }];
+  fs.writeFileSync(appliedFile, JSON.stringify(applied));
+  assert.equal(b.service.guardCheck(), null, 'the guard does not compare an own skill');
+
+  const service = createRuleSync({ db: b.db, env: {}, home: b.home, dataDir: b.dataDir, identity: () => ({ instance_id: RECEIVER_ID, name: 'Office' }), log: quiet, timing: { pollMs: 0, retryMs: 0, guardPollMs: 0 }, agentSkills: ownInstaller(b.home) });
+  t.after(() => service.stop());
+  service.start();
+  await until(() => !exists(path.join(b.paths.skillsDir, 'tcli', MARKER)), 'the received copy is replaced at start');
+  assert.match(read(path.join(b.paths.skillsDir, 'tcli', 'SKILL.md')), /tcli/);
+  assert.notEqual(read(path.join(b.paths.skillsDir, 'tcli', 'SKILL.md')), 'tcli from Home Mac');
 });
 
 test('a receiver refuses traversal, absolute paths, bad names and a wrong revision before writing anything', t => {
@@ -342,7 +480,11 @@ test('settings are checked and echoed', t => {
   const saved = a.service.update({ role: 'source', skills: ['alpha', 'alpha', 'zeta'], codex: false });
   assert.equal(saved.role, 'source');
   assert.equal(saved.codex, false);
-  assert.deepEqual(saved.skills, [{ name: 'alpha', synced: false, shared: true }, { name: 'beta', symlink: true, shared: false }, { name: 'zeta', shared: true, missing: true }]);
+  assert.deepEqual(saved.skills, [
+    { name: 'alpha', synced: false, shared: true }, { name: 'beta', symlink: true, shared: false },
+    { name: 'browser', shared: false, bundled: true, missing: true }, { name: 't-attention', shared: false, bundled: true, missing: true },
+    { name: 'tcli', shared: false, bundled: true, missing: true }, { name: 'zeta', shared: true, missing: true },
+  ], "T-Agent's own skills are always listed apart and never shared");
   assert.equal(a.service.createShared().shared_rules_exists, true);
   write(a.paths.sharedRules, 'Mine.\n');
   a.service.createShared();

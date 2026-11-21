@@ -218,3 +218,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.150.0 Learn translates word cards ahead of time and stores them; a Spell word asked inside its sentence plays the whole sentence
 > v2.151.0 Learn: ask the model about any practice card (multi-turn, streamed, stored with the card and synced; schema 20); American voices only
 > v2.152.0 Learn English chat: your own questions, journal reviews and the journaling habit (chats stored and synced; schema 21); T-Agent's bundled skills are no longer shared by the rules and skills sync
+> v2.152.1 Learn audio: a repeat waits until the browser has stopped reading, so a sentence in Spell is no longer cut off by its second pass

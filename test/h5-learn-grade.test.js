@@ -108,6 +108,70 @@ test('a spelled word is checked letter by letter, case aside', async () => {
   assert.equal(short.right, 3);
 });
 
+test('a wrong spelling is lined up under the right one by the closest match', async () => {
+  const { alignSpelling, spellCheck } = await load();
+  const row = (result, side) => result.columns.map(column => column[side] || '_').join('');
+  const kinds = result => result.columns.map(column => column.kind[0]).join('');
+
+  const incident = alignSpelling('incident', 'encedant');
+  assert.equal(row(incident, 'want'), 'incident');
+  assert.equal(row(incident, 'got'), 'encedant', 'the same length: by position');
+  assert.equal(kinds(incident), 'wsswswss');
+  assert.deepEqual([incident.different, incident.missing, incident.extra], [3, 0, 0]);
+
+  const environment = alignSpelling('environment', 'enviroment');
+  assert.equal(row(environment, 'want'), 'environment');
+  assert.equal(row(environment, 'got'), 'enviro_ment', 'the missing n leaves its own column; the rest stays right');
+  assert.equal(environment.columns[6].kind, 'missing');
+  assert.equal(environment.columns[6].want, 'n');
+  assert.deepEqual([environment.different, environment.missing, environment.extra], [0, 1, 0]);
+
+  const writing = alignSpelling('writing', 'writtin');
+  assert.equal(row(writing, 'want'), 'writ_ing');
+  assert.equal(row(writing, 'got'), 'writtin_');
+  assert.equal(kinds(writing), 'ssssessm');
+  assert.deepEqual([writing.different, writing.missing, writing.extra], [0, 1, 1]);
+
+  const cased = alignSpelling('Expire', ' eXPIRE ');
+  assert.equal(kinds(cased), 'ssssss', 'case and spaces around aside');
+  assert.equal(cased.columns[0].want, 'E', 'the word as written');
+  assert.equal(cased.columns[1].got, 'X', 'the answer as typed');
+  assert.deepEqual([cased.different, cased.missing, cased.extra], [0, 0, 0]);
+
+  const empty = alignSpelling('cat', '');
+  assert.equal(kinds(empty), 'mmm');
+  assert.deepEqual([empty.different, empty.missing, empty.extra], [0, 3, 0]);
+  assert.equal(alignSpelling('', 'ab').extra, 2);
+  assert.deepEqual(alignSpelling('', '').columns, []);
+
+  assert.equal(kinds(alignSpelling('ab', 'ba')), 'ww', 'a tie: by position, not an extra and a missing letter');
+  assert.equal(spellCheck('incident', 'encedant').right, 5, 'the letter check itself is unchanged');
+});
+
+test('the line under a wrong spelling says what differs, in whole translated sentences', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { spellingNote } = await load();
+  assert.equal(spellingNote({}), null);
+  assert.deepEqual(spellingNote({ different: 3 }), { template: '{1} letters different', values: [3] });
+  assert.deepEqual(spellingNote({ different: 1 }), { template: '1 letter different', values: [] });
+  assert.deepEqual(spellingNote({ missing: 1 }), { template: '1 letter missing', values: [] });
+  assert.deepEqual(spellingNote({ missing: 2 }), { template: '{1} letters missing', values: [2] });
+  assert.deepEqual(spellingNote({ extra: 1 }), { template: '1 extra letter', values: [] });
+  assert.deepEqual(spellingNote({ extra: 2 }), { template: '{1} extra letters', values: [2] });
+  assert.deepEqual(spellingNote({ extra: 1, missing: 1 }), { template: '1 extra letter, {1} missing', values: [1] });
+  assert.deepEqual(spellingNote({ different: 2, extra: 1, missing: 3 }), { template: '{1} letters different, {2} extra, {3} missing', values: [2, 1, 3] });
+  const dictionary = fs.readFileSync(path.join(__dirname, '../public/js/i18n-zh-extra.js'), 'utf8');
+  for (const different of [0, 1, 2]) {
+    for (const extra of [0, 1, 2]) {
+      for (const missing of [0, 1, 2]) {
+        const note = spellingNote({ different, extra, missing });
+        if (note) assert.ok(dictionary.includes(`'${note.template}':`), `a Chinese translation for "${note.template}"`);
+      }
+    }
+  }
+});
+
 test('the offered grade: Good when right, Hard when right with help, Again when wrong', async () => {
   const { suggestedGrade } = await load();
   assert.equal(suggestedGrade({ correct: true }), 'good');

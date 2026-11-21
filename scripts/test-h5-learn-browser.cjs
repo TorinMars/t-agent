@@ -199,6 +199,16 @@ async function tapKeys(page, keys) {
     await page.locator(selector).tap();
   }
 }
+// The two rows of a wrong spelling: per row, the letters ('_' for an empty slot) and the kinds (first letters), with the left edge of every slot.
+async function spellRows(page) {
+  return page.evaluate(() => {
+    const side = name => {
+      const cells = [...document.querySelectorAll(`.h5-learn-letter-${name}`)];
+      return { text: cells.map(el => el.textContent || '_').join(''), kinds: cells.map(el => el.dataset.kind[0]).join(''), lefts: cells.map(el => Math.round(el.getBoundingClientRect().left)), colors: cells.map(el => getComputedStyle(el).color), lines: cells.map(el => `${getComputedStyle(el).borderBottomStyle} ${getComputedStyle(el).borderBottomColor}`) };
+    };
+    return { want: side('want'), got: side('got'), pairs: document.querySelectorAll('.h5-learn-letter-pair').length, note: (document.querySelector('#h5-learn-spell-note') || {}).textContent || '' };
+  });
+}
 const lastAnswer = mock => { const list = mock.posts(/\/answer$/); return list.length ? { id: list.at(-1).path.match(/cards\/(\d+)/)[1], ...list.at(-1).body } : null; };
 // Places the tiles for these words, in order (a word can be on two tiles: the first free one).
 async function placeTiles(page, words) {
@@ -329,6 +339,21 @@ async function toTerminal(page) {
       await page.keyboard.press('Enter');
       await page.locator('#h5-learn-feedback[data-correct="false"]').waitFor();
       assert.match(await text(page, '#h5-learn-feedback'), /expire.*You wrote: expier.*4 of 6 letters right/);
+      // The right spelling above the typed one, letter by letter: the same length lines up by position.
+      const wrongRows = await spellRows(page);
+      assert.equal(wrongRows.pairs, 1, 'one pair of rows');
+      assert.equal(wrongRows.want.text, 'expire');
+      assert.equal(wrongRows.got.text, 'expier');
+      assert.equal(wrongRows.want.kinds, 'ssssww');
+      assert.equal(wrongRows.got.kinds, 'ssssww');
+      assert.deepEqual(wrongRows.want.lefts, wrongRows.got.lefts, 'each letter in the same column');
+      assert.equal(wrongRows.note, '2 letters different');
+      assert.equal(await page.locator('.h5-learn-letters').getAttribute('data-aligned'), 'true');
+      const [same, differs] = [wrongRows.want.colors[0], wrongRows.want.colors[4]];
+      assert.notEqual(same, differs, 'the top row: a differing letter in green, not the text colour');
+      assert.equal(wrongRows.got.colors[0], differs, 'the bottom row: a right letter green, as the differing one above');
+      assert.notEqual(wrongRows.got.colors[4], differs, 'the bottom row: a wrong letter red');
+      assert.equal(wrongRows.want.lines[4], `solid ${differs}`, 'a green line under a differing letter');
       await page.keyboard.press('1');
       await waitFor(() => mock.posts(/\/answer$/).length === 3, 'the spell answer');
       assert.deepEqual(lastAnswer(mock), { id: '1', mode: 'spell', grade: 'again', correct: false, answer: 'expier', expected: 'expire', tag: 'letter-order', hinted: false });
@@ -641,6 +666,9 @@ async function toTerminal(page) {
       assert.equal(await value(page, spell), 'expire');
       await page.locator('#h5-learn-check').tap();
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
+      assert.equal(await page.locator('.h5-learn-letter-pair').count(), 0, 'a right answer stays one row');
+      assert.equal(await page.locator('.h5-learn-letter').count(), 6);
+      assert.equal(await page.locator('#h5-learn-spell-note').count(), 0);
       const grades = await rect(page, '.h5-learn-footer .h5-learn-grades');
       assert.ok(grades.bottom <= (await rect(page, '#h5-learn-keys')).y, 'the grades stay above the keyboard');
       assert.equal(await ui(page, 'hasKeyboard'), false, 'the page keys are not a hardware keyboard');
@@ -919,7 +947,42 @@ async function toTerminal(page) {
       const width320 = await page.locator('.h5-learn-letter').evaluateAll(list => Math.max(...list.map(el => el.getBoundingClientRect().right)));
       assert.ok(width320 <= 320 - 16 + 1, 'inside the page at 320px');
       await shot(page, 'learn-phone-spell-long-320.png');
+      // Wrong with an extra and a missing letter: 17 columns for the 16 letters, wrapped as two pairs of rows that keep the columns.
+      await tapKeys(page, 'responsibbilitie');
+      await page.locator('#h5-learn-feedback[data-correct="false"]').waitFor({ timeout: 2000 });
+      const longRows = await spellRows(page);
+      assert.equal(longRows.pairs, 2, 'two pairs of rows at 320px');
+      assert.equal(longRows.want.text, 'responsib_ilities');
+      assert.equal(longRows.got.text, 'responsibbilitie_');
+      assert.equal(longRows.want.kinds, 'sssssssssessssssm');
+      assert.deepEqual(longRows.want.lefts, longRows.got.lefts, 'the columns stay aligned across the wrap');
+      assert.equal(longRows.note, '1 extra letter, 1 missing');
+      assert.equal(longRows.want.lines[9].split(' ')[0], 'dashed', 'an empty dashed slot above the extra letter');
+      assert.equal(longRows.got.lines[16].split(' ')[0], 'dashed', 'an empty dashed slot for the missing letter');
+      assert.notEqual(longRows.got.lines[16], longRows.want.lines[9], 'the missing slot in red, the extra one quiet');
+      const widthPairs = await page.locator('.h5-learn-letter').evaluateAll(list => Math.max(...list.map(el => el.getBoundingClientRect().right)));
+      assert.ok(widthPairs <= 320 - 16 + 1, 'the pairs stay inside the page at 320px');
+      await shot(page, 'learn-phone-spell-wrong-long-320.png');
       await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+      // A missing letter at 390px: its own empty column, the rest of the word stays green.
+      mock.spellCards = [card(8, 'word', 'environment', ZH_EXPIRE, 'lookup', { phonetic: '/\u026an\u02c8va\u026ar\u0259nm\u0259nt/' })];
+      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('.h5-learn-letter').first().waitFor();
+      await tapKeys(page, 'enviroment');
+      await page.locator('#h5-learn-check').tap();
+      await page.locator('#h5-learn-feedback[data-correct="false"]').waitFor();
+      const missingRows = await spellRows(page);
+      assert.equal(missingRows.pairs, 1, 'one pair of rows at 390px');
+      assert.equal(missingRows.want.text, 'environment');
+      assert.equal(missingRows.got.text, 'enviro_ment');
+      assert.equal(missingRows.got.kinds, 'ssssssmssss', 'one missing letter does not turn the rest red');
+      assert.deepEqual(missingRows.want.lefts, missingRows.got.lefts);
+      assert.equal(missingRows.note, '1 letter missing');
+      assert.match(await text(page, '#h5-learn-feedback'), /environment.*You wrote: enviroment/);
+      assert.equal(await page.locator('.h5-learn-letter-want').first().getAttribute('aria-hidden'), 'true', 'the rows are hidden from screen readers; the card says it');
+      await shot(page, 'learn-phone-spell-wrong-390.png');
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
       await context.close();

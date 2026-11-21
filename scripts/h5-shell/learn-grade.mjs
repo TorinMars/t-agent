@@ -187,6 +187,64 @@ export function spellCheck(expected, answer) {
   return { ok: want.toLowerCase() === got.toLowerCase(), letters, right: letters.filter(letter => letter.ok).length, total: letters.length };
 }
 
+// The right spelling lined up above a wrong one, letter by letter (case aside), by the closest match rather than by position, so one missing or
+// extra letter does not push every later letter out of its column. `columns`, in order:
+//   { want, got, kind: 'same' }     the same letter (want as in the word, got as typed)
+//   { want, got, kind: 'wrong' }    another letter in its place
+//   { want, got: '', kind: 'missing' }  a letter of the word that was not typed
+//   { want: '', got, kind: 'extra' }    a typed letter the word does not have
+// An edit-distance alignment (suffix table, traced from the start): a match when the letters agree, otherwise on a tie a substitution first (so
+// words of the same length line up by position), then a missing letter, then an extra one; the gaps land as late as the match allows.
+// See "Spell the word" in docs/design/learn-english-page.md.
+export function alignSpelling(expected, typed) {
+  const want = [...unify(expected).trim()];
+  const got = [...unify(typed).trim()];
+  const same = (i, j) => want[i].toLowerCase() === got[j].toLowerCase();
+  const n = want.length;
+  const m = got.length;
+  // cost[i][j]: the edits that turn got[j..] into want[i..].
+  const cost = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n; i >= 0; i -= 1) {
+    for (let j = m; j >= 0; j -= 1) {
+      if (i === n) cost[i][j] = m - j;
+      else if (j === m) cost[i][j] = n - i;
+      else cost[i][j] = Math.min(cost[i + 1][j + 1] + (same(i, j) ? 0 : 1), cost[i + 1][j] + 1, cost[i][j + 1] + 1);
+    }
+  }
+  const columns = [];
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && cost[i][j] === cost[i + 1][j + 1] + (same(i, j) ? 0 : 1)) {
+      columns.push({ want: want[i], got: got[j], kind: same(i, j) ? 'same' : 'wrong' });
+      i += 1; j += 1;
+    } else if (i < n && cost[i][j] === cost[i + 1][j] + 1) {
+      columns.push({ want: want[i], got: '', kind: 'missing' });
+      i += 1;
+    } else {
+      columns.push({ want: '', got: got[j], kind: 'extra' });
+      j += 1;
+    }
+  }
+  const counted = kind => columns.filter(column => column.kind === kind).length;
+  return { columns, different: counted('wrong'), missing: counted('missing'), extra: counted('extra') };
+}
+
+// The line under the two rows of a wrong spelling: what differs, as one whole sentence for the translation layer (the first part names the letters,
+// the later ones only count: "1 extra letter, 1 missing"). Returns { template, values } for Fmt, or null when nothing differs. Every template it can
+// return has its Chinese in public/js/i18n-zh-extra.js.
+export function spellingNote({ different = 0, missing = 0, extra = 0 } = {}) {
+  const parts = [['different', different], ['extra', extra], ['missing', missing]].filter(([, number]) => number > 0);
+  if (!parts.length) return null;
+  const FIRST = { different: ['1 letter different', 'letters different'], extra: ['1 extra letter', 'extra letters'], missing: ['1 letter missing', 'letters missing'] };
+  const values = [];
+  const slot = number => { values.push(number); return `{${values.length}}`; };
+  const [[kind, number], ...rest] = parts;
+  let template = number === 1 ? FIRST[kind][0] : `${slot(number)} ${FIRST[kind][1]}`;
+  for (const [later, count] of rest) template += `, ${slot(count)} ${later}`;
+  return { template, values };
+}
+
 // The automatic check of Spell and Fill the gap: the answer is checked by itself AUTO_CHECK_MS after the typed letters reach the word's length (the
 // last letter is seen first; a change in that pause, such as Backspace, starts over). A shorter answer waits for Check.
 export const AUTO_CHECK_MS = 300;

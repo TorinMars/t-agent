@@ -1,5 +1,6 @@
 // Settings → Devices → "Rules and skills sync" (scripts/h5-shell/RuleSync.jsx) in real Chromium at 390px (touch) and 1440px (mouse), against a mocked /api/rule-sync:
-// the role echo and change, the source part (shared file path, Create it, skill checkboxes, receivers, Sync now, a cap error), the receiver part (the
+// the role echo and change, the source part (shared file path, Create it, skill checkboxes, T-Agent's own skills listed apart and never chosen,
+// receivers, Sync now, a cap error), the receiver part (the
 // followed source, Reset, conflicts), the leftover import line when off, an error notice, the editor of the shared rules (load, save with the base
 // revision, Ctrl/Cmd+S, the unsaved-changes question, the 409 flow with Load the latest / Overwrite, errors, no source), and the local changes a receiver
 // replaced with Dismiss, and the shared Claude settings (the source's key checklist with its status line scripts, the receiver's "Keep this device's own
@@ -44,7 +45,10 @@ const claudeReceiver = (keep = []) => ({
 const sourceView = (fields = {}) => base({
   claude_settings: claudeSource(),
   role: 'source', import_line_present: true, revision: REV, last_change_at: '2026-11-12T08:00:00Z',
-  skills: [{ name: 'deploy', shared: true, synced: false }, { name: 'notes', shared: false, synced: false }, { name: 'linked-skill', symlink: true, shared: false }],
+  skills: [
+    { name: 'browser', shared: false, synced: false, bundled: true }, { name: 'deploy', shared: true, synced: false }, { name: 'linked-skill', symlink: true, shared: false },
+    { name: 'notes', shared: false, synced: false }, { name: 't-attention', shared: false, bundled: true, missing: true }, { name: 'tcli', shared: false, synced: false, bundled: true },
+  ],
   targets: [
     { id: 'l1', name: 'Office computer with a very long name that must wrap or cut', online: true, status: 'up-to-date', role: 'receive', revision: REV, last_push_at: '2026-11-12T08:00:05Z', last_error: null, conflicts: [{ skill: 'company', reason: 'local' }] },
     { id: 'l2', name: 'Laptop', online: true, status: 'not-receiving', role: 'off', revision: null, last_push_at: null, last_error: null, conflicts: [] },
@@ -171,6 +175,17 @@ async function testSource(browser, { wide = false } = {}) {
   assert.equal(await page.locator('#h5-rule-sync-skill-notes').isChecked(), false);
   assert.equal(await page.locator('#h5-rule-sync-skill-linked-skill').isDisabled(), true, 'a symlinked skill cannot be chosen');
   assert.match(await page.locator('.h5-rule-sync-skill[data-skill="linked-skill"]').innerText(), /a link, cannot be shared/);
+  // T-Agent's own skills: under their own caption after the shareable ones, a disabled empty checkbox, and the line that says why.
+  assert.deepEqual(await page.locator('#h5-rule-sync-skills .h5-rule-sync-skill').evaluateAll(rows => rows.map(row => row.dataset.skill)), ['deploy', 'linked-skill', 'notes']);
+  assert.deepEqual(await page.locator('#h5-rule-sync-bundled .h5-rule-sync-skill').evaluateAll(rows => rows.map(row => row.dataset.skill)), ['browser', 't-attention', 'tcli']);
+  assert.equal(await page.locator('#h5-rule-sync-bundled-caption').innerText(), 'Installed on every machine by T-Agent');
+  assert.equal(await page.evaluate(() => Boolean(document.querySelector('#h5-rule-sync-skills').compareDocumentPosition(document.querySelector('#h5-rule-sync-bundled')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+  for (const name of ['browser', 't-attention', 'tcli']) {
+    assert.equal(await page.locator(`#h5-rule-sync-skill-${name}`).isDisabled(), true, `${name} cannot be chosen`);
+    assert.equal(await page.locator(`#h5-rule-sync-skill-${name}`).isChecked(), false, `${name} is never shared`);
+    assert.equal(await page.locator(`.h5-rule-sync-skill[data-skill="${name}"]`).innerText(), name, `${name} has no note`);
+  }
+  assert.equal(await page.locator('#h5-rule-sync-bundled-note').innerText(), 'Each T-Agent installs and updates these itself (Settings → Tasks and files → Agent skills), with the paths of that machine, so they are not shared.');
   assert.equal(await page.locator('.h5-rule-sync-target').count(), 3);
   assert.equal(await page.locator('.h5-rule-sync-target[data-target="l1"] .h5-rule-sync-status').innerText(), 'Up to date');
   assert.match(await page.locator('.h5-rule-sync-target[data-target="l1"]').innerText(), /Revision a1b2c3d4/);
@@ -179,7 +194,7 @@ async function testSource(browser, { wide = false } = {}) {
   assert.equal(await page.locator('.h5-rule-sync-target[data-target="l3"] .h5-rule-sync-error').innerText(), 'Timed out');
   assert.match(await page.locator('#h5-rule-sync-import').innerText(), /@~\/\.claude\/shared\/CLAUDE\.shared\.md/);
   await assertFits(page, wide ? 'source wide' : 'source 390', !wide);
-  if (!wide) { await shot('source'); await shot('source-targets', '#h5-rule-sync-push'); }
+  if (!wide) { await shot('source'); await shot('source-skills', '#h5-rule-sync-bundled-note'); await shot('source-targets', '#h5-rule-sync-push'); }
 
   await tap('#h5-rule-sync-skill-notes');
   await waitCall(page, model, call => call.method === 'PUT' && call.body.skills);
@@ -465,6 +480,8 @@ async function testChinese(browser) {
   assert.equal(await page.evaluate(() => I18n.get()), 'zh');
   await open();
   assert.match(await page.locator('#h5-sec-rule-sync').innerText(), /\u89c4\u5219\u548c\u6280\u80fd\u540c\u6b65/);
+  assert.match(await page.locator('#h5-rule-sync-bundled-caption').innerText(), /T-Agent \u5b89\u88c5\u5728\u6bcf\u53f0\u673a\u5668\u4e0a/);
+  assert.match(await page.locator('#h5-rule-sync-bundled-note').innerText(), /\u6240\u4ee5\u4e0d\u5171\u4eab/);
   await assertFits(page, 'Chinese 390', true);
   // The editor in Chinese: "Edit shared rules" and "Saved on Home Mac".
   await page.locator('#h5-rule-sync-edit').waitFor();

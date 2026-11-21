@@ -15,11 +15,14 @@
 // The setting is one system_state row, `rule_sync_v1`. Transport: the source PUTs a bundle to /v1/rule-sync/bundle of every linked receiver; a receiver
 // has no route that reads its rules or skills back, so it never sends them anywhere. The shared rules file can be edited from the page of any linked
 // service: the edit always goes to the source (GET / PUT /v1/rule-sync/shared there), which then pushes it as usual.
+// T-Agent's own skills (services/agent-skills.js SKILLS) are never shared: every T-Agent installs them itself with that machine's paths. See "T-Agent's
+// own skills" in docs/design/rules-and-skills-sync.md.
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const claudeShared = require('./shared-claude-settings');
+const { SKILL_NAMES: BUNDLED_SKILLS } = require('./agent-skills');
 
 const STATE_KEY = 'rule_sync_v1';
 const CAPABILITY = 'rule-sync:receive';
@@ -201,6 +204,9 @@ const withoutNotice = text => String(text || '').replace(NOTICE_LINE, '');
 // ---------------------------------------------------------------------------
 
 const validSkillName = name => typeof name === 'string' && SKILL_NAME.test(name) && name !== '.' && name !== '..' && !name.startsWith(TEMP_PREFIX);
+// A skill that comes with T-Agent (t-attention, tcli, browser): never in a bundle, never written or reported by a receiver.
+const BUNDLED = new Set(BUNDLED_SKILLS);
+const isBundled = name => BUNDLED.has(name);
 
 // A path inside a skill: relative, with `/` only, no empty, `.` or `..` part, and not the marker file.
 function validFilePath(value) {
@@ -283,7 +289,7 @@ function buildBundle({ paths, skills: chosen, source, claudeKeys = null }) {
   const rules = withoutNotice(readText(paths.sharedRules));
   const budget = { bytes: Buffer.byteLength(rules) };
   if (budget.bytes > LIMITS.fileBytes) throw tooLarge('file', path.basename(paths.sharedRules));
-  const names = [...new Set(chosen)].filter(validSkillName).sort();
+  const names = [...new Set(chosen)].filter(name => validSkillName(name) && !isBundled(name)).sort();
   if (names.length > LIMITS.skills) throw tooLarge('skills', String(names.length));
   const skills = [];
   for (const name of names) {
@@ -425,12 +431,13 @@ function normalizeState(value) {
   return {
     role: ROLES.includes(given.role) ? given.role : 'off',
     codex: given.codex !== false,
-    skills: Array.isArray(given.skills) ? [...new Set(given.skills.filter(validSkillName))].sort() : [],
+    // T-Agent's own skills are dropped: an older choice that names them is ignored, and the next save leaves them out.
+    skills: Array.isArray(given.skills) ? [...new Set(given.skills.filter(name => validSkillName(name) && !isBundled(name)))].sort() : [],
     following,
     received: {
       revision: typeof received.revision === 'string' ? received.revision : null,
       synced_at: typeof received.synced_at === 'string' ? received.synced_at : null,
-      conflicts: Array.isArray(received.conflicts) ? received.conflicts : [],
+      conflicts: Array.isArray(received.conflicts) ? received.conflicts.filter(item => !(item && isBundled(item.skill))) : [],
     },
     // On a receiver: synced files that were changed here and put back by the guard, newest first.
     local_changes: Array.isArray(given.local_changes) ? given.local_changes.slice(0, KEEP.localChanges) : [],
@@ -472,7 +479,7 @@ function sessionClaudeSettings({ db, env = process.env, home = os.homedir(), log
 const errorCode = error => (/^[A-Z0-9_]+$/.test((error && (error.code || error.message)) || '') ? (error.code || error.message) : 'RULE_SYNC_FAILED');
 const unref = timer => { if (timer && timer.unref) timer.unref(); return timer; };
 
-function createRuleSync({ db, serviceLinks = null, request = null, identity = () => ({ instance_id: null, name: '' }), env = process.env, home = os.homedir(), now = Date.now, log = console, timing = {}, watch = fs.watch, dataDir = null }) {
+function createRuleSync({ db, serviceLinks = null, request = null, identity = () => ({ instance_id: null, name: '' }), env = process.env, home = os.homedir(), now = Date.now, log = console, timing = {}, watch = fs.watch, dataDir = null, agentSkills = null }) {
   const paths = layout({ env, home });
   // The receiver's own records (the guard); without a data folder there is no guard.
   const store = dataDir ? { dir: path.join(dataDir, 'rule-sync'), applied: path.join(dataDir, 'rule-sync', 'applied-bundle.json'), backups: path.join(dataDir, 'rule-sync', 'overwritten') } : null;
@@ -561,6 +568,42 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     return { text, files: written, keys: Object.keys(values) };
   }
 
+  // T-Agent's own skills that this receiver got from the sync before (a real folder with the marker, directly in the skills folder): each is replaced with
+  // this machine's own install (services/agent-skills.js installSkill, the same as Settings -> Agent skills, with this machine's paths). The received copy
+  // is moved aside first and put back when the install fails, so the skill is never missing. Only where the installer writes into this same skills folder
+  // (it uses the terminal user's Claude folder). A folder without the marker, a link or a file is the person's and is never touched. Returns the names.
+  function replaceSyncedBundled(root) {
+    const replaced = [];
+    if (!agentSkills) return replaced;
+    for (const name of BUNDLED) {
+      const dir = path.join(root, name);
+      const stat = lstatOrNull(dir);
+      if (!stat || stat.isSymbolicLink() || !stat.isDirectory() || !readMarker(dir)) continue;
+      try {
+        if (fs.realpathSync(dir) !== dir) continue;
+        const target = agentSkills.skillStatus(name).claude.path;
+        if (fs.realpathSync(path.dirname(path.dirname(target))) !== root) continue;
+      } catch (error) {
+        log.error(`[rule-sync] the received copy of ${name} is kept: ${error && error.message}`);
+        continue;
+      }
+      const old = path.join(root, `${TEMP_PREFIX}old-${name}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`);
+      fs.renameSync(dir, old);
+      let result = null;
+      try { result = agentSkills.installSkill(name); } catch (error) { log.error(`[rule-sync] installing ${name} failed: ${error && error.message}`); }
+      const action = result && result.results && result.results.claude ? result.results.claude.action : null;
+      if (action === 'installed' || action === 'updated' || action === 'unchanged') {
+        fs.rmSync(old, { recursive: true, force: true });
+        replaced.push(name);
+      } else if (!lstatOrNull(dir)) {
+        fs.renameSync(old, dir);
+      } else {
+        fs.rmSync(old, { recursive: true, force: true });
+      }
+    }
+    return replaced.sort();
+  }
+
   // PUT /v1/rule-sync/bundle. Synchronous from start to end, so two bundles never interleave.
   function receive(body) {
     const state = load();
@@ -586,20 +629,24 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     const marker = { source: bundle.source, revision: bundle.revision, synced_at: syncedAt };
     const written = [];
     const conflicts = [];
-    for (const skill of bundle.skills) {
+    // T-Agent's own skills from an older source are left out; a copy received before is replaced with this machine's own install.
+    const shared = bundle.skills.filter(skill => !isBundled(skill.name));
+    const replaced = replaceSyncedBundled(root);
+    for (const skill of shared) {
       const result = writeSkill(root, skill, marker);
       if (result.conflict) conflicts.push(result.conflict);
       else if (result.written) written.push(skill.name);
     }
-    const removed = removeStaleSkills(root, new Set(bundle.skills.map(skill => skill.name)));
+    // A received copy of an own skill that could not be replaced stays: removing it would leave this machine without the skill.
+    const removed = removeStaleSkills(root, new Set([...shared.map(skill => skill.name), ...BUNDLED]));
     const before = readApplied();
     const previousScripts = before && before.claude_settings ? before.claude_settings.files.map(file => file.path) : [];
     const claudeSettings = writeClaudeSettings(bundle.claudeSettings, following.name, previousScripts);
     save({ ...load(), following, received: { revision: bundle.revision, synced_at: syncedAt, conflicts } });
     const clashing = new Set(conflicts.map(item => item.skill));
-    recordApplied(bundle, { following, notice, codex, syncedAt, skills: bundle.skills.filter(skill => !clashing.has(skill.name)), claudeSettings });
+    recordApplied(bundle, { following, notice, codex, syncedAt, skills: shared.filter(skill => !clashing.has(skill.name)), claudeSettings });
     rewatch();
-    return { revision: bundle.revision, applied: { rules: true, codex, skills: written, removed, conflicts, claude_settings: claudeSettings.keys, statusline_files: claudeSettings.files.map(file => file.path) } };
+    return { revision: bundle.revision, applied: { rules: true, codex, skills: written, removed, replaced, conflicts, claude_settings: claudeSettings.keys, statusline_files: claudeSettings.files.map(file => file.path) } };
   }
 
   // ----- Receiver: the guard of the synced copies -----
@@ -714,7 +761,8 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     }
     let root = null;
     try { root = fs.realpathSync(paths.skillsDir); } catch { /* no skills folder any more: every owned skill is missing */ }
-    for (const skill of applied.skills) {
+    // An own skill kept by an older applied bundle is not guarded: this machine's T-Agent installs it.
+    for (const skill of applied.skills.filter(item => !isBundled(item.name))) {
       const dir = root ? path.join(root, skill.name) : path.join(paths.skillsDir, skill.name);
       const stat = lstatOrNull(dir);
       // A link or a file at that name, or a folder without the marker: not ours, never touched.
@@ -950,7 +998,7 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     if (applied.claude_settings && applied.claude_settings.files.length) watchOne(paths.statuslineDir, false, scheduleGuard);
     watchOne(paths.claudeDir, false, scheduleGuard, new Set([path.basename(paths.claudeMd)]));
     if (applied.codex) watchOne(paths.codexDir, false, scheduleGuard, new Set([path.basename(paths.codexAgents)]));
-    const names = applied.skills.map(skill => skill.name);
+    const names = applied.skills.map(skill => skill.name).filter(name => !isBundled(name));
     if (names.length) watchOne(paths.skillsDir, false, scheduleGuard, new Set(names));
     for (const name of names) watchOne(path.join(paths.skillsDir, name), true, scheduleGuard);
   }
@@ -969,7 +1017,17 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     if (times.retryMs > 0) timers.push(unref(setInterval(() => { retry(); }, times.retryMs)));
     if (times.guardPollMs > 0) timers.push(unref(setInterval(() => { guardCheck(); }, times.guardPollMs)));
     rewatch();
-    setImmediate(() => { if (started) check(); });
+    setImmediate(() => { if (started) { check(); replaceOnStart(); } });
+  }
+  // A receiver whose source still sends T-Agent's own skills (an older source with the same revision) replaces its received copies at start too.
+  function replaceOnStart() {
+    if (load().role !== 'receive') return;
+    try {
+      const stat = lstatOrNull(paths.skillsDir);
+      if (stat && stat.isDirectory() && !stat.isSymbolicLink()) replaceSyncedBundled(fs.realpathSync(paths.skillsDir));
+    } catch (error) {
+      log.error('[rule-sync] replacing received copies of T-Agent skills failed:', error && error.message);
+    }
   }
   function stop() {
     started = false;
@@ -1025,9 +1083,11 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
     const codexText = readText(paths.codexAgents);
     const local = listSkills(paths.skillsDir);
     const names = new Set(local.map(skill => skill.name));
+    // T-Agent's own skills are always listed, with `bundled`, and never shared.
     const skills = [
-      ...local.map(skill => ({ ...skill, shared: state.skills.includes(skill.name) })),
+      ...local.map(skill => (isBundled(skill.name) ? { ...skill, shared: false, bundled: true } : { ...skill, shared: state.skills.includes(skill.name) })),
       ...state.skills.filter(name => !names.has(name)).map(name => ({ name, shared: true, missing: true })),
+      ...BUNDLED_SKILLS.filter(name => !names.has(name)).map(name => ({ name, shared: false, bundled: true, missing: true })),
     ].sort(byKey('name'));
     const built = state.role === 'source' ? currentSnapshot() : null;
     return {
@@ -1054,7 +1114,9 @@ function createRuleSync({ db, serviceLinks = null, request = null, identity = ()
         const entry = targets.get(peer.id) || entryOf(peer);
         return {
           id: peer.id, name: peer.name, online: Boolean(peer.online), status: peer.online ? entry.status : 'offline',
-          role: entry.role, revision: entry.revision, last_push_at: entry.last_push_at, last_error: entry.last_error, conflicts: entry.conflicts,
+          role: entry.role, revision: entry.revision, last_push_at: entry.last_push_at, last_error: entry.last_error,
+          // An older receiver may still name T-Agent's own skills, which are never sent.
+          conflicts: Array.isArray(entry.conflicts) ? entry.conflicts.filter(item => !(item && isBundled(item.skill))) : entry.conflicts,
           // false: an older T-Agent that gets the rules and skills only; its up-to-date revision is `expected_revision`.
           claude_settings_supported: entry.settings,
           expected_revision: built && built.bundle ? bundleFor(built, entry).revision : null,
@@ -1283,6 +1345,7 @@ function getRuleSync() {
     request: (...args) => require('./remote-client').request(...args),
     identity: () => { const { engine_id: instanceId, name } = getEngineIdentity(); return { instance_id: instanceId, name }; },
     dataDir: require('../lib/data-home').paths().root,
+    agentSkills: require('./agent-skills').getAgentSkills(),
   });
   return singleton;
 }
@@ -1290,7 +1353,7 @@ function getRuleSync() {
 module.exports = {
   createRuleSync, getRuleSync, RuleSyncError, layout, buildBundle, parseBundle, revisionOf,
   withImportLine, withoutImportLine, withCodexBlock, withoutCodexBlock, hasImportLine, hasCodexBlock,
-  syncedNotice, withoutNotice, codexInner,
+  syncedNotice, withoutNotice, codexInner, BUNDLED_SKILLS,
   sessionClaudeSettings, claudeShared,
   STATE_KEY, CAPABILITY, EDIT_CAPABILITY, SETTINGS_CAPABILITY, ROLES, MARKER, LIMITS, IMPORT_COMMENT, CODEX_BEGIN, CODEX_END, TIMING,
 };

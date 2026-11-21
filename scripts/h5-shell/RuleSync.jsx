@@ -119,7 +119,10 @@ function Targets({ targets, revision }) {
 }
 
 function SourcePart({ data, busy, save, act }) {
-  const chosen = data.skills.filter(skill => skill.shared).map(skill => skill.name);
+  // T-Agent's own skills (`bundled`) are listed apart and never shared: every T-Agent installs them itself (Settings → Tasks and files → Agent skills).
+  const own = data.skills.filter(skill => !skill.bundled);
+  const bundled = data.skills.filter(skill => skill.bundled);
+  const chosen = own.filter(skill => skill.shared).map(skill => skill.name);
   const toggle = (name, on) => save({ skills: on ? [...chosen, name] : chosen.filter(item => item !== name) });
   return (
     <>
@@ -134,9 +137,9 @@ function SourcePart({ data, busy, save, act }) {
           </>
         )}
       <Heading>{t('Shared skills')}</Heading>
-      {data.skills.length ? (
+      {own.length ? (
         <Box id="h5-rule-sync-skills" sx={{ display: 'flex', flexDirection: 'column' }}>
-          {data.skills.map(skill => {
+          {own.map(skill => {
             const note = skill.symlink ? 'a link, cannot be shared' : skill.missing ? 'not found' : skill.synced ? 'received from a source' : '';
             return (
               <FormControlLabel
@@ -147,7 +150,21 @@ function SourcePart({ data, busy, save, act }) {
             );
           })}
         </Box>
-      ) : <Hint id="h5-rule-sync-no-skills">{t('No skills on this machine yet.')}</Hint>}
+      ) : <Hint id="h5-rule-sync-no-skills">{t('No skills to share on this machine yet.')}</Hint>}
+      {bundled.length ? (
+        <Box id="h5-rule-sync-bundled" sx={{ display: 'flex', flexDirection: 'column' }}>
+          <Hint id="h5-rule-sync-bundled-caption" sx={{ mt: 1.5 }}>{t('Installed on every machine by T-Agent')}</Hint>
+          {bundled.map(skill => (
+            <FormControlLabel
+              key={skill.name} className="h5-rule-sync-skill h5-rule-sync-bundled-skill" data-skill={skill.name} disabled
+              sx={{ minHeight: 44, mr: 0, '& .MuiFormControlLabel-label': { minWidth: 0, overflowWrap: 'anywhere' } }}
+              control={<Checkbox checked={false} disabled slotProps={{ input: { id: `h5-rule-sync-skill-${skill.name}` } }} />}
+              label={<span translate="no">{skill.name}</span>}
+            />
+          ))}
+          <Hint id="h5-rule-sync-bundled-note">{t('Each T-Agent installs and updates these itself (Settings → Tasks and files → Agent skills), with the paths of that machine, so they are not shared.')}</Hint>
+        </Box>
+      ) : null}
       <SharedClaudeSettings data={data} busy={busy} save={save} />
       {data.bundle_error ? (
         <Typography id="h5-rule-sync-bundle-error" variant="body2" color="error" sx={{ overflowWrap: 'anywhere' }}>

@@ -10,7 +10,8 @@
 //                `node "${TA_TCLI:-<checkout>/scripts/tcli.js}"`.
 // Both commands also work outside a T-Agent terminal that way, where the variable is not set (routes/terminal.js sets it in every T-Agent shell).
 // A skill folder that the rules and skills sync owns (it carries .t-agent-sync.json, services/rule-sync.js) is never overwritten: it is reported, and so
-// is a symlinked folder or a file at that name. The old skill of the earlier tracker (`task-tracker`) can be moved into
+// is a symlinked folder or a file at that name. These skills are never shared by the sync (SKILL_NAMES); a receiver replaces a copy it received before
+// with this install (see "T-Agent's own skills" in docs/design/rules-and-skills-sync.md). The old skill of the earlier tracker (`task-tracker`) can be moved into
 // <data folder>/backups/task-tracker-<time>/ once t-attention is in place; it is moved, never deleted.
 const crypto = require('node:crypto');
 const fs = require('node:fs');

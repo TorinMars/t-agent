@@ -149,6 +149,10 @@ const waitFor = async (check, message, timeout = 5000) => {
 };
 const noSidewaysScroll = page => page.evaluate(() => [...document.querySelectorAll('#h5-learn-mode .h5-learn-scroll, #h5-learn-mode .MuiCard-root')].every(el => el.scrollWidth <= el.clientWidth + 1));
 const lastAnswer = mock => { const list = mock.posts(/\/answer$/); return list.length ? { id: list.at(-1).path.match(/cards\/(\d+)/)[1], ...list.at(-1).body } : null; };
+// What the fake speechSynthesis was asked to read, from the oldest; `heard(page, text)` waits until `text` was read.
+const spoken = page => page.evaluate(() => window.spoken.slice());
+const clearSpoken = page => page.evaluate(() => { window.spoken.length = 0; });
+const heard = (page, said, message) => waitFor(async () => (await spoken(page)).includes(said), message || `"${said}" is read`);
 const lines = (page, selector) => page.locator(selector).first().evaluate(el => el.innerText.split('\n').map(line => line.trim()).filter(Boolean));
 async function tapKeys(page, keys) {
   for (const key of keys) await page.locator(`#h5-learn-keys button[data-char="${key}"]`).tap();
@@ -199,6 +203,21 @@ async function openSettings(page, touch) {
       assert.equal(await page.locator('#h5-learn-phonetic').count(), 0, 'the transcription waits for the answer (frame 1)');
       assert.equal(await page.locator('#h5-learn-mode .h5-learn-prompt', { hasText: 'Used in' }).count(), 0);
       assert.equal(await page.locator('.h5-learn-letter').count(), 7, 'the letter slots of the word as written in the sentence');
+      // The audio of a word asked in its sentence is the whole sentence (the default settings: words play at the start, twice): at the start and
+      // on Hear it, whose label stays "Hear it" and shows "Playing 1 of 2" while the sentence plays.
+      await heard(page, SENTENCE, 'the sentence plays when the card appears');
+      assert.ok((await spoken(page)).every(said => said === SENTENCE), `only the sentence is read, never the word alone (${await spoken(page)})`);
+      await waitFor(async () => (await spoken(page)).length === 2 && !(await page.locator('#h5-learn-hear[data-playing]').count()), 'the two readings end');
+      assert.equal(await text(page, '#h5-learn-hear'), 'Hear it');
+      await clearSpoken(page);
+      await page.locator('#h5-learn-hear').tap();
+      await heard(page, SENTENCE, 'Hear it reads the sentence');
+      await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
+      assert.equal(await text(page, '#h5-learn-hear'), 'Playing 1 of 2');
+      assert.deepEqual(await spoken(page), [SENTENCE]);
+      await page.locator('#h5-learn-stop').tap();
+      await page.locator('#h5-learn-hear:not([data-playing])').waitFor();
+      await clearSpoken(page);
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#h5-learn-spell-input').getAttribute('inputmode'), 'none', 'the page keyboard, as today');
       await tapKeys(page, 'expi');
@@ -210,6 +229,9 @@ async function openSettings(page, touch) {
       await tapKeys(page, 'res');
       await page.locator('#h5-learn-sentence-word').waitFor();
       assert.equal(await text(page, '#h5-learn-sentence'), SENTENCE, 'the sentence reads whole');
+      await heard(page, SENTENCE, 'the sentence once more after Check');
+      await page.waitForTimeout(200);
+      assert.deepEqual(await spoken(page), [SENTENCE], 'once after the answer, the sentence and not the word');
       assert.equal(await text(page, '#h5-learn-sentence-word'), 'expires');
       assert.equal(await page.locator('#h5-learn-sentence-word').getAttribute('data-correct'), 'true');
       const success = await color(page, '#h5-learn-feedback p');
@@ -234,8 +256,10 @@ async function openSettings(page, touch) {
       assert.equal(await text(page, '#h5-learn-word-meaning'), `The word: ${ZH_MERGE}`);
       assert.equal(mock.posts(/\/meaning$/).at(-1).body.word, 'merge');
       assert.equal(await text(page, '#h5-learn-sentence'), 'Run the tests again before you .', 'the full stop stays outside the gap');
+      await clearSpoken(page);
       await page.locator('#h5-learn-dont-know').tap();
       await page.locator('#h5-learn-sentence-word').waitFor();
+      await heard(page, 'Run the tests again before you merge.', 'given up: the sentence after the answer too');
       assert.equal(await page.locator('#h5-learn-sentence-word').getAttribute('data-correct'), 'false');
       assert.equal(await text(page, '#h5-learn-sentence'), 'Run the tests again before you merge.');
       const error = await color(page, '#h5-learn-feedback p');
@@ -246,6 +270,7 @@ async function openSettings(page, touch) {
       await waitFor(() => lastAnswer(mock).id === '32', 'the second answer');
       assert.equal(lastAnswer(mock).correct, false);
       assert.equal(lastAnswer(mock).expected, 'merge');
+      await clearSpoken(page);
 
       // A starter word (its context is the list title, no Chinese of a sentence): the meaning layout of today (frame 3).
       await page.locator('#h5-learn-mode .h5-learn-prompt', { hasText: 'Meaning' }).waitFor();
@@ -254,6 +279,14 @@ async function openSettings(page, touch) {
       assert.equal(await text(page, '#h5-learn-meaning'), ZH_LATENCY);
       assert.equal(await text(page, '#h5-learn-phonetic'), '/\u02c8le\u026at\u0259nsi/');
       assert.match(await text(page, '#h5-learn-mode .h5-learn-prompt'), /Used in "Network ___ is the time a packet takes"/);
+      // Its audio stays the word: at the start and on Hear it.
+      await heard(page, 'latency', 'a starter word plays the word when it appears');
+      assert.ok((await spoken(page)).every(said => said === 'latency'), `only the word (${await spoken(page)})`);
+      await clearSpoken(page);
+      await page.locator('#h5-learn-hear').tap();
+      await heard(page, 'latency', 'Hear it reads the word');
+      assert.deepEqual(await spoken(page), ['latency']);
+      await page.locator('#h5-learn-stop').tap();
       await page.locator('#h5-learn-dont-know').tap();
       await page.locator('#h5-learn-grade-again').tap();
       // A word whose form is not in the sentence: the meaning layout too, its context as the hint.

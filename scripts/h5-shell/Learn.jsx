@@ -30,7 +30,7 @@ import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
 import { AUTO_CHECK_MS, diffWords, hintText, mistakeTag, normWord, spellCheck, suggestedGrade, typedInFull } from './learn-grade.mjs';
 import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
-import { attachVoice, canSpeak, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
+import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
@@ -676,7 +676,7 @@ function useAudio(settings, tts) {
   ttsRef.current = tts;
   const [state, setState] = useState({ playing: false, text: '', index: 0, total: 0, blocked: false });
   const player = useMemo(() => createPlayer({
-    speakOnce, cancel: stopSpeaking,
+    speakOnce, cancel: stopSpeaking, speaking: isSpeaking,
     onChange: next => { if (next.blocked) tapToPlayShown = true; setState(next); },
   }), []);
   useEffect(() => () => player.stop(), [player]);

@@ -33,9 +33,16 @@ export function autoPlays(exercise, options) {
 // A rough upper bound of one reading, for a browser that never says the speech ended (Chromium can drop `end` for long text).
 export const longestMs = (text, slow) => Math.round((4000 + String(text || '').length * 120) * (slow ? 1.6 : 1));
 
+// How often the player looks again whether the browser is still reading before it starts the next repeat.
+export const SPEAKING_CHECK_MS = 200;
+
 // `speakOnce(text, { slow, onStart, onEnd, onError })` reads once and calls back (onError with the error name); returns false when it cannot.
-// `cancel()` stops what is being read. `onChange(state)`: { playing, text, index, total, blocked } after every change.
-export function createPlayer({ speakOnce, cancel = () => {}, setTimer = setTimeout, clearTimer = clearTimeout, onChange = () => {} }) {
+// `cancel()` stops what is being read. `speaking()`: whether the browser is still reading (speechSynthesis.speaking / pending). Some browsers
+// report the end of a long reading (a whole sentence in Spell) before it is heard to the end; the next repeat starts with a cancel, so it would cut
+// the sentence off. The next repeat therefore waits until the browser has really stopped, then the pause, and gives up waiting after the longest
+// time a reading can take (a browser that keeps `speaking` set). `onChange(state)`: { playing, text, index, total, blocked } after every change.
+// See "Audio" in docs/design/learn-english-page.md.
+export function createPlayer({ speakOnce, cancel = () => {}, speaking = () => false, setTimer = setTimeout, clearTimer = clearTimeout, onChange = () => {} }) {
   let run = null; // the play in progress: { total, reading, pause }
   let timers = [];
   let state = { playing: false, text: '', index: 0, total: 0, blocked: false };
@@ -78,9 +85,17 @@ export function createPlayer({ speakOnce, cancel = () => {}, setTimer = setTimeo
       const end = () => {
         if (ended || !live()) return;
         ended = true;
-        mine.reading = false;
         clearAll();
-        if (mine.index < mine.total) later(next, pauseMs); else finish();
+        // Still reading although the end was reported: look again shortly, at most until the longest time a reading can take.
+        let waited = 0;
+        const limit = longestMs(text, slow);
+        const done = () => {
+          if (!live()) return;
+          if (waited < limit && safe(speaking)) { waited += SPEAKING_CHECK_MS; later(done, SPEAKING_CHECK_MS); return; }
+          mine.reading = false;
+          if (mine.index < mine.total) later(next, pauseMs); else finish();
+        };
+        done();
       };
       const first = auto && mine.index === 1;
       const ok = speakOnce(text, {
@@ -98,6 +113,8 @@ export function createPlayer({ speakOnce, cancel = () => {}, setTimer = setTimeo
     };
     next();
   }
+
+  const safe = fn => { try { return Boolean(fn()); } catch { return false; } };
 
   // The person started typing: the reading now goes on to its end, the repeats after it are skipped (in a pause between two: it stops now).
   function skipRest() {

@@ -295,6 +295,10 @@ English journal entries and their journaling habit (the server side, the prompt,
   with a Stop text button (`#h5-learn-stop`); pressing Hear it / Play plays again with the same repeat (Slow too, slowly). Typing (a key, the page's
   keyboard, a tile typed after) lets the reading end and skips the repeats after it when the switch is on. Leaving the card, answering and Stop
   cancel what is pending, so nothing of one card is heard over the next. A reading whose end never comes is let go after a time from its length.
+  An end reported while the browser is still reading (`speechSynthesis.speaking` / `pending`, `isSpeaking` in learn-speech.mjs; some browsers
+  report the end of a whole sentence early) does not start the next repeat: every repeat begins with a cancel and would cut the sentence off (the
+  user's report, 2026-11-21: "it starts the second pass before the sentence has finished"). The player looks again every 200 ms and starts the
+  pause only when the browser has stopped, giving up after the longest time a reading can take.
 - A browser that refuses sound before the first tap (`not-allowed`, or an automatic play that has not started after 2.5 s: iOS): the button
   becomes "Tap to play" (`#h5-learn-tap-play`) once per page load; later automatic plays are not watched.
 

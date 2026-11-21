@@ -68,6 +68,8 @@ export function speakOnce(text, { slow = false, onStart = () => {}, onEnd = () =
     return false;
   }
 }
+// Whether the browser is still reading or has something queued (the Learn player waits for this before a repeat; see learn-audio.mjs).
+export function isSpeaking() { const speech = synth(); return Boolean(speech && (speech.speaking || speech.pending)); }
 export function stopSpeaking() { const speech = synth(); if (speech) try { speech.cancel(); } catch { /* nothing to stop */ } }
 
 const Recognition = () => (typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition || null : null);

@@ -38,8 +38,11 @@ function rig({ refuse = false, silent = false } = {}) {
     if (!silent) handlers.onStart();
     return true;
   };
+  let busy = false; // what the fake browser says while asked whether it is still reading
   return {
     spoken, states, setTimer, clearTimer, advance, speakOnce,
+    speaking: () => busy,
+    setSpeaking: value => { busy = value; },
     cancel: () => { cancels += 1; },
     cancels: () => cancels,
     end: () => spoken.at(-1).onEnd(),
@@ -159,4 +162,49 @@ test('a browser that refuses sound before the first tap: an automatic play says 
   quiet.play('expire', { repeat: 1 });
   silent.advance(START_MS + 10);
   assert.equal(quiet.state().blocked, false, 'a press is never marked refused');
+});
+
+test('an end reported while the browser is still reading: the next repeat waits until it has stopped, then the pause', async () => {
+  const { createPlayer, SPEAKING_CHECK_MS } = await load();
+  const r = rig();
+  const sentence = 'The session cookie expires after thirty minutes, so please log in again.';
+  const player = createPlayer({ ...r, onChange: state => r.states.push(state) });
+  player.play(sentence, { repeat: 2, pauseMs: 2000 });
+  r.setSpeaking(true);
+  r.end(); // reported too early: the sentence is still being read
+  r.advance(5000);
+  assert.equal(r.spoken.length, 1, 'no second pass (and no cancel) while the first is still heard');
+  assert.equal(r.cancels(), 0);
+  assert.equal(player.state().index, 1);
+  player.skipRest(); // typing while it is still heard: the reading goes on, no repeat after it
+  r.setSpeaking(false);
+  r.advance(SPEAKING_CHECK_MS);
+  r.advance(5000);
+  assert.equal(r.spoken.length, 1);
+  assert.equal(player.state().playing, false);
+
+  player.play(sentence, { repeat: 2, pauseMs: 2000 });
+  r.setSpeaking(true);
+  r.end();
+  r.advance(1000);
+  r.setSpeaking(false);
+  r.advance(SPEAKING_CHECK_MS);
+  r.advance(1999);
+  assert.equal(r.spoken.length, 2, 'the pause counts from the real end');
+  r.advance(1);
+  assert.equal(r.spoken.length, 3);
+  assert.equal(player.state().index, 2);
+});
+
+test('a browser that keeps saying it is reading: the repeat comes after the longest time a reading can take', async () => {
+  const { createPlayer, longestMs } = await load();
+  const r = rig();
+  const player = createPlayer({ ...r });
+  player.play('expire', { repeat: 2, pauseMs: 1000 });
+  r.setSpeaking(true);
+  r.end();
+  r.advance(longestMs('expire', false) - 1);
+  assert.equal(r.spoken.length, 1);
+  r.advance(1000 + 400);
+  assert.equal(r.spoken.length, 2);
 });

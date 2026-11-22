@@ -37,6 +37,11 @@ const TerminalGestures = (() => {
   }
   function inView(offset, left, right, visible) { return left >= offset && right <= offset + visible; }
   function wrapHint(mode, cols) { return mode !== 'wide' && cols > 0 && cols < WRAP_HINT_BELOW; }
+  // Whether terminal input `data` (xterm's onData) is only mouse reports (a wheel step, a click, a motion report of a program in mouse mode): SGR
+  // `ESC [ < b ; x ; y M|m`, urxvt `ESC [ b ; x ; y M` and X10 `ESC [ M` + 3 bytes. The mouse is pointed at a cell, so it is not typing: it must not pull a
+  // wide terminal back to the cursor (opencode turns on any-motion reports, so every mouse move over it sent the view back to its input box).
+  const MOUSE_REPORTS = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[\d+;\d+;\d+M|\x1b\[M[\s\S]{3})+$/;
+  function isMouseReport(data) { return typeof data === 'string' && MOUSE_REPORTS.test(data); }
 
   // ── The handler ──
   // opts: active() (the terminal is shown and nothing covers it), offset: { get(), set(px), max() } (the wide terminal),
@@ -112,7 +117,7 @@ const TerminalGestures = (() => {
 
   return {
     AXIS_SLOP, WIDE_CHOICES, DEFAULT_WIDE, WRAP_HINT_BELOW, FOLLOW_MARGIN,
-    axisOf, wideCols, columnsFor, maxOffset, clampOffset, followOffset, inView, wrapHint, attach,
+    axisOf, wideCols, columnsFor, maxOffset, clampOffset, followOffset, inView, wrapHint, isMouseReport, attach,
   };
 })();
 if (typeof module !== 'undefined') module.exports = TerminalGestures;

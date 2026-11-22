@@ -54,7 +54,7 @@ running or pending session" in [page-terminal-and-bottom-bar.md](page-terminal-a
   label above the card and no bottom line. Edges as on the stack: the selected card 2px primary, one that needs the person 2px warning, else the 1px
   divider; 8px corners, elevation 8. A switch grows the card from its place in the row into the whole area.
 - **A card in the stack** (`.h5-switcher-card`, a ButtonBase, `data-key`, `data-status`, `data-centred`, `data-current`): above it the session's tile (Claude /
-  Codex mark or `>_`, `SessionKindIcon` of TaskDrawer.jsx, as the task list), the device tag (`DeviceTag`, when the list tags its rows), the name
+  Codex / OpenCode mark or `>_`, `SessionKindIcon` of TaskDrawer.jsx, as the task list), the device tag (`DeviceTag`, when the list tags its rows), the name
   (subtitle2) and the state dot; a card behind the centred one shows only its tile. Inside: the preview lines (caption, monospace); at the bottom over
   a dark gradient: the task (caption), the state word (Running / Needs you / Idle in success.light / warning.light / text.secondary; Needs selection / Needs acceptance in warning.light at a question) and a "Current"
   pill on the current card. The state is the header's rule (`columnStatus` on `state.terminalActivity` and the T-Attention items), so it follows the

@@ -110,7 +110,7 @@ function RowLink({ item }) {
 const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
 const STATE_LABEL = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
 const WAIT_LABEL = { select: 'Needs selection', accept: 'Needs acceptance' }; // a session at a question (columns.mjs WAITING_WORDS)
-const AGENT_NAME = { claude: 'Claude', codex: 'Codex' };
+const AGENT_NAME = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 const sessionName = session => session.title || AGENT_NAME[session.agent] || t('Session');
 function SessionChip({ session, shown }) {
   return (
@@ -548,7 +548,7 @@ function useSessionTasks(state, engine, active) {
 
 const OVERLINE = { typography: 'overline', fontWeight: 500, lineHeight: 1.5, color: 'text.secondary', mt: 0.5 };
 const PAIR = { display: 'flex', gap: 1.5, '& > *': { flex: '1 1 0', minWidth: 0 } };
-const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' };
+const AGENT_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 // A day chip of "Every week": a round 40px toggle (44px on touch) with the day's letter; its accessible name is the day.
 const DAY_SX = { width: 40, height: 40, minWidth: 40, p: 0, borderRadius: '50% !important', border: 1, borderColor: 'divider', typography: 'body2', fontWeight: 500, [TOUCH]: { width: 44, height: 44 } };
 // The letter on a day chip: M T W T F S S in English; in Chinese the last character of the translated day name (the "one" of Monday's name, ...).

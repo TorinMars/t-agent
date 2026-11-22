@@ -37,9 +37,10 @@ import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { menuDetail } from './usage-track.mjs';
 
 const GLYPHS = { shell: '>_', claude: '✳', codex: 'GPT' };
+const CLAUDE_COLOR = '#d97757'; // Claude's own colour for its sparkle, on the session tiles and in the New session dialog
 
 // The sessions under a task are its terminals. Every session row has "⋯" actions, under the selected task or any other.
-const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
 // The live state of a session (h5.js `sessionState`, from the pushed terminal activity): its words and the colours of the column headers (Columns.jsx
 // `STATE_COLORS`: green running, orange needs you, grey idle). The dot takes the main shade; the status line the light one, which reads better as text.
@@ -47,7 +48,7 @@ export const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Id
 export const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
 export const STATE_TEXT = { running: 'success.light', waiting: 'warning.light', idle: 'text.secondary' };
 
-// What a session row is: "Claude session", "Codex session" or "Terminal" (the glyph of its tile shows it; screen readers get the words).
+// What a session row is: "Claude session", "Codex session", "OpenCode session" or "Terminal" (the glyph of its tile shows it; screen readers get the words).
 const kindOf = row => (AGENT_NAMES[row.agent] ? `${AGENT_NAMES[row.agent]} session` : 'Terminal');
 
 // The second line of a session row: its live state ("Running", "Needs you", "Idle", and for a question h5.js names in `row.waiting` "Needs
@@ -132,11 +133,12 @@ const composing = event => Boolean(event.nativeEvent && event.nativeEvent.isComp
 
 // The New session dialog of the "+" of a task, of "New session" in the empty terminal area and of Cmd/Ctrl+Shift+O (h5.js `addSession`, `menu.naming`): the
 // task's title (and its service when it is not this machine), the optional name field, then the choices as full-width buttons and Cancel. The first list is
-// Claude session, Codex session, New Terminal (`pick` items): one is highlighted, Claude session first. The field takes the focus, as in the other dialogs;
+// Claude session, Codex session, OpenCode session, New Terminal (`pick` items): one is highlighted, Claude session first. Each row starts with its mark
+// (`ChoiceMark`) and may have a second line (`note`: the time of an earlier session, or why a kind is greyed: "<engine> needs an update first"). The field takes the focus, as in the other dialogs;
 // Up and Down in it move the highlight (wrapping) while the focus stays in the field (`aria-activedescendant`), and Enter makes a NEW session of the highlighted
 // kind with the typed name (`menuPick`). Tab moves the focus into the choices, one stop (roving tabIndex: only the highlighted one is in the tab order); there
 // Up and Down move the highlight with the focus, Enter makes the focused kind, Shift+Tab goes back to the field. A press (pointer, or Space on a focused
-// choice) on Claude / Codex session opens its sub-list (New …, the earlier sessions, Back), which replaces the choices; there Enter in the field runs New ….
+// choice) on Claude / Codex / OpenCode session opens its sub-list (New …, the earlier sessions, Back), which replaces the choices; there Enter in the field runs New ….
 // While the terminal is being made nothing can be pressed and the dialog does not close; a failure is shown under the choices.
 export function NewSessionDialog({ state, ui }) {
   const menu = state.menu && state.menu.naming ? state.menu : null;
@@ -197,7 +199,7 @@ export function NewSessionDialog({ state, ui }) {
                 const on = option && index === active;
                 return (
                   <ListItemButton
-                    key={`${index}:${item.label}`} component="button" type="button" selected={on} disabled={busy}
+                    key={`${index}:${item.label}`} component="button" type="button" selected={on} disabled={busy || item.disabled}
                     className={[item.kind === 'danger' ? 'danger' : '', on ? 'h5-choice-on' : ''].filter(Boolean).join(' ') || undefined}
                     onClick={() => ui.actions.menuRun(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
                     {...(option ? {
@@ -211,7 +213,13 @@ export function NewSessionDialog({ state, ui }) {
                       '&:focus-visible, &.Mui-focusVisible': { outline: '2px solid', outlineColor: 'text.primary', outlineOffset: '-2px' },
                     }}
                   >
-                    {item.kind === 'raw' ? item.label : t(item.label)}
+                    {item.icon ? <ChoiceMark icon={item.icon} /> : null}
+                    <ListItemText
+                      className="h5-choice-text" sx={{ my: 0.5 }}
+                      primary={<span className="h5-choice-label">{item.kind === 'raw' ? item.label : t(item.label)}</span>}
+                      secondary={item.note ? <span className="h5-choice-note" translate="no">{item.note}</span> : null}
+                      slotProps={{ primary: { variant: 'body1' }, secondary: { variant: 'caption', color: 'text.secondary' } }}
+                    />
                   </ListItemButton>
                 );
               })}
@@ -226,6 +234,24 @@ export function NewSessionDialog({ state, ui }) {
         </Box>
       ) : null}
     </Dialog>
+  );
+}
+
+// The mark at the start of a row of the New session dialog, 24px in MD2's list icon slot: the agent's mark as on the session tiles (Claude's sparkle in its
+// colour), `>_` for a plain terminal, the back arrow for Back. The two text marks are drawn by CSS (`data-glyph`), so a row's text is only its words.
+function ChoiceMark({ icon }) {
+  const glyph = icon === 'shell' || icon === 'claude' ? GLYPHS[icon] : '';
+  const mark = icon === 'back' ? <Icon name="back" size={24} /> : glyph ? null : <DomIcon make={terminalMark(icon)} />;
+  return (
+    <ListItemIcon
+      className="h5-choice-mark" data-mark={icon} data-glyph={glyph || undefined} aria-hidden="true"
+      sx={{
+        minWidth: 40, color: icon === 'claude' ? CLAUDE_COLOR : 'inherit', '& .agent-logo': { width: 22, height: 22 },
+        '&[data-glyph]::before': { content: 'attr(data-glyph)', typography: 'subtitle2', fontFamily: 'monospace', fontSize: icon === 'claude' ? 20 : undefined, lineHeight: 1 },
+      }}
+    >
+      {mark}
+    </ListItemIcon>
   );
 }
 
@@ -303,10 +329,10 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
   );
 }
 
-// The tile that says what a session is: the Claude or Codex mark, or `>_` for a plain shell. Also the cards of the session switcher (Switcher.jsx).
+// The tile that says what a session is: the Claude, Codex or OpenCode mark, or `>_` for a plain shell. Also the cards of the session switcher (Switcher.jsx).
 export function SessionKindIcon({ agent, title, size = 28, children }) {
   return (
-    <Box component="span" className={`h5-terminal-icon ${agent || 'shell'}`} aria-hidden="true" title={title} sx={{ position: 'relative', flex: `0 0 ${size}px`, width: size, height: size, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 'caption', fontFamily: 'monospace', color: agent === 'claude' ? '#d97757' : 'text.secondary', '& svg': { width: Math.round(size * 0.64), height: Math.round(size * 0.64) } }}>
+    <Box component="span" className={`h5-terminal-icon ${agent || 'shell'}`} aria-hidden="true" title={title} sx={{ position: 'relative', flex: `0 0 ${size}px`, width: size, height: size, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 'caption', fontFamily: 'monospace', color: agent === 'claude' ? CLAUDE_COLOR : 'text.secondary', '& svg': { width: Math.round(size * 0.64), height: Math.round(size * 0.64) } }}>
       {agent ? <DomIcon make={terminalMark(agent)} /> : GLYPHS.shell}
       {children}
     </Box>

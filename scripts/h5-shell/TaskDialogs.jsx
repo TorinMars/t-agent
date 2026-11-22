@@ -64,7 +64,7 @@ function RenameTaskDialog({ dialog, ui, service, close }) {
               />
               <Typography variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('New folder')}</Typography>
               <Typography id="h5-task-rename-new" variant="body2" translate="no" sx={{ overflowWrap: 'anywhere' }}><code>{joinFolder(parts, name)}</code></Typography>
-              <Typography id="h5-task-rename-note" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('The Claude Code and Codex sessions of this folder move with it and still resume. Its terminals must be closed.')}</Typography>
+              <Typography id="h5-task-rename-note" variant="caption" component="p" color="text.secondary" sx={{ mt: 1 }}>{t('The Claude Code and Codex sessions of this folder move with it and still resume; OpenCode sessions do not move yet. Its terminals must be closed.')}</Typography>
             </Box>
           ) : null}
           {blocked ? (

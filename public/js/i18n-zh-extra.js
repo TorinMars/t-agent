@@ -29,6 +29,9 @@ I18n.add({
   'ends after 1 time': '共 1 次',
   'ends after {1} times': '共 {1} 次',
 
+  // ---- New session dialog: a session kind the task's engine cannot run yet (h5.js showSessionKinds) ----
+  '{1} needs an update first': '{1} 需要先更新',
+
   // ---- Usage data (Settings → Usage data, UsageData.jsx) ----
   '{1} key': '{1} 键',
   '{1} events since {2}': '自 {2} 起 {1} 次操作',

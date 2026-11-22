@@ -23,7 +23,7 @@ import {
   DOT_SX, DeviceTag, HOVER_SX, REVEAL_SX, RenameRow, SELECTED_SX, STATE_DOT, STATE_TEXT, STATE_WORDS, SessionKindIcon, VISUALLY_HIDDEN,
 } from './TaskDrawer.jsx';
 
-const KIND_NAMES = { claude: 'Claude session', codex: 'Codex session' };
+const KIND_NAMES = { claude: 'Claude session', codex: 'Codex session', opencode: 'OpenCode session' };
 // What the tab reads; it is drawn only while the tab is shown (the By task tab reads none of it).
 const RECENT = state => ({ recent: state.recent, shownTarget: state.shownTarget, taskList: state.taskList, activity: state.terminalActivity, attention: state.attention });
 

@@ -603,7 +603,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(await page.locator('.h5-add-menu [role="menuitem"]').first().textContent(), 'Paste text', 'Paste text is the first item');
       assert.deepEqual(await page.locator('.h5-add-menu .h5-add-menu-head').allTextContents(), ['Start an agent'], 'a plain terminal shows the shell list');
       const commands = await page.locator('.h5-add-menu .h5-add-menu-command').allTextContents();
-      assert.deepEqual(commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'git status'], 'the menu lists the commands that start an agent');
+      assert.deepEqual(commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'opencode', 'opencode -c', 'git status'], 'the menu lists the commands that start an agent');
       const pencils = await page.locator('.h5-add-menu .h5-add-menu-edit').evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return { label: node.getAttribute('aria-label'), title: node.title, opacity: getComputedStyle(node).opacity, w: r.width, h: r.height }; }));
       assert.equal(pencils.length, commands.length, 'every command row has a pencil');
       assert.ok(pencils.every(p => p.label === 'Edit before sending' && p.title === 'Edit before sending' && p.opacity === '1' && p.w >= 44 && p.h >= 44), `touch: the pencil is always shown, 44px: ${JSON.stringify(pencils[0])}`);
@@ -624,7 +624,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
         const order = [...menu.querySelectorAll('.h5-add-menu-command, .h5-add-menu-divider')].map(node => (node.classList.contains('h5-add-menu-divider') ? '|' : node.textContent));
         return { order, head: menu.querySelector('.h5-add-menu-head').textContent, used: [...menu.querySelectorAll('.h5-add-menu-used')].map(node => node.textContent) };
       });
-      assert.deepEqual(recent.order, ['codex resume', 'git status', '|', 'claude', 'claude --continue', 'claude --resume', 'codex'], 'used first, most recent at the top, then the divider and the usual order');
+      assert.deepEqual(recent.order, ['codex resume', 'git status', '|', 'claude', 'claude --continue', 'claude --resume', 'codex', 'opencode', 'opencode -c'], 'used first, most recent at the top, then the divider and the usual order');
       assert.equal(recent.head, 'Start an agent \u00b7 recently used first');
       assert.deepEqual(recent.used, ['used just now', 'used just now']);
       if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-commands-recent.png') });
@@ -1440,7 +1440,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').tap();
     await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
-    assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal'], 'the "+" opens the New session dialog');
+    assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'], 'the "+" opens the New session dialog');
     // The optional name field above the choices: placeholder, limit, the name stays when moving between the lists, and Enter creates.
     const nameField = page.locator('#h5-new-name-input');
     assert.equal(await nameField.getAttribute('placeholder'), 'Name (optional)');
@@ -1932,7 +1932,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await remote.page.locator('[data-source="remote:7"] .h5-task-more').tap();
     await remote.page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     await remote.page.waitForTimeout(300);
-    assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal']);
+    assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal']);
     assert.ok(!remote.calls.some(call => call.includes('/agent/conversations')), 'no chat is read');
     await remote.context.close();
     assert.deepEqual(pageErrors, [], 'the phone shell has no browser runtime errors');

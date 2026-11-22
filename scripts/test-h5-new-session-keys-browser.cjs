@@ -17,7 +17,7 @@ const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
-const CHOICES = ['Claude session', 'Codex session', 'New Terminal'];
+const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'];
 const TASKS = [{ id: 1, title: 'Alpha', status: 'doing' }, { id: 2, title: 'Beta', status: 'doing' }];
 const SHORT = { timeout: 2000 };
 
@@ -132,7 +132,7 @@ async function openPage(browser, apple) {
       // Enter: a new Claude session with the default name.
       await openByKeys();
       assert.equal(await page.locator('#h5-term-menu-actions').getAttribute('role'), 'listbox', `${label}: the choices are a listbox`);
-      assert.deepEqual(await choices.evaluateAll(nodes => nodes.map(node => [node.getAttribute('role'), node.tabIndex])), [['option', 0], ['option', -1], ['option', -1]], `${label}: options, only the highlighted one in the tab order`);
+      assert.deepEqual(await choices.evaluateAll(nodes => nodes.map(node => [node.getAttribute('role'), node.tabIndex])), [['option', 0], ['option', -1], ['option', -1], ['option', -1]], `${label}: options, only the highlighted one in the tab order`);
       assert.equal(await nameField.getAttribute('role'), 'combobox', `${label}: the field owns the list`);
       assert.equal(await page.locator('#h5-new-session-keys').textContent(), 'Enter to create · ↑↓ to choose', `${label}: the hint`);
       assert.equal((await highlighted()).active, (await highlighted()).on[0], `${label}: aria-activedescendant names the highlighted option`);
@@ -159,15 +159,24 @@ async function openPage(browser, apple) {
       await page.keyboard.press('Enter');
       await created({ agent: 'codex' }, 'Down then Enter makes a new Codex session');
 
-      // Down twice + Enter: a terminal, with a typed name.
+      // Down twice + Enter: OpenCode.
+      await openByKeys();
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('ArrowDown');
+      assert.deepEqual((await highlighted()).text, ['OpenCode session'], `${label}: Down twice highlights OpenCode session`);
+      await page.keyboard.press('Enter');
+      await created({ agent: 'opencode' }, 'Down twice then Enter makes a new OpenCode session');
+
+      // Down three times + Enter: a terminal, with a typed name.
       await openByKeys();
       await page.keyboard.type('Build');
       assert.equal(await nameField.inputValue(), 'Build', `${label}: typing goes into the field`);
       await page.keyboard.press('ArrowDown');
       await page.keyboard.press('ArrowDown');
-      assert.deepEqual((await highlighted()).text, ['New Terminal'], `${label}: Down twice highlights New Terminal`);
+      await page.keyboard.press('ArrowDown');
+      assert.deepEqual((await highlighted()).text, ['New Terminal'], `${label}: Down three times highlights New Terminal`);
       await page.keyboard.press('Enter');
-      await created({ title: 'Build' }, 'Down twice then Enter makes a terminal with the typed name');
+      await created({ title: 'Build' }, 'Down three times then Enter makes a terminal with the typed name');
 
       // Up from the first wraps to the last, Down from the last wraps to the first.
       await openByKeys();
@@ -222,12 +231,12 @@ async function openPage(browser, apple) {
         return { outline: style.outlineStyle, width: style.outlineWidth, selected: node.classList.contains('Mui-selected') };
       });
       assert.deepEqual(await ring(), { outline: 'solid', width: '2px', selected: true }, `${label}: the focused option has a focus ring besides the highlight (the selected list row)`);
-      const steps = [['ArrowDown', 1, 'Codex session'], ['ArrowDown', 2, 'New Terminal'], ['ArrowDown', 0, 'Claude session'], ['ArrowUp', 2, 'New Terminal'], ['ArrowUp', 1, 'Codex session']];
+      const steps = [['ArrowDown', 1, 'Codex session'], ['ArrowDown', 2, 'OpenCode session'], ['ArrowDown', 3, 'New Terminal'], ['ArrowDown', 0, 'Claude session'], ['ArrowUp', 3, 'New Terminal'], ['ArrowUp', 2, 'OpenCode session'], ['ArrowUp', 1, 'Codex session']];
       for (const [key, index, text] of steps) {
         await page.keyboard.press(key);
         assert.equal(await activeId(), `h5-new-session-option-${index}`, `${label}: ${key} in the list moves the focus to ${text}`);
         assert.deepEqual((await highlighted()).text, [text], `${label}: ${key} in the list moves the highlight to ${text}`);
-        assert.deepEqual(await choices.evaluateAll(nodes => nodes.map(node => node.tabIndex)), [0, 1, 2].map(i => (i === index ? 0 : -1)), `${label}: roving tabIndex after ${key}`);
+        assert.deepEqual(await choices.evaluateAll(nodes => nodes.map(node => node.tabIndex)), [0, 1, 2, 3].map(i => (i === index ? 0 : -1)), `${label}: roving tabIndex after ${key}`);
       }
       await page.keyboard.press('Shift+Tab');
       assert.equal(await activeId(), 'h5-new-name-input', `${label}: Shift+Tab goes back to the field`);

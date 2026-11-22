@@ -98,7 +98,7 @@ function ClipboardBar({ bar, ui }) {
 // (the white filled button, which opens inside its own click). "+N": more links wait behind this one. Escape inside the bar dismisses it
 // (never from the terminal: Esc belongs to the program there). It hides by itself after `bar.ttl`, held while a mouse is over it or the
 // focus is in it, like the copy bar.
-const LINK_TITLES = { Claude: 'Claude wants to open a link', Codex: 'Codex wants to open a link' };
+const LINK_TITLES = { Claude: 'Claude wants to open a link', Codex: 'Codex wants to open a link', OpenCode: 'OpenCode wants to open a link' };
 function OpenLinkBar({ bar, ui }) {
   const on = useRef({ hover: false, focus: false });
   const hold = (key, value) => { on.current[key] = value; ui.actions.openLinkHold(on.current.hover || on.current.focus); };

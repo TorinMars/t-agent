@@ -1990,9 +1990,9 @@
   let menuScope = null;
   // The optional name typed in the New session dialog. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
-  let menuCreate = -1; // the item that Enter in the name field runs in a sub-list (New Claude session, New Codex session)
-  // The keyboard way of each item of the first list of the New session dialog (Claude session, Codex session, New Terminal): Enter on the highlighted choice
-  // makes a NEW session of that kind at once, where a press on Claude / Codex session opens its sub-list (`menuPick`, `NewSessionDialog`). null: not a choice.
+  let menuCreate = -1; // the item that Enter in the name field runs in a sub-list (New Claude session, New Codex session, New OpenCode session)
+  // The keyboard way of each item of the first list of the New session dialog (Claude session, Codex session, OpenCode session, New Terminal): Enter on the
+  // highlighted choice makes a NEW session of that kind at once, where a press on a session kind opens its sub-list (`menuPick`, `NewSessionDialog`). null: not a choice.
   let menuQuick = [];
   let menuTask = null; // the ref (`taskRef`) of the task whose "+" opened the New session dialog (or whose "⋯" opened its sheet)
   let creating = 0; // counts the terminals asked for from the New session dialog; closing the dialog counts too, so an answer for a dialog that was closed is dropped
@@ -2017,8 +2017,9 @@
   }
   // The typed name, as the server will keep it (an empty name: the default "Terminal N" / "Claude N").
   const takeName = () => newName.replace(/\s+/g, ' ').trim();
-  // items: [label, run, kind, create, quick, disabled]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it;
-  // quick: the item is a choice of the keyboard list (`pick` in the state), and Enter on it runs `quick` instead of `run`.
+  // items: [label, run, kind, create, quick, disabled, look]; kind 'danger' is drawn as a warning, 'raw' is a name that is not translated; create: Enter in the name field runs it;
+  // quick: the item is a choice of the keyboard list (`pick` in the state), and Enter on it runs `quick` instead of `run`; look (the New session dialog only):
+  // { icon, note }, the mark at the start of the row ('claude', 'codex', 'opencode', 'shell' or 'back') and a second line already in the page's language.
   // naming: the New session dialog of the task `menuTask`, with the optional name field above the choices; `extra` adds its own fields (the task's title and service,
   // the sub-list shown, busy and error).
   // anchor: the "⋯" of a session row: the actions are a popup under it instead of the sheet from the bottom.
@@ -2026,7 +2027,7 @@
     menuRuns = items.map(item => (item[5] ? null : item[1])); // item[5]: disabled
     menuCreate = items.findIndex(item => item[3]);
     menuQuick = items.map(item => item[4] || null);
-    ui.set({ menu: { title, items: items.map(([label, , kind, , quick, disabled]) => ({ label, kind: kind || null, pick: Boolean(quick), disabled: Boolean(disabled) })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
+    ui.set({ menu: { title, items: items.map(([label, , kind, , quick, disabled, look]) => ({ label, kind: kind || null, pick: Boolean(quick), disabled: Boolean(disabled), icon: (look && look.icon) || null, note: (look && look.note) || '' })), rename: null, renameValue: '', naming, task: naming ? menuTask : null, name: newName, anchor, ...extra } });
   }
   // The rename field takes the place of the row in the task list ({ kind, id, task } of the row, `task` being its ref: `default` is a terminal id in every task); the sheet of
   // actions goes away.
@@ -2185,23 +2186,44 @@
   }
   function renderTabs() { renderTasks(); renderSessionName(); }
 
-  // ── Session: a plain terminal, or a Claude / Codex session of the task directory (new or resumed) ──
-  const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session']];
-  // The New session dialog (`NewSessionDialog` in TaskDrawer.jsx). sub: null for the first list (Claude session, Codex session, New Terminal), else the label of the
-  // sub-list shown (Claude session: New Claude session, the earlier sessions, Back). The dialog names the task and, when it is not on this machine, its service.
+  // ── Session: a plain terminal, or a Claude / Codex / OpenCode session of the task directory (new or resumed) ──
+  const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session'], ['opencode', 'OpenCode session']];
+  // An agent that came after the first Engines: offered only on an Engine whose `/info` lists its capability (this machine always runs it). An older Engine
+  // would start a plain shell for it, so the row is greyed with "<engine> needs an update first" ("Session menu" in docs/design/page-task-list.md).
+  const AGENT_CAPABILITY = { opencode: 'terminal:opencode' };
+  const runsAgent = (from, agent) => !AGENT_CAPABILITY[agent] || from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes(AGENT_CAPABILITY[agent]));
+  // The time an earlier session was last used, on the second line of its row in a sub-list: "11-22 18:40" (local time), '' without a time.
+  const two = value => String(value).padStart(2, '0');
+  const sessionTime = at => {
+    const date = new Date(Number(at));
+    return Number(at) > 0 && Number.isFinite(date.getTime()) ? `${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}` : '';
+  };
+  // The New session dialog (`NewSessionDialog` in TaskDrawer.jsx). sub: null for the first list (Claude session, Codex session, OpenCode session, New Terminal), else the
+  // label of the sub-list shown (Claude session: New Claude session, the earlier sessions, Back). The dialog names the task and, when it is not on this machine, its service.
   function showSessionMenu(sub, items) {
     const hit = resolveRef(menuTask);
     const extra = { sub, taskTitle: hit ? hit.item.title : '', service: hit ? serviceOf(hit.from) : null, busy: false, error: '' };
     showMenu(tr(sub || 'New session'), items, { naming: true, extra });
   }
-  // The first list, in the order of the keyboard choices: Claude session (highlighted first), Codex session, New Terminal. A press on a session kind opens its
-  // sub-list; Enter on the highlighted one (`menuPick`) makes a new session of that kind at once, as "New Claude session" in the sub-list does.
-  function openSessionMenu() {
+  // The first list, in the order of the keyboard choices: Claude session (highlighted first), Codex session, OpenCode session, New Terminal. A press on a session
+  // kind opens its sub-list; Enter on the highlighted one (`menuPick`) makes a new session of that kind at once, as "New Claude session" in the sub-list does.
+  // A kind the task's Engine cannot run (`runsAgent`) is a greyed row that is not a choice. While a remote Engine has not said what it can do, its `/info` is
+  // read once and the list drawn again (still the same list: not after Back, a sub-list or closing).
+  function openSessionMenu() { showSessionKinds(true); }
+  function showSessionKinds(ask) {
     menuRow = null;
+    const hit = resolveRef(menuTask);
+    const from = hit ? hit.from : source;
+    const known = from.key === 'local' || Array.isArray(from.capabilities);
     showSessionMenu(null, [
-      ...SESSION_KINDS.map(([agent, label]) => [label, () => void openAgentSessions(agent, label), null, false, () => void startSession({ agent })]),
-      ['New Terminal', () => void startSession({}), null, false, () => void startSession({})],
+      ...SESSION_KINDS.map(([agent, label]) => (runsAgent(from, agent)
+        ? [label, () => void openAgentSessions(agent, label), null, false, () => void startSession({ agent }), false, { icon: agent }]
+        : [label, null, null, false, null, true, { icon: agent, note: known ? tr(`${sourceName(from)} needs an update first`) : '' }])),
+      ['New Terminal', () => void startSession({}), null, false, () => void startSession({}), false, { icon: 'shell' }],
     ]);
+    if (known || !ask) return;
+    const shown = ui.get().menu;
+    readInfo(from).catch(() => { /* an offline Engine: the row stays greyed */ }).finally(() => { if (ui.get().menu === shown) showSessionKinds(false); });
   }
   ui.actions.openSessionMenu = openSessionMenu;
   // A choice of the New session dialog. The dialog stays while the terminal is made (busy: nothing in it can be pressed and it cannot be closed), shows a failure in
@@ -2384,9 +2406,9 @@
     if (current !== task || ui.get().menu !== loading) return;
     const start = sessionId => () => void startSession({ agent, session_id: sessionId });
     showSessionMenu(label, [
-      [`New ${label}`, start(undefined), null, true],
-      ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start(row.id), 'raw']),
-      ['Back', openSessionMenu],
+      [`New ${label}`, start(undefined), null, true, null, false, { icon: agent }],
+      ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start(row.id), 'raw', false, null, false, { icon: agent, note: sessionTime(row.updated_at) }]),
+      ['Back', openSessionMenu, null, false, null, false, { icon: 'back' }],
     ]);
   }
 

@@ -53,3 +53,20 @@ test('a plain shell terminal has commands but no key group', async () => {
   assert.equal(SHELL_COMMANDS.keys, undefined);
   assert.ok(commandsFor('codex').keys.length > 0);
 });
+
+test('OpenCode lists its slash commands and keys with exact bytes and translated notes; the shell list starts it', async () => {
+  const { AGENT_COMMANDS, SHELL_COMMANDS, commandsFor } = await import('../scripts/h5-shell/commands.mjs');
+  const I18n = chinese();
+  const list = commandsFor('opencode');
+  assert.equal(list, AGENT_COMMANDS.opencode);
+  assert.equal(list.title, 'OpenCode commands');
+  assert.notEqual(I18n.t(list.title), list.title, 'the header has a Chinese translation');
+  assert.deepEqual(list.commands.map(entry => entry.command), ['/new', '/sessions', '/compact', '/models', '/agents', '/undo', '/redo', '/diff', '/status', '/help']);
+  const bytes = Object.fromEntries(list.keys.map(entry => [entry.label, entry.send]));
+  assert.deepEqual(bytes, { Esc: '\x1b', Tab: '\t', 'Ctrl+J': '\n', 'Ctrl+X B': ['\x18', 'b'], 'Ctrl+X L': ['\x18', 'l'] }, 'Ctrl+X pairs are the leader key, then the letter');
+  assert.ok(!('Ctrl+C' in bytes) && !('Ctrl+D' in bytes), 'Ctrl+C / Ctrl+D quit opencode on an empty prompt: not offered');
+  for (const entry of [...list.commands, ...list.keys]) assert.ok(entry.note && I18n.t(entry.note) !== entry.note, `${entry.command || entry.label}: the note "${entry.note}" has a Chinese translation`);
+  const shell = SHELL_COMMANDS.commands.map(entry => entry.command);
+  assert.ok(shell.indexOf('opencode') > shell.indexOf('codex resume') && shell.indexOf('opencode -c') === shell.indexOf('opencode') + 1, 'opencode and opencode -c follow the Codex entries');
+  for (const entry of SHELL_COMMANDS.commands) assert.notEqual(I18n.t(entry.note), entry.note, `${entry.command}: translated`);
+});

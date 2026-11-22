@@ -13,7 +13,7 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const LOCAL_TASKS = [{ id: 1, title: 'Alpha', status: 'doing' }, { id: 2, title: 'Beta', status: 'doing' }, { id: 3, title: 'Gamma', status: 'doing' }];
 const REMOTE_TASKS = [{ id: 1, title: 'Remote one', status: 'doing' }]; // the same id as Alpha: ids alone do not say which task a list belongs to
-const CHOICES = ['Claude session', 'Codex session', 'New Terminal'];
+const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'];
 const SHORT = { timeout: 1500 };
 
 async function openPage(browser, wide) {
@@ -78,7 +78,7 @@ async function openPage(browser, wide) {
     await pressAdd(title);
     await choices.first().waitFor();
     await settled(page); // faded in
-    assert.deepEqual(await choices.allTextContents(), CHOICES, 'the choices of the dialog');
+    assert.deepEqual(await choices.locator('.h5-choice-label').allTextContents(), CHOICES, 'the choices of the dialog');
   };
   const cancel = async () => { await press(page.locator('#h5-term-menu-cancel')); await gone('after Cancel'); };
   const gone = async text => { await panel.waitFor({ state: 'detached', ...SHORT }).catch(() => assert.fail(`${text}: the New session dialog is still open`)); };
@@ -158,11 +158,11 @@ const CASES = [
     t.server.holdSessions = null;
     release();
     await t.page.waitForTimeout(300);
-    assert.deepEqual(await t.choices.allTextContents(), CHOICES, 'the dialog opened again keeps its choices');
+    assert.deepEqual(await t.choices.locator('.h5-choice-label').allTextContents(), CHOICES, 'the dialog opened again keeps its choices');
     // The sub-list itself still arrives when nothing happened meanwhile.
     await t.press(t.choices.filter({ hasText: 'Claude session' }));
     await t.choices.filter({ hasText: 'Older session' }).waitFor();
-    assert.deepEqual(await t.choices.allTextContents(), ['New Claude session', 'Older session', 'Back'], 'the Claude list');
+    assert.deepEqual(await t.choices.locator('.h5-choice-label').allTextContents(), ['New Claude session', 'Older session', 'Back'], 'the Claude list');
   }],
   ['a collapse takes the rename field away for good', async t => {
     const rows = t.list('Phone terminals').locator('.h5-terminal-row');

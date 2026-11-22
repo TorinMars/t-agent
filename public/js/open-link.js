@@ -14,7 +14,8 @@ const OpenLink = (() => {
     if (typeof url !== 'string' || !url || url.length > MAX_URL || !/^https?:\/\/[^\s\u0000-\u001f\u007f]+$/i.test(url)) return false;
     try { const parsed = new URL(url); return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && Boolean(parsed.hostname); } catch { return false; }
   }
-  const programName = agent => (agent === 'claude' ? 'Claude' : agent === 'codex' ? 'Codex' : '');
+  const PROGRAMS = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
+  const programName = agent => (Object.prototype.hasOwnProperty.call(PROGRAMS, agent) ? PROGRAMS[agent] : '');
 
   // iOS (an iPad's standalone app reports a Mac with touch points) and its major version, or Android.
   function platformOf(nav) {

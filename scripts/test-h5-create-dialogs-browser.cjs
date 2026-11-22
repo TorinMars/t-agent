@@ -15,7 +15,7 @@ const { settled } = require('./browser-test-wait.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
-const CHOICES = ['Claude session', 'Codex session', 'New Terminal'];
+const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'];
 const LOCAL_TASKS = [{ id: 1, title: 'Alpha', status: 'doing' }, { id: 2, title: 'Beta', status: 'doing' }, { id: 3, title: 'Gamma', status: 'doing' }];
 const REMOTE_TASKS = [{ id: 1, title: 'Remote one', status: 'doing' }]; // the same id as Alpha: the id alone does not say which task is meant
 const SHORT = { timeout: 2000 };
@@ -126,7 +126,7 @@ async function openPage(browser, size) {
     await pressAdd(title);
     await choices.first().waitFor();
     await settled(page); // the dialog has finished fading in
-    assert.deepEqual(await choices.allTextContents(), want, `${size}: the choices`);
+    assert.deepEqual(await choices.locator('.h5-choice-label').allTextContents(), want, `${size}: the choices`);
   };
   const gone = async text => { await dialog.waitFor({ state: 'detached', ...SHORT }).catch(() => assert.fail(`${size}: ${text}: the New session dialog is still open`)); };
   // Alpha is the selected task, with its sessions listed.
@@ -198,7 +198,7 @@ const CASES = [
     await t.nameField.fill('Kept');
     await t.press(t.choices.filter({ hasText: 'Claude session' }));
     await t.choices.filter({ hasText: 'Older session' }).waitFor();
-    assert.deepEqual(await t.choices.allTextContents(), ['New Claude session', 'Older session', 'Back'], 'the Claude list');
+    assert.deepEqual(await t.choices.locator('.h5-choice-label').allTextContents(), ['New Claude session', 'Older session', 'Back'], 'the Claude list');
     assert.equal(await t.page.locator('#h5-new-session-sub').textContent(), 'Claude session', 'the sub-list is named');
     await t.press(t.choices.filter({ hasText: 'Back' }));
     await t.choices.filter({ hasText: 'New Terminal' }).waitFor();

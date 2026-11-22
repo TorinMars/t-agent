@@ -187,7 +187,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
       await page.waitForTimeout(300);
       assert.equal(await page.locator('#h5-term-menu .h5-menu-panel').isVisible().catch(() => false), false, `${size}: no sheet from the bottom`);
       assert.equal(await page.locator('#h5-tasks #h5-new-name-input').count(), 0, `${size}: nothing is drawn in the task list`);
-      assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal']);
+      assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal']);
       assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Task 6', `${size}: the dialog names its task`);
       let d = await dialogBox();
       assert.ok(d.field.height >= (wide ? 36 : 44) - 0.5, `${size}: the field is ${d.field.height}px high`);

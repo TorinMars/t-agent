@@ -148,7 +148,7 @@ async function check(env, h, { wide, remote, label }) {
   else { await h.press(page.locator(`${shownRow} .h5-task-more`)); await h.press(page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' })); }
   await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
   await page.waitForTimeout(300);
-  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button').allTextContents(), ['Claude session', 'Codex session', 'New Terminal'], `${label}: the New session dialog`);
+  assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'], `${label}: the New session dialog`);
   await h.press(page.locator('#h5-term-menu-cancel'));
   await page.locator('#h5-new-session').waitFor({ state: 'detached' });
 

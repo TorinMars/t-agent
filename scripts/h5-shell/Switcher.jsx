@@ -1,7 +1,7 @@
 // The session switcher ("Session switcher" in docs/design/session-switcher.md): the switch button (`#h5-cycle`, Terminal.jsx) opens the recently
 // shown sessions. On a phone-sized area a stack like the iPhone app switcher: the current session is the top card, peeking in from the right; the
 // previous one is centred; older ones lie behind it to the left, each a little smaller and darker. Above each card: what the session is (Claude /
-// Codex / shell), its device tag, its name and its state dot; inside: its last lines; at the bottom: the task, the state and "Current". A swipe or a
+// Codex / OpenCode / shell), its device tag, its name and its state dot; inside: its last lines; at the bottom: the task, the state and "Current". A swipe or a
 // drag, a sideways scroll or the arrow keys move the stack; it settles with one card centred. On a wider area ("The wide row") a row of cards that do
 // not overlap, most recent first from the left (the current one, then the selected previous one, then older ones), each with a header that names its
 // task; the row scrolls sideways and keeps the selected card in view. A session that needs the person has an orange edge. A tap on a card, Enter or
@@ -28,7 +28,7 @@ import { columnStatus, stateWord } from './columns.mjs';
 import { cardPlace, recentKey, recentTaskRef, rowPick, rowScrollFor, settleIndex, startIndex, switcherCards, switcherRow } from './recent-sessions.mjs';
 import { useStoreKeys } from './use-store.mjs';
 
-const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 const kindOf = agent => (AGENT_NAMES[agent] ? `${AGENT_NAMES[agent]} session` : 'Terminal');
 // The words and colours of a state, as the task list rows show them (TaskDrawer.jsx).
 const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };

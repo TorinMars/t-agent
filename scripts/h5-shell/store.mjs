@@ -80,7 +80,7 @@ export const initialState = () => ({
   learnOpen: false, // the Learn page (screen-learn.jsx) is open: ui.actions.openLearn() / closeLearn()
   taskName: '', // empty: "Choose a task"
   sessionName: '',
-  terminalAgent: null, // 'claude' / 'codex' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list
+  terminalAgent: null, // 'claude' / 'codex' / 'opencode' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list
   sources: [{ key: 'local', label: 'This machine' }], // every connected service: { key, label, name, offline, hidden, listed, instanceId, capabilities }
   sourceKey: 'local', // the service of the shown task
   sourceLabel: '', // its name when it is not this machine (shown in the header)
@@ -111,7 +111,7 @@ export const initialState = () => ({
   // of the user, written only on Copy; kind 'tap': the browser refused a copy (page selection or program), Copy on the bar writes it.
   clipboard: null,
   // The link bar (h5.js, docs/design/open-links.md): a web link a program in the shown terminal opened, waiting for Open.
-  // { id, url, program ('Claude' | 'Codex' | ''), more (links queued behind it), ttl, holding, round }
+  // { id, url, program ('Claude' | 'Codex' | 'OpenCode' | ''), more (links queued behind it), ttl, holding, round }
   openLink: null,
   upload: null, // { status, progress, count } while images or files go up (progress of the current file: 0-100, or null when it is not known; count: { index, total } of the batch)
   retainUrl: null, // the link (several joined with spaces) of what was uploaded after its terminal went away

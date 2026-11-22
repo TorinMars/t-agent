@@ -36,6 +36,8 @@ test('valid links are http(s) with a host, without spaces, at most 4096 characte
 test('the program name comes from the terminal kind', () => {
   assert.equal(OpenLink.programName('claude'), 'Claude');
   assert.equal(OpenLink.programName('codex'), 'Codex');
+  assert.equal(OpenLink.programName('opencode'), 'OpenCode');
+  assert.equal(OpenLink.programName('toString'), '', 'only the known agents');
   assert.equal(OpenLink.programName(null), '');
   assert.equal(OpenLink.programName('shell'), '');
 });

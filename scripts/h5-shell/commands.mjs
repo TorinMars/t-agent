@@ -3,7 +3,7 @@
 // ("Edit before sending") types it without Enter (command-recency.mjs keeps the recently used ones first). `note` is the short English description shown under it
 // (its Chinese text is in public/js/i18n-zh-ui.js, keyed by the exact English text; test/i18n.test.js checks it).
 //
-// `keys` (Claude Code and Codex only) are common key combinations, shown under a "Keys" header. Like a command, a key is SENT
+// `keys` (Claude Code, Codex and OpenCode only) are common key combinations, shown under a "Keys" header. Like a command, a key is SENT
 // at once: `send` is the exact byte string (or a list of them, sent one after another with a short gap, so "Esc Esc" arrives as two presses).
 // A latched Ctrl / Alt / Shift from row 1 is never added to them (h5.js drops the latch).
 //
@@ -15,6 +15,10 @@
 //                         and the default keymap of the open source TUI, https://github.com/openai/codex (codex-rs/tui/src/keymap.rs: Esc interrupts the
 //                         turn, Ctrl+T opens the transcript, Ctrl+J inserts a new line, Shift+Left edits the last queued message; Shift+Tab is the fixed
 //                         "Change mode" key of bottom_pane/shortcut_overlay.rs). Main branch at commit b3c5a49.
+//   OpenCode commands and keys: opencode 1.19.6 itself (its built-in slash commands and default keybinds read from the installed binary, 2026-11-23;
+//                         the web docs already describe "OpenCode 2" and differ): leader key Ctrl+X, `session_interrupt` Escape, `agent_cycle` Tab,
+//                         `input_newline` Ctrl+J, `<leader>b` the sidebar, `<leader>l` the session list. Ctrl+C / Ctrl+D on an empty prompt quit opencode,
+//                         so they are not offered.
 // Only commands and keys listed there are used. Check them again when the agents change.
 
 export const AGENT_COMMANDS = {
@@ -73,6 +77,29 @@ export const AGENT_COMMANDS = {
       { label: 'Ctrl+J', send: '\n', note: 'Insert a new line' },
     ],
   },
+  opencode: {
+    title: 'OpenCode commands',
+    commands: [
+      { command: '/new', note: 'Start a new session' },
+      { command: '/sessions', note: 'Switch to another session' },
+      { command: '/compact', note: 'Summarize the session to free context' },
+      { command: '/models', note: 'Choose the model' },
+      { command: '/agents', note: 'Choose the agent (build or plan)' },
+      { command: '/undo', note: 'Undo the last message and its file changes' },
+      { command: '/redo', note: 'Redo what was undone' },
+      { command: '/diff', note: 'Show the changes in the working tree' },
+      { command: '/status', note: 'Show the session status' },
+      { command: '/help', note: 'Show the commands and keys' },
+    ],
+    // The Ctrl+X pairs are the leader key, then the letter: two presses.
+    keys: [
+      { label: 'Esc', send: '\x1b', note: 'Interrupt the running turn' },
+      { label: 'Tab', send: '\t', note: 'Switch the agent (build or plan)' },
+      { label: 'Ctrl+J', send: '\n', note: 'Insert a new line' },
+      { label: 'Ctrl+X B', send: ['\x18', 'b'], note: 'Show or hide the sidebar' },
+      { label: 'Ctrl+X L', send: ['\x18', 'l'], note: 'List the sessions' },
+    ],
+  },
 };
 
 // A plain shell terminal (no `keys`: row 1 already has ^C, Esc and the arrows): the commands that start (or resume) an agent, plus a quick look at the repository.
@@ -85,9 +112,11 @@ export const SHELL_COMMANDS = {
     { command: 'claude --resume', note: 'Pick a Claude Code conversation to resume' },
     { command: 'codex', note: 'Start Codex' },
     { command: 'codex resume', note: 'Pick a Codex session to resume' },
+    { command: 'opencode', note: 'Start OpenCode' },
+    { command: 'opencode -c', note: 'Continue the last OpenCode session' },
     { command: 'git status', note: 'Show the state of the repository' },
   ],
 };
 
-// The list for a terminal of this agent ('claude', 'codex', or null / anything else for a plain shell): { title, commands, keys? }.
+// The list for a terminal of this agent ('claude', 'codex', 'opencode', or null / anything else for a plain shell): { title, commands, keys? }.
 export const commandsFor = agent => AGENT_COMMANDS[agent] || SHELL_COMMANDS;

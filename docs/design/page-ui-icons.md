@@ -96,6 +96,7 @@
 | Shift | self-drawn `keyShift` | none | self-drawn: a hollow up arrow (drawn at 26px, like Tab) |
 | Terminal on-screen keyboard: Shift / Backspace / Enter | `keyShift` / `keyBackspace` / `keyEnter` | none / none / 4767097 | the same icons as row 1 (Shift 24px, the others 22px), `aria-label` = `title` |
 | Terminal on-screen keyboard: Caps lock | self-drawn `keyCapsLock` | none | self-drawn: the Shift arrow, shorter, over a bar (Shift tapped twice) |
+| Session kind mark: OpenCode (task rows, Recent, switcher cards, the New session dialog) | self-drawn, in `icon()` of `public/js/agent-chat.js` beside the Claude and Codex marks | none | self-drawn after OpenCode's logo: an outlined rounded rectangle x5-19 y4-20 (rx 2, stroke 1.5, round joins) with a filled block x8-16 y12-17, `currentColor`; an unknown agent gets `>_`, never Claude's sparkle |
 | Wheel strip spring (full-screen program): up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the spring thumb, 14px (direction marks inside the thin strip, not buttons) |
 | Terminal width switch (header, Fit / Wide) | column-width | not looked up (Ant Design `ColumnWidthOutlined`, the same outline as in collection 9402) | `columnWidth` in `Icons.jsx`, 22px |
 | Add column ("+ Column", multi-column view bar) | plus | 7834345 | `add`, 14px, the start icon of the text button |

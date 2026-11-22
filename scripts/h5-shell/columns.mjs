@@ -29,7 +29,7 @@ export const columnWidth = (stripWidth, count) => {
 export const MESSAGE_TYPE = 't-agent-pane';
 export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step', 'move', 'maximize', 'peek', 'mindmaps']);
 export const PEEK_LINES = 6;
-const AGENTS = new Set(['claude', 'codex']);
+const AGENTS = new Set(['claude', 'codex', 'opencode']);
 const SCROLL_MAX = 10000; // px of one forwarded sideways scroll
 const ID = /^[a-z0-9]{1,16}$/;
 const TEXT_MAX = 200;
@@ -119,7 +119,7 @@ export function mountOrder(mounted, ids) {
 // A message from a pane: { type: 't-agent-pane', paneId, event: 'ready' | 'focus' | 'title' | 'scroll-x' | 'step' | 'move' | 'maximize' | 'peek' |
 // 'mindmaps', title?, session?, device?, target?, agent?, sheet?, width?, dx?, step?, lines? }. 'title': the task and session shown, and the device of
 // that task when the pane's list tags it (`device`: { name, instanceId, local, offline }, kept only with a name or as this machine), the terminal it
-// shows (`target`: { sourceKey, taskId, terminalId }, for the state of its column), that terminal's agent ('claude', 'codex' or none), whether its
+// shows (`target`: { sourceKey, taskId, terminalId }, for the state of its column), that terminal's agent ('claude', 'codex', 'opencode' or none), whether its
 // task sheet is shown (`sheet`: true, else left out) and
 // its terminal width (`width`: { mode: 'fit' | 'wide', cols }, left out without a terminal): the column's header draws them; 'scroll-x': a sideways wheel or trackpad swipe inside the pane
 // that nothing in it scrolls (dx in px, nonzero, at most 10000 either way); 'step': Ctrl+Alt+Left / Right pressed inside the pane, 'move':
@@ -344,7 +344,7 @@ export const stateWord = (words, state, kind) => {
   if (!named) return words[state];
   return words.waiting === 'needs you' ? named.toLowerCase() : named;
 };
-export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 // The short name of a column for its tile and peek: the task, else '' (the caller says "Column N").
 export const columnName = info => (info && info.title) || '';
 

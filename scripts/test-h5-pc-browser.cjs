@@ -336,7 +336,7 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       const shell = await menu();
       assert.deepEqual(shell.head, ['Start an agent']);
       assert.deepEqual(shell.keys, [], 'a plain terminal has no key group');
-      assert.deepEqual(shell.commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'git status'], 'a plain terminal lists the commands that start an agent');
+      assert.deepEqual(shell.commands, ['claude', 'claude --continue', 'claude --resume', 'codex', 'codex resume', 'opencode', 'opencode -c', 'git status'], 'a plain terminal lists the commands that start an agent');
       await closeMenu();
       await openTerminal(page, 'Write docs', 'Claude docs');
       await history(page);

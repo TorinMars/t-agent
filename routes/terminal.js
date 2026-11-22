@@ -20,6 +20,14 @@ const { reap, reapSync } = require('../services/terminal-reaper');
 const { sharedClock } = require('../lib/terminal-poll');
 const { createAgentRenamer } = require('../lib/agent-rename');
 
+// The home whose agent files list an agent's sessions: OpenCode's database is in the home of the user the shells run as (a root service drops to
+// TERMINAL_USER, whose opencode writes it); Claude and Codex are read from the service's home (undefined: os.homedir()).
+function sessionHome(agent) {
+  if (agent !== 'opencode') return undefined;
+  const dropped = resolveTerminalUser().user;
+  return dropped ? dropped.home : undefined;
+}
+
 // The statements of the hot paths (the terminal list, the activity helpers, the desktop window's lookups, the socket's access check) are
 // prepared once, at their first use, and reused: db.prepare compiles the SQL again on every call. Cold paths keep their inline db.prepare.
 const statements = new Map();
@@ -157,14 +165,43 @@ function peerEnv(taskId, id) {
   };
 }
 
+// OpenCode terminals (docs/design/opencode-terminals.md): opencode is started as `OPENCODE_CONFIG_CONTENT="$TA_OPENCODE_CONFIG" opencode`.
+// opencode reads OPENCODE_CONFIG_CONTENT as one more config source on top of the person's own (their config files and plugins still load, and
+// T-Agent writes nothing to ~/.config/opencode); TA_OPENCODE_CONFIG (a JSON string in the PTY environment only) loads scripts/opencode-session-plugin.js, which
+// reports the session and the activity to the hook endpoint, and with peer file access on it also adds the `t-agent-peers` MCP server (opencode starts
+// a local MCP server with its whole environment, so the TA_* variables reach it). A value of OPENCODE_CONFIG_CONTENT that the server itself was started
+// with (the person's) is merged in, its plugins first, so the typed prefix does not lose it; one set only in a shell profile cannot be seen here and is
+// replaced for that command. A value that is not a JSON object is left out (with a warning).
+const OPENCODE_PLUGIN = path.resolve(__dirname, '..', 'scripts', 'opencode-session-plugin.js');
+const OPENCODE_PLUGIN_SPEC = `file://${OPENCODE_PLUGIN}`;
+const OPENCODE_PREFIX = 'OPENCODE_CONFIG_CONTENT="$TA_OPENCODE_CONFIG"';
+function opencodeConfig(peer = false, inherited = process.env.OPENCODE_CONFIG_CONTENT) {
+  let own = {};
+  if (typeof inherited === 'string' && inherited.trim()) {
+    try {
+      const parsed = JSON.parse(inherited);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) own = parsed;
+      else throw new Error('not a JSON object');
+    } catch (error) {
+      console.warn(`[terminal] OPENCODE_CONFIG_CONTENT of the server could not be merged into OpenCode terminals: ${error.message}`);
+    }
+  }
+  // A server started from inside a T-Agent OpenCode terminal inherits that terminal's value: its copy of this plugin is not added twice.
+  const plugins = (Array.isArray(own.plugin) ? own.plugin : []).filter(spec => spec !== OPENCODE_PLUGIN_SPEC);
+  const config = { ...own, plugin: [...plugins, OPENCODE_PLUGIN_SPEC] };
+  if (peer) config.mcp = { ...(own.mcp && typeof own.mcp === 'object' ? own.mcp : {}), [PEER_MCP_NAME]: { type: 'local', command: [process.execPath, PEER_MCP_SCRIPT] } };
+  return JSON.stringify(config);
+}
+
 // The command typed for an agent terminal. Claude gets the session hook when the hook endpoint is known (the same condition that
 // puts TA_CLAUDE_SETTINGS into the PTY environment); with `peer` (the same value hookEnv got for this shell) Claude and Codex also
-// get the `t-agent-peers` MCP server.
+// get the `t-agent-peers` MCP server. OpenCode gets its config prefix (the plugin, and the MCP server inside the same config).
 function withSessionHook(agent, command, peer = peerFsOn()) {
   if (!command || !hookEndpoint) return command;
   const on = Boolean(peer);
   if (agent === 'claude') return `${command} --settings "$TA_CLAUDE_SETTINGS"${on ? ` ${CLAUDE_PEER_FLAGS}` : ''}`;
   if (agent === 'codex' && on) return `${command} ${CODEX_PEER_FLAGS}`;
+  if (agent === 'opencode') return `${OPENCODE_PREFIX} ${command}`;
   return command;
 }
 
@@ -172,18 +209,21 @@ function withSessionHook(agent, command, peer = peerFsOn()) {
 // ("Agent terminals" in docs/design/terminals.md): `--name "$TA_SESSION_NAME"`, the name itself only in the PTY environment, so quotes, `$` or backticks in it are
 // never parsed by the shell. Claude writes it to the session file as its custom-title (a resume with a new name appends one), so the name shows in
 // Claude's prompt box, its /resume picker and the terminal title. It goes right after the base command: --settings and --mcp-config follow
-// (--mcp-config takes several values, so it stays last). Codex has no option to name a session at start, so it gets none.
+// (--mcp-config takes several values, so it stays last). Codex has no option to name a session at start, so it gets none. OpenCode has none either:
+// its T-Agent plugin reads TA_SESSION_NAME and sets the title itself (scripts/opencode-session-plugin.js), so an OpenCode terminal gets the variable
+// but nothing on its command line.
 const CLAUDE_NAME_FLAG = '--name "$TA_SESSION_NAME"';
+const NAMED_AGENTS = new Set(['claude', 'opencode']);
 function sessionName(taskId, id) {
   if (id === 'default') return null;
   const row = db.prepare('SELECT agent, title, title_custom FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
-  return row && row.agent === 'claude' && row.title_custom && row.title ? row.title : null;
+  return row && NAMED_AGENTS.has(row.agent) && row.title_custom && row.title ? row.title : null;
 }
 function withSessionName(agent, command, name) {
   return command && name && agent === 'claude' ? `${command} ${CLAUDE_NAME_FLAG}` : command;
 }
 
-const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK', 'TA_ATTENTION_CLI',
+const HOOK_ENV_KEYS = ['TA_HOOK_URL', 'TA_HOOK_TOKEN', 'TA_CLAUDE_SETTINGS', 'TA_OPENCODE_CONFIG', 'TA_ATTENTION_URL', 'TA_ATTENTION_TOKEN', 'TA_ATTENTION_HOOK', 'TA_ATTENTION_CLI',
   'TA_PEER_URL', 'TA_PEER_TASK', 'TA_PEER_TERMINAL', 'TA_MCP_CONFIG', 'TA_PEER_MCP_COMMAND', 'TA_PEER_MCP_ARGS', 'TA_TCLI', 'TA_SESSION_NAME'];
 // The server's own environment may already hold these (a server started from inside a t-agent terminal): they belong to
 // that outer terminal and are never passed on.
@@ -197,13 +237,15 @@ function withoutInheritedHookEnv(env) {
 // and calls the relay /api/tcli on the hook endpoint's origin, so it is set in every shell that has them.
 const TCLI = path.resolve(__dirname, '..', 'scripts', 'tcli.js');
 
-function hookEnv(taskId, id, peer = peerFsOn()) {
+// `inherited`: the shell's environment without the hook variables, whose OPENCODE_CONFIG_CONTENT (the person's) goes into TA_OPENCODE_CONFIG.
+function hookEnv(taskId, id, peer = peerFsOn(), inherited = process.env) {
   if (!hookEndpoint) return {};
   return {
     TA_HOOK_URL: `${hookEndpoint}?task=${Number(taskId)}&terminal=${encodeURIComponent(id)}`,
     TA_HOOK_TOKEN: hookToken(taskId, id),
     TA_TCLI: TCLI,
     TA_CLAUDE_SETTINGS: claudeSettings(peer),
+    TA_OPENCODE_CONFIG: opencodeConfig(peer, inherited && inherited.OPENCODE_CONFIG_CONTENT),
     ...(peer ? peerEnv(taskId, id) : {}),
   };
 }
@@ -266,23 +308,26 @@ function terminalWorkDir(task, id) {
   return (row && row.work_dir) || task.work_dir || null;
 }
 
-// event=session: the Claude session the terminal now runs. Only a Claude terminal of this task takes it, only a
-// well-formed id, and only one that Claude started in the directory the terminal's shell starts in (its own directory, or the directory
-// its live shell really started in when that one was missing and the shell fell back to the task's).
-// `/clear` (source `clear`) does not move the binding: the terminal stays on its original conversation, so a new shell resumes that one.
+// event=session: the Claude or OpenCode session the terminal now runs (Claude's SessionStart hook, scripts/opencode-session-plugin.js). Only a Claude
+// or OpenCode terminal of this task takes it, only a well-formed id, and only one that the agent started in the directory the terminal's shell starts
+// in (its own directory, or the directory its live shell really started in when that one was missing and the shell fell back to the task's).
+// Claude's `/clear` (source `clear`) and OpenCode's `/new` (source `new`) do not move the binding: the terminal stays on its original
+// conversation, so a new shell resumes that one (a terminal that is not bound yet takes it).
 // The id Claude really runs is kept on the live shell (`currentAgentSessionId`) for the per-process facts (the sub-agent count) and is
 // dropped with that shell. Every other source (`startup`, `resume`, `compact`, a fork) rebinds as before.
+const REPORTING_AGENTS = new Set(['claude', 'opencode']);
+const KEEPING_SOURCES = new Set(['clear', 'new']);
 function bindReportedSession(taskId, id, report) {
   if (!report || typeof report !== 'object') return 400;
   const sessionId = report.session_id;
   if (typeof sessionId !== 'string' || !SESSION_ID.test(sessionId)) return 400;
   const row = db.prepare('SELECT t.agent, t.agent_session_id, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.terminal_id = ?').get(taskId, id);
-  if (!row || row.agent !== 'claude') return 404;
+  if (!row || !REPORTING_AGENTS.has(row.agent)) return 404;
   if (typeof report.cwd !== 'string' || !path.isAbsolute(report.cwd)) return 400;
   const live = sessions.get(sessionKey(taskId, id));
   const allowed = [row.work_dir || os.homedir(), live && live.startDir].filter(Boolean).map(realDir);
   if (!allowed.includes(realDir(report.cwd))) return 400;
-  const rebind = !(report.source === 'clear' && row.agent_session_id) && row.agent_session_id !== sessionId;
+  const rebind = !(KEEPING_SOURCES.has(report.source) && row.agent_session_id) && row.agent_session_id !== sessionId;
   const running = live ? liveAgentSessionId(live, row.agent_session_id) : row.agent_session_id;
   if (live) live.currentAgentSessionId = sessionId;
   if (rebind) db.prepare('UPDATE task_terminals SET agent_session_id = ? WHERE task_id = ? AND terminal_id = ?').run(sessionId, taskId, id);
@@ -351,7 +396,7 @@ function withAgentSessions(taskId, rows, names) {
   const lists = new Map();
   const sessionsOf = (agent, dir) => {
     const key = `${agent}\0${dir || ''}`;
-    if (!lists.has(key)) lists.set(key, listSessions(agent, dir, undefined, 200));
+    if (!lists.has(key)) lists.set(key, listSessions(agent, dir, sessionHome(agent), 200));
     return lists.get(key);
   };
   const claimed = new Set(meta.map(item => item.agent_session_id).filter(Boolean));
@@ -368,7 +413,9 @@ function withAgentSessions(taskId, rows, names) {
     const item = info.get(row.terminal_id);
     if (!item) return row;
     if (item.title_custom) return { ...row, agent: item.agent }; // a name the person gave (at creation or by a rename) wins over the session's name
-    const session = item.agent_session_id && sessionsOf(item.agent, item.work_dir).find(entry => entry.id === item.agent_session_id);
+    // An OpenCode session that still has opencode's default title is no name: the terminal keeps its own ("OpenCode 2").
+    const found = item.agent_session_id && sessionsOf(item.agent, item.work_dir).find(entry => entry.id === item.agent_session_id);
+    const session = found && !found.untitled ? found : null;
     if (session && names) names.set(row.terminal_id, session.title);
     return { ...row, agent: item.agent, title: session ? session.title : row.title };
   });
@@ -471,7 +518,7 @@ function dropFromOrder(taskId, id) {
 
 // A terminal created for an agent session types its command once, when its shell is first spawned.
 const pendingStartup = new Map();
-const AGENT_LABELS = { claude: 'Claude', codex: 'Codex' };
+const AGENT_LABELS = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
 // A terminal name as the person typed it: control characters and runs of whitespace become one space, the ends are trimmed. Any script is kept.
 function cleanTitle(value) {
@@ -528,7 +575,7 @@ function reopenCommand(taskId, id, workDir, peer = peerFsOn()) {
   const name = sessionName(taskId, id);
   const typed = command => withSessionHook(row.agent, withSessionName(row.agent, command, name), peer);
   if (!row.agent_session_id) return typed(startupCommand(row.agent));
-  const exists = listSessions(row.agent, workDir, undefined, 200).some(entry => entry.id === row.agent_session_id);
+  const exists = listSessions(row.agent, workDir, sessionHome(row.agent), 200).some(entry => entry.id === row.agent_session_id);
   if (exists) return typed(startupCommand(row.agent, row.agent_session_id));
   return typed(row.agent === 'claude' ? newClaudeCommand(row.agent_session_id) : startupCommand(row.agent));
 }
@@ -536,7 +583,7 @@ function reopenCommand(taskId, id, workDir, peer = peerFsOn()) {
 // Sessions of an agent CLI that were run in the task's working directory (newest first). A new terminal starts there, so the list of
 // sessions to resume is read from the task's current directory.
 function listAgentSessions(task, agent) {
-  return listSessions(agent, task && task.work_dir);
+  return listSessions(agent, task && task.work_dir, sessionHome(agent));
 }
 
 // The live current directory of a terminal's shell, for file links (read-only). `task` has work_dir / md_path. Answers
@@ -674,7 +721,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
         // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
         // otherwise zsh shows Chinese directory names as \M-^ garbage.
         ...utf8LocaleEnv(process.env),
-        ...hookEnv(ownerTaskId, id, peer),
+        ...hookEnv(ownerTaskId, id, peer, baseEnv),
         ...attentionEnv(ownerTaskId, id, baseEnv),
         ...(name ? { TA_SESSION_NAME: name } : {}),
       },
@@ -1125,7 +1172,7 @@ function agentResumable(s, agent) {
     if (!row || !row.agent_session_id) return false;
     const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ?').get(s.taskId);
     const dir = task && (terminalWorkDir(task, s.terminalId) || os.homedir());
-    return Boolean(dir) && fs.existsSync(dir) && listSessions(agent, dir, undefined, 200).some(entry => entry.id === row.agent_session_id);
+    return Boolean(dir) && fs.existsSync(dir) && listSessions(agent, dir, sessionHome(agent), 200).some(entry => entry.id === row.agent_session_id);
   } catch { return false; }
 }
 
@@ -1200,7 +1247,7 @@ const liveSession = (taskId, requestedTerminalId) => {
   return s && s.pty && !s.startupError && !s.exiting ? s : null;
 };
 
-// What the window shows about a terminal named by an item's context.tagent: { agent: 'claude' | 'codex' | null (the task_terminals row), live (its shell runs) }.
+// What the window shows about a terminal named by an item's context.tagent: { agent: 'claude' | 'codex' | 'opencode' | null (the task_terminals row), live (its shell runs) }.
 function terminalInfo(taskId, requestedTerminalId) {
   const live = Boolean(liveSession(taskId, requestedTerminalId));
   let agent = null;

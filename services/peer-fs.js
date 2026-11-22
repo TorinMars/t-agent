@@ -80,7 +80,8 @@ const DENIED_NAMES = new Set([
 // ... matches one of these name patterns, ...
 const DENIED_PATTERNS = [/^\.env\./, /\.pem$/, /\.key$/, /^id_rsa/, /^id_ed25519/, /\.p12$/, /\.pfx$/, /\.keystore$/];
 // ... or when these segments follow each other anywhere in it.
-const DENIED_SEQUENCES = [['.config', 'gh'], ['library', 'keychains'], ['.claude', '.credentials.json'], ['.codex', 'auth.json']];
+// (opencode keeps the provider keys of `opencode auth login` in ~/.local/share/opencode/auth.json.)
+const DENIED_SEQUENCES = [['.config', 'gh'], ['library', 'keychains'], ['.claude', '.credentials.json'], ['.codex', 'auth.json'], ['opencode', 'auth.json']];
 
 const deniedName = name => {
   const lower = String(name).toLowerCase();

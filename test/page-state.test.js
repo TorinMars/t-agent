@@ -92,6 +92,8 @@ test('merge: keys are last writer wins, a cleared key is a tombstone, the recenc
 test('a page change: stamped with one version, an import has version time 0 and gives way to a value set since; malformed bodies are refused', () => {
   const change = merge.changeState({ recent: [{ instance: T, task: 3, terminal: 'c1', title: ZH, agent: 'claude', used: 70 }], keys: { 'h5-columns': '{"on":true}' }, import: { keys: { 'h5-task-list-tab': 'recent', 'h5-columns': 'old' } } }, { at: 50, by: T });
   assert.equal(change.recent[`${T}|3|c1`].title, ZH);
+  const kinds = merge.changeState({ recent: ['claude', 'codex', 'opencode', 'gemini'].map((agent, index) => ({ instance: T, task: 3, terminal: `k${index}`, agent, used: 70 })) }, { at: 50, by: T });
+  assert.deepEqual(Object.values(kinds.recent).map(item => item.agent), ['claude', 'codex', 'opencode', null], 'an OpenCode session keeps its kind; an unknown one has none');
   assert.equal(change.keys['h5-columns'].value, '{"on":true}', 'the change beats the import of the same key');
   assert.equal(change.keys['h5-task-list-tab'].at, 0);
   const stored = { recent: {}, keys: { 'h5-task-list-tab': { value: 'tasks', at: 3, by: K } } };

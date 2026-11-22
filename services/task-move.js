@@ -171,7 +171,7 @@ function createTaskMove(options) {
     const terminalColumns = columnsOf(db, 'task_terminals');
     if (terminalColumns.has('agent') && terminalColumns.has('agent_session_id')) {
       const rows = db.prepare(`SELECT agent, agent_session_id AS id, ${terminalColumns.has('work_dir') ? 'work_dir' : 'NULL AS work_dir'} FROM task_terminals
-        WHERE task_id = ? AND agent IN ('claude', 'codex') AND agent_session_id IS NOT NULL`).all(task.id);
+        WHERE task_id = ? AND agent IN ('claude', 'codex', 'opencode') AND agent_session_id IS NOT NULL`).all(task.id);
       for (const row of rows) wanted.set(`${row.agent}:${row.id}`, { agent: row.agent, id: String(row.id), dir: row.work_dir || task.work_dir });
     }
     for (const row of db.prepare("SELECT agent, session_id AS id FROM agent_conversations WHERE task_id = ? AND session_id IS NOT NULL AND agent IN ('claude', 'codex')").all(task.id)) {
@@ -212,6 +212,8 @@ function createTaskMove(options) {
       return codexIndex;
     };
     for (const { agent, id, dir } of wanted.values()) {
+      // OpenCode keeps its sessions in one database of the whole home (opencode.db), not in files of their own: not carried yet, and said so.
+      if (agent === 'opencode') { missing.push({ agent, id, why: 'OpenCode sessions are not carried' }); continue; }
       if (!SESSION_ID.test(id)) { missing.push({ agent, id, why: 'not a session id' }); continue; }
       const resolved = dir ? path.resolve(dir) : null;
       if (!resolved || !folderDirs.some(folder => inside(resolved, folder) || inside(realOr(resolved) || '', folder))) {
@@ -290,7 +292,10 @@ function createTaskMove(options) {
   function payloadOf(task, folderDirs) {
     const terminalColumns = columnsOf(db, 'task_terminals');
     const pick = ['terminal_id', 'title', 'agent', 'agent_session_id', 'agent_started_at', 'title_custom', 'work_dir'].filter(name => terminalColumns.has(name));
-    const terminalsRows = db.prepare(`SELECT ${pick.join(', ')} FROM task_terminals WHERE task_id = ? ORDER BY rowid`).all(task.id);
+    // An OpenCode session is not carried (findSessions), so the target gets its terminal without the session: it starts a fresh opencode there, and
+    // an older target, which does not know the agent, is never asked to list its sessions.
+    const terminalsRows = db.prepare(`SELECT ${pick.join(', ')} FROM task_terminals WHERE task_id = ? ORDER BY rowid`).all(task.id)
+      .map(row => (row.agent === 'opencode' && row.agent_session_id ? { ...row, agent_session_id: null } : row));
     const chatColumns = columnsOf(db, 'agent_conversations');
     const chatPick = ['id', 'agent', 'session_id', 'title', 'mode', 'model', 'effort', 'translate', 'collapse_keyboard', 'queue', 'created_at', 'updated_at'].filter(name => chatColumns.has(name));
     const group = db.prepare('SELECT group_key, name FROM task_groups WHERE owner_id = ? AND group_key = ?').get(task.user_id, task.status) || null;

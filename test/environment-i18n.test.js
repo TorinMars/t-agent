@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const ROOT = path.join(__dirname, '..');
 const JS = path.join(ROOT, 'public', 'js');
 // Names that read the same in both languages.
-const SAME = new Set(['git', 'Shell', 'HTTPS', 'frpc', 'pm2', 'frpc X', 'Node.js', 'Claude Code', 'Codex', 'tcli']);
+const SAME = new Set(['git', 'Shell', 'HTTPS', 'frpc', 'pm2', 'frpc X', 'Node.js', 'Claude Code', 'Codex', 'OpenCode', 'tcli']);
 
 function loadChinese() {
   const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };

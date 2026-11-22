@@ -679,10 +679,17 @@ router.get('/:id/tasks/:taskId/agent-sessions', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+// An OpenCode terminal only on an Engine that advertises 'terminal:opencode': an older one would quietly make a plain shell, so it is refused here with
+// 501 OPENCODE_UNSUPPORTED before anything is created.
 for (const method of ['get', 'post']) {
   router[method]('/:id/tasks/:taskId/terminals', async (req, res) => {
     const row = getServer(req);
     if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+    if (method === 'post' && req.body && req.body.agent === 'opencode') {
+      const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:opencode');
+      if (supported === null) return;
+      if (!supported) return res.status(501).json({ error: 'OPENCODE_UNSUPPORTED' });
+    }
     try {
       const result = await request(row.base_url,
         `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals`,

@@ -23,6 +23,8 @@ const defaultFinders = {
   pm2: makeFinder('pm2'),
   node: makeFinder('node'),
   swift: makeFinder('swift'),
+  // OpenCode's own install script puts it in ~/.opencode/bin; npm, bun and Homebrew installs are on the usual paths.
+  opencode: makeFinder('opencode', { extraDirs: [path.join('.opencode', 'bin')] }),
 };
 // The tools list ("Environment" in docs/design/environment-compare.md): a linked device's page reads it through /v1/device-settings/environment/tools
 // only when this capability is in /v1/info. It is kept for a while, since a page asks for it each time Settings opens.
@@ -412,6 +414,7 @@ function createEnvironmentCheck(deps = {}) {
   const found = async (finder, versionArgs) => { const file = await finder.find(env); return file ? versionOf((await exec(file, versionArgs || ['--version'], { env })).stdout) : null; };
   const CLAUDE_FIX = 'Install Claude Code (Utilities → install script), or set CLAUDE_PATH in .env to its full path, then restart the Client';
   const CODEX_FIX = 'Install Codex, or set CODEX_PATH in .env to its full path, then restart the Client';
+  const OPENCODE_FIX = 'Install OpenCode (`npm install -g opencode-ai`) for OpenCode sessions, then restart the Client';
   const tools = [
     // The node of the sessions' PATH; the Client's own when none is found there (the Client runs on it, so a session started by it has one).
     { id: 'node', name: 'Node.js', probe: async () => (finders.node ? await found(finders.node) : null) || process.version },
@@ -423,6 +426,8 @@ function createEnvironmentCheck(deps = {}) {
         return file ? versionOf((await exec(file, ['--version'], { env })).stdout) : null;
       },
     },
+    // OpenCode sessions in terminals type `opencode` (docs/design/opencode-terminals.md); optional, like Codex.
+    { id: 'opencode', name: 'OpenCode', fix: OPENCODE_FIX, probe: () => (finders.opencode ? found(finders.opencode) : null) },
     // tcli is part of this install (scripts/tcli.js, given to every terminal as TA_TCLI): it has no version of its own.
     { id: 'tcli', name: 'tcli', fix: 'Reinstall T-Agent: scripts/tcli.js is missing', probe: async () => ((deps.exists || fs.existsSync)(tcliFile) ? '' : null) },
     // The shell terminals start (routes/terminal.js takes the first of these).

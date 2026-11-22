@@ -242,13 +242,13 @@ test('request() reads the status and headers of an answer, for HEAD and for a CO
 
 // ── the tools list (Settings → Devices → Environment) ──
 const versions = {
-  '/usr/bin/node': 'v24.22.0\n', '/usr/bin/git': 'git version 2.50.1\n', '/bin/claude': '2.1.323 (Claude Code)\n', '/bin/codex': 'codex-cli 0.167.1\n',
+  '/usr/bin/node': 'v24.22.0\n', '/usr/bin/git': 'git version 2.50.1\n', '/bin/claude': '2.1.323 (Claude Code)\n', '/bin/codex': 'codex-cli 0.167.1\n', '/bin/opencode': '1.19.6\n',
   '/usr/bin/swift': 'swift-driver version: 1.115 Apple Swift version 6.0.3 (swiftlang-6.0.3.1.10 clang-1600.0.30.1)\n', '/usr/bin/pm2': '6.0.8\n',
 };
 const toolDeps = (extra = {}) => healthy({
   platform: 'darwin', tcliFile: '/install/scripts/tcli.js',
   exists: file => file === '/bin/zsh' || file === '/install/scripts/tcli.js',
-  finders: { claude: finder('/bin/claude'), git: finder('/usr/bin/git'), pm2: finder('/usr/bin/pm2'), node: finder('/usr/bin/node'), swift: finder('/usr/bin/swift') },
+  finders: { claude: finder('/bin/claude'), git: finder('/usr/bin/git'), pm2: finder('/usr/bin/pm2'), node: finder('/usr/bin/node'), swift: finder('/usr/bin/swift'), opencode: finder('/bin/opencode') },
   run: async (file, args) => (file === 'xcode-select' ? { ok: true, stdout: '/Library/Developer/CommandLineTools\n', stderr: '' } : { ok: true, stdout: versions[file] || '', stderr: '' }),
   ...extra,
 });
@@ -260,7 +260,7 @@ test('the tools list names each tool the sessions rely on with its version, in a
   assert.equal(report.platform, 'darwin');
   assert.deepEqual(report.tools.map(tool => [tool.id, tool.name, tool.status, tool.value]), [
     ['node', 'Node.js', 'ok', 'v24.22.0'], ['git', 'git', 'ok', '2.50.1'], ['claude', 'Claude Code', 'ok', '2.1.323'], ['codex', 'Codex', 'ok', '0.167.1'],
-    ['tcli', 'tcli', 'ok', ''], ['shell', 'Shell', 'ok', 'zsh'], ['swift', 'Swift (Mac app)', 'ok', '6.0.3'], ['pm2', 'pm2', 'ok', '6.0.8'],
+    ['opencode', 'OpenCode', 'ok', '1.19.6'], ['tcli', 'tcli', 'ok', ''], ['shell', 'Shell', 'ok', 'zsh'], ['swift', 'Swift (Mac app)', 'ok', '6.0.3'], ['pm2', 'pm2', 'ok', '6.0.8'],
   ]);
   assert.ok(report.tools.every(tool => !('fix' in tool)), 'a found tool has no hint');
 });
@@ -268,13 +268,14 @@ test('the tools list names each tool the sessions rely on with its version, in a
 test('a missing tool carries the install hint of the check; Swift is not needed off macOS and never asked for without the developer tools', async () => {
   const asked = [];
   const missing = await createEnvironmentCheck(toolDeps({
-    finders: { claude: finder(null), git: finder(null), pm2: finder(null), node: finder(null), swift: finder('/usr/bin/swift') },
+    finders: { claude: finder(null), git: finder(null), pm2: finder(null), node: finder(null), swift: finder('/usr/bin/swift'), opencode: finder(null) },
     codexModule: { findCodex: async () => null },
     exists: () => false,
     run: async file => { asked.push(file); return file === 'xcode-select' ? { ok: false, stdout: '', stderr: 'error: unable to get active developer directory' } : { ok: true, stdout: '', stderr: '' }; },
   })).tools();
   assert.equal(valueOf(missing, 'node').value, process.version, 'no node on the PATH: the Client\'s own');
-  for (const id of ['git', 'claude', 'codex', 'tcli', 'shell', 'swift', 'pm2']) assert.equal(valueOf(missing, id).status, 'missing', id);
+  for (const id of ['git', 'claude', 'codex', 'opencode', 'tcli', 'shell', 'swift', 'pm2']) assert.equal(valueOf(missing, id).status, 'missing', id);
+  assert.match(valueOf(missing, 'opencode').fix, /opencode-ai/);
   assert.match(valueOf(missing, 'claude').fix, /Install Claude Code/);
   assert.match(valueOf(missing, 'codex').fix, /CODEX_PATH/);
   assert.match(valueOf(missing, 'swift').fix, /xcode-select --install/);

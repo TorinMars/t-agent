@@ -50,6 +50,8 @@ write('.claude/.credentials.json', 'needle\n');
 write('.claude/settings.json', 'needle ok\n');
 write('.codex/auth.json', 'needle\n');
 write('.codex/config.toml', 'needle ok\n');
+write('.local/share/opencode/auth.json', 'needle\n');
+write('.local/share/opencode/tui.json', 'needle ok\n');
 write('Library/Keychains/login.keychain-db', 'needle\n');
 write('.netrc', 'needle\n');
 write('.npmrc', 'needle\n');
@@ -94,11 +96,11 @@ test('policy: sensitive paths are denied anywhere below the home folder, other p
   const at = relative => verdict(policy, path.join(home, relative));
   for (const denied of ['.ssh', '.ssh/config', '.SSH/config', '.aws/credentials', '.gnupg/x', '.kube/config', '.docker/config.json', '.config/gh/hosts.yml',
     '.netrc', '.git-credentials', '.npmrc', '.pypirc', 'Library/Keychains/x', 'library/keychains', '.password-store/a.gpg', '.tagent/db.sqlite',
-    '.claude/.credentials.json', '.codex/auth.json', 'proj/.env', 'proj/.ENV.local', 'proj/a.pem', 'proj/a.key', 'proj/id_rsa', 'proj/id_rsa.pub',
+    '.claude/.credentials.json', '.codex/auth.json', '.local/share/opencode/auth.json', 'proj/.env', 'proj/.ENV.local', 'proj/a.pem', 'proj/a.key', 'proj/id_rsa', 'proj/id_rsa.pub',
     'proj/id_ed25519', 'proj/a.p12', 'proj/a.PFX', 'proj/release.keystore', 'proj/sub/.ssh/known_hosts', 'data-inside', 'data-inside/db.sqlite']) {
     assert.equal(at(denied), 'denied', denied);
   }
-  for (const fine of ['', 'notes.md', 'proj/src/a.js', '.config/other.txt', '.claude/settings.json', '.codex/config.toml', '.SSH-not/ok.txt',
+  for (const fine of ['', 'notes.md', 'proj/src/a.js', '.config/other.txt', '.claude/settings.json', '.codex/config.toml', '.local/share/opencode/tui.json', '.SSH-not/ok.txt',
     'proj/env', 'proj/keys.txt', 'proj/.envrc', 'Library/Preferences/x', 'gh/x']) {
     assert.equal(at(fine), null, fine);
   }
@@ -210,7 +212,7 @@ for (const engine of ['node', ...(RG ? ['rg'] : [])]) {
     const result = await searcher.search('~', { pattern: 'needle' });
     assert.equal(result.truncated, false);
     const found = result.matches.map(match => `${path.relative(home, match.path)}:${match.line}`).sort();
-    assert.deepEqual(found, ['.SSH-not/ok.txt:1', '.claude/settings.json:1', '.codex/config.toml:1', '.config/other.txt:1', 'notes.md:2', 'notes.md:3', 'proj/src/a.js:1'].sort());
+    assert.deepEqual(found, ['.SSH-not/ok.txt:1', '.claude/settings.json:1', '.codex/config.toml:1', '.config/other.txt:1', '.local/share/opencode/tui.json:1', 'notes.md:2', 'notes.md:3', 'proj/src/a.js:1'].sort());
     const first = result.matches.find(match => match.path === path.join(home, 'notes.md') && match.line === 2);
     assert.deepEqual(first, { path: path.join(home, 'notes.md'), line: 2, text: 'the needle is here' });
     const caps = await searcher.search('~/proj', { pattern: 'NEEDLE', ignore_case: '1' });

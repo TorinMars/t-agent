@@ -9,7 +9,7 @@
   (`#h5-bnav-learn`), library icon `read` (an open book). `state.learnOpen` (store), `ui.actions.openLearn()` / `closeLearn()` (h5.js);
   `railView` / `phoneView` in `columns.mjs` mark it current; any other destination (or Settings) closes it first; Sessions returns. See
   [page-navigation.md](page-navigation.md).
-- **Chunk**: `Learn.jsx` with `LearnAsk.jsx`, `LearnChat.jsx`, `learn-chat.mjs`, `learn-grade.mjs`, `learn-model.mjs`, `learn-speech.mjs` and `learn-icons.mjs` is the lazy chunk
+- **Chunk**: `Learn.jsx` with `LearnAsk.jsx`, `LearnChat.jsx`, `LearnProgress.jsx`, `learn-progress.mjs`, `learn-chat.mjs`, `learn-grade.mjs`, `learn-model.mjs`, `learn-speech.mjs` and `learn-icons.mjs` is the lazy chunk
   `screen-learn.jsx` (`LearnScreen` in `lazy-screens.jsx`, preloaded from the two destination buttons). The first screen only got the two
   destinations, the `learn` icon, the store key and the back layer: 775,336 -> 777,246 bytes (budget 778,240, `test/page-bundles.test.js`, which
   also checks that the page is not in the first download). The page's keyboard (below) reuses the terminal's `Keyboard` of `Osk.jsx`, which is in
@@ -98,7 +98,8 @@
   than the line, and sentences wrap between words.
 - **After Check**: a card "Right" / "Not quite" with the word-by-word diff (struck red: the answer's wrong or extra word; green: the missing or
   right word), "Word by word: 10 of 11 right" and the named mistakes, then Again / Hard / Good. The offered one is contained and focused (wrong:
-  Again; right with help: Hard; right: Good, `suggestedGrade`). `POST /api/learn/cards/:id/answer { mode, grade, correct, answer }` (mode is the
+  Again; right with help: Hard; right: Good, `suggestedGrade`); each button can show when that grade brings the card back (see "Grade intervals"
+  below). `POST /api/learn/cards/:id/answer { mode, grade, correct, answer }` (mode is the
   exercise shown: spell, build, dictation, say or fill; answer capped at 500 characters), then the next card; a failed post stays with a notice.
   At the end: "Session done", answered and right, Back to Learn, Practise more.
 - **The page's own keyboard** (touch screen; `useLearnKeys` and `LearnKeys` in `Learn.jsx`, `#h5-learn-keys`): without a hardware keyboard (input
@@ -138,7 +139,7 @@
   starts on Words with `source=translation` and shows the chip "From your translations" (`#h5-learn-source-filter`, the library `close` icon as its
   delete icon) that clears the source filter; its back arrow returns to Learn settings. Words that were already cards (a starter word that got a
   sentence as its context) keep their source, so they are counted in "Picked so far" but not in this filtered list.
-- **Learn settings**, top to bottom: MY LEVEL, WORDS FROM MY TRANSLATIONS, PRACTICE, AUDIO and the translator card. The section titles are MD2
+- **Learn settings**, top to bottom: MY LEVEL, WORDS FROM MY TRANSLATIONS, PRACTICE, REVIEW SCHEDULE, AUDIO and the translator card. The section titles are MD2
   overlines in text.secondary like the rest of the Learn page (the design drew them in the primary colour).
   - **MY LEVEL** (`LevelSettings`, `GET /api/learn/level` when the settings open: `{ level: { level, label, reason, answers, mistakes, report_at,
     updated_at } | null, picking: { enabled, picked, skipped, sentences, pending, running }, translator }`): a card `#h5-learn-level-card` with "Your
@@ -160,6 +161,47 @@
   - **PRACTICE**: Collect study material (`PUT { collect }`, then `window.LearnCollect.set(on)` so the page stops or starts collecting at
   once), Daily goal 1 to 200 (saved on Enter or blur), Starter list: Programmer English (on: `POST /starter` then `PUT { starter: 'dev' }`; off:
   `PUT { starter: null }`, which hides the starter words not practised yet), Analyze my mistakes every week (`#h5-learn-analysis-auto`, `PUT { analysis_auto }`, shared), and where word meanings come from, with Open Settings.
+  - **REVIEW SCHEDULE** (`ScheduleSettings`, `#h5-learn-schedule-card`): the row "Remember" with "How sure you want to be when a card comes back"
+    and a toggle button group 85% / 90% / 95% (`ChoiceRow` `#h5-learn-retention`, buttons `data-value="0.85|0.9|0.95"`), saved at once with
+    `PUT /settings { desired_retention }` (shared, learn_v1, like the rest), then the caption "Cards are scheduled with FSRS, a model of how memory
+    fades, from your own answers. Higher means more reviews; 90% is a good balance." The section is shown only when the server's settings have a
+    numeric `desired_retention` (an older server without FSRS has none). The FSRS scheduling itself is the server's (the FSRS branch,
+    `services/learn-fsrs.js`).
+- **Progress** (`ProgressView` in `LearnProgress.jsx`, view `{ kind: 'progress' }`; data `GET /api/learn/stats`, [learn-english-stats.md](learn-english-stats.md)):
+  opened from the text button "Progress" (`#h5-learn-progress`, library icon bar-chart `learnChart`, 18px start icon) at the bottom of the home's
+  Today card. A phone shows it full screen like the other views, a computer in the Learn right pane. The bar has the text button "Table"
+  (`#h5-learn-progress-table`, `aria-pressed`; "Charts" while the tables show), passed to `ViewFrame` as its new `action`.
+  - Four stat tiles (`#h5-learn-progress-tiles`, a grid of `minmax(148px, 1fr)`: two per row on a phone, four on a computer): Streak "N days" with
+    "best M"; This week, the answers with "answers · +N vs last" / "−N vs last" / "same as last week"; Right this week "76%" with "+3 points vs last"
+    ("–" and "no answers to compare" without answers); Remembered well = `memory.mature` "of N cards" (`tiles` / `deltaParts` in `learn-progress.mjs`).
+  - Four chart cards (`#h5-learn-progress-charts`, `minmax(300px, 1fr)`: one per row on a phone, two on a computer), in this order: "Answers per day"
+    / "Last 30 days" (columns), "Right answers by week" / "Share of answers right the first time, last 12 weeks" (a line, `right_first / answers`
+    per week, a week without answers breaks it), "Memory strength" / "How long each card is expected to stay remembered (FSRS)" (four bars: New
+    never answered, Learning under 1 day, Getting there 1 to 21 days, Remembered well 21 days or more; relative to the largest group, the count at
+    the right), "Due in the next 14 days" / "Cards the schedule brings back each day" (columns, the first labelled Today).
+  - Drawn as inline SVG in the component (no chart library), following the dataviz rules: one hue, the theme's primary, for every mark (single
+    series, so no legend: the titles name them); columns at most 24px wide with about a third of the slot as air, a 4px rounded top and a square
+    foot (`columnLayout`, `columnPath`); a 2px line over a 10% wash; the end dot r 4 with a 2px ring in the card's own colour (the 1dp overlay
+    mixed into the paper, `mixColor`); a hairline solid grid in the divider colour; clean y ticks (`niceTicks`: 1, 2 or 5 times a power of ten,
+    compact from 10,000); x labels on the first, middle and last slots (`labelSlots`, short dates in the page's language, `shortDay`); the line's
+    last value as its only direct label; all text in text.primary / text.secondary, never the series colour.
+  - Tooltips (`.h5-learn-chart-tip`, grey 800, the value line strong, kept inside the card): on every column (the whole slot is the hit target, so
+    an empty day has one too: "Nov 17 · 40 answers" / "31 right (78%)", "No answers"), on the line (the nearest week with a crosshair: "76% right
+    the first time" / "Week of Nov 17 · 100 cards"), on the memory rows (with the share of all cards) and on the due columns ("21 cards" / "Today,
+    with the overdue ones"). A mouse shows the slot under it and clears on leaving; a tap shows the slot tapped and a second tap clears; each chart
+    is focusable: focus shows the last slot, the arrow keys move, Escape clears. The hovered column turns a lighter primary.
+  - "Table" shows every chart as an MUI table (`#h5-learn-table-daily|weekly|memory|due`, newest first for the days and weeks), the tiles stay.
+  - Loading "Loading…", a failed load an error alert with Retry (`#h5-learn-progress-error`); with no answers at all (`hasAnswers`: no best
+    streak and nothing in the 30 days or 12 weeks) one card "Answer a few cards and your progress shows here." instead of the charts, and no
+    Table. On a company computer whose home is away (or older) the server answers from the cards there with `offline` / `home_older`, and an info
+    alert says the numbers come from this computer (`#h5-learn-progress-offline`).
+- **Grade intervals** (`Grades` in `Learn.jsx`, used after every answer in every mode, `gradeIntervals` / `intervalParts` in `learn-progress.mjs`):
+  a queue card of the FSRS server has `next: { again, hard, good }` (milliseconds until due for each grade; again is 600000) and
+  `retrievability`. When `next` is there, each button shows its interval under the label in caption size (`.h5-learn-grade-when`): under an hour
+  "N min", under a day "N h", then "N days" ("1 day"), past 60 days "N mo" (30-day months), past 365 days "N yr" (one decimal under 10 years);
+  the button's `aria-label` is "Good, 5 days". The three buttons share the row (`flex: 1`, at most 200px each on a computer, never wrapping), keep
+  the 44px touch targets and fit a 320px phone; the suggested grade stays contained and focused, Enter and 1 / 2 / 3 work as before. Without
+  `next` (an older server) the buttons stay the plain labels. "How learning works" describes FSRS instead of the old 1 / 3 / 7 / 15 / 30 days.
 - Card text (English and Chinese) is user content: drawn with `translate="no"`, so the Chinese interface never translates a word of a card
   that happens to be a dictionary key; hint words go into the translated templates the same way (`Fmt`).
 - MD2 through the theme: cards with the 8px radius, typography variants only (h4 due count, h5 titles and prompts, subtitle1 mode names, body2,
@@ -335,6 +377,15 @@ English journal entries and their journaling habit (the server side, the prompt,
   card due for Say it or Dictation is built instead). The box can always be typed in.
 
 ## Tests
+
+- `scripts/test-h5-learn-progress-browser.cjs` (mocked `/api/learn/stats`, a queue with `next`, settings with `desired_retention`; 1440x900,
+  390x844 and 320x640 touch): the Progress button opens the view in the pane and full screen, the tiles, the four charts (thin columns, the line's
+  last value, the memory values, one hue), two charts per row on a computer and one on a phone, tooltips on hover, tap and focus (columns, an
+  empty day, the line with its crosshair, the memory rows, the due chart with the arrow keys), Table and Charts, a failed load with Retry, the
+  empty state, the grade intervals with Enter and a card without `next`, the buttons in one row with 44px targets at 390 and 320px, REVIEW
+  SCHEDULE saving `desired_retention` and hidden on an older server, How learning works; `H5_SHOT_DIR` saves `progress-*.png`, `grades-*.png`,
+  `schedule-desktop.png`. Unit: `test/h5-learn-progress.test.js` (the interval text, the tiles' deltas, ticks, the column shape, the pointer
+  helpers, dates and colours).
 
 - `scripts/test-h5-learn-mistakes-browser.cjs` (mocked API, 1440x900 and 390x844 touch): the home line and View, a report (range, summary, bars, findings), marked seen, Practise these N cards, the Mistakes list with chips, Show more, Analyze (the body, the wait, the report), a model error, All reports, the weekly switch, the language told once, the page without a model, no sideways scroll at 390px; `H5_SHOT_DIR` saves `mistakes-*.png`.
 - Unit: `test/h5-learn-grade.test.js` also has `mistakeTag`. `test/h5-learn-audio.test.js` (the settings, `autoPlays`, the player: repeat and pause, Stop, a new play, typing, a lost end, a refusal),

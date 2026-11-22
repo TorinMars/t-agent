@@ -35,6 +35,8 @@ import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
+import { ProgressView } from './LearnProgress.jsx';
+import { gradeIntervals } from './learn-progress.mjs';
 
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
@@ -122,7 +124,7 @@ function Learn({ state, ui }) {
   const keys = state.input === 'pointer' || Boolean(state.hasKeyboard);
   const data = useLearnData();
   const speech = useSpeech();
-  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats', mode?, preset?, uid?, seq }
+  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats' | 'progress', mode?, preset?, uid?, seq }
   const viewRef = useRef(null);
   viewRef.current = view;
   const close = () => ui.actions.closeLearn();
@@ -218,13 +220,15 @@ function ViewBody({ view, phone, back, open, data, ...common }) {
   if (view.kind === 'report') return <ReportView frame={frame(t('Mistake report'))} view={view} ui={common.ui} open={open} data={data} />;
   if (view.kind === 'chat') return <ChatView view={view} phone={phone} back={back} open={open} {...common} />;
   if (view.kind === 'chats') return <EarlierChats parent={view.parent} open={open} />;
+  if (view.kind === 'progress') return <ProgressView frame={frame(t('Progress'))} />;
   return <HowView frame={frame(t('How learning works'))} />;
 }
 
 // The frame of a mode: on a phone an app bar (back arrow, title, "7 / 20 · from your translations") over the page that scrolls and the actions pinned
 // at its bottom; on a computer a title row with the counter, the progress bar and a close button, then the content.
 // `keyboard`: the page's own keyboard (useLearnKeys), under the page on a phone, at the bottom of the pane on a computer-sized touch screen.
-export function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, children }) {
+// `action`: a text button at the right of the bar (Table of the Progress view).
+export function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, action = null, children }) {
   if (phone) {
     const subtitle = [counter, source].filter(Boolean).join(' · ');
     return (
@@ -236,6 +240,7 @@ export function ViewFrame({ phone, title, counter = '', source = '', progress = 
               <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ fontWeight: 500, lineHeight: 1.3 }}>{title}</Typography>
               {subtitle ? <Typography variant="caption" component="p" color="text.secondary" noWrap className="h5-learn-subtitle">{subtitle}</Typography> : null}
             </Box>
+            {action ? <Box sx={{ flexShrink: 0, mr: 1 }}>{action}</Box> : null}
           </Toolbar>
         </AppBar>
         <Box className="h5-learn-scroll" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -251,6 +256,7 @@ export function ViewFrame({ phone, title, counter = '', source = '', progress = 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minHeight: 40 }}>
         <Typography id="h5-learn-view-title" variant="h6" component="h2" noWrap sx={{ flex: '1 1 auto', minWidth: 0 }}>{title}</Typography>
         {counter ? <Typography variant="body2" color="text.secondary" className="h5-learn-subtitle">{counter}</Typography> : null}
+        {action}
         {progress !== null ? <LinearProgress className="h5-learn-progress" variant="determinate" value={Math.round(progress * 100)} aria-label={t('Progress')} sx={{ width: 160, height: 6, borderRadius: 3 }} /> : null}
         {onBack ? <IconButton id="h5-learn-back" size="small" onClick={onBack} {...named(t('Close'))}><Icon name="close" size={20} /></IconButton> : null}
       </Box>
@@ -339,6 +345,9 @@ function Home({ ui, phone, data, modes, current, open }) {
               ? <Button variant="contained" id="h5-learn-start" onClick={() => open({ kind: 'session', mode: 'review' })}>{t('Start review')}</Button>
               : <Button variant="outlined" id="h5-learn-free" onClick={() => open({ kind: 'session', mode: 'mixed' })}>{t('Practise anyway')}</Button>}
           </Box>
+          {/* Progress: the charts of the answers, the memory and what is due ("Progress" in docs/design/learn-english-page.md). */}
+          <Button id="h5-learn-progress" startIcon={<Icon name="learnChart" size={18} />} onClick={() => open({ kind: 'progress' })}
+            aria-current={current === 'progress' ? 'page' : undefined} sx={{ mt: 1, ml: -1 }}>{t('Progress')}</Button>
         </Card>
       )}
       {summary.new_report && summary.new_report.uid ? <NewReportLine report={summary.new_report} onView={() => open({ kind: 'report', uid: summary.new_report.uid })} /> : null}
@@ -538,15 +547,24 @@ const pickExercise = (exercise, speech) => ((exercise === 'dictation' && !speech
 // ── Shared parts of the exercises ──
 
 const GRADES = [['again', 'Again', '1'], ['hard', 'Hard', '2'], ['good', 'Good', '3']];
-function Grades({ suggested, onGrade, busy, keys }) {
+// `next`: when each grade brings the card back (the queue card's `next` of the FSRS server, milliseconds), shown under each label in caption size
+// ("Again · 10 min", "Grade intervals" in docs/design/learn-english-page.md); without it (an older server) the buttons are the plain labels.
+function Grades({ suggested, onGrade, busy, keys, next = null }) {
+  const intervals = gradeIntervals(next);
   return (
-    <Box className="h5-learn-grades" role="group" aria-label={t('How well did you know it?')} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-      {GRADES.map(([grade, label, key]) => (
-        <Button key={grade} id={`h5-learn-grade-${grade}`} data-grade={grade} variant={grade === suggested ? 'contained' : 'outlined'} autoFocus={grade === suggested}
-          disabled={busy} onClick={() => onGrade(grade)} aria-keyshortcuts={keys ? key : undefined}>
-          {t(label)}{keys ? <Box component="span" aria-hidden="true" sx={{ ml: 1, opacity: 0.7, typography: 'caption' }}>{key}</Box> : null}
-        </Button>
-      ))}
+    <Box className="h5-learn-grades" role="group" aria-label={t('How well did you know it?')}
+      sx={{ display: 'flex', gap: 1, flexWrap: intervals ? 'nowrap' : 'wrap', ...(intervals ? { flex: '1 1 auto', minWidth: 0 } : {}) }}>
+      {GRADES.map(([grade, label, key]) => {
+        const when = intervals ? tf(intervals[grade][0], intervals[grade][1]) : '';
+        return (
+          <Button key={grade} id={`h5-learn-grade-${grade}`} data-grade={grade} variant={grade === suggested ? 'contained' : 'outlined'} autoFocus={grade === suggested}
+            disabled={busy} onClick={() => onGrade(grade)} aria-keyshortcuts={keys ? key : undefined} aria-label={intervals ? `${t(label)}, ${when}` : undefined}
+            sx={intervals ? { flex: '1 1 0', minWidth: 0, maxWidth: 200, flexDirection: 'column', py: 0.5, lineHeight: 1.3 } : undefined}>
+            <span>{t(label)}{keys ? <Box component="span" aria-hidden="true" sx={{ ml: 1, opacity: 0.7, typography: 'caption' }}>{key}</Box> : null}</span>
+            {intervals ? <Box component="span" className="h5-learn-grade-when" sx={{ typography: 'caption', lineHeight: 1.3, opacity: 0.8, whiteSpace: 'nowrap' }}>{when}</Box> : null}
+          </Button>
+        );
+      })}
     </Box>
   );
 }
@@ -578,12 +596,12 @@ function Hints({ hints }) {
   });
 }
 // The result of a checked answer, with the grades on a computer (a phone has them in its pinned actions).
-function Feedback({ correct, phone, keys, busy, suggested, onGrade, children }) {
+function Feedback({ correct, phone, keys, busy, suggested, onGrade, next = null, children }) {
   return (
     <Card id="h5-learn-feedback" data-correct={correct ? 'true' : 'false'} role="status" sx={{ p: 2 }}>
       <Typography variant="body2" sx={{ color: correct ? 'success.light' : 'error.light', fontWeight: 500 }}>{correct ? t('Right') : t('Not quite')}</Typography>
       <Box sx={{ mt: 0.75 }}>{children}</Box>
-      {phone ? null : <Box sx={{ mt: 1.5 }}><Grades suggested={suggested} onGrade={onGrade} busy={busy} keys={keys} /></Box>}
+      {phone ? null : <Box sx={{ mt: 1.5, display: 'flex' }}><Grades suggested={suggested} onGrade={onGrade} busy={busy} keys={keys} next={next} /></Box>}
     </Card>
   );
 }
@@ -888,7 +906,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   const layout = slotLayout(aligned ? aligned.columns.length : word.length, room);
   const rows = [];
   layout.rows.reduce((at, size) => { rows.push([at, size]); return at + size; }, 0);
-  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
     <Button id="h5-learn-dont-know" onClick={giveUp}>{t("I don't know")}</Button>
     <Box sx={{ flex: '1 1 auto' }} />
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
@@ -994,7 +1012,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
         {phone || (result && !cloze) ? null : <Box sx={{ mt: 2 }}>{actions}</Box>}
       </Box>
       {result && !cloze ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
+        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
           {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
           {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[rightLetters, result.total]} /></Typography> : null}
@@ -1078,7 +1096,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
     setHelped(true);
     setPlaced([...base, id]);
   };
-  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
     {tts ? <AudioButton audio={audio} text={card.en} phone={phone} field={field} /> : null}
     <Button id="h5-learn-hint" onClick={hint} {...keepFocus(field)}>{t('Hint')}</Button>
     <Box sx={{ flex: '1 1 auto' }} />
@@ -1118,7 +1136,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
         {phone || result ? null : actions}
       </Card>
       {result ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
+        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
@@ -1141,7 +1159,7 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
   const change = next => { if (!result) { audio.typed(); setValue(next); } };
   const kb = useLearnKeys({ ui, keys, field, change });
   const ask = useAsk({ card, exercise, result, answer: () => value, field, phone, keys, openTranslator });
-  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
     <Box sx={{ flex: '1 1 auto' }} />
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
@@ -1163,7 +1181,7 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
         {phone || result ? null : actions}
       </Card>
       {result ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
+        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
@@ -1190,7 +1208,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
   });
   useCardAudio(audio, exercise, card.en, result); // the model at the start
   const ask = useAsk({ card, exercise, result, answer: () => value, field: box, phone, keys, openTranslator });
-  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
     {tts ? <AudioButton audio={audio} text={card.en} phone={phone} field={box} /> : null}
     <Box sx={{ flex: '1 1 auto' }} />
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
@@ -1217,7 +1235,7 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
         {phone || result ? null : actions}
       </Card>
       {result ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
+        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
@@ -1261,7 +1279,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
       </ViewFrame>
     );
   }
-  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} /> : actionsRow(<>
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
     <Button id="h5-learn-first" disabled={Boolean(value)} onClick={() => { setHelped(true); setValue(gap.word.slice(0, 1)); if (field.current) field.current.focus({ preventScroll: true }); }} {...keepFocus(field)}>{t('Show first letter')}</Button>
     <Box sx={{ flex: '1 1 auto' }} />
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
@@ -1286,7 +1304,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
         {phone || result ? null : actions}
       </Card>
       {result ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade}>
+        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <SentenceResult card={card} result={result} />
         </Feedback>
       ) : null}
@@ -1468,6 +1486,7 @@ function SettingsView({ frame, ui, data, openTranslator, open }) {
             secondary={t('When a week has at least 10 new mistakes, your translation model writes a report: the causes and what to practise. Only the words and sentences you got wrong and what you wrote are sent.')} />
         </Card>
       )}
+      {settings && typeof current.desired_retention === 'number' ? <ScheduleSettings current={current} busy={busy} save={save} /> : null}
       {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}
       <Card sx={{ p: 2 }}>
         <Typography variant="body2" color="text.secondary">{t('Word meanings come from the translator in Settings → Voice and translation.')}</Typography>
@@ -1610,11 +1629,31 @@ function AudioSettings({ current, busy, save }) {
   );
 }
 
+// REVIEW SCHEDULE of Learn settings ("Learn settings" in docs/design/learn-english-page.md): `desired_retention` of the learning settings (learn_v1,
+// shared by every linked engine like the rest), how sure the person wants to be of a card when it comes back; FSRS plans the gaps for it. Saved at
+// once like the other Learn settings. Shown only when the server's settings have the field (an older server has no FSRS).
+const RETENTION = [0.85, 0.9, 0.95];
+function ScheduleSettings({ current, busy, save }) {
+  const value = RETENTION.find(choice => Math.abs(choice - current.desired_retention) < 0.001) ?? null;
+  return (
+    <>
+      <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('Review schedule')}</Typography>
+      <Card id="h5-learn-schedule-card" sx={{ px: 2, py: 1 }}>
+        <ChoiceRow id="h5-learn-retention" label={t('Remember')} secondary={t('How sure you want to be when a card comes back')} value={value} disabled={busy}
+          choices={RETENTION.map(choice => [choice, `${Math.round(choice * 100)}%`])} onChange={next => save({ desired_retention: next })} />
+        <Typography variant="caption" component="p" color="text.secondary" sx={{ pb: 1 }}>
+          {t('Cards are scheduled with FSRS, a model of how memory fades, from your own answers. Higher means more reviews; 90% is a good balance.')}
+        </Typography>
+      </Card>
+    </>
+  );
+}
+
 // ── How learning works ──
 
 const HOW = [
   ['Your own sentences', 'Messages you send with "Chinese → English" become cards (the Chinese and the English), and words you tap to look up become word cards. A starter list can be added too.'],
-  ['Spaced review', 'Each card comes back after 1, 3, 7, 15, 30… days; Again / Hard / Good change the gap. The due count is the plan for today.'],
+  ['Spaced review', 'Each card comes back about when you would start to forget it. FSRS, a model of how memory fades, plans the gap from your own answers; Again / Hard / Good change it, and each button shows when the card returns. The due count is the plan for today.'],
   ['Five ways to practise', 'Spell the word · Build the sentence (tiles or typing) · Dictation (hear, type) · Say it (read aloud, voice input checks) · Fill the gap.'],
   ['Clear feedback', 'Word-by-word diff after Check, with the usual mistake named (articles, plurals, tense, word order) and a list of mistakes to review.'],
   ['Everywhere', 'Stored on the server, so the phone and the computer share progress.'],

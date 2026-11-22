@@ -12,6 +12,7 @@
 const { readState, writeState, isPlainObject } = require('./settings-sync-store');
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
+const { createLearnStats } = require('./learn-stats');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('./learn-starter');
 const phonetics = require('./phonetics');
 
@@ -218,6 +219,7 @@ function createLearn({
   const stamp = () => syncStore.stamp(db, now());
   const seq = () => syncStore.nextSeq(db);
   const changed = () => syncStore.learnChanged(db);
+  const progress = createLearnStats({ db, now, timeZone }); // the numbers of the Progress view (services/learn-stats.js)
   function settingsChanged(owner) {
     writeState(db, settingsVersionKey(owner), { at: stamp(), by: '', seq: seq() });
     changed();
@@ -741,6 +743,7 @@ function createLearn({
     settle: () => background, // the queue's background fill has ended (tests)
     mistakes, sinceReport, mistakesSince, reports, report, hasReport, saveReport, findCards, newReport, lastReport, lastAutoReport,
     prefill, missingMeanings,
+    stats: owner => progress.stats(owner, { starter: settings(owner).starter }),
   };
 }
 

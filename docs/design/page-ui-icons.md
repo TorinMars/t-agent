@@ -122,6 +122,7 @@
 | Ask (the text button of every Learn practice card, "Ask about this question") | message | 4765866 | `learnAsk` (20px start icon) in `learn-icons.mjs`; the sheet's send button uses `send` (22px) |
 | English chat (the Learn home card, 22px in its tile; the new chat's mark, 32px) / Earlier chats / New chat / the chat's menu | message / reload time (Ant Design's history) / plus / ellipsis | 4765866 / 4765853 / 7834345 / 4767094 | `learnAsk` and `learnHistory` (22px) in `learn-icons.mjs`; `add` (22px in the phone's app bar, 18px start icon of the computer's "New chat") and `taskMore` (22px) in `Icons.jsx`; Send uses `send` (22px) |
 | Streak, How learning works, Learn settings (the Learn page's home) | fire / question-circle / setting | 4936460 / 4765736 / 4765891 | `learnStreak` (16px, warning colour), `learnHow` (18px start icon) in `learn-icons.mjs`; `setting` (18px start icon) |
+| Progress (the text button of the Learn home's Today card, `#h5-learn-progress`) | bar-chart (Ant Design's BarChartOutlined; iconfont.cn id not looked up) | — | `learnChart` in `learn-icons.mjs`, 18px start icon |
 | Edit meaning, Search your material (the Learn page's material list) | edit / search | 4766959 / 6598347 | `edit` 20px, `search` 18px |
 
 The Learn page's own icons live in `scripts/h5-shell/learn-icons.mjs`, not in `Icons.jsx`: `Icons.jsx` is in the first screen, whose size is capped (`test/page-bundles.test.js`), and only the Learn chunk draws them. The module adds them to `PATHS` when the chunk loads, so `<Icon name>` draws them like any other icon.

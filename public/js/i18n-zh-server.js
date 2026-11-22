@@ -566,6 +566,7 @@ I18n.add({
   "Mistake reports are kept on a normal computer, which cannot be reached right now": "错题报告保存在普通电脑上，现在连不上那台电脑",
   // The level and the words from translations (services/learn-pick.js, routes/learn.js)
   "Your level is kept on a normal computer, which cannot be reached right now": "你的水平保存在普通电脑上，现在连不上那台电脑",
+  "Your progress is kept on a normal computer, which cannot be reached right now": "你的学习进度保存在普通电脑上，现在连不上那台电脑",
   "Your level is estimated on a normal computer. Link one to this computer first.": "你的水平在普通电脑上评估。请先把一台普通电脑连接到这台电脑。",
   "Your level is being estimated already": "已经在评估你的水平",
   "Answer at least 10 cards first, so your level can be estimated": "请先至少回答 10 张卡片，才能评估你的水平",

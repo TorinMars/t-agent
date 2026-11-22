@@ -547,6 +547,7 @@ function createLearnSync(options) {
       return action === 'level' ? picker.view(name) : picker.check(name);
     }
     if (action === 'starter') return service().starter(name, body);
+    if (action === 'stats') return service().stats(name);
     if (action === 'mistakes') return service().mistakes(name, isPlainObject(body) ? body : {});
     if (action === 'reports') return reportsView ? reportsView(name) : { reports: service().reports(name).reports };
     if (action === 'report') return service().report(name, isPlainObject(body) ? body.uid : null);

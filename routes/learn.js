@@ -11,6 +11,8 @@ const express = require('express');
 //   POST  /api/learn/meaning { word }                   -> { zh }   (the configured translator; 503 when there is none)
 //   POST  /api/learn/starter { list: 'dev' }            -> { added }
 //   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter?, audio_*? } -> settings
+//   GET   /api/learn/stats                            -> { streak, best_streak, week, daily, weekly, memory, total_cards, due }  (the Progress view;
+//         "Learn progress statistics" in docs/design/learn-english-stats.md; services/learn-stats.js)
 //   GET   /api/learn/status                           -> { company_computer, cache_only, home_name, home_online, waiting }
 //   GET   /api/learn/mistakes?limit=50&before=<ISO>   -> { mistakes: [{ uid, at, mode, tag, hinted, expected, written, card }], more }
 //   GET   /api/learn/reports                          -> { reports, since: { from, mistakes, answers }, model: { ready, label, name }, running, auto }
@@ -43,6 +45,7 @@ const express = require('express');
 const LEVEL_OFFLINE = 'Your level is kept on a normal computer, which cannot be reached right now';
 const ASK_OFFLINE = 'Questions about a card are answered on a normal computer, which cannot be reached right now';
 const HOME_OLDER = 'The normal computer that keeps your learning data needs an update first';
+const STATS_OFFLINE = 'Your progress is kept on a normal computer, which cannot be reached right now';
 const CHAT_OFFLINE = 'Your English chats are kept on a normal computer, which cannot be reached right now';
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
@@ -113,6 +116,15 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     return { ...learn().summary(owner(req)), device: { ...status(), offline_copy_at: null } };
   }));
   router.get('/status', handle(() => status()));
+  // The Progress view: on a company computer the numbers of its home; while the home is away (503) or older (404), the cards and answers here, said as such.
+  router.get('/stats', handle(async req => {
+    if (!cacheOnly()) return learn().stats(owner(req));
+    await fresh();
+    try { return await learnSync().askHome('stats', { offline: STATS_OFFLINE }); } catch (error) {
+      if (error.statusCode !== 503 && error.statusCode !== 404) throw error;
+      return { ...learn().stats(owner(req)), offline: error.statusCode === 503, home_older: error.statusCode === 404 };
+    }
+  }));
   router.get('/queue', handle(async req => { await fresh(); return learn().queue(owner(req), req.query.mode, req.query.limit); }));
   router.get('/cards', handle(async req => { await fresh(); return learn().list(owner(req), req.query); }));
   router.post('/cards', handle(req => {

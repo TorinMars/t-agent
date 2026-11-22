@@ -10,6 +10,7 @@
 //   estimate runs on the home; the same answers as GET /api/learn/level and POST /api/learn/level/check).
 //   GET  /v1/learn-sync/ask?kind=&norm=, POST /v1/learn-sync/ask { kind, norm, question, mode, state }: the questions about a card for a company
 //   computer's page (the card named by kind and normalized text; the model is asked on the home, and the answer comes as one JSON { messages }).
+//   GET  /v1/learn-sync/stats: the numbers of the Progress view of the home for a company computer's page (the same answer as GET /api/learn/stats).
 //   GET  /v1/learn-sync/chats, GET /v1/learn-sync/chat?uid=, POST /v1/learn-sync/chat-send { chat, question, topic }, POST /v1/learn-sync/chat-update
 //   { uid, title?, journal? }, POST /v1/learn-sync/chat-delete { uid }: the English chats for a company computer's page (kept and answered on the home;
 //   the same answers as /api/learn/chats, the send as one JSON { chat, messages }).
@@ -58,6 +59,7 @@ function createEngineLearnSyncRouter(options = {}) {
   router.post('/level-check', handle(req => service().engineHome(req.serviceLink, 'level-check')));
   router.get('/ask', handle(req => service().engineHome(req.serviceLink, 'ask-history', { kind: req.query.kind, norm: req.query.norm })));
   router.post('/ask', handle(req => service().engineHome(req.serviceLink, 'ask', req.body)));
+  router.get('/stats', handle(req => service().engineHome(req.serviceLink, 'stats')));
   router.get('/chats', handle(req => service().engineHome(req.serviceLink, 'chats')));
   router.get('/chat', handle(req => service().engineHome(req.serviceLink, 'chat', { uid: req.query.uid })));
   router.post('/chat-send', handle(req => service().engineHome(req.serviceLink, 'chat-send', req.body)));

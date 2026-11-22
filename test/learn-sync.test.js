@@ -163,7 +163,13 @@ test('schema 13 -> 14: an old database with cards and answers gets the sync colu
   const cards = db.prepare('SELECT * FROM learn_cards ORDER BY id').all();
   assert.equal(cards.length, 2);
   assert.equal(cards[0].zh, ZH);
-  assert.deepEqual(cards.map(card => [card.content_at, card.content_by, card.state_at, card.state_by]), [[0, '', 5000, ''], [0, '', 0, '']]);
+  // The answered card is replayed with FSRS by the schema 22 step of the same migration: its state gets a new clock (after its last answer, 5000);
+  // the starter word without answers stays new with clock 0.
+  assert.deepEqual(cards.map(card => [card.content_at, card.content_by, card.state_by]), [[0, '', ''], [0, '', '']]);
+  assert.ok(cards[0].state_at > 5000);
+  assert.equal(cards[1].state_at, 0);
+  assert.equal(cards[0].fsrs_stability, 2.3065, 'two good answers 1 s apart: the first gives S0(good), the same-day one keeps it');
+  assert.equal(cards[1].fsrs_stability, null);
   const reviews = db.prepare('SELECT * FROM learn_reviews ORDER BY id').all();
   assert.equal(reviews.length, 2);
   assert.ok(reviews.every(row => typeof row.uid === 'string' && row.uid.length >= 16));
@@ -351,7 +357,8 @@ test('two linked services: cards, answers and settings made on each side reach t
     const card = cardsOf(side).find(row => row.norm === 'merge');
     assert.equal(card.zh, ZH2, `${side.name}: the meaning edit survives`);
     assert.equal(card.reps, 2, `${side.name}: the answer survives`);
-    assert.equal(card.interval_days, 3);
+    // FSRS-6: the first good gives S0(good) = 2.3065 (2 days); the second on the same day keeps it (the same-day formula never lowers it).
+    assert.equal(card.interval_days, 2);
   }
   assert.deepEqual(reviewsOf(A), reviewsOf(B));
   assert.equal(reviewsOf(A).length, 2);

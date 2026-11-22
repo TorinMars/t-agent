@@ -5,7 +5,9 @@
 // last_result, last_at, last_correct), changed by an answer. Each half goes to the later version on its own, a tie to the greater instance id, so an
 // answer on one device and a meaning edit on another both survive. A meaning or a phonetic transcription is never replaced by an empty one (an older
 // peer, schema 14, sends none), and created_at is the earliest. Schema 19: the pick of a sentence (picked_level, picked_skipped, picked_at) is a third
-// part with its own clock: the later pick wins, and a peer without it (older) sends none, so it never undoes one.
+// part with its own clock: the later pick wins, and a peer without it (older) sends none, so it never undoes one. Schema 22: the FSRS state
+// (fsrs_stability, fsrs_difficulty) is part of the review state; a peer without it (older) sends none, which is kept as NULL (not computed), and
+// services/learn-sync.js then recomputes the card from its answers ("Replay, sync and migration" in docs/design/learn-review-fsrs.md).
 const {
   normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED, LEVELS, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON,
   MAX_ZH: MAX_CARD_ZH,
@@ -14,7 +16,7 @@ const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
 
 const CONTENT = ['en', 'zh', 'phonetic', 'source', 'context', 'suspended'];
-const STATE = ['due_at', 'interval_days', 'ease', 'reps', 'lapses', 'last_result', 'last_at', 'last_correct'];
+const STATE = ['due_at', 'interval_days', 'ease', 'reps', 'lapses', 'last_result', 'last_at', 'last_correct', 'fsrs_stability', 'fsrs_difficulty'];
 const PICKED = ['picked_level', 'picked_skipped', 'picked_at'];
 const FIELDS = ['created_at', ...CONTENT, 'content_at', 'content_by', ...STATE, 'state_at', 'state_by', ...PICKED];
 const INSTANCE_ID = /^[A-Za-z0-9-]{1,64}$/;
@@ -52,7 +54,8 @@ function mergeCard(local, incoming, { follow = false } = {}) {
   if (!follow && incoming.content_at === local.content_at && incoming.content_by === local.content_by && local.context
     && typeof incoming.context === 'string' && incoming.context.length > local.context.length && incoming.context.startsWith(local.context)) card.context = incoming.context;
   const before = { ...local, ...pickedOf(local) };
-  return { card, changed: FIELDS.some(field => card[field] !== before[field]) };
+  // A field a row does not have (undefined, an older row) and NULL are the same.
+  return { card, changed: FIELDS.some(field => (card[field] === undefined ? null : card[field]) !== (before[field] === undefined ? null : before[field])) };
 }
 
 const int = value => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
@@ -67,6 +70,8 @@ function pick(row, fields) {
 const time = value => Number.isSafeInteger(value) && value >= 0;
 const count = value => Number.isSafeInteger(value) && value >= 0;
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : null);
+// An FSRS value from a peer: a number in its range, else NULL (not computed; also what an older peer, which sends none, gives).
+const fsrsValue = (value, min, max) => (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : null);
 
 // A card as a peer sent it, checked and made into the local form (norm computed here, suspended and last_correct as 0 / 1), or null when it is not a
 // card this version can keep (a text the checks refuse, a field of the wrong type). `sender`: the instance id that sent it, for a version with no device.
@@ -88,6 +93,7 @@ function cardFromPeer(raw, sender) {
     created_at: raw.created_at, content_at: raw.content_at, content_by: by(raw.content_by),
     due_at: raw.due_at, interval_days: raw.interval_days, ease: raw.ease, reps: raw.reps, lapses: raw.lapses,
     last_result: raw.last_result, last_at: raw.last_at, last_correct: raw.last_correct === null ? null : (raw.last_correct ? 1 : 0),
+    fsrs_stability: fsrsValue(raw.fsrs_stability, 0.001, 36500), fsrs_difficulty: fsrsValue(raw.fsrs_difficulty, 1, 10),
     state_at: raw.state_at, state_by: by(raw.state_by),
     // Schema 19: a peer without the pick (an older version) sends none: '' at clock 0, which never wins over a pick here.
     ...(raw.kind === 'sentence' && time(raw.picked_at) ? pickedOf(raw) : { picked_level: '', picked_skipped: 0, picked_at: 0 }),
@@ -102,6 +108,7 @@ function cardToPeer(row, me) {
     due_at: row.due_at, interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: row.last_at === null || row.last_at === undefined ? null : row.last_at,
     last_correct: row.last_correct === null || row.last_correct === undefined ? null : Boolean(row.last_correct),
+    fsrs_stability: Number.isFinite(row.fsrs_stability) ? row.fsrs_stability : null, fsrs_difficulty: Number.isFinite(row.fsrs_difficulty) ? row.fsrs_difficulty : null,
     state_at: row.state_at, state_by: row.state_by || me,
     picked_level: row.picked_level || '', picked_skipped: int(row.picked_skipped), picked_at: int(row.picked_at),
   };

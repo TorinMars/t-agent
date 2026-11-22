@@ -381,6 +381,11 @@ CREATE TABLE IF NOT EXISTS learn_cards (
   picked_level   TEXT    NOT NULL DEFAULT '',
   picked_skipped INTEGER NOT NULL DEFAULT 0,
   picked_at      INTEGER NOT NULL DEFAULT 0,
+  -- Schema 22, FSRS-6 ("Review rules" in docs/design/learn-review-fsrs.md): the memory state of the card, part of the review state. Derived data:
+  -- the replay of the card's answers (services/learn-schedule.js); NULL: not computed (a new card, or a state from an older version).
+  -- interval_days is the FSRS interval in whole days; ease is kept unchanged and no longer used. services/learn-sync-store.js adds them.
+  fsrs_stability  REAL,
+  fsrs_difficulty REAL,
   UNIQUE (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);

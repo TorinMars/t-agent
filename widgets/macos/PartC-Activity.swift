@@ -52,7 +52,7 @@ struct ActivityTerminal: Equatable {
     var taskTitle = ""  // one line
     var terminalID = ""
     var title = ""  // the terminal's title, one line
-    var agent = ""  // claude, codex or "" (a plain terminal or an unknown agent)
+    var agent = ""  // claude, codex, opencode or "" (a plain terminal or an unknown agent)
     var state: ActivityState = .running
     var since: Date?  // the last state change; nil when the answer has none
     var openPath = ""  // a path activityOpenPath accepts, else empty (the row then opens nothing)
@@ -114,7 +114,7 @@ func decodeActivityTerminal(_ object: [String: Any]) -> ActivityTerminal? {
     let engine = text("engine")
     return ActivityTerminal(engine: engine.isEmpty ? "local" : engine, taskID: text("task_id"), taskTitle: text("task_title"),
                             terminalID: text("terminal_id"), title: text("title"),
-                            agent: agent == "claude" || agent == "codex" ? agent : "", state: state,
+                            agent: ["claude", "codex", "opencode"].contains(agent) ? agent : "", state: state,
                             since: activityTime(object["since"]),
                             openPath: (object["open_path"] as? String).flatMap(activityOpenPath) ?? "",
                             waitingKind: ["select", "accept"].contains(text("waiting_kind")) ? text("waiting_kind") : "")
@@ -147,11 +147,12 @@ func elapsedText(_ seconds: TimeInterval) -> String {
     return L("{1}h {2}m", String(total / 3600), String(total % 3600 / 60))
 }
 
-/// Who runs in the terminal: Claude or Codex, else the terminal's title, else "Terminal".
+/// Who runs in the terminal: Claude, Codex or OpenCode, else the terminal's title, else "Terminal".
 func activityAgentLabel(_ terminal: ActivityTerminal) -> String {
     switch terminal.agent {
     case "claude": return "Claude"
     case "codex": return "Codex"
+    case "opencode": return "OpenCode"
     default: return terminal.title.isEmpty ? L("Terminal") : terminal.title
     }
 }
@@ -520,9 +521,10 @@ func runActivitySelfTest(_ check: (String, Bool) -> Void) {
           kindLabel("1") == "Needs selection" && kindLabel("2") == "Needs acceptance" && kindLabel("3") == "Waiting for you"
           && kindLabel("4") == "Running" && kinds.first { $0.taskID == "3" }?.waitingKind == ""
           && activityRowSpeech(kinds.first { $0.taskID == "1" }!, now: Date()).contains("Needs selection"))
-    check("activity: the agent label is Claude, Codex, the title, else Terminal",
+    check("activity: the agent label is Claude, Codex, OpenCode, the title, else Terminal",
           activityAgentLabel(ActivityTerminal(title: "Claude 2", agent: "claude")) == "Claude"
           && activityAgentLabel(ActivityTerminal(agent: "codex")) == "Codex"
+          && activityAgentLabel(ActivityTerminal(agent: "opencode")) == "OpenCode"
           && activityAgentLabel(ActivityTerminal(title: "npm run watch")) == "npm run watch"
           && activityAgentLabel(ActivityTerminal()) == "Terminal")
     check("activity: running and waiting are counted, not done", activityCounts(decoded) == ActivityCounts(running: 2, waiting: 1)

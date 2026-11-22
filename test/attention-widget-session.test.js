@@ -226,7 +226,7 @@ test('activity: the live terminals that are not idle, running first, then waitin
     idle: terminal.createTerminal(task.id),
     doneOld: terminal.createTerminal(task.id, { agent: 'claude' }),
     running: terminal.createTerminal(task.id, { agent: 'codex' }),
-    waiting: terminal.createTerminal(other.id, { agent: 'claude' }),
+    waiting: terminal.createTerminal(other.id, { agent: 'opencode' }),
     doneNew: terminal.createTerminal(other.id, { agent: 'codex', title: 'Named one' }),
     runningNew: terminal.createTerminal(other.id),
   };
@@ -261,6 +261,7 @@ test('activity: the live terminals that are not idle, running first, then waitin
     state: 'done', since: list[3].since, open_path: `/?openTerminal=local:${other.id}:${made.doneNew.terminal_id}`,
   });
   assert.equal(list[2].waiting_kind, 'accept', 'a question names its kind (an attention without one: accept)');
+  assert.equal(list[2].agent, 'opencode', 'an OpenCode terminal is named as one');
   assert.equal(list[1].task_title, 'Widget session task');
   assert.equal(list[1].title, made.running.title);
   assert.match(made.running.title, /^Codex \d+$/);

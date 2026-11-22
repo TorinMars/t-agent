@@ -53,6 +53,8 @@ const ENGINE_KEY = /^(?:local|remote:[1-9]\d{0,14})$/;
 const ITEM_KEY = /^(local|remote:[1-9]\d{0,14}):([1-9]\d{0,14})$/;
 const TAGENT_TASK = /^[1-9]\d{0,14}$/;
 const TAGENT_TERMINAL = /^[a-zA-Z0-9_-]{1,64}$/;
+// The agents whose terminals the window names and offers as targets (the kinds of routes/terminal.js).
+const WINDOW_AGENTS = new Set(['claude', 'codex', 'opencode']);
 const REPLY_MAX = 4000;
 const ACTIVITY_LIMIT = 50;
 const BRIDGE_WAIT_MS = 1500; // how long POST /open-terminal waits for the browser extension to bring the tab to the front
@@ -139,7 +141,7 @@ function sessionOf(engine, item, info) {
   if (engine === 'local' && info) {
     let found = null;
     try { found = info(taskId, terminalId); } catch { found = null; }
-    agent = found && (found.agent === 'claude' || found.agent === 'codex') ? found.agent : null;
+    agent = found && WINDOW_AGENTS.has(found.agent) ? found.agent : null;
     live = Boolean(found && found.live);
   }
   return { engine, task_id: taskId, terminal_id: terminalId, agent, live, open_path: openTerminalPath(engine, taskId, terminalId) };
@@ -362,7 +364,7 @@ function cleanTargets(answer) {
   const sessions = (answer && Array.isArray(answer.sessions) ? answer.sessions : [])
     .filter(entry => entry && TAGENT_TASK.test(String(entry.task_id ?? '')) && TAGENT_TERMINAL.test(String(entry.terminal_id ?? '')))
     .slice(0, TARGETS_LIMIT)
-    .map(entry => ({ task_id: String(entry.task_id), terminal_id: String(entry.terminal_id), name: text(entry.name), task_title: text(entry.task_title), agent: entry.agent === 'claude' || entry.agent === 'codex' ? entry.agent : null }));
+    .map(entry => ({ task_id: String(entry.task_id), terminal_id: String(entry.terminal_id), name: text(entry.name), task_title: text(entry.task_title), agent: WINDOW_AGENTS.has(entry.agent) ? entry.agent : null }));
   const tasks = (answer && Array.isArray(answer.tasks) ? answer.tasks : [])
     .filter(entry => entry && TAGENT_TASK.test(String(entry.id ?? '')))
     .slice(0, TARGETS_LIMIT)
@@ -370,15 +372,15 @@ function cleanTargets(answer) {
   return { sessions, tasks };
 }
 
-// One task's terminals as the window lists them: the agent terminals (Claude, Codex), named as the task's terminal list names them.
+// One task's terminals as the window lists them: the agent terminals (Claude, Codex, OpenCode), named as the task's terminal list names them.
 const agentTerminals = (task, terminals) => (Array.isArray(terminals) ? terminals : [])
-  .filter(row => row && (row.agent === 'claude' || row.agent === 'codex'))
+  .filter(row => row && WINDOW_AGENTS.has(row.agent))
   .map(row => ({ task_id: String(task.id), terminal_id: String(row.terminal_id), name: row.title || '', task_title: task.title || '', agent: row.agent }));
 
 // This machine's tasks in use and their agent terminals (routes/terminal.js listTerminals, which names a terminal after its session).
 function localTargetList(db) {
   const tasks = db.prepare('SELECT id, title FROM tasks WHERE archived_at IS NULL ORDER BY id DESC LIMIT ?').all(TARGETS_LIMIT);
-  const withAgents = new Set(db.prepare("SELECT DISTINCT task_id FROM task_terminals WHERE agent IN ('claude', 'codex')").all().map(row => row.task_id));
+  const withAgents = new Set(db.prepare("SELECT DISTINCT task_id FROM task_terminals WHERE agent IN ('claude', 'codex', 'opencode')").all().map(row => row.task_id));
   const { listTerminals } = require('./terminal');
   const sessions = [];
   for (const task of tasks) {
@@ -563,7 +565,7 @@ function createAttentionWidgetRoutes({
     return enginesKept.list;
   }
 
-  // The agents of terminals: `${task_id}:${terminal_id}` -> 'claude' | 'codex', one query for all task ids (in chunks of AGENT_CHUNK), as
+  // The agents of terminals: `${task_id}:${terminal_id}` -> 'claude' | 'codex' | 'opencode', one query for all task ids (in chunks of AGENT_CHUNK), as
   // routes/terminal.js terminalInfo reads them one by one (none for the 'default' terminal).
   // The names come with them: the terminal's title, else its task's (`then_target.name` of a prompt).
   function readAgents(sessions) {
@@ -575,7 +577,7 @@ function createAttentionWidgetRoutes({
       try {
         const rows = db.prepare(`SELECT task_id, terminal_id, agent, title, (SELECT title FROM tasks WHERE tasks.id = task_terminals.task_id) AS task_title FROM task_terminals WHERE task_id IN (${chunk.map(() => '?').join(',')})`).all(...chunk);
         for (const row of rows) {
-          if (row.agent === 'claude' || row.agent === 'codex') agents.set(`${row.task_id}:${row.terminal_id}`, row.agent);
+          if (WINDOW_AGENTS.has(row.agent)) agents.set(`${row.task_id}:${row.terminal_id}`, row.agent);
           const name = (typeof row.title === 'string' && row.title.trim()) || (typeof row.task_title === 'string' && row.task_title.trim()) || '';
           if (name) names.set(`${row.task_id}:${row.terminal_id}`, name);
         }
@@ -866,7 +868,7 @@ function createAttentionWidgetRoutes({
         task_title: typeof entry.task_title === 'string' ? entry.task_title : '',
         terminal_id: String(entry.terminal_id),
         title: typeof entry.title === 'string' ? entry.title : '',
-        agent: entry.agent === 'claude' || entry.agent === 'codex' ? entry.agent : null,
+        agent: WINDOW_AGENTS.has(entry.agent) ? entry.agent : null,
         state: entry.state,
         ...(entry.state === 'waiting' && (entry.waiting_kind === 'select' || entry.waiting_kind === 'accept') ? { waiting_kind: entry.waiting_kind } : {}),
         since: new Date(Number(entry.since) || 0).toISOString(),

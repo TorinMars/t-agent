@@ -122,6 +122,8 @@ Capability `tasks:rename-folder` (additive, `api_version` stays 1). `POST /v1/ta
 
 Listing and creating need the `terminal:execute` scope. `/v1/info` returns the `terminal:multiple` capability flag.
 
+`POST /v1/tasks/:id/terminals` takes `{ agent, session_id, title }`; `agent` is `claude`, `codex` or, on an Engine with the capability `terminal:opencode`, `opencode` (an older Engine makes a plain shell for an agent it does not know). `GET /v1/tasks/:id/agent-sessions?agent=claude|codex|opencode` lists the sessions of that agent in the task's folder (`[{ id, title, updated_at, started_at }]`, OpenCode adds `untitled: true` for a session that still has opencode's default title); an unknown agent is 400 `INVALID_AGENT`. The Client's proxy refuses an OpenCode terminal on an Engine without the capability with 501 `OPENCODE_UNSUPPORTED` before anything is created. See `docs/design/opencode-terminals.md`.
+
 The body of a ticket request is `{ "task_id": 1, "terminal_id": "terminal ID" }`. The ticket is bound to both the task and the terminal, so the WebSocket URL cannot change the target. Omitting `terminal_id` uses `default`, which stays compatible with the original endpoint and history.
 
 The terminal control body also accepts an optional `terminal_id` and only controls that shell. Each terminal's history is persisted separately; switching or disconnecting does not terminate the shell.

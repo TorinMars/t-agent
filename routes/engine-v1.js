@@ -183,6 +183,10 @@ function infoHandler(req, res) {
       'terminal:interactive', 'terminal:control', 'terminal:multiple', 'token:pairing',
       // terminals:order: PUT /v1/tasks/:id/terminals/order stores the order of a task's terminals, and GET /v1/tasks/:id/terminals answers in it.
       'terminals:order',
+      // terminal:opencode: POST /v1/tasks/:id/terminals takes agent 'opencode' (an OpenCode terminal) and GET /v1/tasks/:id/agent-sessions?agent=opencode
+      // lists its sessions. An older Engine makes a plain shell for that agent and answers 400 INVALID_AGENT to the listing, so the page offers
+      // OpenCode only for an Engine with this (docs/design/opencode-terminals.md).
+      'terminal:opencode',
       // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.

@@ -170,6 +170,8 @@ function seedTask(side, { title = 'Notes', folder = 'notes' } = {}) {
   const insertTerminal = side.db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, title_custom, work_dir) VALUES (?, ?, ?, ?, ?, ?, ?)');
   insertTerminal.run(taskId, 'term-claude', 'Claude 1', 'claude', CLAUDE_ID, 0, dir);
   insertTerminal.run(taskId, 'term-codex', 'Codex 1', 'codex', CODEX_ID, 0, dir);
+  // OpenCode keeps its sessions in one database of the home: the terminal moves, its session is not carried and is said so.
+  insertTerminal.run(taskId, 'term-opencode', 'OpenCode 1', 'opencode', 'ses_dfb2ee326ffenXILrXxvHwj6qe', 0, dir);
   insertTerminal.run(taskId, 'term-plain', ZH, null, null, 1, path.join(dir, 'src'));
   side.db.prepare("INSERT INTO task_todos (task_id, content, completed, sort_order) VALUES (?, 'write tests', 0, 1)").run(taskId);
   side.db.prepare("INSERT INTO agent_conversations (id, task_id, agent, title, mode) VALUES (?, ?, 'claude', 'Chat', 'default')").run(crypto.randomUUID(), taskId);
@@ -242,7 +244,7 @@ test('a move: folder, links, modes, .git, a large file in chunks, sessions, rows
   assert.equal(preview.body.refusal, null);
   assert.equal(preview.body.terminals.running, 1);
   assert.equal(preview.body.folder.files, 7);
-  assert.deepEqual({ claude: preview.body.sessions.claude, codex: preview.body.sessions.codex }, { claude: 1, codex: 1 });
+  assert.deepEqual(preview.body.sessions, { claude: 1, codex: 1, missing: 1 }, 'the OpenCode session is counted as not carried');
   assert.deepEqual(preview.body.targets.map(target => [target.name, target.supported, target.refusal]), [['K01', true, null]]);
   const started = await A.page('POST', `/${seed.taskId}/move`, { target: B.instanceId });
   assert.equal(started.status, 202, JSON.stringify(started.body));
@@ -271,9 +273,10 @@ test('a move: folder, links, modes, .git, a large file in chunks, sessions, rows
   // Rows: terminals (their folders moved), to-do, chat.
   const terminals = B.db.prepare('SELECT * FROM task_terminals WHERE task_id = ? ORDER BY rowid').all(task.id);
   assert.deepEqual(terminals.map(row => [row.terminal_id, row.agent_session_id, row.work_dir]), [
-    ['term-claude', CLAUDE_ID, newDir], ['term-codex', CODEX_ID, newDir], ['term-plain', null, path.join(newDir, 'src')],
+    ['term-claude', CLAUDE_ID, newDir], ['term-codex', CODEX_ID, newDir], ['term-opencode', null, newDir], ['term-plain', null, path.join(newDir, 'src')],
   ]);
-  assert.equal(terminals[2].title, ZH);
+  assert.equal(terminals[2].agent, 'opencode', 'the OpenCode terminal comes along and starts a fresh opencode there');
+  assert.equal(terminals[3].title, ZH);
   assert.equal(B.db.prepare('SELECT COUNT(*) AS n FROM task_todos WHERE task_id = ?').get(task.id).n, 1);
   assert.equal(B.db.prepare('SELECT COUNT(*) AS n FROM agent_conversations WHERE task_id = ?').get(task.id).n, 1);
   // Sessions: in the project folder of the new path, their cwd rewritten (message text kept); Codex at the same place under its home.

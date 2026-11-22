@@ -224,3 +224,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.152.1 Learn audio: a repeat waits until the browser has stopped reading, so a sentence in Spell is no longer cut off by its second pass
 > v2.152.2 Learn Spell: after a wrong answer the right spelling stands above yours, letters aligned (gaps for a missing or an extra letter)
 > v2.153.0 OpenCode is a third agent in sessions (start, resume, session names and activity through a per-terminal plugin, earlier sessions, capability terminal:opencode); mouse wheel reaches full-screen programs at the right column (Wide view, touch strip, mouse over the strip)
+> v2.154.0 Learn schedules reviews with FSRS-6 (answers replayed, desired retention 85/90/95%, intervals on the grade buttons; schema 22) and shows a Progress view with tiles and charts

@@ -31,7 +31,8 @@ const OC_KEYS = ['Esc', 'Tab', 'Ctrl+J', 'Ctrl+X B', 'Ctrl+X L'];
 // 11-22 18:40 and 11-21 09:12 in the browser's time zone (the page shows local time).
 const AT_1 = new Date(2026, 10, 22, 18, 40).getTime();
 const AT_2 = new Date(2026, 10, 21, 9, 12).getTime();
-const SESSIONS = [{ id: 'ses_a1', title: 'Fix the flaky release test', updated_at: AT_1 }, { id: 'ses_b2', title: 'Write the 2.152 release notes', updated_at: AT_2 }];
+const SESSIONS = [{ id: 'ses_a1', title: 'Fix the flaky release test', updated_at: AT_1 }, { id: 'ses_b2', title: 'Write the 2.152 release notes', updated_at: AT_2 },
+  { id: 'ses_c3xyz789ab', title: 'yz789ab', untitled: true, updated_at: AT_2 - 60000 }]; // still on opencode's default title: shown as Untitled session
 const LOCAL_TASKS = [{ id: 1, title: 'release-notes', status: 'doing' }];
 const TERMINALS = [
   { terminal_id: 'default', title: 'Terminal 1' },
@@ -139,11 +140,11 @@ async function dialogChecks(t) {
   await t.press(choices.filter({ hasText: 'OpenCode session' }));
   await choices.filter({ hasText: 'Fix the flaky release test' }).waitFor();
   assert.equal(server.sessionQueries.at(-1), '/api/tasks/1/agent-sessions?agent=opencode', `${size}: the sessions of the folder are asked for`);
-  assert.deepEqual(await labels(), ['New OpenCode session', 'Fix the flaky release test', 'Write the 2.152 release notes', 'Back'], `${size}: the OpenCode sub-list`);
+  assert.deepEqual(await labels(), ['New OpenCode session', 'Fix the flaky release test', 'Write the 2.152 release notes', 'Untitled session', 'Back'], `${size}: the OpenCode sub-list`);
   assert.equal(await page.locator('#h5-new-session-sub').textContent(), 'OpenCode session', `${size}: the sub-list is named`);
   const sub = await marks(page);
-  assert.deepEqual(sub.map(item => item.mark), ['opencode', 'opencode', 'opencode', 'back'], `${size}: the sub-list marks`);
-  assert.deepEqual(sub.map(item => item.note), ['', '11-22 18:40', '11-21 09:12', ''], `${size}: an earlier session shows when it was last used`);
+  assert.deepEqual(sub.map(item => item.mark), ['opencode', 'opencode', 'opencode', 'opencode', 'back'], `${size}: the sub-list marks`);
+  assert.deepEqual(sub.map(item => item.note), ['', '11-22 18:40', '11-21 09:12', '11-21 09:11', ''], `${size}: an earlier session shows when it was last used`);
   await shot(page, `${size}-2-opencode-list.png`);
   await t.press(choices.filter({ hasText: 'New OpenCode session' }));
   await page.locator('#h5-new-session').waitFor({ state: 'detached', ...SHORT });

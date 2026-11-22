@@ -2407,7 +2407,10 @@
     const start = sessionId => () => void startSession({ agent, session_id: sessionId });
     showSessionMenu(label, [
       [`New ${label}`, start(undefined), null, true, null, false, { icon: agent }],
-      ...(Array.isArray(rows) ? rows : []).map(row => [row.title, start(row.id), 'raw', false, null, false, { icon: agent, note: sessionTime(row.updated_at) }]),
+      // An OpenCode session still on its default title comes `untitled` (its title is then a piece of its id): it reads "Untitled session".
+      ...(Array.isArray(rows) ? rows : []).map(row => (row.untitled
+        ? ['Untitled session', start(row.id), null, false, null, false, { icon: agent, note: sessionTime(row.updated_at) }]
+        : [row.title, start(row.id), 'raw', false, null, false, { icon: agent, note: sessionTime(row.updated_at) }])),
       ['Back', openSessionMenu, null, false, null, false, { icon: 'back' }],
     ]);
   }

@@ -647,6 +647,7 @@ I18n.add({
   "All": "全部",
   "Session": "会话",
   "New Terminal": "新开终端",
+  "Untitled session": "未命名会话",
   "New session": "新建会话",
   "Enter to create · ↑↓ to choose": "回车创建 · ↑↓ 选择",
   "Creating…": "正在创建…",

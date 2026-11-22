@@ -156,7 +156,9 @@ test('a starter list chosen shows the untouched starter words as new', t => {
 
 test('the FSRS stability wins over the interval where it is set', t => {
   const { db, learn, cards } = setup(t);
-  db.exec('ALTER TABLE learn_cards ADD COLUMN fsrs_stability REAL');
+  // Schema 22 (FSRS) has the column; an older schema gets it here, so both cases read the same.
+  if (!db.prepare('PRAGMA table_info(learn_cards)').all().some(column => column.name === 'fsrs_stability')) db.exec('ALTER TABLE learn_cards ADD COLUMN fsrs_stability REAL');
+  db.prepare('UPDATE learn_cards SET fsrs_stability = NULL').run();
   db.prepare('UPDATE learn_cards SET fsrs_stability = ? WHERE id = ?').run(5, cards.learning);
   db.prepare('UPDATE learn_cards SET fsrs_stability = ? WHERE id = ?').run(0.5, cards.mature);
   assert.deepEqual(learn.stats('me').memory, { new: 2, learning: 1, young: 4, mature: 1 }, 'NULL stability falls back to interval_days');

@@ -51,3 +51,17 @@ test('the copy view hint shows in fit mode under 100 columns only', () => {
   assert.equal(G.wrapHint('wide', 52), false);
   assert.equal(G.wrapHint('fit', 0), false);
 });
+
+test('mouse reports are told apart from typed input (they never pull a wide terminal back to the cursor)', () => {
+  assert.equal(G.isMouseReport('\x1b[<64;150;26M'), true, 'SGR wheel up');
+  assert.equal(G.isMouseReport('\x1b[<65;3;1M'), true, 'SGR wheel down');
+  assert.equal(G.isMouseReport('\x1b[<35;42;16M'), true, 'SGR motion (any-motion mode, as opencode turns on)');
+  assert.equal(G.isMouseReport('\x1b[<0;10;5m'), true, 'SGR release');
+  assert.equal(G.isMouseReport('\x1b[<64;1;1M\x1b[<64;1;1M'), true, 'two reports in one chunk');
+  assert.equal(G.isMouseReport('\x1b[96;10;20M'), true, 'urxvt');
+  assert.equal(G.isMouseReport('\x1b[M`!!'), true, 'X10');
+  for (const typed of ['a', 'x', '\r', '\x1b', '\x1b[A', '\x1bOB', '\x1b[1;5D', '\x1b[3~', '\x1b[200~hello\x1b[201~', '\x1b[<64;1;1Mx', 'M', '']) {
+    assert.equal(G.isMouseReport(typed), false, `typed input ${JSON.stringify(typed)}`);
+  }
+  assert.equal(G.isMouseReport(null), false);
+});

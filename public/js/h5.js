@@ -2419,8 +2419,12 @@
   function send(s, data) {
     if (uploading || !connected(s)) return false;
     s.ws.send(data);
-    s.follow = true; // input (typed, a key of the key bar or the on-screen keyboard, a paste) brings the cursor of a wide terminal back into view
-    followCursor(s);
+    // Input (typed, a key of the key bar or the on-screen keyboard, a paste) brings the cursor of a wide terminal back into view. A mouse report (a
+    // wheel step, a click or a motion report for a program in mouse mode) points at a cell the person sees, so it leaves the view where it is.
+    if (!TerminalGestures.isMouseReport(data)) {
+      s.follow = true;
+      followCursor(s);
+    }
     return true;
   }
   // Typed input. While the saved screen is replayed it is kept (modifiers stay latched until the text is really sent).
@@ -2650,7 +2654,9 @@
   //   below the thumb scrolls one page. The thumb also follows scrolling done elsewhere (new output, a native drag on the body, keys).
   // - 'spring' (alternate buffer: Claude Code, Codex, vim, tmux ...; the page cannot know the program's position): the thumb rests in the
   //   middle; pulling it down scrolls down (newer), up scrolls up (older), faster the further it is pulled; released, it springs back. The
-  //   steps are wheel events, which xterm forwards the way a desktop wheel would (mouse reports, or arrow keys without mouse mode).
+  //   steps are wheel events, which xterm forwards the way a desktop wheel would (mouse reports, or arrow keys without mouse mode). They point at the
+  //   middle of the visible terminal, not at the strip: a program that scrolls the pane under the mouse (opencode) has its main content there, and
+  //   the strip's own x is over its right-most columns (opencode's sidebar, which does not scroll the messages).
   // - 'none' (no terminal, or a normal buffer without history): nothing is drawn and touches go through to the terminal.
   // A drag on the terminal body does not make wheel events; xterm's own touch handling scrolls the normal-buffer history there (touch-action: pan-y).
   // Tuning. Change these to tune the feel.
@@ -2788,7 +2794,8 @@
       if (!lines) return;
       drag.rest -= lines;
       const rect = drag.el.getBoundingClientRect();
-      scrollStep(drag.s, lines, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      const box = drag.s.el.getBoundingClientRect(); // the visible terminal (a wide screen is moved inside it)
+      scrollStep(drag.s, lines, box.left + box.width / 2, rect.top + rect.height / 2);
     };
     const frame = () => {
       spring = 0;
@@ -2891,6 +2898,22 @@
     });
     document.addEventListener('pointerup', finish);
     document.addEventListener('pointercancel', finish);
+    // A mouse wheel or trackpad over the strip (a touch screen that also has a mouse or trackpad: the strip is drawn in input mode 'touch') goes to the
+    // terminal under it at the same point, as if the strip were not there: xterm scrolls, or reports the cell under the pointer to the program, and a
+    // sideways wheel moves the wide terminal. A pinch (ctrlKey) stays the browser's.
+    document.addEventListener('wheel', event => {
+      const el = strip(event);
+      if (!el || event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const old = el.style.pointerEvents;
+      el.style.pointerEvents = 'none';
+      const under = document.elementFromPoint(event.clientX, event.clientY);
+      el.style.pointerEvents = old;
+      if (!under || (under.closest && under.closest('#h5-wheel'))) return;
+      const { deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, shiftKey, altKey, metaKey, buttons } = event;
+      under.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, view: window, deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, shiftKey, altKey, metaKey, buttons }));
+    }, { capture: true, passive: false });
     // Capture lost without a pointerup first (the strip was removed, or the browser took the pointer): the drag is over.
     document.addEventListener('lostpointercapture', finish, true);
     const away = () => { drop(); hideLater(); };

@@ -470,11 +470,14 @@ test('a schema 13 database gets the learning sync columns (schema 14), with a co
   assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
   const card = after.prepare('SELECT * FROM learn_cards').get();
   assert.equal(card.en, 'merge');
-  assert.deepEqual([card.content_at, card.state_at, card.state_by], [0, 777, '']);
-  assert.ok(card.sync_seq > 0);
+  // Schema 14 gives the state the clock of the last answer (777); the schema 22 step of the same start then replays the answered card with FSRS
+  // and gives it a newer clock and the newest change number.
+  assert.deepEqual([card.content_at, card.state_by], [0, '']);
+  assert.ok(card.state_at > 777);
+  assert.equal(card.interval_days, 2, 'one good answer: S0(good), 2 days');
   const answer = after.prepare('SELECT * FROM learn_reviews').get();
   assert.equal(answer.at, 777);
-  assert.ok(answer.uid && answer.sync_seq > card.sync_seq);
+  assert.ok(answer.uid && answer.sync_seq > 0 && card.sync_seq > answer.sync_seq);
   assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'learn_card_moves'").get().n, 1);
   for (const index of ['idx_learn_cards_seq', 'idx_learn_reviews_uid', 'idx_learn_reviews_seq', 'idx_learn_card_moves_seq']) assert.equal(after.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?").get(index).n, 1, index);
   after.close();
@@ -698,6 +701,51 @@ test('a schema 20 database gets the tables learn_convos and learn_convo_messages
   const again = openDb({ TAGENT_HOME: root });
   assert.equal(again.status, 0, again.stderr);
   assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
+test('a schema 21 database gets the FSRS columns (schema 22) and its answered cards replayed, with a copy taken first; a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: learn_cards without the FSRS columns, user_version 21, a card with two answers (the old rules gave it
+  // 3 days) and a card without answers.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE learn_cards DROP COLUMN fsrs_stability; ALTER TABLE learn_cards DROP COLUMN fsrs_difficulty');
+  const day = 24 * 60 * 60 * 1000;
+  const at = Date.UTC(2026, 10, 1);
+  const card = old.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, created_at, due_at, interval_days, reps, last_result, last_at, last_correct,
+    content_at, state_at, sync_seq) VALUES ('owner', 'word', 'deploy', 'deploy', 'z', 'manual', 1, ?, 3, 2, 'good', ?, 1, 5, ?, 3)`).run(at + 4 * day, at + day, at + day).lastInsertRowid;
+  old.prepare("INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, uid, sync_seq) VALUES (?, 'owner', ?, 'review', 'good', 1, 'u-0001', 4)").run(card, at);
+  old.prepare("INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, uid, sync_seq) VALUES (?, 'owner', ?, 'review', 'good', 1, 'u-0002', 5)").run(card, at + day);
+  old.prepare("INSERT INTO learn_cards (owner, kind, en, norm, source, created_at, due_at, content_at, sync_seq) VALUES ('owner', 'word', 'merge', 'merge', 'manual', 1, 2, 5, 6)").run();
+  old.pragma('user_version = 21');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 21 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  assert.match(result.stdout, /the review state of 1 learning cards was replayed with FSRS-6 \(0 due earlier, 1 later, 0 kept\)/);
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const columns = after.prepare('PRAGMA table_info(learn_cards)').all().map(column => column.name);
+  assert.ok(columns.includes('fsrs_stability') && columns.includes('fsrs_difficulty'));
+  const rows = after.prepare('SELECT norm, interval_days, due_at, reps, fsrs_stability, state_at, sync_seq FROM learn_cards ORDER BY id').all();
+  // good, then good a day later: S = 7.3 days, due 7 days after the last answer; a new clock and change number so that linked engines get it.
+  assert.equal(rows[0].interval_days, 7);
+  assert.equal(rows[0].due_at, at + day + 7 * day);
+  assert.equal(rows[0].reps, 2);
+  assert.ok(rows[0].fsrs_stability > 7 && rows[0].fsrs_stability < 8);
+  assert.ok(rows[0].state_at > at + day);
+  assert.ok(rows[0].sync_seq > 6);
+  assert.deepEqual({ ...rows[1] }, { norm: 'merge', interval_days: 0, due_at: 2, reps: 0, fsrs_stability: null, state_at: 0, sync_seq: 6 }, 'a card without answers stays new');
+  assert.equal(after.prepare('SELECT COUNT(*) FROM learn_reviews').pluck().get(), 2, 'the answers are kept');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-21-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated|replayed/);
 });
 
 test('a database of this schema is refused by a version that knows the one before at most', t => {

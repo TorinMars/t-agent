@@ -598,6 +598,7 @@ I18n.add({
   "Invalid list range": "列表范围无效",
   "Invalid meaning": "释义无效",
   "The daily goal must be a whole number from 1 to 200": "每日目标必须是 1 到 200 之间的整数",
+  "The desired retention must be 0.85, 0.9 or 0.95": "目标记忆率必须是 0.85、0.9 或 0.95",
   "The grade must be again, hard or good": "评分必须是“重来”“困难”或“良好”",
   "The kind must be word or sentence": "类型必须是单词或句子",
   "The sentence must be English": "句子必须是英文",

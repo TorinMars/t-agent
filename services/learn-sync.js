@@ -21,6 +21,7 @@ const { seal, open } = require('./settings-sync');
 const { readState, writeState, isPlainObject } = require('./settings-sync-store');
 const learnModule = require('./learn');
 const review = require('./learn-review');
+const replaySchedule = require('./learn-schedule');
 const { STARTER_LISTS } = require('./learn-starter');
 
 const CAPABILITY = 'learn:sync';
@@ -238,10 +239,12 @@ function createLearnSync(options) {
     const name = o();
     const seqFor = current => (bump ? syncStore.nextSeq(db) : current);
     let applied = 0;
+    // The cards whose review state or answers changed here: recomputed from their answers at the end (replayTouched).
+    const touched = new Set();
     const writeCard = (id, card, currentSeq) => db.prepare(`UPDATE learn_cards SET created_at = @created_at, en = @en, zh = @zh, phonetic = @phonetic, source = @source,
       context = @context, suspended = @suspended, content_at = @content_at, content_by = @content_by, due_at = @due_at, interval_days = @interval_days,
-      ease = @ease, reps = @reps, lapses = @lapses, last_result = @last_result, last_at = @last_at, last_correct = @last_correct, state_at = @state_at,
-      state_by = @state_by, picked_level = @picked_level, picked_skipped = @picked_skipped, picked_at = @picked_at, sync_seq = @sync_seq WHERE id = @id`)
+      ease = @ease, reps = @reps, lapses = @lapses, last_result = @last_result, last_at = @last_at, last_correct = @last_correct,
+      fsrs_stability = @fsrs_stability, fsrs_difficulty = @fsrs_difficulty, state_at = @state_at, state_by = @state_by, picked_level = @picked_level, picked_skipped = @picked_skipped, picked_at = @picked_at, sync_seq = @sync_seq WHERE id = @id`)
       .run({ ...card, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: seqFor(currentSeq), id });
 
     function applyCard(raw) {
@@ -268,15 +271,17 @@ function createLearnSync(options) {
       if (!local) {
         if (follow) return; // the card it moved to is not here: nothing to merge into
         db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, reps, lapses, last_result,
-          last_at, last_correct, suspended, content_at, content_by, state_at, state_by, picked_level, picked_skipped, picked_at, sync_seq) VALUES (@owner, @kind,
-          @en, @norm, @zh, @phonetic, @source, @context, @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result, @last_at, @last_correct,
-          @suspended, @content_at, @content_by, @state_at, @state_by, @picked_level, @picked_skipped, @picked_at, @sync_seq)`).run({ ...card, owner: name, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
+          last_at, last_correct, fsrs_stability, fsrs_difficulty, suspended, content_at, content_by, state_at, state_by, picked_level, picked_skipped, picked_at,
+          sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @phonetic, @source, @context, @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result,
+          @last_at, @last_correct, @fsrs_stability, @fsrs_difficulty, @suspended, @content_at, @content_by, @state_at, @state_by, @picked_level, @picked_skipped,
+          @picked_at, @sync_seq)`).run({ ...card, owner: name, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
         applied += 1;
         return;
       }
       const result = merge.mergeCard(merge.resolved(local, self), card, { follow });
       if (!result.changed) return;
       writeCard(local.id, result.card, local.sync_seq);
+      touched.add(local.id);
       applied += 1;
     }
 
@@ -293,7 +298,7 @@ function createLearnSync(options) {
         if (!target || target.id === card.id) return;
         const result = merge.mergeCard(merge.resolved(target, self), merge.resolved(card, self), { follow: true });
         if (result.changed) writeCard(target.id, result.card, target.sync_seq);
-        db.prepare('UPDATE learn_reviews SET card_id = ? WHERE card_id = ?').run(target.id, card.id);
+        if (db.prepare('UPDATE learn_reviews SET card_id = ? WHERE card_id = ?').run(target.id, card.id).changes || result.changed) touched.add(target.id);
         // The questions about the old text go with the card; the newest 20 of both are kept.
         if (db.prepare('UPDATE learn_chats SET card_id = ? WHERE card_id = ?').run(target.id, card.id).changes) syncStore.pruneChats(db, target.id);
         db.prepare('DELETE FROM learn_cards WHERE id = ?').run(card.id);
@@ -321,6 +326,7 @@ function createLearnSync(options) {
       if (!card) return;
       db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq, expected, tag, hinted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(card.id, name, answer.at, answer.mode, answer.grade, answer.correct, answer.answer, answer.uid, bump ? syncStore.nextSeq(db) : 0, answer.expected, answer.tag, answer.hinted);
+      touched.add(card.id);
       applied += 1;
     }
 
@@ -409,9 +415,15 @@ function createLearnSync(options) {
       const by = typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender;
       syncStore.observe(db, raw.at);
       const local = settingsVersion(name);
-      const hasValue = readState(db, learnModule.settingsKey(name)) !== null;
+      const stored = readState(db, learnModule.settingsKey(name));
+      const hasValue = stored !== null;
       if (hasValue && !merge.later(raw.at, by, local.at, local.by || self)) return;
+      // An older peer does not know the desired retention and sends none: the one here stays (it is not reset to the default).
+      if (value.desired_retention === undefined && isPlainObject(stored) && review.RETENTIONS.includes(stored.desired_retention)) value.desired_retention = stored.desired_retention;
+      const before = replaySchedule.retentionOf(db, name);
       writeState(db, learnModule.settingsKey(name), value);
+      const after = replaySchedule.retentionOf(db, name);
+      if (after !== before) retentionChanged = after;
       writeState(db, learnModule.settingsVersionKey(name), { at: raw.at, by: own(by), seq: bump ? syncStore.nextSeq(db) : local.seq });
       applied += 1;
     }
@@ -429,6 +441,28 @@ function createLearnSync(options) {
       applied += 1;
     }
 
+    // A desired retention that came with the settings: the due dates of the cards follow it (every engine does the same from the same stability).
+    let retentionChanged = null;
+    // The touched cards with a complete history get the state of their replay, so two engines with the same answers have the same state whatever
+    // order the answers came in. Not on a company computer (its cache takes its home's state: its answers are not all here). A state made by a
+    // version that does not compute FSRS (an older peer: NULL with answers) whose schedule differs from the replay gets a new review-state clock
+    // with it, so that peer takes it; any other replay keeps the clock: an engine with the same answers replays to the same state, and a replay
+    // that only adds the FSRS state (a replayed schedule that came through an older peer, which drops it) changes nothing that peer reads, so
+    // nothing goes back and forth.
+    function replayTouched() {
+      if (!bump || !touched.size) return;
+      const retention = replaySchedule.retentionOf(db, name);
+      for (const id of touched) {
+        const row = db.prepare('SELECT * FROM learn_cards WHERE id = ?').get(id);
+        if (!row) continue;
+        const state = replaySchedule.replayed(db, row, retention);
+        if (!state || !replaySchedule.differs(row, state)) continue;
+        const older = (row.fsrs_stability === null || row.fsrs_stability === undefined) && (Number(row.reps) || 0) > 0 && replaySchedule.scheduleDiffers(row, state);
+        replaySchedule.writeReplayed(db, row.id, state, { sync_seq: syncStore.nextSeq(db), ...(older ? { state_at: syncStore.stamp(db, now()), state_by: '' } : {}) });
+        applied += 1;
+      }
+    }
+
     db.transaction(() => {
       for (const raw of list('cards')) applyCard(raw);
       for (const raw of list('moves')) applyMove(raw);
@@ -441,6 +475,8 @@ function createLearnSync(options) {
       if (convosTouched && bump) syncStore.pruneConvos(db, name);
       if (payload.settings) applySettings(payload.settings);
       if (payload.level) applyLevel(payload.level);
+      if (retentionChanged !== null) replaySchedule.reschedule(db, name, retentionChanged);
+      replayTouched();
     })();
     return applied;
   }

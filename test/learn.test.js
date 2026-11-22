@@ -12,7 +12,9 @@ const { createLearn, checkEnglish, codeLike } = require('../services/learn');
 // The audio settings with their defaults ("Audio" in docs/design/learn-english-page.md).
 const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true,
   // The mistake analysis settings ("Mistake reports" in docs/design/learn-english.md), kept with them.
-  analysis_auto: true, report_seen: '', report_lang: 'en', pick_words: true };
+  analysis_auto: true, report_seen: '', report_lang: 'en', pick_words: true,
+  // The desired retention of the review ("Desired retention" in docs/design/learn-review-fsrs.md).
+  desired_retention: 0.9 };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');
@@ -102,7 +104,7 @@ test('a card is created once per owner, kind and text; adding it again returns i
   assert.equal(first.status, 200);
   assert.equal(first.body.created, true);
   const card = first.body.card;
-  assert.deepEqual(Object.keys(card).sort(), ['context', 'context_zh', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'source', 'suspended', 'zh'].sort());
+  assert.deepEqual(Object.keys(card).sort(), ['context', 'context_zh', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'retrievability', 'source', 'suspended', 'zh'].sort());
   assert.equal(card.en, 'Please fix the login page.');
   assert.equal(card.zh, '');
   assert.equal(card.context, 'Fix login');
@@ -151,18 +153,21 @@ test('an answer applies the review rules, is logged, and its answer text is capp
   const { card } = (await call('POST', '/cards', word('merge', { zh: ZH }))).body;
   const good = await call('POST', `/cards/${card.id}/answer`, { mode: 'spell', grade: 'good', correct: true, answer: 'merge' });
   assert.equal(good.status, 200);
-  assert.equal(good.body.card.interval_days, 1);
-  assert.equal(good.body.card.due_at, new Date(NOW + DAY).toISOString());
+  // FSRS-6 at the desired retention 0.9: a first good gives the stability S0(good) = 2.3065 days, 2 whole days.
+  assert.equal(good.body.card.interval_days, 2);
+  assert.equal(good.body.card.due_at, new Date(NOW + 2 * DAY).toISOString());
+  assert.equal(good.body.card.retrievability, 1, 'just answered');
   assert.equal(good.body.card.reps, 1);
   assert.equal(good.body.card.last_result, 'good');
   assert.equal(good.body.card.last_at, new Date(NOW).toISOString());
   clock.now += DAY;
   const second = await call('POST', `/cards/${card.id}/answer`, { mode: 'review', grade: 'good', correct: true });
-  assert.equal(second.body.card.interval_days, 3);
+  assert.equal(second.body.card.interval_days, 7, 'good a day later: S = 7.3 days');
+  assert.ok(second.body.card.retrievability === 1, 'just answered');
   const wrong = await call('POST', `/cards/${card.id}/answer`, { mode: 'review', grade: 'again', correct: false, answer: 'x'.repeat(900) });
   assert.equal(wrong.body.card.interval_days, 0);
   assert.equal(wrong.body.card.lapses, 1);
-  assert.equal(wrong.body.card.ease, 2.3);
+  assert.equal(wrong.body.card.ease, 2.5, 'the ease is no longer used and stays as it is');
   assert.equal(wrong.body.card.due_at, new Date(clock.now + 10 * 60 * 1000).toISOString());
   const rows = db.prepare('SELECT mode, grade, correct, length(answer) AS size FROM learn_reviews ORDER BY id').all();
   assert.deepEqual(rows.map(row => ({ ...row })), [

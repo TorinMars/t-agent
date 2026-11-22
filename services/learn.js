@@ -12,6 +12,7 @@
 const { readState, writeState, isPlainObject } = require('./settings-sync-store');
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
+const schedule = require('./learn-schedule');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('./learn-starter');
 const phonetics = require('./phonetics');
 
@@ -63,8 +64,13 @@ const REPORT_SETTINGS = {
 const PICK_SETTINGS = {
   pick_words: { default: true, check: value => typeof value === 'boolean' },
 };
-// The fields checked by a rule (REPORT_SETTINGS and PICK_SETTINGS), read, saved and merged the same way.
-const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS };
+// The desired retention of the review ("Desired retention" in docs/design/learn-review-fsrs.md): the probability of recall FSRS schedules a card at,
+// 0.85, 0.9 or 0.95. Changing it reschedules the cards.
+const SCHEDULE_SETTINGS = {
+  desired_retention: { default: review.DEFAULT_RETENTION, check: value => review.RETENTIONS.includes(value) },
+};
+// The fields checked by a rule (REPORT_SETTINGS, PICK_SETTINGS and SCHEDULE_SETTINGS), read, saved and merged the same way.
+const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS, ...SCHEDULE_SETTINGS };
 const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS), ...Object.keys(CHECKED_SETTINGS)]);
 const DEFAULT_SETTINGS = {
   collect: true, daily_goal: 20, starter: 'dev', ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.default])),
@@ -174,13 +180,15 @@ function reportJson(row, { full = true } = {}) {
 }
 
 // The JSON of a card for the page. Times are ISO 8601 strings. `contexts`: the Chinese of the sentence cards by their English (contextZh below), so a
-// word asked inside one of the person's sentences carries that sentence's Chinese as `context_zh` ('' for every other card).
-function cardJson(row, contexts = null) {
+// word asked inside one of the person's sentences carries that sentence's Chinese as `context_zh` ('' for every other card). `retrievability`: the
+// probability of recall at `at` from the FSRS state (0..1), null for a card without one (a new card).
+function cardJson(row, contexts = null, at = Date.now()) {
   return {
     id: row.id, kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context,
     context_zh: row.kind === 'word' && row.context && contexts ? contexts.get(row.context) || '' : '',
     due_at: iso(row.due_at), interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: iso(row.last_at), suspended: Boolean(row.suspended), created_at: iso(row.created_at),
+    retrievability: review.retrievability(row, at),
   };
 }
 
@@ -254,13 +262,22 @@ function createLearn({
       if (!field.values.includes(body[key])) throw bad('Invalid audio setting');
       next[key] = body[key];
     }
+    if (body.desired_retention !== undefined && !SCHEDULE_SETTINGS.desired_retention.check(body.desired_retention)) {
+      throw bad('The desired retention must be 0.85, 0.9 or 0.95');
+    }
+    const retention = next.desired_retention;
     for (const [key, field] of Object.entries(CHECKED_SETTINGS)) {
       if (body[key] === undefined) continue;
       if (!field.check(body[key])) throw bad('Invalid learning settings');
       next[key] = body[key];
     }
-    writeState(db, settingsKey(owner), next);
-    settingsChanged(owner);
+    // A new desired retention reschedules the cards with an FSRS state, with the settings, in one transaction.
+    db.transaction(() => {
+      writeState(db, settingsKey(owner), next);
+      if (next.desired_retention !== retention) schedule.reschedule(db, owner, next.desired_retention);
+      writeState(db, settingsVersionKey(owner), { at: stamp(), by: '', seq: seq() });
+    })();
+    changed();
     if (next.starter) importStarter(owner, next.starter);
     return next;
   }
@@ -282,7 +299,14 @@ function createLearn({
     const found = db.prepare("SELECT en, zh FROM learn_cards WHERE owner = ? AND kind = 'sentence' AND en IN (SELECT value FROM json_each(?))").all(owner, JSON.stringify(wanted));
     return new Map(found.map(row => [row.en, row.zh]));
   }
-  const cardsJson = (owner, rows) => { const contexts = contextZh(owner, rows); return rows.map(row => cardJson(row, contexts)); };
+  const cardsJson = (owner, rows) => { const contexts = contextZh(owner, rows); const at = now(); return rows.map(row => cardJson(row, contexts, at)); };
+  // The state an answer on this card builds on (services/learn-schedule.js): the stored FSRS state; for a card answered before without one (its
+  // state came from an older version) the replay of its answers when they are all here; else the row as it is (learn-review.js estimates it).
+  function baseState(row, retention) {
+    if (review.storedMemory(row) || !(row.reps > 0)) return row;
+    const state = schedule.replayed(db, row, retention);
+    return state ? { ...row, ...state } : row;
+  }
   const oneCard = (owner, row) => cardsJson(owner, [row])[0];
 
   // A card is created once per owner, kind and normalized text; adding it again returns the card there, with an empty meaning filled in.
@@ -372,10 +396,12 @@ function createLearn({
     // whether help was used: the Mistakes list and the analysis read them ("Mistakes" in docs/design/learn-english.md). A right one keeps none.
     const detail = mistakeDetail(body, row);
     const at = now();
-    const next = review.applyAnswer(row, body.grade, body.correct, at);
+    const retention = schedule.retentionOf(db, owner);
+    const next = review.applyAnswer(baseState(row, retention), body.grade, body.correct, at, { retention });
     db.transaction(() => {
       db.prepare(`UPDATE learn_cards SET due_at = @due_at, interval_days = @interval_days, ease = @ease, reps = @reps, lapses = @lapses,
-        last_result = @last_result, last_at = @last_at, last_correct = @last_correct, state_at = @state_at, state_by = '', sync_seq = @seq WHERE id = @id`)
+        last_result = @last_result, last_at = @last_at, last_correct = @last_correct, fsrs_stability = @fsrs_stability, fsrs_difficulty = @fsrs_difficulty,
+        state_at = @state_at, state_by = '', sync_seq = @seq WHERE id = @id`)
         .run({ ...next, state_at: stamp(), seq: seq(), id: row.id });
       db.prepare('INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct, answer, uid, sync_seq, expected, tag, hinted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(row.id, owner, at, body.mode, body.grade, body.correct ? 1 : 0, text, syncStore.reviewId(), seq(), detail.expected, detail.tag, detail.hinted);
@@ -580,7 +606,12 @@ function createLearn({
     if (rest.length && !translatorDown) {
       background = background.then(async () => { await fillMeanings(owner, rest); await fillPhonetics(owner, rest, { ask: true }); }).catch(() => {});
     }
-    return { cards: cardsJson(owner, rows) };
+    // `next`: what each grade would do now, in milliseconds until the card is due again ({ again: 600000, hard, good }), for the grade buttons.
+    const at = now();
+    const retention = current.desired_retention;
+    const cards = cardsJson(owner, rows);
+    cards.forEach((card, index) => { card.next = review.preview(baseState(rows[index], retention), at, retention); });
+    return { cards };
   }
 
   // `source`: the cards of one source; `translation` also gives the words asked inside one of the person's translated sentences (their context is
@@ -767,6 +798,6 @@ function sharedLearn() {
 
 module.exports = {
   createLearn, sharedLearn, translatorLookup, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
   LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse, PREFILL_BATCH,
 };

@@ -16,17 +16,21 @@ const listeners = new Set();
 // time of the last answer as the review-state clock (so on the first merge the side answered last keeps its schedule), a random review id, and
 // change numbers in their order of creation. Schema 15 adds `phonetic` (the transcription of a word, '' until it is looked up) the same way,
 // schema 17 the detail of a wrong answer (`expected`, `tag`, `hinted`) and the table `learn_reports`, schema 19 the pick of a sentence
-// (`picked_level`, `picked_skipped`, `picked_at`; not picked yet), schema 20 the table `learn_chats` (the questions about a card), and schema 21
-// the tables `learn_convos` and `learn_convo_messages` (the English chats).
+// (`picked_level`, `picked_skipped`, `picked_at`; not picked yet), schema 20 the table `learn_chats` (the questions about a card), schema 21
+// the tables `learn_convos` and `learn_convo_messages` (the English chats), and schema 22 the FSRS state of a card (`fsrs_stability`,
+// `fsrs_difficulty`; NULL: not computed), filled in once by replaying every card's answers (services/learn-schedule.js migrate; "Replay, sync and
+// migration" in docs/design/learn-review-fsrs.md). Returns the counts of that replay when it ran now, else null.
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
-  if (!cards.length) return;
+  if (!cards.length) return null;
   const addCard = [];
   for (const [name, type] of [['content_at', 'INTEGER NOT NULL DEFAULT 0'], ['content_by', "TEXT NOT NULL DEFAULT ''"], ['state_at', 'INTEGER NOT NULL DEFAULT 0'],
     ['state_by', "TEXT NOT NULL DEFAULT ''"], ['sync_seq', 'INTEGER NOT NULL DEFAULT 0'], ['phonetic', "TEXT NOT NULL DEFAULT ''"],
     // Schema 19: the pick of a sentence card (the level it was picked at, the known words it met, the clock of the pick).
-    ['picked_level', "TEXT NOT NULL DEFAULT ''"], ['picked_skipped', 'INTEGER NOT NULL DEFAULT 0'], ['picked_at', 'INTEGER NOT NULL DEFAULT 0']]) {
+    ['picked_level', "TEXT NOT NULL DEFAULT ''"], ['picked_skipped', 'INTEGER NOT NULL DEFAULT 0'], ['picked_at', 'INTEGER NOT NULL DEFAULT 0'],
+    // Schema 22: the FSRS memory state of a card (derived from its answers; NULL until computed).
+    ['fsrs_stability', 'REAL'], ['fsrs_difficulty', 'REAL']]) {
     if (!cards.includes(name)) addCard.push(`ALTER TABLE learn_cards ADD COLUMN ${name} ${type}`);
   }
   const reviews = columns('learn_reviews');
@@ -37,6 +41,7 @@ function ensureSyncSchema(db) {
   for (const [name, type] of [['expected', 'TEXT'], ['tag', "TEXT NOT NULL DEFAULT ''"], ['hinted', 'INTEGER NOT NULL DEFAULT 0']]) {
     if (!reviews.includes(name)) addReview.push(`ALTER TABLE learn_reviews ADD COLUMN ${name} ${type}`);
   }
+  let replay = null;
   db.transaction(() => {
     for (const sql of addCard) db.exec(sql);
     if (!cards.includes('state_at')) db.exec('UPDATE learn_cards SET state_at = COALESCE(last_at, 0)');
@@ -74,7 +79,40 @@ function ensureSyncSchema(db) {
       meta TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_convo ON learn_convo_messages (owner, convo_uid, at)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_seq ON learn_convo_messages (owner, sync_seq)');
+    // Schema 22: every card's state from the replay of its answers, a changed one with a new review-state clock and change number after every one
+    // stored (also those of the settings and the level in system_state), so the linked engines get it.
+    if (!cards.includes('fsrs_stability')) {
+      let seq = Math.max(newestSeq(db), storedSeqs(db));
+      replay = require('./learn-schedule').migrate(db, { clock: Math.max(Date.now(), newestClock(db) + 1), nextSeq: () => { seq += 1; return seq; } });
+    }
   })();
+  return replay;
+}
+
+const newestOf = (db, sql) => Number(db.prepare(sql).pluck().get()) || 0;
+// The newest hybrid clock time and the highest change number stored in the learning tables (the start of the clock and of the counter).
+function newestClock(db) {
+  return Math.max(newestOf(db, 'SELECT MAX(MAX(content_at), MAX(state_at)) FROM learn_cards'), newestOf(db, 'SELECT MAX(at) FROM learn_card_moves'),
+    newestOf(db, 'SELECT MAX(at) FROM learn_chats'), newestOf(db, 'SELECT MAX(MAX(title_at), MAX(journal_at), MAX(deleted_at), MAX(updated_at)) FROM learn_convos'),
+    newestOf(db, 'SELECT MAX(at) FROM learn_convo_messages'));
+}
+function newestSeq(db) {
+  return Math.max(...['learn_cards', 'learn_reviews', 'learn_card_moves', 'learn_reports', 'learn_chats', 'learn_convos', 'learn_convo_messages']
+    .map(table => newestOf(db, `SELECT MAX(sync_seq) FROM ${table}`)));
+}
+// The change numbers kept in system_state (the version of the learning settings and the level of each owner), which services/learn-sync.js
+// observes later.
+function storedSeqs(db) {
+  const { readState } = require('./settings-sync-store');
+  let best = 0;
+  const seen = value => { if (value && Number.isSafeInteger(value.seq) && value.seq > best) best = value.seq; };
+  for (const owner of db.prepare('SELECT DISTINCT owner FROM learn_cards').pluck().all()) {
+    try {
+      seen(readState(db, `learn_v1_sync:${owner}`));
+      seen(readState(db, `learn_level_v1:${owner}`));
+    } catch { /* no system_state yet (a very old database): nothing stored */ }
+  }
+  return best;
 }
 
 // The questions about a card and their answers ("Ask about a question" in docs/design/learn-english.md): only the newest MAX_CHAT_MESSAGES of a card
@@ -107,14 +145,7 @@ function stateOf(db) {
   let state = clocks.get(db);
   if (state) return state;
   ensureSyncSchema(db);
-  const max = sql => Number(db.prepare(sql).pluck().get()) || 0;
-  state = {
-    clock: Math.max(max('SELECT MAX(MAX(content_at), MAX(state_at)) FROM learn_cards'), max('SELECT MAX(at) FROM learn_card_moves'), max('SELECT MAX(at) FROM learn_chats'),
-      max('SELECT MAX(MAX(title_at), MAX(journal_at), MAX(deleted_at), MAX(updated_at)) FROM learn_convos'), max('SELECT MAX(at) FROM learn_convo_messages')),
-    seq: Math.max(max('SELECT MAX(sync_seq) FROM learn_cards'), max('SELECT MAX(sync_seq) FROM learn_reviews'), max('SELECT MAX(sync_seq) FROM learn_card_moves'),
-      max('SELECT MAX(sync_seq) FROM learn_reports'), max('SELECT MAX(sync_seq) FROM learn_chats'), max('SELECT MAX(sync_seq) FROM learn_convos'),
-      max('SELECT MAX(sync_seq) FROM learn_convo_messages')),
-  };
+  state = { clock: newestClock(db), seq: newestSeq(db) };
   clocks.set(db, state);
   return state;
 }

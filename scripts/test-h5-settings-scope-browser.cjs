@@ -125,7 +125,7 @@ async function openSheet(page) {
   await settled(page);
   // The sheet reads only the settings sync (for the tabs) and the linked devices when it opens; the groups read nothing until opened.
   await page.waitForFunction(() => window.calls.some(call => call.url === '/api/settings-sync'));
-  const early = await page.evaluate(() => window.calls.map(call => call.url).filter(url => !['/api/settings-sync', '/api/device-settings/devices'].includes(url) && !url.startsWith('/api/system/') && !url.startsWith('/api/service-links') && !/^\/api\/attention(\?|$)/.test(url)));
+  const early = await page.evaluate(() => window.calls.map(call => call.url).filter(url => !['/api/settings-sync', '/api/device-settings/devices'].includes(url) && !url.startsWith('/api/system/') && !url.startsWith('/api/service-links') && !/^\/api\/attention(\?|$)/.test(url) && !url.startsWith('/api/agent-usage'))); // the header's plan usage is not a settings read
   // A computer shows the first group (Tasks and files) at once, so only its parts read; a phone shows the list and nothing reads.
   const shown = (await wideLayout(page)) ? ['/auth/me', '/api/oss/agent-access', '/api/oss/config', '/api/agent-skills', '/api/browser-ext', '/api/browser-sites'] : [];
   assert.deepEqual(early.filter(url => !shown.includes(url)), [], 'no other group reads anything before it opens');

@@ -57,10 +57,11 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
     assert.equal(await page.locator('#h5-update-check, #h5-update-log, #h5-update-hint').count(), 0, 'the updater moved to the header Update button');
     // The header Update button reads the update state for its red dot when the page loads; that is not a settings read.
     const openGroup = id => openSettingsGroup(page, id);
-    // T-Attention reads its list (and opens its live stream) when the page loads, for the badge of row 2: not a settings read either.
+    // T-Attention reads its list (and opens its live stream) when the page loads, for the badge of row 2: not a settings read either. Nor is the
+    // plan usage of the session header (GET /api/agent-usage, docs/design/plan-usage-page.md).
     // Linked services is read when the sheet opens: an older server answers 404 and the group is not drawn. So are the linked devices and the settings
     // sync, which decide whether the tabs at the top are drawn (here: no linked device, no tabs).
-    const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && call.url !== '/api/device-settings/devices' && call.url !== '/api/settings-sync' && !/^\/api\/attention(\?|$)/.test(call.url)));
+    const calls = () => page.evaluate(() => window.calls.filter(call => !call.url.startsWith('/api/system/') && !call.url.startsWith('/api/service-links') && call.url !== '/api/device-settings/devices' && call.url !== '/api/settings-sync' && !/^\/api\/attention(\?|$)/.test(call.url) && !call.url.startsWith('/api/agent-usage')));
     assert.equal(await page.locator('#h5-settings-tabs').count(), 0, 'no tabs without a linked device');
     assert.equal((await calls()).length, 0, 'nothing is read until a group is opened');
     assert.deepEqual(await listedTitles(page), ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data']);

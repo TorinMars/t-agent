@@ -1,7 +1,8 @@
 // Auto-paired punctuation of input methods (public/js/terminal-ime-pairs.js), in real Chromium with CDP key and IME input and mocked sockets. WeType answers
 // one press of " with the pair “” in one insertion and then a Left arrow key; the terminal must send ONE quote per press (opening, closing, opening, ...),
 // never the Left key and never repeated text, whether the keydown is a plain one or the input method's 229 and whether the Left comes after or before the
-// pair. Ordinary Left keys, a pinyin composition, the Apple-style 229 punctuation, a paste of the pair and a pair without a Left key stay as they were.
+// pair. Ordinary Left keys, a pinyin composition, the Apple-style 229 punctuation, a paste of the pair and a pair without a Left key stay as they were, and a
+// Left key pressed right after an input method's key never overtakes that key's text, also when xterm's timers run late (`slowTimers`).
 // Only Chromium: WebKit / the Mac app with the real WeType are not covered here.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -21,6 +22,11 @@ async function openPage(browser, options) {
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.addInitScript(() => {
+    // A busy page, made deterministic: while `slowTimers` is set, every shorter timer (xterm's 0 ms composition and textarea-diff timers among them)
+    // runs that late, so the CDP key events of a step all arrive before xterm has sent the text of the input method's key.
+    const realSetTimeout = window.setTimeout.bind(window);
+    window.slowTimers = 0;
+    window.setTimeout = (fn, ms, ...args) => realSetTimeout(fn, window.slowTimers && (Number(ms) || 0) < window.slowTimers ? window.slowTimers : ms, ...args);
     window.sockets = [];
     window.WebSocket = class {
       constructor(url) { this.url = url; this.readyState = 0; this.sent = []; window.sockets.push(this); setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
@@ -118,6 +124,24 @@ async function run(page, cdp, label) {
     await cdp.send('Input.insertText', { text: '\u6D4B' });
     await arrowLeft(cdp);
   }, `${label}: a composition commit, then a Left key that stays ordinary`);
+  // A busy page: xterm's 0 ms timers run 60 ms late. The text of the input method's key must still go out before a Left key pressed right after it.
+  await page.evaluate(() => { window.slowTimers = 60; });
+  const commit = async text => {
+    await key(cdp, { type: 'rawKeyDown', windowsVirtualKeyCode: 229, key: 'Process', code: 'KeyC' });
+    await cdp.send('Input.imeSetComposition', { text: 'ce', selectionStart: 2, selectionEnd: 2 });
+    await cdp.send('Input.insertText', { text });
+  };
+  await expectSent(page, '\u6D4B\x1b[D', async () => { await commit('\u6D4B'); await arrowLeft(cdp); }, `${label}, busy: a composition commit goes out before the Left key`);
+  await expectSent(page, '\u6D4B\u8BD5\x1b[D\x1b[D', async () => { await commit('\u6D4B\u8BD5'); await arrowLeft(cdp); await arrowLeft(cdp); }, `${label}, busy: two Left keys after a commit, in order`);
+  await expectSent(page, `${BANG}\x1b[D`, async () => { await imeKeyDown(cdp); await cdp.send('Input.insertText', { text: BANG }); await arrowLeft(cdp); await imeKeyUp(cdp); }, `${label}, busy: 229 punctuation goes out before the Left key`);
+  await expectSent(page, `${BANG}\x1b[Da`, async () => { await imeKeyDown(cdp); await cdp.send('Input.insertText', { text: BANG }); await arrowLeft(cdp); await imeKeyUp(cdp); await page.keyboard.press('a'); }, `${label}, busy: 229 punctuation, Left, then a letter: in that order`);
+  await expectSent(page, '\r', () => page.keyboard.press('Enter'), `${label}, busy: Enter`);
+  await expectSent(page, `${LQ}${RQ}`, async () => { await wetype(cdp, QUOTES); await wetype(cdp, QUOTES); }, `${label}, busy: the WeType pair still gives one quote per press`);
+  await expectSent(page, `${LQ}${RQ}`, async () => { await wetype(cdp, QUOTES, { reversed: true }); await wetype(cdp, QUOTES, { reversed: true }); }, `${label}, busy: and in the reversed order`);
+  await expectSent(page, '\x1b[D', () => arrowLeft(cdp), `${label}, busy: an ordinary Left key`);
+  await page.evaluate(() => { window.slowTimers = 0; });
+  await expectSent(page, '\r', () => page.keyboard.press('Enter'), `${label}: Enter after the busy part`);
+
   await expectSent(page, QUOTES, async () => {
     await page.evaluate(text => {
       const data = new DataTransfer();

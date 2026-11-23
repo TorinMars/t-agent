@@ -8,6 +8,7 @@ import './App.jsx';
 import './store.mjs';
 import './back.mjs';
 import './attention-feed.mjs';
+import './plan-usage-feed.mjs';
 import './pane.mjs';
 import './common.jsx';
 import './shared-store.mjs';

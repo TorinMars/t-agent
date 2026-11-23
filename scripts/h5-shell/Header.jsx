@@ -18,6 +18,7 @@ import { Icon } from './Icons.jsx';
 import { Dot, overlay, useShownKind, useShownState } from './Columns.jsx';
 import { AGENT_NAMES, STATE_WORDS, WAITING_WORDS, stateWord } from './columns.mjs';
 import { DeviceTag } from './TaskDrawer.jsx';
+import { PlanUsageButton } from './PlanUsage.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore } from './use-store.mjs';
 
@@ -37,9 +38,9 @@ const HEADER = state => {
 // The session header ("Session header" in docs/design/page-navigation.md).
 // Computer (wide layout): a dense 48px bar that reads like a column header (Columns.jsx `ColumnHeader`): the sidebar fold toggle, the state dot of the
 // session shown, its device tag and "task · session" on one line cut with an ellipsis (a click unfolds a folded sidebar), the agent and its state; at
-// the right "Wide terminal" and "More" (Refresh the page). Update is in the navigation rail there.
+// the right "Wide terminal", "Plan usage" (PlanUsage.jsx) and "More" (Refresh the page). Update is in the navigation rail there.
 // Phone: a 56px MD2 top app bar: the menu button (opens the task drawer), the task name over a status line (dot, device tag, session, state), "Wide
-// terminal" and "More" (Refresh the page, Update with its red dot).
+// terminal", "Plan usage" (its bars without the numbers) and "More" (Refresh the page, Update with its red dot).
 // A shell notebook (`state.notebook`, "Session header" in docs/design/shell-notebook-page.md): the flask and the notebook's name over "task · path ·
 // Saved" (computer) or over its shell's state (phone), the shell's chip (computer), no "Wide terminal", and "Notebook menu" with the notebook's actions
 // before Refresh the page.
@@ -117,6 +118,7 @@ export function Header({ ui }) {
           </>
         ) : null}
         {state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
+        <PlanUsageButton ui={ui} phone={!wide} />
         <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} />
       </Toolbar>
     </AppBar>
@@ -170,6 +172,7 @@ function NotebookHeader({ ui, state, wide, docked, fold, device }) {
         )}
         {wide ? <Box sx={{ flex: '1 1 auto' }} /> : null}
         {wide && kernel ? <KernelChip kernel={kernel} /> : null}
+        <PlanUsageButton ui={ui} phone={!wide} />
         <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} notebook />
       </Toolbar>
     </AppBar>

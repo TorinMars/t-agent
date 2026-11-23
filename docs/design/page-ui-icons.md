@@ -48,8 +48,8 @@
 | Collapse / expand (mind map bar) | minus-square / plus-square | 4765972 / 4765973 | `minusSquare`, `plusSquare` |
 | Undo / redo (mind map bar) | undo / redo | 4765837 / 4765838 | `undo`, `redo` |
 | Fit map (mind map bar) | fullscreen | 4767015 | `fitWindow` |
-| Import .xmind (mind map list) | Import | 4765960 | `Import` |
-| Export .xmind (mind map editor) | export | 4765958 | `export` |
+| Import (mind map list) | Import | 4765960 | `Import` |
+| Export (mind map editor) | export | 4765958 | `export` |
 | Recent sessions (the switch button `#h5-cycle`, the session switcher; also a column's "Next running or pending session") | swap | 4767044 | `cycleSessions` in `Icons.jsx`; two opposite arrows for "switch between"; also inline (16px, primary) in the switcher's hint |
 | Close (design document sheet) | close | 4767096 | |
 | Close (full-screen picture viewer) | close | 4767096 | the same icon as the sheet's Close |

@@ -76,6 +76,33 @@
 .mm-menu-item { min-height: 44px; padding: 0 10px; color: #fff; font-size: 15px; text-align: left; background: transparent; border: 0; border-radius: 8px; cursor: pointer; touch-action: manipulation; }
 .mm-menu-item:hover:not(:disabled) { background: rgba(255, 255, 255, .08); }
 .mm-menu-item:disabled { color: rgba(255, 255, 255, .35); cursor: default; }
+/* Export and Import menus ("Export and import" in docs/design/mind-maps.md): an MD2 menu under its button (8dp, 4px corners, two-line items with a
+   caption, overline headers), and on touch a bottom sheet (8px top corners, the 32% scrim of the page's drawer). */
+.mm-menu-wrap { background: transparent; display: block; padding: 0; }
+.mm-popmenu { position: absolute; width: 320px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); box-sizing: border-box; overflow-y: auto; padding: 8px 0; color: #fff; background: #2e2e2e; border-radius: 4px; box-shadow: 0 5px 5px -3px rgba(0, 0, 0, .2), 0 8px 10px 1px rgba(0, 0, 0, .14), 0 3px 14px 2px rgba(0, 0, 0, .12); }
+.mm-popmenu .mm-menu, .mm-sheet .mm-menu { gap: 0; }
+.mm-sheet-wrap { align-items: flex-end; padding: 0; background: rgba(0, 0, 0, .32); }
+.mm-sheet { width: 100%; max-height: 85%; box-sizing: border-box; overflow-y: auto; padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); color: #fff; background: #2e2e2e; border-radius: 8px 8px 0 0; box-shadow: 0 -8px 10px 1px rgba(0, 0, 0, .14); }
+.mm-sheet-title { margin: 0; padding: 12px 16px 8px; font-size: 16px; font-weight: 500; }
+.mm-menu-header { padding: 8px 16px 4px; font-size: 12px; font-weight: 500; letter-spacing: 1.5px; text-transform: uppercase; color: #90caf9; }
+.mm-menu-divider { height: 1px; margin: 8px 0; background: rgba(255, 255, 255, .12); }
+.mm-menu-caption { margin: 4px 16px 0; font-size: 12px; line-height: 1.4; color: rgba(255, 255, 255, .6); }
+.mm-menu-item2 { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 2px; min-height: 48px; padding: 6px 16px; border-radius: 0; }
+.mm-menu-item2:focus-visible { outline-offset: -2px; }
+.mm-menu-label { font-size: 15px; }
+.mm-menu-hint { font-size: 12px; color: rgba(255, 255, 255, .6); }
+.mm-menu-item2:disabled .mm-menu-hint { color: rgba(255, 255, 255, .3); }
+/* New map from text. */
+.mm-dialog:has(.mm-import-text) { max-width: 480px; }
+.mm-import-text { display: flex; flex-direction: column; gap: 8px; }
+.mm-outline-input { min-height: 180px; font: 13px/1.55 ui-monospace, Menlo, Consolas, monospace; tab-size: 4; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+.mm-dialog-caption { margin: 0; min-height: 16px; font-size: 12px; color: rgba(255, 255, 255, .6); overflow-wrap: anywhere; }
+.mm-dialog-caption[data-error] { color: #f48fb1; }
+.mm-btn:disabled { opacity: .38; cursor: default; }
+/* A file dragged over the list. */
+.mm-list { position: relative; }
+.mm-drop { display: none; position: absolute; inset: 8px; z-index: 5; align-items: center; justify-content: center; border: 2px dashed rgba(144, 202, 249, .6); border-radius: 8px; color: #90caf9; font-size: 14px; background: rgba(18, 18, 18, .88); pointer-events: none; }
+.mm-list[data-drop] .mm-drop { display: flex; }
 .mm-keys { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .mm-key-row { display: flex; justify-content: space-between; gap: 12px; }
 .mm-key-row kbd { padding: 2px 6px; font: inherit; background: #1e1e1e; border-radius: 4px; }

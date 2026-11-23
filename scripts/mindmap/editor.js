@@ -4,11 +4,11 @@ import { actionFor } from './keys.mjs';
 import { pickDirectional } from './nav.mjs';
 import { attachTouch } from './touch.js';
 import { RIGHT_ONLY, escapeHtml, plainDoc, safeLink, sanitizeDoc } from './doc.mjs';
+import { CLIPBOARD_TYPE, clipboardPayload, topicsFromClipboard } from './clipboard.mjs';
 
-const CLIPBOARD_MAGIC = 't-agent-mindmap-topics';
 const APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 const TEXT_FIELD = 'input, textarea, select, [contenteditable]';
-const MAX_PASTED_LINES = 200;
+const parseHtml = text => new DOMParser().parseFromString(text, 'text/html'); // an inert document: no script runs and nothing is loaded
 
 // Dark colours of the app (Material UI dark palette, as in h5.css).
 const THEME = {
@@ -123,11 +123,37 @@ export async function createEditor(host, doc, handlers) {
     label() { handlers.onOpenInfo('label'); },
     link() { handlers.onOpenInfo('link'); },
     back() { handlers.onBack(); },
-    copyTopics() { const list = selection(); if (list.length) buffer = list.map(tpc => JSON.parse(mind.stringifyData(tpc.nodeObj))); },
+    // The More menu (no clipboard event): the topics are kept here for Paste topic, and the other forms go to the system clipboard where the
+    // browser allows it, so they can be pasted into another app.
+    copyTopics() {
+      const list = selection();
+      if (!list.length) return;
+      buffer = copiedNodes();
+      void writeSystemClipboard(buffer);
+    },
     cutTopics() { actions.copyTopics(); actions.remove(); },
-    pasteTopics() { if (buffer && buffer.length) pasteNodes(buffer); },
+    pasteTopics() { void pasteFromMenu(); },
   };
   let buffer = null;
+  const copiedNodes = () => selection().map(tpc => JSON.parse(mind.stringifyData(tpc.nodeObj)));
+
+  async function writeSystemClipboard(nodes) {
+    const payload = clipboardPayload(nodes);
+    const clip = navigator.clipboard;
+    try {
+      if (clip && clip.write && typeof ClipboardItem !== 'undefined') {
+        await clip.write([new ClipboardItem({ 'text/plain': new Blob([payload['text/plain']], { type: 'text/plain' }), 'text/html': new Blob([payload['text/html']], { type: 'text/html' }) })]);
+      } else if (clip && clip.writeText) await clip.writeText(payload['text/plain']);
+    } catch { /* not allowed here: Paste topic still has the copy */ }
+  }
+  // Paste topic of the More menu: what the system clipboard holds when the browser lets the page read it, the exact copy when that is what is there
+  // (or when the clipboard cannot be read).
+  async function pasteFromMenu() {
+    const read = await readSystemClipboard();
+    if (read && buffer && read.text.trim() === clipboardPayload(buffer)['text/plain'].trim()) { pasteNodes(buffer); return; }
+    if (read && pasteFound(read)) return;
+    if (buffer && buffer.length) pasteNodes(buffer);
+  }
 
   function move(dir) {
     const tpc = current();
@@ -148,6 +174,21 @@ export async function createEditor(host, doc, handlers) {
     const target = ensure();
     const clean = nodes.map(node => sanitizeDoc({ nodeData: node }).nodeData);
     mind.copyNodes(clean.map(nodeObj => ({ nodeObj })), target);
+    return target;
+  }
+  // `forms`: { custom, html, text } read from the clipboard. Returns whether something was pasted (or refused with a message).
+  function pasteFound(forms) {
+    let found;
+    try { found = topicsFromClipboard(forms, { parseHtml }); } catch (error) { handlers.notify(handlers.t(error.message || 'These topics cannot be pasted')); return true; }
+    if (!found) return false;
+    let target;
+    try { target = pasteNodes(found.nodes); } catch { handlers.notify(handlers.t('These topics cannot be pasted')); return true; }
+    // Topics from another app become a branch: say where it went (a copy inside T-Agent pastes as it was, without a message).
+    if (!found.exact && handlers.info) {
+      const name = String(target && target.nodeObj ? target.nodeObj.topic : '').slice(0, 40);
+      handlers.info(handlers.t(found.topics === 1 ? `Pasted 1 topic under \u201c${name}\u201d` : `Pasted ${found.topics} topics under \u201c${name}\u201d`));
+    }
+    return true;
   }
 
   // Keys. The listener is on the document, in the capture phase, so that nothing under the view (the terminal) sees them. `handlers.owns(event)`
@@ -197,14 +238,31 @@ export async function createEditor(host, doc, handlers) {
   function onSpacePointer(event) { if (space.held && event.button === 0) space.panned = true; }
   function onWindowBlur() { releaseSpace(false); }
 
+  async function readSystemClipboard() {
+    const clip = navigator.clipboard;
+    try {
+      if (clip && clip.read) {
+        const forms = { custom: '', html: '', text: '' };
+        for (const item of await clip.read()) {
+          if (!forms.html && item.types.includes('text/html')) forms.html = await (await item.getType('text/html')).text();
+          if (!forms.text && item.types.includes('text/plain')) forms.text = await (await item.getType('text/plain')).text();
+        }
+        return forms;
+      }
+      if (clip && clip.readText) return { custom: '', html: '', text: await clip.readText() };
+    } catch { /* not allowed, or nothing there */ }
+    return null;
+  }
+
   const isTextTarget = event => {
     const t2 = event.target;
     return (t2 && t2.matches && t2.matches(TEXT_FIELD)) || isEditing();
   };
   function onCopy(event) {
     if (disposed || handlers.isBlocked() || !ownsEvent(event) || isTextTarget(event) || !selection().length || !event.clipboardData) return;
-    const payload = { magic: CLIPBOARD_MAGIC, data: selection().map(tpc => JSON.parse(mind.stringifyData(tpc.nodeObj))) };
-    event.clipboardData.setData('text/plain', JSON.stringify(payload));
+    for (const [type, value] of Object.entries(clipboardPayload(copiedNodes()))) {
+      try { event.clipboardData.setData(type, value); } catch { /* a browser that refuses our own type still gets text and HTML */ }
+    }
     event.preventDefault();
     event.stopPropagation();
     actions.copyTopics();
@@ -212,19 +270,13 @@ export async function createEditor(host, doc, handlers) {
   }
   function onPaste(event) {
     if (disposed || handlers.isBlocked() || !ownsEvent(event) || isTextTarget(event) || !event.clipboardData) return;
-    const text = event.clipboardData.getData('text/plain');
-    if (!text) return;
+    const data = event.clipboardData;
+    const get = type => { try { return data.getData(type) || ''; } catch { return ''; } };
+    const forms = { custom: get(CLIPBOARD_TYPE), html: get('text/html'), text: get('text/plain') };
+    if (!forms.custom && !forms.html && !forms.text.trim()) return;
     event.preventDefault();
     event.stopPropagation();
-    let parsed = null;
-    try { parsed = JSON.parse(text); } catch { /* plain text */ }
-    if (parsed && parsed.magic === CLIPBOARD_MAGIC && Array.isArray(parsed.data)) {
-      try { pasteNodes(parsed.data); } catch { handlers.notify(handlers.t('These topics cannot be pasted')); }
-      return;
-    }
-    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, MAX_PASTED_LINES);
-    const target = ensure();
-    for (const line of lines) mind.addChild(target, { ...mind.generateNewObj(), topic: line });
+    pasteFound(forms);
   }
 
   const onOperation = op => { if (op.name !== 'beginEdit') changed(); };

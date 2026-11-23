@@ -1,4 +1,5 @@
-// .xmind files: a zip with content.json (current format), metadata.json and manifest.json; older files have content.xml instead.
+// .xmind files: a zip with content.json (current format), metadata.json and manifest.json; older files have content.xml instead. An export carries both, so XMind 8
+// opens it too.
 // The file comes from outside, so it is handled as untrusted: size limits before anything is unpacked, only the named entries are read, and every text goes into the
 // document as plain text (doc.mjs `sanitizeDoc` runs on the result).
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
@@ -25,7 +26,7 @@ export function iconsFor(markers) {
   }).filter(Boolean);
 }
 
-const looksLikeZip = bytes => bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5) && (bytes[3] === 4 || bytes[3] === 6);
+export const looksLikeZip = bytes => bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5) && (bytes[3] === 4 || bytes[3] === 6);
 
 function readZip(bytes) {
   if (!looksLikeZip(bytes)) throw new XmindError('This is not a .xmind file');
@@ -48,7 +49,7 @@ function readZip(bytes) {
   return files;
 }
 
-const emptyLost = () => ({ sheets: 0, images: 0, boundaries: 0, callouts: 0, floating: 0, links: 0 });
+export const emptyLost = () => ({ sheets: 0, images: 0, boundaries: 0, callouts: 0, floating: 0, links: 0 });
 
 function fromJsonTopic(raw, ctx, depth) {
   if (!raw || typeof raw !== 'object') throw new XmindError('This .xmind file is damaged');
@@ -111,7 +112,7 @@ function fromXml(text, parseXml) {
   if (!rootEl) throw new XmindError('This .xmind file has no map in it');
   const lost = emptyLost();
   lost.sheets = sheets.length - 1;
-  const ctx = { count: 0, idMap: new Map(), lost };
+  const ctx = { count: 0, idMap: new Map(), lost, summaries: [] };
   const toTopic = (el, depth) => {
     if (depth > LIMITS.depth) throw new XmindError('This map is too deeply nested');
     ctx.count += 1;
@@ -143,6 +144,17 @@ function fromXml(text, parseXml) {
         else if (group.getAttribute('type') === 'callout') lost.callouts += list.length;
       }
     }
+    const summaries = firstChild(el, 'summaries');
+    if (summaries) {
+      const titles = new Map();
+      for (const group of children ? [...children.children].filter(child => child.localName === 'topics' && child.getAttribute('type') === 'summary') : []) {
+        for (const topic of [...group.children].filter(child => child.localName === 'topic')) { const title = firstChild(topic, 'title'); titles.set(topic.getAttribute('id'), title ? title.textContent : ''); }
+      }
+      for (const summary of [...summaries.children].filter(child => child.localName === 'summary')) {
+        const m = /^\((\d+),(\d+)\)$/.exec(String(summary.getAttribute('range')));
+        if (m) ctx.summaries.push({ id: newId(), parent: id, start: Number(m[1]), end: Number(m[2]), label: titles.get(summary.getAttribute('topic-id')) || '' });
+      }
+    }
     return node;
   };
   const nodeData = toTopic(rootEl, 0);
@@ -151,7 +163,7 @@ function fromXml(text, parseXml) {
     const title = firstChild(r, 'title');
     return { id: newId(), label: title ? title.textContent : '', from: ctx.idMap.get(r.getAttribute('end1')), to: ctx.idMap.get(r.getAttribute('end2')), delta1: { x: 80, y: -40 }, delta2: { x: -80, y: -40 } };
   }) : [];
-  return { nodeData, arrows, summaries: [], lost };
+  return { nodeData, arrows, summaries: ctx.summaries, lost };
 }
 
 // bytes: Uint8Array of the file. Returns { doc, lost } (lost: what could not be kept, as counts).
@@ -220,5 +232,50 @@ export function buildXmind({ title, data, creator = 'T-Agent' }) {
   const content = JSON.stringify([sheet]);
   const metadata = JSON.stringify({ creator: { name: creator, version: '1' }, activeSheetId: sheet.id });
   const manifest = JSON.stringify({ 'file-entries': { 'content.json': {}, 'metadata.json': {} } });
-  return zipSync({ 'content.json': strToU8(content), 'metadata.json': strToU8(metadata), 'manifest.json': strToU8(manifest) }, { level: 6 });
+  return zipSync({
+    'content.json': strToU8(content), 'metadata.json': strToU8(metadata), 'manifest.json': strToU8(manifest),
+    'content.xml': strToU8(contentXml(sheet)), 'meta.xml': strToU8(META_XML), 'META-INF/manifest.xml': strToU8(MANIFEST_XML),
+  }, { level: 6 });
+}
+
+// XML text: characters XML 1.0 does not allow are dropped (they would make the whole file unreadable), the rest is escaped. In an attribute, line breaks and tabs are
+// written as character references, or a parser would turn them into spaces.
+const NOT_XML = /[^\t\n\r\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu;
+const XML_ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;', '\n': '&#10;', '\r': '&#13;', '\t': '&#9;' };
+export function escapeXml(value, { attribute = true } = {}) {
+  return String(value == null ? '' : value).replace(NOT_XML, '').replace(attribute ? /[&<>"'\n\r\t]/g : /[&<>"'\r]/g, ch => XML_ENTITIES[ch]);
+}
+
+const META_XML = '<?xml version="1.0" encoding="UTF-8" standalone="no"?><meta xmlns="urn:xmind:xmap:xmlns:meta:2.0" version="2.0"/>';
+const MANIFEST_XML = '<?xml version="1.0" encoding="UTF-8" standalone="no"?><manifest xmlns="urn:xmind:xmap:xmlns:manifest:1.0">'
+  + '<file-entry full-path="content.xml" media-type="text/xml"/><file-entry full-path="META-INF/" media-type=""/>'
+  + '<file-entry full-path="META-INF/manifest.xml" media-type="text/xml"/><file-entry full-path="meta.xml" media-type="text/xml"/></manifest>';
+
+// content.xml of XMind 8, written from the content.json sheet, so both carry the same topic ids.
+function topicXml(topic) {
+  const attrs = [`id="${escapeXml(topic.id)}"`];
+  if (topic.structureClass) attrs.push(`structure-class="${escapeXml(topic.structureClass)}"`);
+  if (topic.branch === 'folded') attrs.push('branch="folded"');
+  if (topic.href) attrs.push(`xlink:href="${escapeXml(topic.href)}"`);
+  let xml = `<topic ${attrs.join(' ')}><title>${escapeXml(topic.title, { attribute: false })}</title>`;
+  if (topic.notes) xml += `<notes><plain>${escapeXml(topic.notes.plain.content, { attribute: false })}</plain></notes>`;
+  if (topic.labels) xml += `<labels>${topic.labels.map(label => `<label>${escapeXml(label, { attribute: false })}</label>`).join('')}</labels>`;
+  if (topic.markers) xml += `<marker-refs>${topic.markers.map(marker => `<marker-ref marker-id="${escapeXml(marker.markerId)}"/>`).join('')}</marker-refs>`;
+  const children = topic.children || {};
+  if (children.attached || children.summary) {
+    xml += '<children>';
+    if (children.attached) xml += `<topics type="attached">${children.attached.map(topicXml).join('')}</topics>`;
+    if (children.summary) xml += `<topics type="summary">${children.summary.map(topicXml).join('')}</topics>`;
+    xml += '</children>';
+  }
+  if (topic.summaries) xml += `<summaries>${topic.summaries.map(s => `<summary id="${escapeXml(s.id)}" range="${escapeXml(s.range)}" topic-id="${escapeXml(s.topicId)}"/>`).join('')}</summaries>`;
+  return `${xml}</topic>`;
+}
+
+function contentXml(sheet) {
+  const relations = (sheet.relationships || []).map(r => `<relationship id="${escapeXml(r.id)}" end1="${escapeXml(r.end1Id)}" end2="${escapeXml(r.end2Id)}">${r.title ? `<title>${escapeXml(r.title, { attribute: false })}</title>` : ''}</relationship>`).join('');
+  return '<?xml version="1.0" encoding="UTF-8" standalone="no"?>'
+    + '<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="2.0">'
+    + `<sheet id="${escapeXml(sheet.id)}">${topicXml(sheet.rootTopic)}${relations ? `<relationships>${relations}</relationships>` : ''}<title>${escapeXml(sheet.title, { attribute: false })}</title></sheet>`
+    + '</xmap-content>';
 }

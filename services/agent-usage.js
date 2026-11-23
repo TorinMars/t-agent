@@ -221,7 +221,8 @@ function createAgentUsage({
       jobs.push(read(agent, { force: true }));
     }
     let timer = null;
-    await Promise.race([Promise.allSettled(jobs), new Promise(resolve => { timer = setTimeout(resolve, refreshTimeoutMs); if (timer.unref) timer.unref(); })]);
+    // Not unref'd: a request waits on this timer (it is cleared right after), so it must keep the process running until it fires.
+    await Promise.race([Promise.allSettled(jobs), new Promise(resolve => { timer = setTimeout(resolve, refreshTimeoutMs); })]);
     clearTimeout(timer);
     return answer(agents);
   }

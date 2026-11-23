@@ -1,7 +1,7 @@
 // The parts of "English chat" on the Learn page that need no DOM (pure functions with unit tests): the starter chips of a new chat, the topic
 // sent with a question, the corrections markup of a reviewed journal entry, the page's own guard against a model meta line, the row line of a chat,
 // the merge of stored messages and of the chats list, the context of a card added from an answer, and the Enter key of the input. See
-// "English chat" in docs/design/learn-english-page.md.
+// "English chat on the page" in docs/design/learn-english-chat.md.
 import { boldParts, findWholeWord, shortDateTime } from './learn-model.mjs';
 
 export const CHAT_QUESTION_MAX = 4000;

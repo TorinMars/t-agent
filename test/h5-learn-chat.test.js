@@ -1,6 +1,6 @@
 // "English chat" on the Learn page: the pure parts in scripts/h5-shell/learn-chat.mjs (the starter chips, the topic of a typed question, the
-// corrections markup, the meta-line guard, the row line, the merges, the context of an added card, the Enter key). See "English chat" in
-// docs/design/learn-english-page.md.
+// corrections markup, the meta-line guard, the row line, the merges, the context of an added card, the Enter key). See "English chat on the page" in
+// docs/design/learn-english-chat.md.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

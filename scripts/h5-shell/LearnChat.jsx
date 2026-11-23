@@ -29,7 +29,7 @@ import {
   mergeChat, putChat, visibleAnswer,
 } from './learn-chat.mjs';
 
-// "English chat" ("English chat" in docs/design/learn-english-page.md): the person's own conversations with the translation model about English
+// "English chat" ("English chat on the page" in docs/design/learn-english-chat.md): the person's own conversations with the translation model about English
 // (words, grammar, how to say something, their journal entries and their learning habits), not tied to a card. The server keeps the chats and syncs
 // them (/api/learn/chats, docs/design/learn-english.md); a company computer asks its home, like Ask.
 // - Phone: a full-screen view of Learn (`{ kind: 'chat', uid? }`): an app bar ("English chat", the chat's title with its Journal tag; Earlier chats,

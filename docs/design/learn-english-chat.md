@@ -49,3 +49,73 @@ Under `/api/learn`, the same auth, error shape and translated server messages as
 
 - **Decisions** (where the contract left room, 2026-11-21): `deleted_by` was added to `learn_convos` so a prune never removes a journal chat that the person marked elsewhere at the same time; a prune's tombstone is at the chat's own last time + 1 (not now), so a later message wins over it; a tombstone that does not hold sends the messages again; the meta keeps `journal: true` on the reviewed answer (the journal summary counts entries by it); sentence cards in the meta are checked by the sentence rules too, so every chip can be added; the model only ever turns the journal flag on; a topic is guessed only for a question of at most 500 characters that is not a journal entry for review; no new capability in `/v1/info` (an older home answers 404); no new `system_state` key.
 - **Known limits**: the 30-a-minute limit and the one-answer-per-chat rule are per engine; two engines that write to one chat while apart can together pass 100 messages; a home of an older version without the routes at all answers an HTML 404, which the company computer reads as "cannot be reached"; tombstones are kept for good (a few small rows).
+
+## English chat on the page
+
+The person's own conversations with the translation model about English, not tied to a card: words, grammar, how to say something, their
+English journal entries and their journaling habit (the server side, the prompt, the meta line, the storage and the sync are "English chat" in
+[learn-english.md](learn-english.md)). `LearnChat.jsx` (in the Learn chunk; the pure parts in `learn-chat.mjs`). The approved design is the board
+"Learn · English chat: your own questions, journal and habits" (frames 1 to 7). Same content on a phone and a computer.
+
+- **Home entry** (frame 1): after Mistakes the overline "Ask" and a mode card `#h5-learn-mode-chat` "English chat" (library icon `message`,
+  `learnAsk`), "Ask anything about English: words, grammar, how to say something", and "N chats": `chats` of `GET /api/learn/summary` when the
+  server sends it, else the length of `GET /api/learn/chats`, read again with each new summary (`useChatCount`). It opens the view
+  `{ kind: 'chat' }` (a new chat).
+- **Phone** (frames 2, 3, 5, 6): the view is a Learn mode page (`#h5-learn-mode`) with its own app bar: back arrow (`#h5-learn-back`, to the
+  home), "English chat" with the open chat's title as the subtitle (`#h5-learn-chat-title`, "New chat" until the first answer names it) and the
+  Journal tag before it, then the icon buttons Earlier chats (`#h5-learn-chat-history`, library `reload time`, Ant Design's history,
+  `learnHistory`), New chat (`#h5-learn-chat-new`, `add`) and, once the chat exists, its menu (`#h5-learn-chat-more`, `taskMore`). Below, the
+  conversation (`#h5-learn-chat`, `data-layout="phone"`) and the input pinned at the bottom (above the system keyboard, like every Learn page).
+- **Earlier chats** (frame 4, phone only): the view `{ kind: 'chats', parent }`, its own screen: back arrow (to the chat it came from; the back
+  button and Escape do the same: `PhoneLearn` closes it to `parent`, not to the home), "Earlier chats", New chat, the rows, and the caption
+  "Kept on the server and on your other machines." (`#h5-learn-chats-note`).
+- **Computer** (frame 7): the view fills Learn's right pane (`.h5-learn-pane` without padding): a 260px chats list (`#h5-learn-chats`: "Chats",
+  a "New chat" text button with the plus icon, the rows, the same caption) and the conversation (`data-layout="wide"`: the title in h6 with the
+  Journal tag, the menu, Close; the messages; the input). Picking a row or New chat changes the conversation in place (an answer on its way is
+  cancelled). The input takes the focus when a chat opens (hardware keyboard or mouse). Escape closes the menu or a dialog first, then the view.
+- **Rows** (`.h5-learn-chat-row`, `data-uid`, the open one `aria-current`): the Journal tag, the title (body2, medium), and
+  "11-21 22:05 · 6 messages" (`chatLine`: the time of the last message in the browser's zone, "1 message" / "{1} messages"); newest first.
+- **New chat** (frame 3, `#h5-learn-chat-start`): the message icon, "Ask anything about English" (h6), "Words, grammar, how to say something,
+  your journal entries and your learning habits. Ask in Chinese or English.", "Try one:" and the chips (`CHAT_CHIPS`): "Review my journal entry"
+  puts "Please review my journal entry:" and a line break into the input, "How do I say … in English?" puts `How do I say "" in English?` with the
+  caret between the quotes, "Check my sentence" puts "Please check my sentence: " (each translated, `chipFill`; the input gets the focus; nothing
+  is sent); "How is my journaling going?" and "Words I keep getting wrong" send their shown text at once with `topic` `journal` / `mistakes`. Above
+  the input the privacy caption "Your questions and your level go to the translation model you set up. A short summary of your recent mistakes or
+  your journal is added only when you ask about them." (`#h5-learn-chat-privacy`).
+- **Messages** (`.h5-learn-chat-msg`, as Ask's bubbles): the person's on the right, the model's on the left, `lang` per text, line breaks,
+  `**bold**`, and the corrections of a reviewed journal entry (frame 5): `[-wrong-]` as a `<del>` in the error colour (struck through) and
+  `{+right+}` as an `<ins>` in the success colour, underlined (`answerParts`; never across a line break; an unclosed marker stays as written).
+  A trailing `<<meta>>` line is never shown: the server strips it, and the page cuts a complete one and holds back a piece that could be its start
+  while streaming (`visibleAnswer`).
+- **Add to my cards** (frame 2): under a model message with `cards`, the caption "Add to my cards" once and an outlined primary chip per card,
+  "+ <en>"; a tap posts `POST /api/learn/cards { kind, en, zh, context, source: 'manual' }` (`context`: for a word the sentence of the answer it
+  stands in, as corrected, at most 120 characters, `cardContext`; '' for a sentence) and the chip turns "✓ <en>" (`data-added`). Cards the server
+  marks `added` start as ✓; a card added once is ✓ in every message of the view (`cardKey`: kind and text). A failure shows an error Alert under
+  that message's chips.
+- **Input**: multiline (up to 6 lines, then it scrolls), "Ask anything about English" (with messages "Reply or write more"), at most 4000
+  characters; Send (`#h5-learn-chat-send`, `aria-label` "Send", never takes the focus). On a computer (a mouse or a hardware keyboard seen) Enter
+  sends and Shift+Enter is a new line; on a touch screen Enter is a new line and the button sends (`enterSends`; an IME composition never sends).
+  The Learn keyboard is not used here. A typed question about the journal or mistakes (`chatTopic`: journal, diary, habit and the Chinese for
+  diary and habit; mistake, wrong, keep getting and the Chinese for mistake) is sent with that `topic` too.
+- **Sending** (`POST /api/learn/chats/send { chat: uid | null, question, topic? }`): the question and a growing model bubble (`data-streaming`);
+  the first NDJSON line `{"chat"}` names a new chat (the page keeps its uid, adds it to the list and shows the menu), `delta`s grow the bubble,
+  `done` replaces the temporary bubbles with the stored messages and updates the chat (its title from the first answer). A plain JSON answer
+  `{ chat, messages }` (a company computer asking its home) is taken the same way. When a new chat's first answer fails, the chat is dropped
+  again (nothing is stored).
+- **Menu** (`#h5-learn-chat-menu`): "Mark as journal entry" / "Not a journal entry" (`PATCH { journal }`; the person's choice wins over the
+  model's), "Rename" (a form dialog "Rename chat", the title filled in, at most 60 characters, Cancel / Save contained, `PATCH { title }`),
+  "Delete" (a confirmation "Delete this chat?", "It is deleted on all your machines. Cards you added from it stay.", Cancel / Delete in the
+  error colour, `DELETE`; then a new chat).
+- **Errors** (as Ask): a JSON error before the first piece or an `{"error"}` line half way keeps the question with an error Alert and Try again
+  (`#h5-learn-chat-retry`, the same question and topic). 409 "This chat is full. Start a new one." (or a chat that already holds 100 messages)
+  shows an info Alert `#h5-learn-chat-full` with New chat, and the question waits in the input for the new chat. The 503 "Translation service not
+  configured yet" (or `translator: false` from GET) shows the translator notice ("English chat needs a translator…"), the question back in the
+  input, chips and Send off. `GET /chats` with `offline: true` / `home_older: true` (a company computer whose home cannot answer) shows Ask's
+  lines ("Questions are answered by your normal computer, which cannot be reached right now." / "…needs an update…") with chips and Send off.
+  The other routes of a company computer answer 503 "Your English chats are kept on a normal computer, which cannot be reached right now" or
+  409 "…needs an update first" and show as an error Alert; a 409 "Another question in this chat is being answered" too (only the exact "This
+  chat is full…" text gets New chat). A chat that is gone (404 "Chat not found" from GET, PATCH or DELETE) is left: a new chat in its place and
+  the list read again. `PATCH { journal: false }` may answer the chat as `deleted` (one non-journal chat too many, pruned at once): the same, plus
+  the notice "This chat was removed: only the newest 50 chats are kept.". A refused title (400 "A chat title has 1 to 60 characters") shows in
+  the rename dialog. Deltas are joined exactly as they come (the server holds back trailing white space); only the display holds back a
+  possible `<<meta>>` start.

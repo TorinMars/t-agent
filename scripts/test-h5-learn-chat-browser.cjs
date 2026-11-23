@@ -1,5 +1,5 @@
 // Learn: "English chat" (scripts/h5-shell/LearnChat.jsx), in real Chromium with every route mocked; /api/learn/chats follows the contract of
-// "English chat" in docs/design/learn-english-page.md (GET /chats: the list and `translator`, `offline` / `home_older` on a company computer whose
+// "English chat on the page" in docs/design/learn-english-chat.md (GET /chats: the list and `translator`, `offline` / `home_older` on a company computer whose
 // home cannot answer; GET /chats/:uid: the chat and its messages with their cards; POST /chats/send: an NDJSON stream of a first `{"chat"}` line,
 // `{"delta"}` lines and a last `{"done","chat","messages"}` or `{"error","status"}` line, or plain JSON from a company computer; PATCH and DELETE
 // /chats/:uid). Cards are added with POST /api/learn/cards. No model is ever called. A streamed answer the test feeds piece by piece goes through a

@@ -2560,6 +2560,7 @@
   const connected = s => Boolean(s && s === session && !s.paused && s.ws && s.ws.readyState === WebSocket.OPEN);
   function send(s, data) {
     if (uploading || !connected(s)) return false;
+    s.imePairs?.observe(data); // an Enter, Ctrl+C or Ctrl+U from any path: the next auto-paired quote opens again
     s.ws.send(data);
     // Input (typed, a key of the key bar or the on-screen keyboard, a paste) brings the cursor of a wide terminal back into view. A mouse report (a
     // wheel step, a click or a motion report for a program in mouse mode) points at a cell the person sees, so it leaves the view where it is.
@@ -2764,8 +2765,10 @@
       event.stopImmediatePropagation();
       if (!uploading) void upload(s, files.map(entry => entry.getAsFile()));
     }, true);
-    term.onData(data => typed(s, data));
-    TerminalIme.attach(term, data => typed(s, data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
+    // An input method's auto-paired “” or 【】 followed by its Left key becomes one character (terminal-ime-pairs.js); all of xterm's data goes through it.
+    s.imePairs = TerminalImePairs.attach(term, data => typed(s, data));
+    term.onData(data => s.imePairs.forward(data));
+    TerminalIme.attach(term, data => s.imePairs.forward(data)); // the Apple Chinese keyboard's spaces and punctuation, which xterm drops
     term.onResize(() => { if (!s.paused) sendResize(s); requestAnimationFrame(() => layoutWide(s)); }); // only the shown one (sendResize)
     term.onWriteParsed(() => { if (s.follow && session === s) followCursor(s); }); // the wide terminal keeps the cursor in view
     let cursorFrame = 0;
@@ -3282,6 +3285,7 @@
     scheduleWheelSync();
     s.gestures?.dispose();
     clearTimeout(s.timer);
+    s.imePairs?.dispose();
     s.heartbeat?.stop();
     s.observer?.disconnect();
     s.clipboard?.dispose();

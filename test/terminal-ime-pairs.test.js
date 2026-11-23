@@ -21,13 +21,11 @@ function setup() {
     for (const timer of timers.filter(item => item.at <= clock)) { timers = timers.filter(item => item !== timer); timer.fn(); }
   };
   // One press of the WeType key: the pair, then its Left key (xterm would emit the Left only on 'pass').
-  const press = pair => { assert.equal(pairs.pairInserted(pair), true); assert.equal(pairs.leftKey(), 'drop'); };
-  // The order seen in WebKit: the input method's key (229), its Left (xterm emits it), then the pair.
+  const press = pair => { assert.equal(pairs.pairInserted(pair), true); assert.equal(pairs.leftKey(LEFT), 'drop'); };
+  // The order seen in WebKit: the input method's key (229), its Left (held, kept from xterm), then the pair.
   const pressReversed = pair => {
     pairs.imeKey();
-    assert.equal(pairs.leftKey(), 'hold');
-    pairs.forward(LEFT);
-    pairs.disarm();
+    assert.equal(pairs.leftKey(LEFT), 'hold');
     assert.equal(pairs.pairInserted(pair), true);
   };
   return { pairs, sent, wait, press, pressReversed };
@@ -61,9 +59,9 @@ test('brackets give the opening one every time', () => {
 test('other text between the presses keeps the alternation', () => {
   const t = setup();
   t.press(QUOTES);
-  t.pairs.forward('\uFF01');
+  t.pairs.forward('\uFF01', { fromKey: true });
   t.press(QUOTES);
-  t.pairs.forward('\uFF01');
+  t.pairs.forward('\uFF01', { fromKey: true });
   t.press(QUOTES);
   assert.deepEqual(t.sent, [LQ, '\uFF01', RQ, '\uFF01', LQ]);
 });
@@ -72,7 +70,7 @@ for (const [name, key] of [['Enter', '\r'], ['Ctrl+C', '\x03'], ['Ctrl+U', '\x15
   test(`${name} starts the quotes again`, () => {
     const t = setup();
     t.press(QUOTES);
-    t.pairs.forward(key);
+    t.pairs.forward(key, { fromKey: true });
     t.press(QUOTES);
     assert.deepEqual(t.sent, [LQ, key, LQ]);
   });
@@ -106,7 +104,7 @@ test('a pair without a Left key is sent unchanged, a moment later', () => {
   assert.deepEqual(t.sent, []);
   t.wait(100);
   assert.deepEqual(t.sent, [QUOTES]);
-  assert.equal(t.pairs.leftKey(), 'pass', 'a Left after the window is an ordinary Left');
+  assert.equal(t.pairs.leftKey(LEFT), 'pass', 'a Left after the window is an ordinary Left');
   t.press(QUOTES);
   assert.deepEqual(t.sent, [QUOTES, LQ], 'and the unchanged pair did not count as a press');
 });
@@ -114,50 +112,89 @@ test('a pair without a Left key is sent unchanged, a moment later', () => {
 test('other data before the Left sends the waiting pair first, unchanged, in order', () => {
   const t = setup();
   t.pairs.pairInserted(QUOTES);
-  t.pairs.forward('a');
+  t.pairs.forward('a', { fromKey: true });
   assert.deepEqual(t.sent, [QUOTES, 'a']);
-  assert.equal(t.pairs.leftKey(), 'pass');
+  assert.equal(t.pairs.leftKey(LEFT), 'pass');
 });
 
 test('an ordinary Left key passes at once', () => {
   const t = setup();
-  assert.equal(t.pairs.leftKey(), 'pass');
-  t.pairs.forward(LEFT);
+  assert.equal(t.pairs.leftKey(LEFT), 'pass');
+  t.pairs.forward(LEFT, { fromKey: true });
   assert.deepEqual(t.sent, [LEFT]);
 });
 
-test('a Left held after an input method key is sent when no pair follows, in order', () => {
+test('a Left held after an input method key is sent when no text or pair follows', () => {
   const t = setup();
   t.pairs.imeKey();
-  assert.equal(t.pairs.leftKey(), 'hold');
-  t.pairs.forward(LEFT);
+  assert.equal(t.pairs.leftKey(LEFT), 'hold');
   assert.deepEqual(t.sent, []);
   t.wait(100);
   assert.deepEqual(t.sent, [LEFT]);
   t.pairs.imeKey();
-  t.pairs.leftKey();
-  t.pairs.forward('\x1bOD'); // application cursor mode
-  t.pairs.forward('x');
-  assert.deepEqual(t.sent, [LEFT, '\x1bOD', 'x'], 'other data sends the held Left first');
+  assert.equal(t.pairs.leftKey('\x1bOD'), 'hold', 'application cursor mode');
+  t.wait(100);
+  assert.deepEqual(t.sent, [LEFT, '\x1bOD']);
 });
 
-test('an input method key whose text came is no reason to hold the next Left', () => {
+test('the text of the input method key goes out before the Left key pressed after it', () => {
+  const t = setup();
+  t.pairs.imeKey(); // a 229 key, or a composition that ended: xterm sends its text from a late timer
+  assert.equal(t.pairs.leftKey(LEFT), 'hold');
+  t.pairs.forward('\u6D4B'); // the committed text, not from a key dispatch
+  assert.deepEqual(t.sent, ['\u6D4B', LEFT], 'text first, then the Left at once');
+  t.wait(1000);
+  assert.deepEqual(t.sent, ['\u6D4B', LEFT], 'nothing later');
+  assert.equal(t.pairs.leftKey(LEFT), 'pass', 'the key got its text: the next Left is ordinary');
+});
+
+test('several Left keys behind the text keep their order and count', () => {
   const t = setup();
   t.pairs.imeKey();
-  t.pairs.inserted();
-  assert.equal(t.pairs.leftKey(), 'pass');
+  assert.equal(t.pairs.leftKey(LEFT), 'hold');
+  t.wait(50);
+  assert.equal(t.pairs.leftKey(LEFT), 'hold');
+  t.pairs.forward('\uFF01');
+  assert.deepEqual(t.sent.join(''), `\uFF01${LEFT}${LEFT}`);
+});
+
+test('keys pressed after the held Left wait behind it, after the text', () => {
+  const t = setup();
+  t.pairs.imeKey();
+  t.pairs.leftKey(LEFT);
+  t.pairs.forward('a', { fromKey: true });
+  t.pairs.forward('\r', { fromKey: true });
+  assert.deepEqual(t.sent, []);
+  t.pairs.forward('\uFF01');
+  assert.deepEqual(t.sent, ['\uFF01', `${LEFT}a\r`]);
+});
+
+test('keys queued behind a held Left go out when the window ends', () => {
+  const t = setup();
+  t.pairs.imeKey();
+  t.pairs.leftKey(LEFT);
+  t.pairs.forward('a', { fromKey: true });
+  t.wait(100);
+  assert.deepEqual(t.sent, [`${LEFT}a`]);
+});
+
+test('the reversed order with a key queued behind the Left: one character, then the key', () => {
+  const t = setup();
+  t.pairs.imeKey();
+  t.pairs.leftKey(LEFT);
+  t.pairs.forward('a', { fromKey: true });
+  t.pairs.pairInserted(QUOTES);
+  assert.deepEqual(t.sent, [LQ, 'a']);
+});
+
+test('an input method key whose text came, or one long ago, is no reason to hold the next Left', () => {
+  const t = setup();
+  t.pairs.imeKey();
+  t.pairs.forward('\uFF0C');
+  assert.equal(t.pairs.leftKey(LEFT), 'pass');
   t.pairs.imeKey();
   t.wait(200);
-  assert.equal(t.pairs.leftKey(), 'pass', 'nor one long ago');
-});
-
-test('only the Left emitted right after the key is held', () => {
-  const t = setup();
-  t.pairs.imeKey();
-  t.pairs.leftKey();
-  t.pairs.disarm();
-  t.pairs.forward(LEFT);
-  assert.deepEqual(t.sent, [LEFT]);
+  assert.equal(t.pairs.leftKey(LEFT), 'pass', 'nor one long ago');
 });
 
 test('text that is not a pair is not taken', () => {
@@ -173,7 +210,7 @@ function dom() {
   const textarea = { value: '', selectionStart: 0, selectionEnd: 0, setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; } };
   const term = { element: { addEventListener: (type, fn) => { listeners[type] = fn; }, removeEventListener: type => { delete listeners[type]; } }, textarea };
   const sent = [];
-  const pairs = attach(term, data => sent.push(data), { schedule: () => 0, cancel: () => {} });
+  const pairs = attach(term, data => sent.push(data), { schedule: () => 0, cancel: () => {}, fromKey: () => false });
   const event = props => ({ defaultPrevented: false, stopped: false, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; }, ...props });
   return { listeners, textarea, sent, pairs, event };
 }
@@ -223,4 +260,24 @@ test('DOM: composing, modified Left keys and plain text are left alone', () => {
     assert.equal(left.stopped, false, JSON.stringify(mods));
   }
   assert.deepEqual(d.sent, []);
+});
+
+test('DOM: a Left key right after an input method key or a composition is kept from xterm until the text came', () => {
+  const d = dom();
+  d.listeners.keydown(d.event({ key: 'Process', keyCode: 229 }));
+  const left = d.event({ key: 'ArrowLeft', keyCode: 37 });
+  d.listeners.keydown(left);
+  assert.equal(left.stopped, true);
+  d.pairs.forward('\uFF01');
+  assert.deepEqual(d.sent, ['\uFF01', LEFT]);
+  d.listeners.compositionstart({});
+  d.listeners.compositionend({});
+  const after = d.event({ key: 'ArrowLeft', keyCode: 37 });
+  d.listeners.keydown(after);
+  assert.equal(after.stopped, true, 'after a composition too');
+  d.pairs.forward('\u6D4B');
+  assert.deepEqual(d.sent, ['\uFF01', LEFT, '\u6D4B', LEFT]);
+  const ordinary = d.event({ key: 'ArrowLeft', keyCode: 37 });
+  d.listeners.keydown(ordinary);
+  assert.equal(ordinary.stopped, false, 'then an ordinary Left is xterm\'s');
 });

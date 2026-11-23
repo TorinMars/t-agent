@@ -177,6 +177,73 @@ test('the offered grade: Good when right, Hard when right with help, Again when 
   assert.equal(suggestedGrade({ correct: true }), 'good');
   assert.equal(suggestedGrade({ correct: true, helped: true }), 'hard');
   assert.equal(suggestedGrade({ correct: false, helped: true }), 'again');
+  assert.equal(suggestedGrade({ correct: false, near: true }), 'hard', 'one letter off: Hard');
+  assert.equal(suggestedGrade({ correct: true, near: true }), 'good');
+});
+
+test('one letter off: a wrong, missing, extra or swapped letter in a word of 4 letters or more', async () => {
+  const { nearMiss, swapDistance } = await load();
+  assert.equal(swapDistance('expire', 'expier'), 1, 'two adjacent letters swapped are one edit');
+  assert.equal(swapDistance('kitten', 'sitting'), 3);
+  assert.equal(nearMiss('extension', 'extention'), true, 'a wrong letter');
+  assert.equal(nearMiss('environment', 'enviroment'), true, 'a missing letter');
+  assert.equal(nearMiss('expire', 'expirez'), true, 'an extra letter');
+  assert.equal(nearMiss('expire', 'expier'), true, 'two letters swapped');
+  assert.equal(nearMiss('code', 'cdoe'), true, 'four letters are enough');
+  assert.equal(nearMiss('Expire ', 'expirE'), false, 'the same word (case and spaces aside) is right, not almost');
+  assert.equal(nearMiss('cat', 'cut'), false, 'a word of 3 letters is never almost');
+  assert.equal(nearMiss('expire', 'axpirr'), false, 'two letters off');
+  assert.equal(nearMiss('extension', 'extnesoin'), false);
+  assert.equal(nearMiss('expire', ''), false, 'an empty answer');
+  assert.equal(nearMiss('wasn\u2019t', "wasnt"), true, 'a curly apostrophe is the straight one');
+});
+
+test('the spelling pattern behind a wrong word, in templates with a Chinese translation', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { spellingPattern } = await load();
+  const not = (right, wrong) => ({ template: '{1}, not {2} here', values: [right, wrong] });
+  assert.deepEqual(spellingPattern('extension', 'extention'), not('-sion', '-tion'));
+  assert.deepEqual(spellingPattern('function', 'funcsion'), not('-tion', '-sion'));
+  assert.deepEqual(spellingPattern('consistent', 'consistant'), not('-ent', '-ant'));
+  assert.deepEqual(spellingPattern('relevant', 'relevent'), not('-ant', '-ent'));
+  assert.deepEqual(spellingPattern('dependency', 'dependancy'), not('-ency', '-ancy'), 'the longer ending is named');
+  assert.deepEqual(spellingPattern('existence', 'existance'), not('-ence', '-ance'));
+  assert.deepEqual(spellingPattern('visible', 'visable'), not('-ible', '-able'));
+  assert.deepEqual(spellingPattern('independently', 'independantly'), not('-ent', '-ant'), 'inside the word too');
+  assert.deepEqual(spellingPattern('receive', 'recieve'), not('ei', 'ie'));
+  assert.deepEqual(spellingPattern('believe', 'beleive'), not('ie', 'ei'));
+  assert.deepEqual(spellingPattern('occurrence', 'occurence'), { template: 'Double {1}', values: ['r'] });
+  assert.deepEqual(spellingPattern('across', 'accross'), { template: 'Only one {1}', values: ['c'] });
+  assert.deepEqual(spellingPattern('Extension', 'EXTENTION'), not('-sion', '-tion'), 'case aside');
+  assert.equal(spellingPattern('expire', 'expier'), null, 'no known pattern');
+  assert.equal(spellingPattern('extension', 'extension'), null);
+  assert.equal(spellingPattern('extension', ''), null);
+  const dictionary = fs.readFileSync(path.join(__dirname, '../public/js/i18n-zh-extra.js'), 'utf8');
+  for (const template of ['{1}, not {2} here', 'Double {1}', 'Only one {1}']) assert.ok(dictionary.includes(`'${template}':`), `a Chinese translation for "${template}"`);
+});
+
+test('a word in parts: the card\'s own parts, else a syllable split that spells the word again', async () => {
+  const { splitParts, partsOf } = await load();
+  const split = word => splitParts(word).join('\u00b7');
+  assert.equal(split('temporarily'), 'tem\u00b7po\u00b7ra\u00b7ri\u00b7ly');
+  assert.equal(split('extension'), 'ex\u00b7ten\u00b7sion');
+  assert.equal(split('function'), 'func\u00b7tion', '-tion is a part of its own');
+  assert.equal(split('expire'), 'ex\u00b7pire', 'a final silent e stays with the part before');
+  assert.equal(split('table'), 'ta\u00b7ble', 'a final consonant + le is a part');
+  assert.equal(split('regression'), 're\u00b7gres\u00b7sion', 'a consonant + r starts a part');
+  assert.equal(split('teacher'), 'tea\u00b7cher', 'ch stays together');
+  assert.equal(split('ship'), 'ship', 'one vowel group: one part');
+  assert.equal(split('rhythm'), 'rhythm');
+  assert.equal(split("can't"), "can't", 'an apostrophe stays inside its word');
+  assert.deepEqual(splitParts(''), []);
+  for (const word of ['temporarily', 'responsibility', 'environment', 'trade-off', 'log in', 'Yesterday', 'queueing', 'strengths', 'a', 'beautiful', 'children']) {
+    assert.equal(splitParts(word).join(''), word, `the parts of "${word}" spell it`);
+    assert.ok(splitParts(word).every(Boolean), 'no empty part');
+  }
+  assert.deepEqual(partsOf({ en: 'temporarily', parts: ['tem', 'po', 'rar', 'i', 'ly'] }), ['tem', 'po', 'rar', 'i', 'ly'], 'the translator\'s parts');
+  assert.deepEqual(partsOf({ en: 'temporarily', parts: ['tem', 'po'] }), splitParts('temporarily'), 'parts that do not spell the word are not used');
+  assert.deepEqual(partsOf({ en: 'expire', parts: null }), ['ex', 'pire']);
 });
 
 test('edit distance', async () => {

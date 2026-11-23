@@ -28,7 +28,7 @@ import { SwitchRow } from './Form.jsx';
 import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
-import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, normWord, spellCheck, spellingNote, suggestedGrade, typedInFull } from './learn-grade.mjs';
+import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss, normWord, partsOf, spellCheck, spellingNote, spellingPattern, suggestedGrade, typedInFull } from './learn-grade.mjs';
 import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
@@ -88,9 +88,10 @@ function useLearnData() {
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState('');
   const [settings, setSettings] = useState(null);
+  // Resolves with the new summary (null on a failure): the end of a round reads `minutes_today` from it.
   const reload = useCallback(() => api('GET', '/api/learn/summary').then(
-    data => { setSummary(data || {}); setError(''); },
-    failure => setError(errorText(failure) || t('Could not load your study cards.')),
+    data => { setSummary(data || {}); setError(''); return data || {}; },
+    failure => { setError(errorText(failure) || t('Could not load your study cards.')); return null; },
   ), []);
   useEffect(() => {
     void reload();
@@ -212,7 +213,10 @@ function PhoneLearn({ view, close, home, back, ...common }) {
 function ViewBody({ view, phone, back, open, data, ...common }) {
   // A report opened from the Mistakes page (or the list of reports) goes back there (`parent`); every other view back to the home.
   const frame = title => ({ phone, title, onBack: view.parent ? () => open(view.parent) : back });
-  if (view.kind === 'session') return <Session mode={view.mode} preset={view.preset} phone={phone} onBack={back} onRestart={mode => open({ kind: 'session', mode })} onDone={data.reload} settings={data.settings} {...common} />;
+  if (view.kind === 'session') {
+    return <Session mode={view.mode} extra={view.extra || ''} preset={view.preset} phone={phone} onBack={back} onRestart={(mode, extra = '') => open({ kind: 'session', mode, extra })}
+      onDone={data.reload} settings={data.settings} {...common} />;
+  }
   if (view.kind === 'material') return <MaterialView frame={frame(t('Your material'))} ui={common.ui} source={view.source || ''} />;
   if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} open={open} />;
   if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} open={open} openTranslator={common.openTranslator} />;
@@ -335,6 +339,7 @@ function Home({ ui, phone, data, modes, current, open }) {
               </Typography>
             </Box>
           ) : <Typography variant="h6" component="p" id="h5-learn-due">{t('Nothing due today')}</Typography>}
+          <NewWordsLine summary={summary} />
           <LinearProgress id="h5-learn-goal" variant="determinate" value={Math.round(goalProgress(done, goal) * 100)} aria-label={tf('{1} of {2} done', done, goal)} sx={{ height: 6, borderRadius: 3, my: 1.5 }} />
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="body2" color="text.secondary" id="h5-learn-streak" sx={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
@@ -385,6 +390,24 @@ function Home({ ui, phone, data, modes, current, open }) {
   );
 }
 
+// The new words of today under the due count ("New words a day" in docs/design/learn-english-page.md): `new_left`, `new_today` and `new_per_day` of
+// the summary. Today's count is what was learned plus what is left, so 5 more new words raise it too. An older server sends none: no line.
+function NewWordsLine({ summary }) {
+  if (typeof summary.new_left !== 'number' || typeof summary.new_today !== 'number') return null;
+  const left = Math.max(0, summary.new_left);
+  const learned = Math.max(0, summary.new_today);
+  return (
+    <Typography variant="body2" color="text.secondary" id="h5-learn-new-words" sx={{ mt: 0.5 }}>
+      {left > 0 ? (
+        <>
+          <Box component="span" sx={{ color: 'text.primary' }}><Fmt template={left === 1 ? '1 new word left today' : '{1} new words left today'} values={[left]} /></Box>
+          {' · '}<Fmt template="{1} of {2} learned" values={[learned, learned + left]} />
+        </>
+      ) : <Fmt template="Today's {1} new words are learned" values={[learned]} />}
+    </Typography>
+  );
+}
+
 // The count of English chats on the home: `chats` of the summary when the server sends it, else read from GET /api/learn/chats when the home opens
 // (null while unknown or on a failure: the card shows no count).
 function useChatCount(summary) {
@@ -429,33 +452,55 @@ const EMPTY = {
   sentence: ['No sentences yet', 'Messages you send with "Chinese → English" become sentence cards.'],
 };
 
-async function loadQueue(mode) {
+// `extra`: 'practice' asks for cards that are not due (words already learned) on top of the due ones; without it a queue has the due cards and the
+// new words up to today's count, and nothing more ("Done for today" in docs/design/learn-english-page.md). Practice (mixed) always asks for it.
+async function loadQueue(mode, extra = '') {
   if (mode === 'mixed') {
-    const [words, sentences] = await Promise.all([api('GET', '/api/learn/queue?mode=spell&limit=10'), api('GET', '/api/learn/queue?mode=build&limit=10')]);
+    const [words, sentences] = await Promise.all([api('GET', '/api/learn/queue?mode=spell&limit=10&extra=practice'), api('GET', '/api/learn/queue?mode=build&limit=10&extra=practice')]);
     return mixCards([words && words.cards, sentences && sentences.cards], 20);
   }
   const limit = (modeOf(mode) || { limit: 20 }).limit;
-  const data = await api('GET', `/api/learn/queue?mode=${encodeURIComponent(mode)}&limit=${limit}`);
+  const data = await api('GET', `/api/learn/queue?mode=${encodeURIComponent(mode)}&limit=${limit}${extra ? `&extra=${encodeURIComponent(extra)}` : ''}`);
   return (data && Array.isArray(data.cards) ? data.cards : []).filter(card => card && !card.suspended);
 }
+// The modes whose empty queue can mean "done for today" (due words reviewed, today's new words learned) rather than "nothing at all".
+const PACED = new Set(['spell', 'review', 'mixed']);
+// The break note of Round done: after this many minutes of study today.
+const BREAK_MINUTES = 20;
 
-function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onDone, openTranslator, settings }) {
+function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, onRestart, onDone, openTranslator, settings }) {
   const audio = useAudio(settings, speech.tts);
   const [cards, setCards] = useState(preset || null);
   const [error, setError] = useState('');
   const [index, setIndex] = useState(0);
-  const [stats, setStats] = useState({ answered: 0, right: 0 });
+  // The answers of this round, for Round done: { id, en, correct, near, leech, answer }.
+  const [round, setRound] = useState([]);
+  // The summary read when the queue comes back empty (is it done for today?) or when the round ends (the minutes of today).
+  const [summary, setSummary] = useState(null);
+  const [loads, setLoads] = useState(0);
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const register = useRef(null);
   useEffect(() => {
-    if (preset) return undefined;
+    if (preset && !loads) return undefined;
     let live = true;
-    loadQueue(mode).then(list => { if (live) setCards(list); }, failure => { if (live) setError(errorText(failure)); });
+    loadQueue(mode, extra).then(async list => {
+      // An empty queue waits for the summary, so "Done for today" is told apart from "nothing at all" before either is shown.
+      const info = !list.length && PACED.has(mode) ? await api('GET', '/api/learn/summary').catch(() => null) : null;
+      if (!live) return;
+      setSummary(info);
+      setCards(list);
+      setIndex(0);
+      setRound([]);
+    }, failure => { if (live) setError(errorText(failure)); });
     return () => { live = false; };
-  }, [mode, preset]);
+  }, [mode, extra, preset, loads]);
   const finished = Boolean(cards) && cards.length > 0 && index >= cards.length;
-  useEffect(() => { if (finished) void onDone(); }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps -- once at the end
+  useEffect(() => {
+    if (!finished) return;
+    Promise.resolve(onDone()).then(data => { if (data && typeof data === 'object') setSummary(data); }, () => {});
+  }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps -- once at the end
   // The keys of a computer (exerciseKey): Enter checks, Enter again takes the offered grade, 1 / 2 / 3 grade a checked answer.
   useEffect(() => {
     const onKey = event => {
@@ -478,7 +523,7 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
   }, []);
   const card = cards && cards[index];
   const exercise = card ? pickExercise(exerciseOf(card, mode), speech) : null;
-  const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, detail = null }) => {
+  const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, near = false, detail = null }) => {
     if (busyRef.current || !card) return;
     busyRef.current = true;
     setBusy(true);
@@ -491,7 +536,7 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
     }
     try {
       await api('POST', `/api/learn/cards/${encodeURIComponent(card.id)}/answer`, body);
-      setStats(now => ({ answered: now.answered + 1, right: now.right + (correct ? 1 : 0) }));
+      setRound(now => [...now, { id: card.id, en: (detail && detail.expected) || card.en, correct: Boolean(correct), near: Boolean(near && !correct), leech: Boolean(card.leech && exercise === 'spell'), answer: gaveUp ? '' : String(text || '') }]);
       register.current = null;
       setIndex(now => now + 1);
     } catch (failure) {
@@ -502,6 +547,21 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
     }
   };
   const skip = () => { register.current = null; setIndex(now => now + 1); };
+  // 5 more new words: today's count of new words is raised on the server, then the queue is read again.
+  const moreWords = async () => {
+    setAdding(true);
+    try {
+      await api('POST', '/api/learn/new-words', { count: 5 });
+      setCards(null);
+      setSummary(null);
+      setLoads(now => now + 1);
+      void onDone();
+    } catch (failure) {
+      ui.notify(errorText(failure), 'error');
+    } finally {
+      setAdding(false);
+    }
+  };
   const total = cards ? cards.length : 0;
   const frame = {
     phone, title: titleOf(mode), onBack,
@@ -510,6 +570,25 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
   if (error) return <ViewFrame {...frame}><Alert severity="error" id="h5-learn-session-error">{error}</Alert></ViewFrame>;
   if (!cards) return <ViewFrame {...frame}><Typography variant="body2" color="text.secondary" id="h5-learn-session-loading">{t('Loading…')}</Typography></ViewFrame>;
   if (!cards.length) {
+    // Done for today: the queue is empty while words exist and the server counts today's new words (an older server keeps the texts below).
+    const paced = PACED.has(mode) && summary && typeof summary.new_left === 'number' && Number(summary.words) > 0;
+    if (paced) {
+      const learned = Math.max(0, Number(summary.new_today) || 0);
+      return (
+        <ViewFrame {...frame}>
+          <Card id="h5-learn-session-empty" data-kind="done-today" sx={{ p: 2 }}>
+            <Typography variant="h6" component="p">{t('Done for today')}</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {learned > 0 ? <Fmt template="Every due word is reviewed and today's {1} new words are learned." values={[learned]} /> : t('Every due word is reviewed.')}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
+              <Button variant="outlined" id="h5-learn-session-free" onClick={() => onRestart(mode, 'practice')}>{t('Practise anyway')}</Button>
+              <Button id="h5-learn-more-words" disabled={adding} onClick={moreWords}>{t('5 more new words')}</Button>
+            </Box>
+          </Card>
+        </ViewFrame>
+      );
+    }
     const [title, text] = EMPTY[mode] || (modeOf(mode) && modeOf(mode).kind === 'sentence' ? EMPTY.sentence : EMPTY.mixed);
     return (
       <ViewFrame {...frame}>
@@ -524,21 +603,83 @@ function Session({ mode, preset, phone, keys, speech, ui, onBack, onRestart, onD
   if (finished) {
     return (
       <ViewFrame {...frame} progress={1}>
-        <Card id="h5-learn-done" sx={{ p: 2 }}>
-          <Typography variant="h6" component="p">{t('Session done')}</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}><Fmt template="{1} answered · {2} right" values={[stats.answered, stats.right]} /></Typography>
-          <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
-            <Button variant="contained" id="h5-learn-finish" onClick={onBack}>{t('Back to Learn')}</Button>
-            <Button id="h5-learn-again" onClick={() => onRestart(mode === 'mistakes' ? 'mixed' : mode)}>{t('Practise more')}</Button>
-          </Box>
-        </Card>
+        <RoundDone round={round} minutes={summary && typeof summary.minutes_today === 'number' ? summary.minutes_today : null} onBack={onBack}
+          onNext={() => onRestart(mode === 'mistakes' ? 'mixed' : mode, extra)} />
       </ViewFrame>
     );
   }
   const Exercise = EXERCISES[exercise];
   return (
-    <Exercise key={`${card.id}-${index}`} ui={ui} card={card} cards={cards} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
+    <Exercise key={`${card.id}-${index}-${loads}`} ui={ui} card={card} cards={cards} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
       onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={exercise} />
+  );
+}
+
+// Round done ("Round done" in docs/design/learn-english-page.md): the counts of the round (right, almost: one letter off, again: the rest), a thin bar
+// with a segment per answer in those colours and its legend, the words answered wrong this round with what was written, and after BREAK_MINUTES of
+// study today (`minutes_today` of the summary) a note to take a break.
+const OUTCOMES = [['right', 'success.main'], ['almost', 'warning.main'], ['again', 'error.main']];
+const outcomeOf = entry => (entry.correct ? 'right' : entry.near ? 'almost' : 'again');
+function RoundDone({ round, minutes, onBack, onNext }) {
+  const counts = { right: 0, almost: 0, again: 0 };
+  for (const entry of round) counts[outcomeOf(entry)] += 1;
+  const ordered = OUTCOMES.flatMap(([kind, color]) => Array.from({ length: counts[kind] }, () => [kind, color]));
+  const wrong = round.filter(entry => !entry.correct);
+  return (
+    <>
+      <Card id="h5-learn-done" sx={{ p: 2 }}>
+        <Typography variant="h6" component="p">{t('Round done')}</Typography>
+        <Typography variant="body2" color="text.secondary" id="h5-learn-done-counts" sx={{ mt: 0.5 }}>
+          <Fmt template="{1} answered · {2} right · {3} almost" values={[round.length, counts.right, counts.almost]} />
+        </Typography>
+        {round.length ? (
+          <>
+            <Box id="h5-learn-done-bar" role="img" aria-label={tf('{1} right, {2} almost, {3} again', counts.right, counts.almost, counts.again)}
+              sx={{ display: 'flex', gap: '2px', height: 6, mt: 1.5 }}>
+              {ordered.map(([kind, color], at) => <Box key={at} data-kind={kind} sx={{ flex: '1 1 0', minWidth: 2, borderRadius: '1px', bgcolor: color }} />)}
+            </Box>
+            <Typography variant="caption" component="p" color="text.secondary" id="h5-learn-done-legend" aria-hidden="true" sx={{ mt: 0.5, display: 'flex', alignItems: 'center', columnGap: 0.5, flexWrap: 'wrap' }}>
+              {OUTCOMES.map(([kind, color], at) => (
+                <Box component="span" key={kind} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+                  {at ? <span>{'· '}</span> : null}
+                  <Box component="span" sx={{ width: 8, height: 8, borderRadius: '1px', bgcolor: color }} />
+                  {t(kind)}
+                </Box>
+              ))}
+            </Typography>
+          </>
+        ) : null}
+      </Card>
+      {wrong.length ? (
+        <Card id="h5-learn-work-on" sx={{ px: 2, pt: 1.5, pb: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" component="h3">{t('Words to work on')}</Typography>
+          <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>
+            {wrong.map((entry, at) => {
+              const status = entry.leech ? ['Keeps slipping', 'warning.main'] : entry.near ? ['Almost', 'warning.main'] : ['Again', 'error.main'];
+              return (
+                <Box component="li" key={`${entry.id}-${at}`} className="h5-learn-work-row" data-status={status[0]}
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 1, borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+                  <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+                    <Typography variant="body1" translate="no" noWrap className="h5-learn-work-word">{entry.en}</Typography>
+                    <Typography variant="body2" color="text.secondary" noWrap className="h5-learn-work-note">
+                      {entry.leech ? t('Learned in parts') : entry.answer ? <Fmt template="You wrote {1}" values={[entry.answer]} /> : t("I don't know")}
+                    </Typography>
+                  </Box>
+                  <Typography variant="caption" className="h5-learn-work-status" sx={{ color: status[1], flexShrink: 0 }}>{t(status[0])}</Typography>
+                </Box>
+              );
+            })}
+          </Box>
+        </Card>
+      ) : null}
+      {minutes !== null && minutes >= BREAK_MINUTES ? (
+        <Alert severity="info" id="h5-learn-break"><Fmt template="{1} min today. A short break now helps you remember more." values={[minutes]} /></Alert>
+      ) : null}
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <Button variant="contained" id="h5-learn-finish" onClick={onBack}>{t('Back to Learn')}</Button>
+        <Button id="h5-learn-again" onClick={onNext}>{t('Next round')}</Button>
+      </Box>
+    </>
   );
 }
 // A mode the browser cannot run falls back to Build the sentence (a card due for Dictation in a browser without speech output).
@@ -595,11 +736,31 @@ function Hints({ hints }) {
     return <span key={index} className="h5-learn-hint">{' · '}<Fmt template={template} values={values} /></span>;
   });
 }
-// The result of a checked answer, with the grades on a computer (a phone has them in its pinned actions).
-function Feedback({ correct, phone, keys, busy, suggested, onGrade, next = null, children }) {
+// The title of a checked answer: Right, Almost (a typed word one letter off, in the warning colour: "Almost" in docs/design/learn-english-page.md) or
+// Not quite. `right`: the word for a right answer (Spell's sentence layout says Correct).
+function ResultTitle({ correct, near = false, right = 'Right', sx = null }) {
+  const [text, color] = correct ? [right, 'success.light'] : near ? ['Almost', 'warning.main'] : ['Not quite', 'error.light'];
+  return <Typography variant="body2" className="h5-learn-result-title" data-near={near && !correct ? 'true' : undefined} sx={{ color, fontWeight: 500, ...sx }}>{t(text)}</Typography>;
+}
+// The one-line note under a wrong typed word: the card's tip when it has one, else the known spelling pattern ("-sion, not -tion here"), shown only
+// when the mistake matches a pattern (spellingPattern). The right part is in medium weight.
+function PatternNote({ expected, answer, tip = '' }) {
+  const pattern = spellingPattern(expected, answer);
+  if (!pattern) return null;
+  const tipText = String(tip || '').trim();
   return (
-    <Card id="h5-learn-feedback" data-correct={correct ? 'true' : 'false'} role="status" sx={{ p: 2 }}>
-      <Typography variant="body2" sx={{ color: correct ? 'success.light' : 'error.light', fontWeight: 500 }}>{correct ? t('Right') : t('Not quite')}</Typography>
+    <Box id="h5-learn-pattern" sx={theme => ({ mt: 1, px: 1.5, py: 1, borderRadius: 1, bgcolor: alpha(theme.palette.text.primary, 0.06) })}>
+      <Typography variant="body2" translate={tipText ? 'no' : undefined}>
+        {tipText || <Fmt template={pattern.template} values={pattern.values.map((value, at) => (at ? value : <Box component="strong" key={at} sx={{ fontWeight: 'fontWeightMedium' }}>{value}</Box>))} />}
+      </Typography>
+    </Box>
+  );
+}
+// The result of a checked answer, with the grades on a computer (a phone has them in its pinned actions).
+function Feedback({ correct, near = false, phone, keys, busy, suggested, onGrade, next = null, children }) {
+  return (
+    <Card id="h5-learn-feedback" data-correct={correct ? 'true' : 'false'} data-near={near && !correct ? 'true' : undefined} role="status" sx={{ p: 2 }}>
+      <ResultTitle correct={correct} near={near} />
       <Box sx={{ mt: 0.75 }}>{children}</Box>
       {phone ? null : <Box sx={{ mt: 1.5, display: 'flex' }}><Grades suggested={suggested} onGrade={onGrade} busy={busy} keys={keys} next={next} /></Box>}
     </Card>
@@ -643,10 +804,10 @@ const ChineseText = ({ card, id }) => (
 // `detail()`: what a wrong answer was asked for and its tag, when the exercise knows better than the card's text (Fill the gap).
 function useChecked({ register, onAnswer, check, answerText, detail = null }) {
   const [result, setResult] = useState(null); // { correct, helped, ... }
-  const suggested = result ? suggestedGrade({ correct: result.correct, helped: result.helped }) : null;
+  const suggested = result ? suggestedGrade({ correct: result.correct, helped: result.helped, near: result.near }) : null;
   const grade = choice => {
     if (!result) return;
-    onAnswer({ grade: choice || suggested, correct: result.correct, answer: answerText(), helped: Boolean(result.helped), gaveUp: Boolean(result.gaveUp), detail: detail && !result.correct ? detail() : null });
+    onAnswer({ grade: choice || suggested, correct: result.correct, answer: answerText(), helped: Boolean(result.helped), gaveUp: Boolean(result.gaveUp), near: Boolean(result.near), detail: detail && !result.correct ? detail() : null });
   };
   register.current = { checked: Boolean(result), check: () => { if (!result) check(setResult); }, grade };
   return { result, setResult, suggested, grade };
@@ -847,15 +1008,10 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
 
 // ── Spell the word ──
 
-function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, openTranslator, audio, exercise }) {
-  const word = String(card.en || '').trim();
-  const [value, setValue] = useState('');
-  const [helped, setHelped] = useState(false);
-  const [focused, setFocused] = useState(false);
+// The meaning of a word card: its own, else looked up once (POST /api/learn/meaning). `state`: ok, loading, none or no-translator.
+function useMeaning(card, word) {
   const [meaning, setMeaning] = useState({ zh: card.zh || '', phonetic: card.phonetic || '', state: card.zh ? 'ok' : 'loading' });
-  const input = useRef(null);
   useEffect(() => {
-    focusOnStart(input, true); // on a touch screen too: the page's keyboard types into it (no system keyboard)
     if (card.zh) return undefined;
     let live = true;
     api('POST', '/api/learn/meaning', { word }).then(
@@ -864,9 +1020,25 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     );
     return () => { live = false; };
   }, [card]); // eslint-disable-line react-hooks/exhaustive-deps -- one card
+  return meaning;
+}
+
+// A word that keeps slipping (`leech` of the queue card) is learned in parts; any other word is spelled letter by letter.
+function SpellOrParts(props) {
+  return props.card.leech ? <PartsExercise {...props} /> : <SpellExercise {...props} />;
+}
+
+function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, openTranslator, audio, exercise }) {
+  const word = String(card.en || '').trim();
+  const [value, setValue] = useState('');
+  const [helped, setHelped] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const meaning = useMeaning(card, word);
+  const input = useRef(null);
+  useEffect(() => { focusOnStart(input, true); }, [card]); // on a touch screen too: the page's keyboard types into it (no system keyboard)
   const { result, setResult, suggested, grade } = useChecked({
     register, onAnswer, answerText: () => value,
-    check: set => { if (!value.trim()) return; const check = spellCheck(word, value); set({ ...check, correct: check.ok, helped }); },
+    check: set => { if (!value.trim()) return; const check = spellCheck(word, value); set({ ...check, correct: check.ok, helped, near: !check.ok && nearMiss(word, value) }); },
   });
   // A word asked inside its sentence (the sentence layout below) is heard in that whole sentence, at the start, after Check and on Hear it; any
   // other word card plays the word. See "Spell the word" in docs/design/learn-english-page.md.
@@ -996,9 +1168,10 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
         {cloze && result ? (
           // The sentence layout says the result under the letters (the word is in the sentence already); a computer grades right under it.
           <Box id="h5-learn-feedback" data-correct={result.correct ? 'true' : 'false'} role="status" sx={{ mt: 1, textAlign: 'center' }}>
-            <Typography variant="body2" sx={{ color: result.correct ? 'success.light' : 'error.light', fontWeight: 'fontWeightMedium' }}>{result.correct ? t('Correct') : t('Not quite')}</Typography>
+            <ResultTitle correct={result.correct} near={result.near} right="Correct" />
             {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
             {!result.correct && !result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[rightLetters, result.total]} /></Typography> : null}
+            {!result.correct && !result.gaveUp ? <Box sx={{ textAlign: 'left' }}><PatternNote expected={word} answer={value} tip={card.tip} /></Box> : null}
           </Box>
         ) : note ? (
           <Typography variant="body2" color="text.secondary" align="center" id="h5-learn-spell-note" sx={{ mt: 1 }}>
@@ -1012,10 +1185,144 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
         {phone || (result && !cloze) ? null : <Box sx={{ mt: 2 }}>{actions}</Box>}
       </Box>
       {result && !cloze ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
+        <Feedback correct={result.correct} near={result.near} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
           {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
           {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[rightLetters, result.total]} /></Typography> : null}
+          {!result.correct && !result.gaveUp ? <PatternNote expected={word} answer={value} tip={card.tip} /> : null}
+        </Feedback>
+      ) : null}
+      {ask.panel}
+    </ViewFrame>
+  );
+}
+
+// ── Keeps slipping: learn it in parts ("Keeps slipping" in docs/design/learn-english-page.md) ──
+// A word missed again and again (`leech`, with `missed` times) gets two steps instead of the letter slots. Step 1, "Learn it in parts": the meaning, the
+// word in its parts (the card's `parts` from the translator, else splitParts) in alternating colours, the transcription, Hear it and Slowly, the card's
+// tip, and the word copied once (Next only when the copy matches). Step 2, "Now from memory": the word hidden, the meaning and the sound kept, the
+// number of parts; Show parts and Hint count as help (Hard). Check grades step 2 like Spell (Right, Almost, Not quite); step 1 is never graded.
+const WARN_CHIP_SX = theme => ({ height: 24, typography: 'caption', fontWeight: 'fontWeightMedium', color: 'warning.main', bgcolor: alpha(theme.palette.warning.main, 0.12), '& .MuiChip-label': { px: 1 } });
+function SlippingChip({ card }) {
+  const missed = Number(card.missed) || 0;
+  return <Box><Chip id="h5-learn-slipping" size="small" label={missed > 0 ? tf('Keeps slipping · missed {1} times', missed) : t('Keeps slipping')} sx={WARN_CHIP_SX} /></Box>;
+}
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+function PartsWord({ parts, word }) {
+  return (
+    <Typography variant="h4" component="p" translate="no" id="h5-learn-parts" aria-label={word} sx={theme => ({ ...theme.typography.h5, fontFamily: MONO, textAlign: 'center', my: 1.5 })}>
+      {/* A long word wraps only between its parts. */}
+      {parts.map((part, at) => (
+        <span key={at} aria-hidden="true">
+          {at ? <Box component="span" sx={{ color: 'text.secondary' }}>{'\u00b7'}</Box> : null}
+          <Box component="span" className="h5-learn-part" sx={{ color: at % 2 ? 'primary.main' : 'text.primary', whiteSpace: 'nowrap' }}>{part}</Box>
+        </span>
+      ))}
+    </Typography>
+  );
+}
+function TipBox({ tip }) {
+  const text = String(tip || '').trim();
+  if (!text) return null;
+  return (
+    <Box id="h5-learn-tip" sx={theme => ({ mt: 1.5, px: 1.5, py: 1, borderRadius: 1, bgcolor: alpha(theme.palette.text.primary, 0.06) })}>
+      <Typography variant="body2" translate="no">{text}</Typography>
+    </Box>
+  );
+}
+
+function PartsExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, openTranslator, audio, exercise }) {
+  const word = String(card.en || '').trim();
+  const parts = useMemo(() => partsOf(card), [card]);
+  const meaning = useMeaning(card, word);
+  const [step, setStep] = useState('copy'); // copy | recall
+  const [copy, setCopy] = useState('');
+  const [value, setValue] = useState('');
+  const [helped, setHelped] = useState(false);
+  const [shown, setShown] = useState(false);
+  const input = useRef(null);
+  useEffect(() => { focusOnStart(input, true); }, [step]);
+  const copied = normWord(copy) === normWord(word);
+  const { result, suggested, grade } = useChecked({
+    register, onAnswer, answerText: () => value,
+    check: set => {
+      if (step === 'copy') { if (copied) setStep('recall'); return; }
+      if (!value.trim()) return;
+      const check = spellCheck(word, value);
+      set({ ...check, correct: check.ok, helped, near: !check.ok && nearMiss(word, value) });
+    },
+  });
+  useCardAudio(audio, exercise, word, result);
+  useAutoCheck({ register, ready: step === 'recall' && typedInFull(value, word), value, result });
+  const change = next => {
+    if (result) return;
+    audio.typed();
+    if (step === 'copy') setCopy(next); else setValue(next);
+  };
+  const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
+  const ask = useAsk({ card, exercise, result, answer: () => value, field: input, phone, keys, openTranslator });
+  // Hint: the next part after those already typed right.
+  const hint = () => {
+    if (result) return;
+    let typed = 0;
+    while (typed < parts.length && value.toLowerCase().startsWith(parts.slice(0, typed + 1).join('').toLowerCase())) typed += 1;
+    setHelped(true);
+    setValue(parts.slice(0, Math.min(parts.length, typed + 1)).join(''));
+    if (input.current) input.current.focus({ preventScroll: true });
+  };
+  const showParts = () => { setHelped(true); setShown(true); };
+  const recall = step === 'recall';
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
+    <Box sx={{ flex: '1 1 auto' }} />
+    {recall ? <Button id="h5-learn-hint" onClick={hint} {...keepFocus(input)}>{t('Hint')}</Button> : null}
+    {recall
+      ? <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
+      : <Button id="h5-learn-next" variant="contained" disabled={!copied} onClick={() => register.current.check()}>{t('Next step')}</Button>}
+  </>);
+  const audioRow = (
+    <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', justifyContent: recall ? 'flex-start' : 'center', ml: recall ? -1 : 0 }}>
+      {tts ? <AudioButton audio={audio} text={word} field={input} /> : null}
+      {tts && !recall ? <AudioButton audio={audio} text={word} field={input} id="h5-learn-slow" label="Slowly" slow /> : null}
+      {recall ? <Button id="h5-learn-show-parts" disabled={shown || Boolean(result)} onClick={showParts} {...keepFocus(input)}>{t('Show parts')}</Button> : null}
+      {ask.button}
+    </Box>
+  );
+  const meaningText = meaning.zh
+    ? <Typography variant="h5" component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography>
+    : meaning.state === 'loading' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t('Looking up the meaning…')}</Typography> : null;
+  return (
+    <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
+      <SlippingChip card={card} />
+      <Prompt label={recall ? t('Now from memory') : t('Learn it in parts')} footer={<>{audioRow}{recall ? null : <TipBox tip={card.tip} />}</>}>
+        {meaningText}
+        {meaning.state === 'no-translator' && !meaning.zh ? <TranslatorNotice onOpen={openTranslator} sx={{ mt: 1 }} /> : null}
+        {recall ? (
+          <>
+            {shown && !result ? <PartsWord parts={parts} word={word} /> : null}
+            <Typography variant="body2" color="text.secondary" id="h5-learn-parts-count" sx={{ mt: 0.5, display: 'flex', columnGap: 0.5, flexWrap: 'wrap' }}>
+              {meaning.phonetic ? <><Phonetic text={meaning.phonetic} id="h5-learn-phonetic" /><span>{'·'}</span></> : null}
+              <span><Fmt template="{1} parts" values={[parts.length]} /></span>
+            </Typography>
+          </>
+        ) : (
+          <>
+            <PartsWord parts={parts} word={word} />
+            {meaning.phonetic ? <Box sx={{ textAlign: 'center' }}><Phonetic text={meaning.phonetic} id="h5-learn-phonetic" /></Box> : null}
+          </>
+        )}
+      </Prompt>
+      <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <TextField key={step} id={recall ? 'h5-learn-recall-input' : 'h5-learn-copy-input'} label={recall ? t('Type the word') : t('Copy it once')} fullWidth
+          inputRef={input} value={recall ? value : copy} onChange={event => change(event.target.value)} onClick={kb.show}
+          inputProps={{ readOnly: Boolean(result), translate: 'no', ...fieldProps, ...kb.inputProps }}
+          sx={theme => ({ '& input': { ...theme.typography.h6, fontFamily: MONO } })} />
+        {phone || result ? null : actions}
+      </Card>
+      {result ? (
+        <Feedback correct={result.correct} near={result.near} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
+          <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
+          {!result.correct ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
+          {!result.correct ? <PatternNote expected={word} answer={value} tip={card.tip} /> : null}
         </Feedback>
       ) : null}
       {ask.panel}
@@ -1260,7 +1567,8 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
     check: set => {
       if (!gap || !value.trim()) return;
       const diff = diffWords(card.en, full);
-      set({ ...diff, correct: normWord(value) === normWord(gap.word), helped });
+      const correct = normWord(value) === normWord(gap.word);
+      set({ ...diff, correct, helped, near: !correct && nearMiss(gap.word, value) });
     },
   });
   useCardAudio(audio, exercise, card.en, result);
@@ -1287,6 +1595,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   </>);
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
+      {card.leech ? <SlippingChip card={card} /> : null}
       <Prompt label={t('Chinese')} footer={ask.row}>
         <ChineseText card={card} id="h5-learn-chinese" />
         <Origin card={card} />
@@ -1304,8 +1613,9 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
         {phone || result ? null : actions}
       </Card>
       {result ? (
-        <Feedback correct={result.correct} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
+        <Feedback correct={result.correct} near={result.near} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
           <SentenceResult card={card} result={result} />
+          {!result.correct ? <PatternNote expected={gap.word} answer={value} tip={card.tip} /> : null}
         </Feedback>
       ) : null}
       {ask.panel}
@@ -1313,7 +1623,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   );
 }
 
-const EXERCISES = { spell: SpellExercise, build: BuildExercise, dictation: DictationExercise, say: SayExercise, fill: FillExercise };
+const EXERCISES = { spell: SpellOrParts, build: BuildExercise, dictation: DictationExercise, say: SayExercise, fill: FillExercise };
 
 // ── Mistakes and reports: LearnMistakes.jsx ──
 
@@ -1480,12 +1790,15 @@ function SettingsView({ frame, ui, data, openTranslator, open }) {
           </Box>
           <Divider sx={{ mx: -2 }} />
           <SwitchRow inputId="h5-learn-starter" label={t('Starter list: Programmer English')} disabled={busy} checked={current.starter === 'dev'} onChange={toggleStarter}
-            secondary={t('Common words of software work, 10 new ones a day. Turning it off hides the starter words you have not practised yet; nothing is deleted.')} />
+            secondary={typeof current.new_per_day === 'number'
+              ? t('Common words of software work; new ones come at the pace of New words a day. Turning it off hides the starter words you have not practised yet; nothing is deleted.')
+              : t('Common words of software work, 10 new ones a day. Turning it off hides the starter words you have not practised yet; nothing is deleted.')} />
           <Divider sx={{ mx: -2 }} />
           <SwitchRow inputId="h5-learn-analysis-auto" label={t('Analyze my mistakes every week')} disabled={busy} checked={current.analysis_auto !== false} onChange={on => save({ analysis_auto: on })}
             secondary={t('When a week has at least 10 new mistakes, your translation model writes a report: the causes and what to practise. Only the words and sentences you got wrong and what you wrote are sent.')} />
         </Card>
       )}
+      {settings && typeof current.new_per_day === 'number' ? <NewWordsSettings current={current} busy={busy} save={save} /> : null}
       {settings && typeof current.desired_retention === 'number' ? <ScheduleSettings current={current} busy={busy} save={save} /> : null}
       {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}
       <Card sx={{ p: 2 }}>
@@ -1624,6 +1937,23 @@ function AudioSettings({ current, busy, save }) {
         <Divider sx={{ mx: -2 }} />
         <SwitchRow inputId="h5-learn-audio-stop" label={t('Stop when I start typing')} disabled={busy} checked={options.stopOnTyping} onChange={on => save({ audio_stop_on_typing: on })}
           secondary={t('The rest of the repeats is skipped')} />
+      </Card>
+    </>
+  );
+}
+
+// NEW WORDS of Learn settings ("New words a day" in docs/design/learn-english-page.md): `new_per_day` of the learning settings (learn_v1, shared by every
+// linked engine), at most this many never-answered words join the queues each day, after the due cards. Saved at once. Shown only when the server's
+// settings have the field (an older server has no daily count).
+const NEW_PER_DAY = [5, 10, 15, 20, 30];
+function NewWordsSettings({ current, busy, save }) {
+  const value = NEW_PER_DAY.includes(current.new_per_day) ? current.new_per_day : null;
+  return (
+    <>
+      <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('New words')}</Typography>
+      <Card id="h5-learn-new-words-card" sx={{ px: 2, py: 1 }}>
+        <ChoiceRow id="h5-learn-new-per-day" label={t('New words a day')} secondary={t('Due reviews always come first')} value={value} disabled={busy}
+          choices={NEW_PER_DAY.map(choice => [choice, String(choice)])} onChange={next => save({ new_per_day: next })} />
       </Card>
     </>
   );

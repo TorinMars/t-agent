@@ -25,7 +25,7 @@
   steps aside and `--h5-height` is the visual viewport, h5.js `fitViewport`) they end at the top of the keyboard. A mode's actions (Check, I
   don't know, Hint, then the grades) are pinned at the bottom of its page, so the answer field and Check stay in sight above the keyboard.
 - **Home** (`GET /api/learn/summary`, `GET /api/learn/settings`): the due count (h4) with "cards due today · about N min" (20 seconds a card,
-  `minutesFor`), the goal bar (done today / goal), "N-day streak · D of G done" with the fire icon, and Start review (`#h5-learn-start`); with
+  `minutesFor`), under it the new words of today (`#h5-learn-new-words`, see "New words a day"), the goal bar (done today / goal), "N-day streak · D of G done" with the fire icon, and Start review (`#h5-learn-start`); with
   nothing due "Nothing due today" and Practise anyway (`#h5-learn-free`, a mixed session from the spell and build queues). Then PRACTICE: one card
   per mode (`#h5-learn-mode-<id>`) with its count ("42 words", "26 sentences"; the noun is an exact dictionary key, never a "{1} words"
   template), and Mistakes (`#h5-learn-mode-mistakes`, the summary's count); YOUR MATERIAL (`#h5-learn-material`), Learn settings and How
@@ -39,7 +39,9 @@
   online nothing is shown (the server hands the waiting answers over). Learn settings keep the reason of a failed change in view
   (`#h5-learn-settings-error`, an error Alert with the server's message, such as the 503 "Learning settings are kept on a normal computer, which
   cannot be reached right now", besides the toast) until the next change works; the switches and the goal show the stored values again.
-- **Modes** (`MODES` in `learn-model.mjs`; a session fetches `GET /queue?mode=…&limit=` 20 for words, 10 for sentences):
+- **Modes** (`MODES` in `learn-model.mjs`; a session fetches `GET /queue?mode=…&limit=` 20 for words, 10 for sentences; without `&extra=practice`
+  a queue has the due cards and the new words up to today's count and nothing more, see "Done for today"; Practice, the mixed session, always asks
+  for `extra=practice` on both its queues):
   - Review: the due cards of both kinds, each in the mode that fits (`exerciseOf`): a word is spelled, a sentence is built. Mistakes and free
     practice work the same way.
   - Spell the word: the meaning and, when the page can read aloud, the phonetic transcription under it next to Hear it (`#h5-learn-phonetic`; the sound is offered there already, so it gives nothing more away) (or, without a meaning, `POST /meaning`; a 503 shows "Word meanings need a translator…" with Open Settings, which
@@ -96,12 +98,49 @@
 - **Words and wrapping**: a word with its transcription after it (`WordLine`: the Spell feedback `#h5-learn-feedback-phonetic`, the material list, Mistakes;
   `translate="no"`, `lang="en-US-fonipa"`, no wrap inside it). Text uses `overflow-wrap: break-word`, so a word breaks only when it alone is wider
   than the line, and sentences wrap between words.
-- **After Check**: a card "Right" / "Not quite" with the word-by-word diff (struck red: the answer's wrong or extra word; green: the missing or
+- **After Check**: a card "Right" / "Almost" / "Not quite" with the word-by-word diff (struck red: the answer's wrong or extra word; green: the missing or
   right word), "Word by word: 10 of 11 right" and the named mistakes, then Again / Hard / Good. The offered one is contained and focused (wrong:
-  Again; right with help: Hard; right: Good, `suggestedGrade`); each button can show when that grade brings the card back (see "Grade intervals"
+  Again; one letter off: Hard; right with help: Hard; right: Good, `suggestedGrade`); each button can show when that grade brings the card back (see "Grade intervals"
   below). `POST /api/learn/cards/:id/answer { mode, grade, correct, answer }` (mode is the
   exercise shown: spell, build, dictation, say or fill; answer capped at 500 characters), then the next card; a failed post stays with a notice.
-  At the end: "Session done", answered and right, Back to Learn, Practise more.
+  At the end: "Round done" (below).
+- **Almost** (one letter off; Spell, its sentence layout, the leech step 2 and Fill the gap, every exercise that types one word; sentences are not
+  affected): a word of 4 letters or more typed with exactly one wrong, missing or extra letter, or two adjacent letters swapped (`nearMiss`, the
+  optimal string alignment distance 1 after the usual normalization). The result title is "Almost" in `warning.main` (`ResultTitle`, the feedback
+  has `data-near="true"`) instead of "Not quite", and Hard is the offered grade (contained, focused, taken by Enter). The answer is still sent as
+  wrong: `{ correct: false, grade: 'hard', expected, tag, hinted }` unless the person picks another grade, so it still counts in Mistakes. Under the
+  result a one-line note in a quiet box (`PatternNote`, `#h5-learn-pattern`) when the mistake is a known mix-up (`spellingPattern`): "**-sion**, not
+  -tion here" (also -ent / -ant, -ence / -ance, -ency / -ancy, -able / -ible, ie / ei; the right one in medium weight), "Double r" or "Only one s";
+  when the card has a `tip` (from the translator) the tip is shown there instead.
+- **Keeps slipping** (a queue card with `leech: true`, in Spell and in Review's word cards; `PartsExercise` in place of the letter slots): a chip in
+  the warning colour on its 12% tint "Keeps slipping · missed 9 times" (`#h5-learn-slipping`, `card.missed`; Fill the gap shows the chip too, with its
+  usual exercise). Step 1 "Learn it in parts": the meaning (h5), the word in its parts (`#h5-learn-parts`, h5 type in monospace, parts in text.primary
+  and primary.main by turns, a middle dot in text.secondary between them, wrapping only between parts; the parts are `card.parts` when they spell the
+  word, else `splitParts`, `partsOf`), the transcription, Hear it and Slowly, the tip box (`#h5-learn-tip`) when the card has a tip, and the outlined
+  field "Copy it once" (`#h5-learn-copy-input`, monospace); Next step (`#h5-learn-next`, contained; Enter too) only when the copy matches. Step 2 "Now
+  from memory": the word hidden, the meaning and the sound kept, "/…/ · 5 parts" (`#h5-learn-parts-count`), Show parts (`#h5-learn-show-parts`, shows
+  the parts and counts as help), the field "Type the word" (`#h5-learn-recall-input`) with Hint (types the next part, help) and Check (the automatic
+  check at the word's length as in Spell). Then the usual result (Right / Almost / Not quite, the pattern note) and grades; only step 2 is graded and
+  sent (`mode: 'spell'`, `hinted` after Show parts or Hint). The page's own keyboard types into both fields on a touch screen.
+- **Round done** (`RoundDone`, `#h5-learn-done`): "Round done" (h6) and "20 answered · 13 right · 4 almost" (`#h5-learn-done-counts`; almost = a
+  wrong answer one letter off, again = the other wrong ones; Skip counts nothing), a thin bar of one segment per answer, right in `success.main`,
+  almost in `warning.main`, again in `error.main` (`#h5-learn-done-bar`, `role="img"` with "13 right, 4 almost, 3 again"), and the legend "right ·
+  almost · again" with a small square of each colour. "Words to work on" (`#h5-learn-work-on`): each card answered wrong this round, the word and
+  "You wrote …" ("Learned in parts" for a word that keeps slipping, "I don't know" when given up), with its status at the right in caption type:
+  Almost or Keeps slipping in the warning colour, Again in the error colour. When the round ends the summary is read again (the home's reload) and
+  with `minutes_today` of 20 or more an info Alert says "24 min today. A short break now helps you remember more." (`#h5-learn-break`). Buttons: Back
+  to Learn (contained, `#h5-learn-finish`) and Next round (text, `#h5-learn-again`: the same mode and `extra` again, Mistakes goes on with Practice).
+- **Done for today**: when the queue of Spell, Review or Practice comes back empty, the session reads the summary before it shows anything; with
+  words and the new fields of the summary the card (`#h5-learn-session-empty`, `data-kind="done-today"`) says "Done for today" and "Every due word is
+  reviewed and today's 10 new words are learned." (`new_today`; "Every due word is reviewed." when none was new today), with Practise anyway
+  (outlined, `#h5-learn-session-free`: the same mode with `extra=practice`, words already learned and not due yet) and 5 more new words (text,
+  `#h5-learn-more-words`: `POST /api/learn/new-words { count: 5 }`, which raises only today's count, then the queue is read again). Without words,
+  in Mistakes and sentence modes, or on an older server the empty texts stay as they were ("No words yet", "Nothing due today" with Practise anyway
+  starting Practice, "No mistakes to review").
+- **New words a day**: at most this many never-answered words join the queues each day, after the due cards (the server counts them from today's
+  first answers, the same on every linked engine). The home shows "6 new words left today · 4 of 10 learned" under the due count (the count of words
+  left in text.primary; today's count is learned + left, so 5 more new words raise it) and "Today's 10 new words are learned" when none is left;
+  without `new_left` in the summary (an older server) nothing. Learn settings have NEW WORDS (below).
 - **The page's own keyboard** (touch screen; `useLearnKeys` and `LearnKeys` in `Learn.jsx`, `#h5-learn-keys`): without a hardware keyboard (input
   mode not `pointer` and no `hasKeyboard`) the answer fields of Spell, Fill the gap, Dictation and Build have `inputmode="none"` (like the xterm
   textarea), so the system keyboard never opens; T-Agent's keyboard (the terminal's `Keyboard` of `Osk.jsx`: same look, Shift one-shot or caps
@@ -139,7 +178,7 @@
   starts on Words with `source=translation` and shows the chip "From your translations" (`#h5-learn-source-filter`, the library `close` icon as its
   delete icon) that clears the source filter; its back arrow returns to Learn settings. Words that were already cards (a starter word that got a
   sentence as its context) keep their source, so they are counted in "Picked so far" but not in this filtered list.
-- **Learn settings**, top to bottom: MY LEVEL, WORDS FROM MY TRANSLATIONS, PRACTICE, REVIEW SCHEDULE, AUDIO and the translator card. The section titles are MD2
+- **Learn settings**, top to bottom: MY LEVEL, WORDS FROM MY TRANSLATIONS, PRACTICE, NEW WORDS, REVIEW SCHEDULE, AUDIO and the translator card. The section titles are MD2
   overlines in text.secondary like the rest of the Learn page (the design drew them in the primary colour).
   - **MY LEVEL** (`LevelSettings`, `GET /api/learn/level` when the settings open: `{ level: { level, label, reason, answers, mistakes, report_at,
     updated_at } | null, picking: { enabled, picked, skipped, sentences, pending, running }, translator }`): a card `#h5-learn-level-card` with "Your
@@ -161,6 +200,10 @@
   - **PRACTICE**: Collect study material (`PUT { collect }`, then `window.LearnCollect.set(on)` so the page stops or starts collecting at
   once), Daily goal 1 to 200 (saved on Enter or blur), Starter list: Programmer English (on: `POST /starter` then `PUT { starter: 'dev' }`; off:
   `PUT { starter: null }`, which hides the starter words not practised yet), Analyze my mistakes every week (`#h5-learn-analysis-auto`, `PUT { analysis_auto }`, shared), and where word meanings come from, with Open Settings.
+  - **NEW WORDS** (`NewWordsSettings`, `#h5-learn-new-words-card`): the row "New words a day" with "Due reviews always come first" and a toggle
+    button group 5 / 10 / 15 / 20 / 30 (`ChoiceRow` `#h5-learn-new-per-day`, `data-value`), saved at once with `PUT /settings { new_per_day }`
+    (shared, learn_v1, default 10). Shown only when the server's settings have a numeric `new_per_day`; with it the starter list's line says new ones
+    come at the pace of New words a day instead of "10 new ones a day".
   - **REVIEW SCHEDULE** (`ScheduleSettings`, `#h5-learn-schedule-card`): the row "Remember" with "How sure you want to be when a card comes back"
     and a toggle button group 85% / 90% / 95% (`ChoiceRow` `#h5-learn-retention`, buttons `data-value="0.85|0.9|0.95"`), saved at once with
     `PUT /settings { desired_retention }` (shared, learn_v1, like the rest), then the caption "Cards are scheduled with FSRS, a model of how memory
@@ -337,7 +380,17 @@ English journal entries and their journaling habit (the server side, the prompt,
   words in another order, or a word missing in one place and extra in another).
 - `spellCheck` compares a spelled word letter by letter (the stored answer, the "N of M letters right" line and the mistake tag use it);
   `alignSpelling` lines the right spelling up above a wrong one by the closest match and counts the different, missing and extra letters, and
-  `spellingNote` turns the counts into the line under the two rows (see "Spell the word"); `suggestedGrade` offers the grade.
+  `spellingNote` turns the counts into the line under the two rows (see "Spell the word"); `suggestedGrade` offers the grade (`near`: Hard for a
+  wrong word one letter off).
+- One letter off (see "Almost"): `swapDistance` is the optimal string alignment distance (a swap of two adjacent letters is one edit); `nearMiss`
+  is distance 1 for a word of 4 letters or more. `spellingPattern(expected, answer)` returns `{ template, values }` or null: one of the suffix pairs
+  replaced by the other anywhere in the word (the longer pair first, so -ency before -ent), ie / ei, one letter of a double left out ("Double {1}")
+  or a single letter doubled ("Only one {1}"); the templates are in `public/js/i18n-zh-extra.js`.
+- Parts (see "Keeps slipping"): `splitParts` splits by vowel groups (y a vowel after a consonant): one consonant between two groups starts the next
+  part, two or more split after the first, except ch / sh / th / ph / wh / ck / qu / gh kept together, a consonant + r or l starting a part
+  (re·gres·sion) and -tion / -sion their own part; a final silent e stays with the part before (ex·pire), a final consonant + le is a part (ta·ble);
+  hyphens and spaces end the part before them, apostrophes stay inside. The parts always join back to the word. `partsOf(card)` takes `card.parts`
+  when they spell the word, else `splitParts`.
 - `mistakeTag` gives a wrong answer its first tag (see "Mistakes" in [learn-english.md](learn-english.md)); the session sends it with `expected` and `hinted` for a wrong answer only.
 
 ## Audio
@@ -378,6 +431,12 @@ English journal entries and their journaling habit (the server side, the prompt,
 
 ## Tests
 
+- `scripts/test-h5-learn-pace-browser.cjs` (mocked summary with `new_per_day` / `new_today` / `new_left` / `minutes_today`, queue cards with `leech`,
+  `missed`, `parts`, `tip`, `POST /new-words`, settings with `new_per_day`; 390x844 touch and 1440x900): the home's new-words line; Almost (warning
+  colour, Hard offered and sent with `correct: false`, the pattern note); Keeps slipping step 1 (chip, parts in turns of colour, tip, Next step only
+  when the copy matches) and step 2 (hidden word, "5 parts", Show parts as help, the answer sent with `hinted`), Hint and Enter on a computer; Round
+  done (counts, bar segments and label, legend, words to work on, the break note, 44px buttons); Done for today with both buttons (request URLs and
+  body); NEW WORDS saving `new_per_day`; Practice asking for `extra=practice`; an older server without any of it; `H5_SHOT_DIR` saves `pace-*.png`.
 - `scripts/test-h5-learn-progress-browser.cjs` (mocked `/api/learn/stats`, a queue with `next`, settings with `desired_retention`; 1440x900,
   390x844 and 320x640 touch): the Progress button opens the view in the pane and full screen, the tiles, the four charts (thin columns, the line's
   last value, the memory values, one hue), two charts per row on a computer and one on a phone, tooltips on hover, tap and focus (columns, an

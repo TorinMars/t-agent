@@ -253,10 +253,130 @@ export const typedInFull = (answer, word) => {
   return want.length > 0 && unify(answer).replace(/\s+/g, '').length === want.length;
 };
 
-// The grade offered after an answer (Enter takes it): right without help is Good, right with help (a hint, the first letter) is Hard, wrong is Again.
-export function suggestedGrade({ correct, helped = false }) {
-  if (!correct) return 'again';
+// The grade offered after an answer (Enter takes it): right without help is Good, right with help (a hint, the first letter) is Hard, wrong is Again,
+// and a typed word only one letter off (`near`, see nearMiss) is Hard: the word was known. See "Almost" in docs/design/learn-english-page.md.
+export function suggestedGrade({ correct, helped = false, near = false }) {
+  if (!correct) return near ? 'hard' : 'again';
   return helped ? 'hard' : 'good';
+}
+
+// ── One letter off ("Almost" in docs/design/learn-english-page.md) ──
+const spelled = word => unify(word).trim().toLowerCase();
+
+// The optimal string alignment distance (Damerau-Levenshtein where two adjacent letters swapped count as one edit).
+export function swapDistance(a, b) {
+  const x = [...a];
+  const y = [...b];
+  const table = Array.from({ length: x.length + 1 }, (_, i) => Array.from({ length: y.length + 1 }, (__, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= x.length; i += 1) {
+    for (let j = 1; j <= y.length; j += 1) {
+      const cost = x[i - 1] === y[j - 1] ? 0 : 1;
+      table[i][j] = Math.min(table[i - 1][j] + 1, table[i][j - 1] + 1, table[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1]) table[i][j] = Math.min(table[i][j], table[i - 2][j - 2] + 1);
+    }
+  }
+  return table[x.length][y.length];
+}
+
+// A typed word that is one letter off: a word of 4 letters or more, with exactly one wrong, missing or extra letter, or two adjacent letters swapped
+// (case, spaces around it and curly apostrophes aside). Such an answer is still wrong, but the page says "Almost" and offers Hard.
+export function nearMiss(expected, answer) {
+  const want = spelled(expected);
+  const got = spelled(answer);
+  if ([...want].length < 4 || !got || want === got) return false;
+  return swapDistance(want, got) === 1;
+}
+
+// The usual spelling mix-ups, longest first so "-ency" is named before "-ent". Each pair is tried both ways round.
+const SUFFIX_PAIRS = [['ency', 'ancy'], ['ence', 'ance'], ['able', 'ible'], ['sion', 'tion'], ['ent', 'ant']];
+
+// The known spelling pattern behind a wrong word, as a template for the translation layer: -sion / -tion, -ent / -ant, -ence / -ance, -ency / -ancy,
+// -able / -ible ("{1}, not {2} here" with the right one first), a doubled letter missing ("Double {1}") or one too many ("Only one {1}"), and ie / ei.
+// Returns { template, values } or null. Every template has its Chinese in public/js/i18n-zh-extra.js.
+export function spellingPattern(expected, answer) {
+  const want = spelled(expected);
+  const got = spelled(answer);
+  if (!want || !got || want === got) return null;
+  for (const pair of SUFFIX_PAIRS) {
+    for (const [right, wrong] of [pair, [pair[1], pair[0]]]) {
+      for (let at = want.indexOf(right); at >= 0; at = want.indexOf(right, at + 1)) {
+        if (want.slice(0, at) + wrong + want.slice(at + right.length) === got) return { template: '{1}, not {2} here', values: [`-${right}`, `-${wrong}`] };
+      }
+    }
+  }
+  for (const [right, wrong] of [['ie', 'ei'], ['ei', 'ie']]) {
+    for (let at = want.indexOf(right); at >= 0; at = want.indexOf(right, at + 1)) {
+      if (want.slice(0, at) + wrong + want.slice(at + 2) === got) return { template: '{1}, not {2} here', values: [right, wrong] };
+    }
+  }
+  // One letter of a double left out, or a single letter doubled.
+  const dropAt = (word, at) => word.slice(0, at) + word.slice(at + 1);
+  if (got.length === want.length - 1) {
+    for (let at = 0; at < want.length - 1; at += 1) {
+      if (want[at] === want[at + 1] && /[a-z]/.test(want[at]) && dropAt(want, at) === got) return { template: 'Double {1}', values: [want[at]] };
+    }
+  }
+  if (got.length === want.length + 1) {
+    for (let at = 0; at < got.length - 1; at += 1) {
+      if (got[at] === got[at + 1] && /[a-z]/.test(got[at]) && dropAt(got, at) === want) return { template: 'Only one {1}', values: [got[at]] };
+    }
+  }
+  return null;
+}
+
+// ── Learn it in parts ("Keeps slipping" in docs/design/learn-english-page.md) ──
+// The parts of a word when the card has none from the translator: a rough syllable split by vowel groups. One consonant between two vowel groups starts
+// the next part (ta-ble aside), two or more are split after the first (keeping ch, sh, th, ph, wh, ck, qu together), a final silent e stays with the
+// part before it, a final consonant + le is a part of its own, a consonant with r or l after it starts a part with it (re-gres-sion), and -tion /
+// -sion start their own part. Hyphens and spaces stay at the end of the part before them, an apostrophe inside its word. The parts joined give the
+// word back exactly.
+const TOGETHER = new Set(['ch', 'sh', 'th', 'ph', 'wh', 'ck', 'qu', 'gh']);
+function syllables(letters) {
+  const low = letters.toLowerCase();
+  const vowel = at => 'aeiou'.includes(low[at]) || (low[at] === 'y' && at > 0 && !'aeiou'.includes(low[at - 1]));
+  const groups = []; // [start, end) of each vowel group
+  for (let at = 0; at < low.length; at += 1) {
+    if (!vowel(at)) continue;
+    if (groups.length && groups.at(-1)[1] === at) groups.at(-1)[1] = at + 1; else groups.push([at, at + 1]);
+  }
+  // A final lone e after a consonant is silent (ex-pire), unless it ends a consonant + le (ta-ble).
+  const last = groups.at(-1);
+  if (groups.length > 1 && last[0] === low.length - 1 && low.endsWith('e') && !/[^aeiou]le$/.test(low)) groups.pop();
+  if (groups.length < 2) return [letters];
+  const cuts = [];
+  for (let k = 0; k + 1 < groups.length; k += 1) {
+    const from = groups[k][1];
+    const to = groups[k + 1][0];
+    const cluster = low.slice(from, to);
+    if (k + 2 === groups.length && /[^aeiou]le$/.test(low) && to === low.length - 1) { cuts.push(to - 2); continue; } // ta-ble
+    if (cluster.length <= 1) cuts.push(from);
+    else if (/^[tsc]$/.test(cluster.at(-1)) && low.startsWith('io', to)) cuts.push(to - 1); // func-tion, man-sion
+    else if (TOGETHER.has(cluster)) cuts.push(from); // tea-cher
+    else if (TOGETHER.has(cluster.slice(-2)) || (/^[bcdfgkpt][rl]$/.test(cluster.slice(-2)) && !/^[td]l$/.test(cluster.slice(-2)))) cuts.push(to - 2); // re-gres-sion
+    else cuts.push(from + 1);
+  }
+  const parts = [];
+  let start = 0;
+  for (const cut of cuts) { if (cut > start && cut < letters.length) { parts.push(letters.slice(start, cut)); start = cut; } }
+  parts.push(letters.slice(start));
+  return parts;
+}
+export function splitParts(word) {
+  const text = String(word || '');
+  if (!text) return [];
+  const parts = [];
+  for (const piece of text.match(/[A-Za-z'\u2019]+|[^A-Za-z'\u2019]+/g)) {
+    if (/[A-Za-z]/.test(piece)) parts.push(...syllables(piece));
+    else if (parts.length) parts[parts.length - 1] += piece;
+    else parts.push(piece);
+  }
+  return parts;
+}
+// The parts to show: the card's own (from the translator) when they spell the word, else splitParts.
+export function partsOf(card) {
+  const word = String((card && card.en) || '').trim();
+  const given = card && Array.isArray(card.parts) ? card.parts.map(String).filter(Boolean) : [];
+  return given.length && given.join('').toLowerCase() === word.toLowerCase() ? given : splitParts(word);
 }
 
 // ── The first tag of a wrong answer ("Mistakes" in docs/design/learn-english-page.md) ──

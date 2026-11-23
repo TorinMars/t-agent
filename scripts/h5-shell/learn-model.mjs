@@ -1,24 +1,45 @@
-// The rules of the Learn page that need no DOM (pure functions with unit tests): which exercise a card gets, the word tiles of "Build the sentence",
+// The rules of the Learn page that need no DOM (pure functions with unit tests): which exercise a card gets, the word tiles of "Build the sentence" (hidden),
 // the gap of "Fill the gap", a word asked inside its sentence in Spell, the notes of "MY LEVEL" and "WORDS FROM MY TRANSLATIONS" in Learn settings,
 // the time estimate of the home, the order of a mixed session, the keys of a computer, and the parts of "Ask about this question" (chips, caption,
 // the state sent, the language and **bold** of a message, the NDJSON stream). See "The Learn page" and "Ask about this question" in
 // docs/design/learn-english-page.md.
 import { normWord, wordsOf } from './learn-grade.mjs';
 
-// The practice modes of the page, in the order of the home. `kind`: the cards it takes; `queue`: the /api/learn/queue mode; `limit`: cards per session.
+// "Build the sentence" is hidden on purpose for now (the person's decision, 2026-11-23): the home does not offer it, and Review, Mistakes and
+// Practice give a sentence card Fill the gap instead. Its code stays (BuildExercise in Learn.jsx, tilesFor, builtAnswer, hintTile, its texts and
+// the server's `mode=build`): set this to false to bring it back. See "Build the sentence is hidden" in docs/design/learn-english-page.md.
+export const BUILD_HIDDEN = true;
+
+// The practice modes of the page, in the order of the home. `kind`: the cards it takes; `queue`: the /api/learn/queue mode; `limit`: cards per session;
+// `hidden`: kept (its title, a session opened with it) but not offered on the home.
 export const MODES = [
   { id: 'spell', kind: 'word', label: 'Spell the word', note: 'See the meaning or hear it, type the word', icon: 'learnSpell', limit: 20 },
-  { id: 'build', kind: 'sentence', label: 'Build the sentence', note: 'Chinese + word tiles → the full sentence', icon: 'learnBuild', limit: 10 },
+  { id: 'build', kind: 'sentence', label: 'Build the sentence', note: 'Chinese + word tiles → the full sentence', icon: 'learnBuild', limit: 10, hidden: BUILD_HIDDEN },
   { id: 'dictation', kind: 'sentence', label: 'Dictation', note: 'Hear a sentence, type what you hear', icon: 'learnDictation', limit: 10, needs: 'tts' },
   { id: 'say', kind: 'sentence', label: 'Say it', note: 'Read aloud; voice input checks you', icon: 'voice', limit: 10, needs: 'voice' },
   { id: 'fill', kind: 'sentence', label: 'Fill the gap', note: 'One word missing from your own sentence', icon: 'learnFill', limit: 10 },
 ];
 export const modeOf = id => MODES.find(mode => mode.id === id) || null;
-// The modes this browser can offer: Dictation needs speech output, Say it a way to hear the person.
-export const availableModes = ({ tts = false, voice = false } = {}) => MODES.filter(mode => !mode.needs || (mode.needs === 'tts' ? tts : voice));
+// The modes this browser can offer: Dictation needs speech output, Say it a way to hear the person; a hidden mode is never offered.
+export const availableModes = ({ tts = false, voice = false } = {}) => MODES.filter(mode => !mode.hidden && (!mode.needs || (mode.needs === 'tts' ? tts : voice)));
 
-// The exercise a card gets in a mixed session (Review, Mistakes, free practice): a word is spelled, a sentence is built.
-export const exerciseOf = (card, mode) => (mode === 'review' || mode === 'mistakes' || mode === 'mixed' ? (card.kind === 'word' ? 'spell' : 'build') : mode);
+// The exercise of a sentence card that has no mode of its own: Fill the gap while Build the sentence is hidden, else Build.
+export const SENTENCE_EXERCISE = BUILD_HIDDEN ? 'fill' : 'build';
+const MIXED = new Set(['review', 'mistakes', 'mixed']);
+// The exercise a card gets in a mixed session (Review, Mistakes, free practice): a word is spelled, a sentence gets SENTENCE_EXERCISE.
+export const exerciseOf = (card, mode) => (MIXED.has(mode) ? (card.kind === 'word' ? 'spell' : SENTENCE_EXERCISE) : mode);
+
+// The exercise a card is shown in (exerciseOf, then what this browser and this card allow): a hidden mode (a session opened as `build`), Dictation
+// without speech output and Say it without a way to hear the person fall back to SENTENCE_EXERCISE. A sentence that would get Fill the gap without
+// being in the Fill the gap mode, and has no content word to take out (`gapFor` is null: "I am here."), gets Dictation when the page can speak;
+// else it stays Fill the gap, which then takes out the best word it has (`gapFor(card, { loose: true })`). See "Which exercise a card gets" in
+// docs/design/learn-english-page.md.
+export function exerciseFor(card, mode, { tts = false, voice = false } = {}) {
+  let exercise = exerciseOf(card, mode);
+  if ((modeOf(exercise) || {}).hidden || (exercise === 'dictation' && !tts) || (exercise === 'say' && !voice)) exercise = SENTENCE_EXERCISE;
+  if (exercise === 'fill' && mode !== 'fill' && card.kind === 'sentence' && tts && !gapFor(card)) return 'dictation';
+  return exercise;
+}
 
 // About 20 seconds a card: "about 6 min" for 18 cards; at least one minute while anything is due.
 export const minutesFor = due => (due > 0 ? Math.max(1, Math.round((due * 20) / 60)) : 0);
@@ -85,17 +106,20 @@ export function hintTile(card, tiles, placed) {
 }
 
 // The gap of "Fill the gap": one content word of the sentence (the same one for a card each time), with the text before and after it.
-// Null when the sentence has no word to take out.
-export function gapFor(card) {
+// Null when the sentence has no word to take out. `loose`: a sentence without a content word ("I am here.") takes out its longest word instead
+// (the first of the longest; any word of letters, a common one too) and the gap has `loose: true`; null only without any such word ("2 + 2").
+export function gapFor(card, { loose = false } = {}) {
   const pieces = String(card.en || '').trim().split(/(\s+)/);
   const candidates = [];
+  let longest = -1;
   pieces.forEach((piece, index) => {
     if (/^\s*$/.test(piece)) return;
     const word = { text: piece, norm: normWord(piece) };
     if (contentWord(word)) candidates.push(index);
+    else if (/^[a-z][a-z'-]*$/.test(word.norm) && (longest < 0 || word.norm.length > normWord(pieces[longest]).length)) longest = index;
   });
-  if (!candidates.length) return null;
-  const at = candidates[Math.floor(seeded(seedOf(card.id))() * candidates.length)];
+  if (!candidates.length && !(loose && longest >= 0)) return null;
+  const at = candidates.length ? candidates[Math.floor(seeded(seedOf(card.id))() * candidates.length)] : longest;
   const piece = pieces[at];
   const core = normWord(piece);
   // Keep the punctuation around the word outside the gap ("expires." -> gap + ".").
@@ -103,7 +127,7 @@ export function gapFor(card) {
   const lead = start > 0 ? piece.slice(0, start) : '';
   const word = piece.slice(lead.length, lead.length + core.length);
   const trail = piece.slice(lead.length + core.length);
-  return { word, before: pieces.slice(0, at).join('') + lead, after: trail + pieces.slice(at + 1).join('') };
+  return { word, before: pieces.slice(0, at).join('') + lead, after: trail + pieces.slice(at + 1).join(''), ...(candidates.length ? {} : { loose: true }) };
 }
 
 // The context line of a word card: its context with the word itself replaced by a gap ("after the session cookie ___"), or '' when there is none.

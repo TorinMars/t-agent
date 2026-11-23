@@ -55,7 +55,7 @@ function learnMock({ legacy = false } = {}) {
     if (p === '/api/learn/settings' && method === 'PUT') { mock.settings = { ...mock.settings, ...body }; return mock.settings; }
     if (p === '/api/learn/queue') {
       const mode = url.searchParams.get('mode');
-      if (url.searchParams.get('extra') === 'practice') return { cards: mode === 'build' ? [] : mock.practice };
+      if (url.searchParams.get('extra') === 'practice') return { cards: mode === 'fill' ? [] : mock.practice };
       if (mode === 'spell' || mode === 'review') return { cards: mock.spell.shift() || [] };
       return { cards: [] };
     }
@@ -302,7 +302,7 @@ async function toTerminal(page) {
       assert.equal(await noSidewaysScroll(page), true, 'settings fit 390px');
       await page.locator('#h5-learn-back').tap();
 
-      // Practice (nothing due): spell and build with extra=practice.
+      // Practice (nothing due): spell and fill (the sentence queue) with extra=practice.
       mock.summary = { ...mock.summary, due: 0 };
       await page.locator('#h5-learn-settings').tap();
       await page.locator('#h5-learn-back').tap();
@@ -310,7 +310,7 @@ async function toTerminal(page) {
       const before = mock.gets(/\/queue$/).length;
       await page.locator('#h5-learn-free').tap();
       await waitFor(() => mock.gets(/\/queue$/).length >= before + 2, 'the practice queues');
-      assert.deepEqual(mock.gets(/\/queue$/).slice(before).map(item => item.search).sort(), ['?mode=build&limit=10&extra=practice', '?mode=spell&limit=10&extra=practice']);
+      assert.deepEqual(mock.gets(/\/queue$/).slice(before).map(item => item.search).sort(), ['?mode=fill&limit=10&extra=practice', '?mode=spell&limit=10&extra=practice']);
       await context.close();
     }
 

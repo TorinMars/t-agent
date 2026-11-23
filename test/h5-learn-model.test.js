@@ -1,4 +1,4 @@
-// The rules of the Learn page (scripts/h5-shell/learn-model.mjs): modes, tiles, the gap, the estimate, a mixed session and the keys of a computer.
+// The rules of the Learn page (scripts/h5-shell/learn-model.mjs): modes (Build hidden), the exercise of a card, tiles, the gap, the estimate, a mixed session and the keys of a computer.
 // See "The Learn page" in docs/design/learn-english-page.md.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -6,16 +6,48 @@ const assert = require('node:assert/strict');
 const load = () => import('../scripts/h5-shell/learn-model.mjs');
 const card = (id, en, kind = 'sentence') => ({ id, kind, en, zh: '' });
 
-test('the modes, and the ones a browser without speech output or voice input offers', async () => {
-  const { MODES, availableModes, exerciseOf } = await load();
-  assert.deepEqual(MODES.map(mode => mode.id), ['spell', 'build', 'dictation', 'say', 'fill']);
-  assert.deepEqual(availableModes({ tts: true, voice: true }).map(mode => mode.id), ['spell', 'build', 'dictation', 'say', 'fill']);
-  assert.deepEqual(availableModes({ tts: false, voice: false }).map(mode => mode.id), ['spell', 'build', 'fill']);
-  assert.deepEqual(availableModes({ tts: true }).map(mode => mode.id), ['spell', 'build', 'dictation', 'fill']);
+test('the modes, and the ones a browser without speech output or voice input offers; Build the sentence is kept but hidden', async () => {
+  const { MODES, BUILD_HIDDEN, availableModes, exerciseOf, modeOf } = await load();
+  assert.equal(BUILD_HIDDEN, true, 'Build the sentence is hidden for now (the person\'s decision)');
+  assert.deepEqual(MODES.map(mode => mode.id), ['spell', 'build', 'dictation', 'say', 'fill'], 'its entry stays, so it can come back');
+  assert.equal(modeOf('build').label, 'Build the sentence');
+  assert.equal(modeOf('build').hidden, true);
+  assert.deepEqual(availableModes({ tts: true, voice: true }).map(mode => mode.id), ['spell', 'dictation', 'say', 'fill']);
+  assert.deepEqual(availableModes({ tts: false, voice: false }).map(mode => mode.id), ['spell', 'fill']);
+  assert.deepEqual(availableModes({ tts: true }).map(mode => mode.id), ['spell', 'dictation', 'fill']);
+  assert.deepEqual(availableModes().map(mode => mode.id), ['spell', 'fill']);
   assert.equal(exerciseOf(card(1, 'w', 'word'), 'review'), 'spell');
-  assert.equal(exerciseOf(card(2, 'a b c'), 'review'), 'build');
-  assert.equal(exerciseOf(card(2, 'a b c'), 'mistakes'), 'build');
+  for (const mode of ['review', 'mistakes', 'mixed']) assert.equal(exerciseOf(card(2, 'a b c'), mode), 'fill', mode);
   assert.equal(exerciseOf(card(2, 'a b c'), 'dictation'), 'dictation');
+});
+
+test('the exercise a card is shown in: sentences in Review, Mistakes and Practice get Fill the gap; the fallbacks', async () => {
+  const { exerciseFor } = await load();
+  const both = { tts: true, voice: true };
+  const none = { tts: false, voice: false };
+  const sentence = card(5, 'Deploy the staging server tonight.');
+  const word = card(6, 'expire', 'word');
+  for (const mode of ['review', 'mistakes', 'mixed']) {
+    assert.equal(exerciseFor(sentence, mode, both), 'fill', mode);
+    assert.equal(exerciseFor(sentence, mode, none), 'fill', `${mode} without speech`);
+    assert.equal(exerciseFor(word, mode, none), 'spell', `${mode}: a word`);
+  }
+  assert.equal(exerciseFor(sentence, 'dictation', both), 'dictation');
+  assert.equal(exerciseFor(sentence, 'dictation', none), 'fill', 'Dictation without speech output: Fill the gap, not Build');
+  assert.equal(exerciseFor(sentence, 'say', { tts: true, voice: false }), 'fill', 'Say it without voice input: Fill the gap');
+  assert.equal(exerciseFor(sentence, 'say', both), 'say');
+  assert.equal(exerciseFor(sentence, 'build', both), 'fill', 'a session opened as build (hidden) gets Fill the gap');
+  assert.equal(exerciseFor(sentence, 'fill', none), 'fill');
+  assert.equal(exerciseFor(word, 'spell', none), 'spell');
+  assert.equal(exerciseFor(sentence, undefined, none), undefined, 'no mode: nothing invented');
+  // A sentence without a content word to take out: Dictation when the page can speak, else Fill the gap with its longest word.
+  const plain = card(7, 'I am here.');
+  for (const mode of ['review', 'mistakes', 'mixed']) {
+    assert.equal(exerciseFor(plain, mode, { tts: true }), 'dictation', mode);
+    assert.equal(exerciseFor(plain, mode, none), 'fill', `${mode} without speech`);
+  }
+  assert.equal(exerciseFor(plain, 'say', { tts: true, voice: false }), 'dictation', 'Say it without voice: Dictation rather than a weak gap');
+  assert.equal(exerciseFor(plain, 'fill', { tts: true }), 'fill', 'the Fill the gap mode keeps its own exercise');
 });
 
 test('the estimate and the goal', async () => {
@@ -68,6 +100,12 @@ test('the gap is one content word, the same for a card, with the punctuation out
   const end = gapFor(card(1, 'it is expires.'));
   assert.deepEqual(end, { word: 'expires', before: 'it is ', after: '.' });
   assert.equal(gapFor(card(2, 'it is a an')), null, 'no content word');
+  // `loose`: the longest word of letters instead (the first of the longest), marked; a content word is still taken first.
+  assert.deepEqual(gapFor(card(3, 'I am here.'), { loose: true }), { word: 'here', before: 'I am ', after: '.', loose: true });
+  assert.deepEqual(gapFor(card(2, 'it is a an'), { loose: true }), { word: 'it', before: '', after: ' is a an', loose: true });
+  assert.deepEqual(gapFor(card(1, 'it is expires.'), { loose: true }), end, 'a content word: the same gap as without loose');
+  assert.equal(gapFor(card(4, '2 + 2 = 4'), { loose: true }), null, 'no word at all');
+  assert.equal(gapFor(card(4, ''), { loose: true }), null, 'an empty sentence');
 });
 
 test('the context of a word card hides the word', async () => {

@@ -228,7 +228,7 @@ const CASES = {
       if (servers.length) empty.store('/api/remote-servers/3/mindmaps').control.mode = 'unsupported';
       const second = await openPage(browser, empty);
       await tools(second.page, false).openView();
-      await second.page.locator('.mm-note', { hasText: 'No mind maps yet. Create one or import a .xmind file.' }).waitFor();
+      await second.page.locator('.mm-note', { hasText: 'No mind maps yet. Create one or import a file.' }).waitFor();
       await second.context.close();
     }
   },
@@ -302,8 +302,10 @@ const CASES = {
     try {
       const file = path.join(dir, 'Imported here.xmind');
       fs.writeFileSync(file, zipSync({ 'content.json': strToU8(JSON.stringify([{ id: 's', class: 'sheet', title: 'Sheet', rootTopic: { id: 'r', class: 'topic', title: 'Imported root' } }])), 'metadata.json': strToU8('{}'), 'manifest.json': strToU8('{}') }));
-      await page.locator('#mm-import').click(); // picks the target; the chooser itself is fed below
-      await page.locator('.mm-file').setInputFiles(file);
+      await page.locator('#mm-import').click();
+      const chooser = page.waitForEvent('filechooser');
+      await page.locator('#mm-import-file').click(); // picks the target and opens the chooser
+      await (await chooser).setFiles(file);
       await page.locator('.me-tpc', { hasText: 'Imported root' }).waitFor();
       check(world.requests(OFFICE_BASE, 'POST').length === 2 && world.requests(LOCAL_BASE, 'POST').length === 1, 'the import went to the chosen service');
       check(world.requests(OFFICE_BASE, 'GET').some(entry => entry.pathname.endsWith([...world.store(OFFICE_BASE).maps.values()].at(-1).id)), 'and the imported map was opened there');

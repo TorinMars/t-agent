@@ -698,6 +698,7 @@ const CASES = {
       // Export it again and look inside the file.
       const download = page.waitForEvent('download');
       await page.locator('#mm-export').click();
+      await page.locator('#mm-export-xmind').click();
       const saved = await (await download).path();
       const entries = unzipSync(new Uint8Array(fs.readFileSync(saved)));
       for (const name of ['content.json', 'metadata.json', 'manifest.json']) check(entries[name], `the export has ${name}`);
@@ -725,6 +726,7 @@ const CASES = {
         check(created.data.direction === 1 && sidesIn(created.data).length === 0, 'the imported map is stored as a right-side tree');
         const exported = page.waitForEvent('download');
         await page.locator('#mm-export').click();
+        await page.locator('#mm-export-xmind').click();
         const bytes = fs.readFileSync(await (await exported).path());
         check(JSON.parse(strFromU8(unzipSync(new Uint8Array(bytes))['content.json']))[0].rootTopic.structureClass === 'org.xmind.ui.logic.right', 'the export is a right-side tree');
         await page.locator('#mm-back').click();

@@ -5,8 +5,10 @@ import { shortName, tagColor } from '../h5-shell/task-order.mjs';
 import { localGet, localSet } from '../h5-shell/local-keys.mjs';
 import { createEditor } from './editor.js';
 import { createSaver } from './saver.mjs';
-import { blankDoc, sanitizeDoc, DocError } from './doc.mjs';
-import { buildXmind, parseXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
+import { blankDoc, countTopics, sanitizeDoc, DocError } from './doc.mjs';
+import { buildXmind, describeLost, XmindError, XMIND_LIMITS } from './xmind.mjs';
+import { FormatError, docFromNodes, importFile, parseOutline, toFreeMind, toMarkdown, toOpml, toOutlineText } from './formats.mjs';
+import { PasteError, topicsFromClipboard } from './clipboard.mjs';
 
 const tr = text => (typeof I18n !== 'undefined' ? I18n.t(text) : text);
 // The services whose maps are listed (`sources` of the mount options, in the one order of devices, by name): { key, label, base, online, instanceId }.
@@ -78,7 +80,7 @@ const isUnsupported = error => error instanceof ApiError && (error.status === 50
 
 // `src`: the service the request went to, named when it is offline.
 function messageFor(error, src) {
-  if (error instanceof XmindError || error instanceof DocError) return tr(error.message);
+  if (error instanceof XmindError || error instanceof DocError || error instanceof FormatError || error instanceof PasteError) return tr(error.message);
   if (error instanceof ApiError) {
     if (CODE_MESSAGES[error.code]) return tr(CODE_MESSAGES[error.code]);
     if (src && !src.local && isOffline(error)) return `${tr('This service is offline:')} ${sourceName(src)}`;
@@ -145,10 +147,47 @@ function sizeText(bytes) {
   return n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 102.4) / 10} KB` : `${Math.round(n / 104857.6) / 10} MB`;
 }
 const clipTitle = title => [...String(title || '').replace(/[\r\n]+/g, ' ').trim()].slice(0, 200).join(''); // the service takes 1 to 200 characters on one line
-const safeFileName = title => `${String(title || 'Mind map').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 120).trim() || 'Mind map'}.xmind`;
+const safeFileName = (title, ext = 'xmind') => `${String(title || 'Mind map').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 120).trim() || 'Mind map'}.${ext}`;
+// The file kinds of Import (chosen by content as well as by name, formats.mjs `importFile`) and the end of a name that is not part of the map's title.
+const IMPORT_ACCEPT = '.xmind,.mm,.opml,.md,.markdown,.txt';
+const IMPORT_EXT = /\.(xmind|mm|opml|md|markdown|txt)$/i;
+const depthOf = node => 1 + Math.max(0, ...(node.children || []).map(depthOf));
+const parseXml = text => new DOMParser().parseFromString(text, 'text/xml');
+const parseHtml = text => new DOMParser().parseFromString(text, 'text/html'); // inert: no script runs and nothing is loaded
 
-function download(bytes, name) {
-  const file = new File([bytes], name, { type: 'application/vnd.xmind.workbook' });
+// Copy as Markdown / outline text: the async clipboard where the page may use it (https or localhost), else a hidden text field and the copy command.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall back below */ }
+  const area = el('textarea', { readonly: true, 'aria-hidden': 'true', style: 'position:fixed;left:-9999px;top:0;opacity:0' });
+  area.value = text;
+  document.body.append(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  area.remove();
+  return ok;
+}
+// What the clipboard holds as HTML and as text, for Import > From the clipboard; null when the page may not read it.
+async function readClipboard() {
+  const clip = navigator.clipboard;
+  try {
+    if (clip && clip.read) {
+      const forms = { custom: '', html: '', text: '' };
+      for (const item of await clip.read()) {
+        if (!forms.html && item.types.includes('text/html')) forms.html = await (await item.getType('text/html')).text();
+        if (!forms.text && item.types.includes('text/plain')) forms.text = await (await item.getType('text/plain')).text();
+      }
+      return forms;
+    }
+    if (clip && clip.readText) return { custom: '', html: '', text: await clip.readText() };
+  } catch { /* not allowed, or nothing there */ }
+  return null;
+}
+
+function download(content, name, type = 'application/vnd.xmind.workbook') {
+  const file = new File([content], name, { type });
   // A Home Screen app on iOS cannot follow a download link; the share sheet can save the file.
   if (matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) {
     navigator.share({ files: [file], title: name }).catch(() => {});
@@ -218,11 +257,13 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
   function closeAll() { if (screen === 'editor') void leaveEditor({ thenClose: true }); else onClose(); }
 
   // ── Dialogs (inside the view, so the terminal and its keys stay out of it) ──
-  function openDialog(titleText, content, buttons, { onDismiss } = {}) {
+  // `menu`: an element to drop a menu from (an MD2 menu under it), or 'sheet' (a bottom sheet, on touch); the content is then a list of items.
+  function openDialog(titleText, content, buttons, { onDismiss, menu = null } = {}) {
     if (dialog) dialog.close();
     const opener = document.activeElement;
-    const box = el('div', { class: 'mm-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': titleText });
-    const wrap = el('div', { class: 'mm-dialog-wrap', onPointerdown: e => { if (e.target === wrap) dismiss(); } }, box);
+    const sheet = menu === 'sheet';
+    const box = el('div', { class: menu ? (sheet ? 'mm-sheet' : 'mm-popmenu') : 'mm-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': titleText });
+    const wrap = el('div', { class: menu ? (sheet ? 'mm-dialog-wrap mm-sheet-wrap' : 'mm-dialog-wrap mm-menu-wrap') : 'mm-dialog-wrap', onPointerdown: e => { if (e.target === wrap) dismiss(); } }, box);
     const close = () => {
       if (!dialog || dialog.box !== box) return;
       dialog = null;
@@ -236,6 +277,16 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     function onKey(e) {
       if (!owns(e) && !box.contains(e.target)) return;
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); return; }
+      if (menu && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End')) {
+        const items = [...box.querySelectorAll('.mm-menu-item')].filter(n => !n.disabled);
+        if (!items.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const at = items.indexOf(document.activeElement);
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : e.key === 'ArrowDown' ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+        items[next].focus();
+        return;
+      }
       if (e.key !== 'Tab') return;
       const focusable = [...box.querySelectorAll('button, input, textarea, a[href]')].filter(n => !n.disabled);
       if (!focusable.length) return;
@@ -244,19 +295,47 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
-    box.append(el('h2', { class: 'mm-dialog-title', text: titleText }));
+    if (!menu || sheet) box.append(el('h2', { class: sheet ? 'mm-sheet-title' : 'mm-dialog-title', text: titleText }));
     if (content) box.append(content);
     if (buttons && buttons.length) {
       box.append(el('div', { class: 'mm-dialog-actions' }, ...buttons.map(b => el('button', { type: 'button', class: b.primary ? 'mm-btn mm-btn-primary' : b.danger ? 'mm-btn mm-btn-danger' : 'mm-btn', text: b.label, onClick: () => { if (b.keepOpen) b.run(close); else { close(); b.run && b.run(); } } }))));
     }
     root.append(wrap);
+    if (menu && !sheet) placeMenu(box, menu);
     document.addEventListener('keydown', onKey, true);
     dialog = { box, close: dismiss };
     pushLayers();
     const input = box.querySelector('input, textarea');
-    (input || box.querySelector('button')).focus();
+    const first = input || [...box.querySelectorAll('button')].find(n => !n.disabled);
+    if (first) first.focus();
     if (input && input.select) input.select();
-    return { close, dismiss };
+    return { close, dismiss, box };
+  }
+  // Under its button, right-aligned with it when it would run off the view, and above it when there is no room below.
+  function placeMenu(box, anchor) {
+    const area = root.getBoundingClientRect();
+    const at = anchor.getBoundingClientRect();
+    const width = box.offsetWidth;
+    const height = box.offsetHeight;
+    let left = at.left - area.left;
+    if (left + width > area.width - 8) left = Math.max(8, at.right - area.left - width);
+    let top = at.bottom - area.top + 4;
+    if (top + height > area.height - 8) top = Math.max(8, Math.min(at.top - area.top - height - 4, area.height - height - 8));
+    Object.assign(box.style, { left: `${left}px`, top: `${top}px` });
+  }
+  // A menu of `entries`: { header }, { divider: true }, { caption } or { id, label, hint, run, disabled }. On touch it is a bottom sheet.
+  function openMenu(anchor, titleText, entries) {
+    const sheet = matchMedia('(pointer: coarse)').matches;
+    let handle = null;
+    const list = el('div', { class: 'mm-menu', role: 'menu', 'aria-label': titleText }, ...entries.filter(Boolean).map(entry => {
+      if (entry.header) return el('div', { class: 'mm-menu-header', role: 'presentation', text: tr(entry.header) });
+      if (entry.divider) return el('div', { class: 'mm-menu-divider', role: 'separator' });
+      if (entry.caption) return el('p', { class: 'mm-menu-caption', text: tr(entry.caption) });
+      return el('button', { type: 'button', class: 'mm-menu-item mm-menu-item2', role: 'menuitem', id: entry.id, disabled: Boolean(entry.disabled), onClick: () => { handle.close(); entry.run(); } },
+        el('span', { class: 'mm-menu-label', text: tr(entry.label) }), entry.hint ? el('span', { class: 'mm-menu-hint', text: tr(entry.hint) }) : null);
+    }));
+    handle = openDialog(titleText, list, [], { menu: sheet ? 'sheet' : anchor });
+    return handle;
   }
   const confirmDialog = (titleText, message, label, run) => openDialog(titleText, el('p', { class: 'mm-dialog-text', text: message }), [{ label: tr('Cancel') }, { label, danger: true, run }]);
   function promptDialog(titleText, value, label, run, { multiline = false, placeholder = '' } = {}) {
@@ -273,8 +352,9 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
 
   // ── List ──
   const rows = el('div', { class: 'mm-rows' });
+  const importButton = iconButton('Import', 'Import', () => openImport(), { id: 'mm-import', 'aria-haspopup': 'menu' });
   const fileInput = el('input', { type: 'file', class: 'mm-file', tabindex: '-1', 'aria-hidden': 'true', onChange: onFilePicked });
-  if (!matchMedia('(pointer: coarse)').matches) fileInput.setAttribute('accept', '.xmind'); // on a phone a file type the system does not know could not be chosen at all
+  if (!matchMedia('(pointer: coarse)').matches) fileInput.setAttribute('accept', IMPORT_ACCEPT); // on a phone a file type the system does not know could not be chosen at all
   // "Create on" (the same idea and words as the New task form of the task list): only when more than one service can take a new map.
   const createSelect = el('select', { id: 'mm-create-on', class: 'mm-select', 'aria-label': tr('Create on'), onChange: () => { createOn = createSelect.value; } });
   const createRow = el('label', { class: 'mm-on', hidden: true }, el('span', { class: 'mm-on-label', text: tr('Create on') }), createSelect);
@@ -288,9 +368,20 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     el('header', { class: 'mm-top' },
       split ? null : iconButton('close', 'Close', () => closeAll(), { id: 'mm-close' }),
       el('h1', { class: 'mm-heading', text: tr('Mind maps') }),
-      iconButton('Import', 'Import .xmind', () => { importTarget = createTarget(); fileInput.click(); }, { id: 'mm-import' }),
+      importButton,
       iconButton('add', 'New map', () => { void createMap(); }, { id: 'mm-new' })),
-    searchRow, createRow, rows, fileInput);
+    searchRow, createRow, rows, fileInput, el('div', { class: 'mm-drop', 'aria-hidden': 'true' }, el('span', { text: tr('Drop a file here to import') })));
+  // A file dropped on the list is imported, as with From a file.
+  const hasFiles = e => Boolean(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'));
+  listView.addEventListener('dragover', e => { if (!hasFiles(e) || dialog) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; listView.dataset.drop = '1'; });
+  listView.addEventListener('dragleave', e => { if (!listView.contains(e.relatedTarget)) delete listView.dataset.drop; });
+  listView.addEventListener('drop', e => {
+    delete listView.dataset.drop;
+    if (!hasFiles(e) || dialog) return;
+    e.preventDefault();
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) void importPicked(file, createTarget());
+  });
 
   const sourceByKey = key => sources.find(src => src.key === key) || null;
   const listOf = src => lists.get(src.key) || { status: 'loading', maps: [] };
@@ -404,7 +495,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     const focusRow = active && rows.contains(active) && active.closest('.mm-row');
     const focus = focusRow ? [focusRow.dataset.ref, active.dataset.part] : null;
     const shown = listedSources().filter(src => listOf(src).status !== 'unsupported');
-    if (!shown.length) { rows.replaceChildren(note(tr(sources.length ? 'No mind maps yet. Create one or import a .xmind file.' : 'Loading...'))); return; }
+    if (!shown.length) { rows.replaceChildren(note(tr(sources.length ? 'No mind maps yet. Create one or import a file.' : 'Loading...'))); return; }
     // Tags when more than one engine is involved: several services listed, or (with the sync) more than one engine keeping the maps.
     const tagged = shown.length > 1 || (syncOn() && Array.isArray(syncInfo.engines) && syncInfo.engines.length > 1);
     const rank = new Map(shown.map((src, index) => [src.key, index]));
@@ -422,7 +513,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     if (maps.length) parts.push(el('div', { class: 'mm-section-rows', role: 'list' }, ...maps.map(({ src, map }) => mapRow(src, map, tagged))));
     else if (waiting.length === shown.length && waiting.every(src => listOf(src).status === 'loading')) parts.push(note(tr('Loading...')));
     else if (query && all.length) parts.push(note(tr('No maps match')));
-    else if (!waiting.length || !all.length) parts.push(note(tr(waiting.length ? 'No mind maps' : 'No mind maps yet. Create one or import a .xmind file.')));
+    else if (!waiting.length || !all.length) parts.push(note(tr(waiting.length ? 'No mind maps' : 'No mind maps yet. Create one or import a file.')));
     for (const src of waiting) {
       const list = listOf(src);
       const name = tagged ? el('span', { class: 'mm-source-name', translate: 'no', text: sourceName(src) }) : null;
@@ -530,24 +621,87 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     });
   }
 
-  async function onFilePicked() {
+  function onFilePicked() {
     const file = fileInput.files && fileInput.files[0];
     const src = importTarget || createTarget(); // the service chosen when Import was pressed
     importTarget = null;
     fileInput.value = '';
-    if (!file) return;
-    if (file.size > XMIND_LIMITS.file) { say(tr('This .xmind file is too large'), 'error'); return; }
+    if (file) void importPicked(file, src);
+  }
+  // A file from From a file or a drop: .xmind, FreeMind, OPML, Markdown or outline text, told apart by content as well as by name.
+  async function importPicked(file, src) {
+    if (file.size > XMIND_LIMITS.file) { say(tr('This file is too large'), 'error'); return; }
     if (!(await makeRoom())) return;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const { doc, lost } = parseXmind(bytes, { parseXml: text => new DOMParser().parseFromString(text, 'text/xml') });
-      const title = clipTitle(file.name.replace(/\.xmind$/i, '')) || tr('Imported map');
-      const created = await call('POST', src.base, { title, data: doc });
-      noteCreated(src);
-      const dropped = describeLost(lost, tr);
-      say(dropped.length ? `${tr('Imported.')} ${dropped.join(', ')}` : tr('Imported'), dropped.length ? 'warning' : 'success');
-      await openMap(src, created.id);
+      const { doc, lost } = importFile({ name: file.name, bytes, parseXml });
+      await createFromDoc(src, clipTitle(file.name.replace(IMPORT_EXT, '')), doc, lost);
     } catch (error) { say(messageFor(error, src), 'error'); }
+  }
+  // A new map on `src` with `doc`, opened at once. `lost`: what the source had that the map cannot keep, said in the message.
+  async function createFromDoc(src, title, doc, lost) {
+    const created = await call('POST', src.base, { title: title || clipTitle(doc.nodeData.topic) || tr('Imported map'), data: doc });
+    noteCreated(src);
+    const dropped = lost ? describeLost(lost, tr) : [];
+    say(dropped.length ? `${tr('Imported.')} ${dropped.join(', ')}` : tr('Imported'), dropped.length ? 'warning' : 'success');
+    await openMap(src, created.id);
+  }
+
+  function openImport() {
+    openMenu(importButton, tr('Import'), [
+      { id: 'mm-import-file', label: 'From a file\u2026', hint: '.xmind, .mm, .opml, .md, .txt', run: () => { importTarget = createTarget(); fileInput.click(); } },
+      { id: 'mm-import-text', label: 'From text\u2026', hint: 'Paste an outline', run: () => openTextImport() },
+      { id: 'mm-import-clipboard', label: 'From the clipboard', hint: 'Topics or an outline you copied', run: () => { void importClipboard(); } },
+    ]);
+  }
+  async function importClipboard() {
+    const src = createTarget();
+    const forms = await readClipboard();
+    let found = null;
+    try { found = forms && topicsFromClipboard(forms, { parseHtml }); } catch (error) { say(messageFor(error, src), 'error'); return; }
+    // The page may not read the clipboard (http, or the browser asks first and was refused): the person pastes into the text box instead.
+    if (!found) { openTextImport(forms ? 'The clipboard has no topics or outline in it. Paste one here.' : 'The clipboard cannot be read here. Paste the outline into the box.'); return; }
+    if (!(await makeRoom())) return;
+    try { await createFromDoc(src, '', docFromNodes(found.nodes, tr('Imported map')), null); } catch (error) { say(messageFor(error, src), 'error'); }
+  }
+  // New map from text: an outline typed or pasted, with a live count of what the map will be.
+  function openTextImport(lead = 'Paste an outline: Markdown headings or lists, or lines indented with tabs or spaces.') {
+    const src = createTarget();
+    const input = el('textarea', { id: 'mm-import-text-input', class: 'mm-input mm-outline-input', rows: '10', spellcheck: 'false', translate: 'no', 'aria-label': tr('Outline'), placeholder: '# Q1 launch\n- Scope\n  - Login page\n- Risks' });
+    const summary = el('p', { id: 'mm-import-count', class: 'mm-dialog-caption', role: 'status' });
+    let doc = null;
+    const handle = openDialog(tr('New map from text'), el('div', { class: 'mm-import-text' }, el('p', { class: 'mm-dialog-text', text: tr(lead) }), input, summary),
+      [{ label: tr('Cancel') }, { label: tr('Create map'), primary: true, keepOpen: true, run: close => {
+        if (!doc) return;
+        const made = doc;
+        close();
+        void (async () => {
+          if (!(await makeRoom())) return;
+          try { await createFromDoc(src, '', made, null); } catch (error) { say(messageFor(error, src), 'error'); }
+        })();
+      } }]);
+    const create = handle.box.querySelector('.mm-btn-primary');
+    let timer = null;
+    const update = () => {
+      timer = null;
+      doc = null;
+      summary.textContent = '';
+      summary.removeAttribute('data-error');
+      if (input.value.trim()) {
+        try {
+          const { nodes } = parseOutline(input.value);
+          if (nodes.length) doc = docFromNodes(nodes, tr('Imported map'));
+        } catch (error) { summary.textContent = messageFor(error, src); summary.dataset.error = '1'; }
+      }
+      if (doc) {
+        const topics = countTopics(doc.nodeData);
+        const levels = depthOf(doc.nodeData);
+        summary.textContent = [tr(topics === 1 ? '1 topic' : `${topics} topics`), tr(levels === 1 ? '1 level' : `${levels} levels`), `${tr('root:')} ${doc.nodeData.topic}`].join(' \u00b7 ');
+      }
+      create.disabled = !doc;
+    };
+    input.addEventListener('input', () => { if (timer) clearTimeout(timer); timer = setTimeout(update, 120); });
+    update();
   }
 
   // ── Editor ──
@@ -573,7 +727,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     barButton('undo', 'undo', 'Undo', () => act('undo')),
     barButton('redo', 'redo', 'Redo', () => act('redo')),
     barButton('fit', 'fitWindow', 'Fit map', () => act('fit')));
-  const exportButton = iconButton('export', 'Export .xmind', () => exportMap(), { id: 'mm-export' });
+  const exportButton = iconButton('export', 'Export', () => openExport(), { id: 'mm-export', 'aria-haspopup': 'menu' });
   const moreButton = iconButton('taskMore', 'More', () => openMore(), { id: 'mm-more' });
   // The split view: fold the list away or bring it back (`aria-expanded`: whether the list is shown).
   const foldButton = split ? iconButton('sidebarFold', 'Hide the map list', () => setFolded(!listFolded), { id: 'mm-list-toggle', 'aria-controls': 'mm-list' }) : null;
@@ -704,6 +858,7 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
         owns,
         isBlocked: () => Boolean(dialog),
         notify: text => say(text, 'error'),
+        info: text => say(text, 'success'),
       });
     } catch { say(tr('The editor could not start'), 'error'); if (state === current) void returnToList(); return; }
     if (state !== current || disposed) { editor.destroy(); return; }
@@ -822,11 +977,40 @@ export function mountApp(root, { onClose, notify = () => {}, onLayers = () => {}
     }, POLL_MS);
   }
 
-  function exportMap() {
+  // Export: a file in one of the formats other mind map and outline apps open, or the whole map copied as text.
+  const EXPORTS = [
+    { key: 'xmind', label: 'XMind (.xmind)', hint: 'XMind 8, XMind 2020 and later', type: 'application/vnd.xmind.workbook', make: (title, data) => buildXmind({ title, data }) },
+    { key: 'md', label: 'Markdown (.md)', hint: 'Headings and lists: Obsidian, Typora, Notion', type: 'text/markdown;charset=utf-8', make: (title, data) => toMarkdown([data.nodeData]) },
+    { key: 'opml', label: 'OPML (.opml)', hint: 'MindNode, iThoughts, MindManager, Workflowy', type: 'text/x-opml;charset=utf-8', make: (title, data) => toOpml({ title, data }) },
+    { key: 'mm', label: 'FreeMind (.mm)', hint: 'FreeMind, Freeplane', type: 'application/x-freemind;charset=utf-8', make: (title, data) => toFreeMind({ title, data }) },
+    { key: 'txt', label: 'Outline text (.txt)', hint: 'One topic per line, indented with tabs', type: 'text/plain;charset=utf-8', make: (title, data) => toOutlineText([data.nodeData]) },
+  ];
+  function openExport() {
     if (!current || !current.editor) return;
     current.editor.finishEdit();
-    try { download(buildXmind({ title: current.title, data: current.editor.getDoc() }), safeFileName(current.title)); }
+    const touch = matchMedia('(pointer: coarse)').matches;
+    openMenu(exportButton, tr('Export'), [
+      { header: 'Download' },
+      ...EXPORTS.map(format => ({ id: `mm-export-${format.key}`, label: format.label, hint: format.hint, run: () => exportAs(format) })),
+      { divider: true },
+      { header: 'Copy' },
+      { id: 'mm-copy-md', label: 'Copy as Markdown', hint: 'The whole map', run: () => { void copyMap(toMarkdown); } },
+      { id: 'mm-copy-txt', label: 'Copy as outline text', hint: 'Paste into XMind, MindNode or notes', run: () => { void copyMap(toOutlineText); } },
+      touch ? { caption: 'The file goes to the share sheet: save it to Files, send it, or open it in another app.' } : null,
+    ]);
+  }
+  function exportAs(format) {
+    if (!current || !current.editor) return;
+    try { download(format.make(current.title, current.editor.getDoc()), safeFileName(current.title, format.key), format.type); }
     catch { say(tr('The map could not be exported'), 'error'); }
+  }
+  async function copyMap(make) {
+    if (!current || !current.editor) return;
+    const { editor } = current;
+    let ok = false;
+    try { ok = await copyText(make([editor.getDoc().nodeData])); } catch { ok = false; }
+    if (current && current.editor === editor) editor.focus();
+    say(tr(ok ? 'Copied' : 'The map could not be copied'), ok ? 'success' : 'error');
   }
 
   function openInfo(state, kind) {

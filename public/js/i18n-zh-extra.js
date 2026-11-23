@@ -195,4 +195,9 @@ I18n.add({
   '{1}, not {2} here': '这里是 {1}，不是 {2}',
   'Double {1}': '{1} 要双写',
   'Only one {1}': '只有一个 {1}',
+  // ---- Shell notebooks: why a notebook's shell did not start, shown as the cell's output (services/notebook-kernels.js) ----
+  'The shell did not start: {1}': 'Shell 没有启动：{1}',
+  'it gave no sign of being ready within {1} s': '{1} 秒内没有就绪',
+  'the shell ended at once (exit code {1})': 'Shell 立即退出了（退出码 {1}）',
+  'The cell could not be written to a temporary file: {1}': '无法把单元格写入临时文件：{1}',
 });

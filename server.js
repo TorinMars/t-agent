@@ -208,6 +208,8 @@ const authRouter = require('./routes/auth');
 app.use('/auth', authRouter);
 app.use(config.loginPath, authRouter);
 app.use('/api/tasks/:id/agent', require('./routes/agent-chat').createAgentChatRouter());
+// Shell notebooks of a task (routes/notebooks.js, docs/design/shell-notebook.md); before /api/tasks, like the chats.
+app.use('/api/tasks/:id/notebooks', require('./routes/notebooks').createNotebookRouter());
 app.use('/api/agent-chat', require('./routes/agent-chat').createAgentChatSummaryRouter());
 app.use('/api/tasks', require('./routes/tasks'));
 // Read-only preview of a file at any path, as the terminal user (services/fs-read.js); the session check is the /api gate above.

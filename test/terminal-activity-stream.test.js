@@ -92,7 +92,7 @@ test('the tracker change callback, a closed session and an ack reach the stream 
   const source = require('node:fs').readFileSync(require.resolve('../routes/terminal.js'), 'utf8');
   // The tracker's change callback tells the stream (and pokes a rename that waits for a permission question, "Rename reaches the agent").
   assert.match(source, /createActivityTracker\(pty, shell, \(\) => \{\s*activityStream\.notify\(\);/);
-  assert.equal((source.match(/activityStream\.notify\(\)/g) || []).length, 4, 'tracker changes, natural exit, close / restart / delete and a Claude session rebind');
+  assert.equal((source.match(/activityStream\.notify\(\)/g) || []).length, 5, 'tracker changes, natural exit, close / restart / delete, a Claude session rebind and a notebook cell that starts or ends (notifyActivity)');
   assert.match(source, /UPDATE task_terminals SET agent_session_id = \? WHERE task_id = \? AND terminal_id = \?'\)\.run\(sessionId, taskId, id\);\n\s*if \(rebind \|\| running !== sessionId\) activityStream\.notify\(\);/, 'a rebind, or a /clear that changes the live session, pushes the sub-agent count of the new session');
 });
 

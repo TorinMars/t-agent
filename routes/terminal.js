@@ -19,6 +19,19 @@ const { createPresence } = require('../lib/terminal-presence');
 const { reap, reapSync } = require('../services/terminal-reaper');
 const { sharedClock } = require('../lib/terminal-poll');
 const { createAgentRenamer } = require('../lib/agent-rename');
+const notebookFormat = require('../lib/notebook-format');
+
+// Shell notebooks (docs/design/shell-notebook.md): a task_terminals row with agent 'notebook' is a notebook, not a terminal. Its shell (the kernel) is
+// run by services/notebook-kernels.js, which registers itself here when it is first used; the feeds below then include running cells. Nothing in
+// this file binds an agent session, types a command or opens a WebSocket shell for such a row.
+let notebookKernels = null;
+function setNotebookKernels(service) { notebookKernels = service || null; }
+const kernels = () => notebookKernels || require('../services/notebook-kernels').getNotebookKernels();
+function isNotebookRow(taskId, id) {
+  if (id === 'default') return false;
+  const row = prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(Number(taskId), id);
+  return Boolean(row && row.agent === 'notebook');
+}
 
 // The home whose agent files list an agent's sessions: OpenCode's database is in the home of the user the shells run as (a root service drops to
 // TERMINAL_USER, whose opencode writes it); Claude and Codex are read from the service's home (undefined: os.homedir()).
@@ -391,7 +404,7 @@ const MAX_TERMINAL_TITLE = 40;
 // directory it was started in (terminalWorkDir), which may differ from the task's current one.
 // `names` (a Map, optional) gets terminal id -> session name for every terminal that shows its session's name.
 function withAgentSessions(taskId, rows, names) {
-  const meta = prepared("SELECT t.terminal_id, t.agent, t.agent_session_id, t.agent_started_at, t.title_custom, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.agent IS NOT NULL ORDER BY t.rowid").all(taskId);
+  const meta = prepared("SELECT t.terminal_id, t.agent, t.agent_session_id, t.agent_started_at, t.title_custom, COALESCE(t.work_dir, k.work_dir) AS work_dir FROM task_terminals t JOIN tasks k ON k.id = t.task_id WHERE t.task_id = ? AND t.agent IS NOT NULL AND t.agent != 'notebook' ORDER BY t.rowid").all(taskId);
   if (!meta.length) return rows;
   const lists = new Map();
   const sessionsOf = (agent, dir) => {
@@ -448,7 +461,14 @@ function listTerminals(taskId) {
     "SELECT terminal_id, title, work_dir FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
   ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]), names);
   rememberSessionNames(taskId, names);
-  return rows;
+  return withNotebooks(taskId, rows);
+}
+
+// Notebook rows carry agent 'notebook' and `notebook`, the path of their file relative to their folder ("Identity and storage" in docs/design/shell-notebook.md).
+function withNotebooks(taskId, rows) {
+  const notebooks = new Map(prepared("SELECT terminal_id, agent_session_id FROM task_terminals WHERE task_id = ? AND agent = 'notebook'").all(taskId).map(row => [row.terminal_id, row.agent_session_id]));
+  if (!notebooks.size) return rows;
+  return rows.map(row => (notebooks.has(row.terminal_id) ? { ...row, agent: 'notebook', notebook: notebooks.get(row.terminal_id) } : row));
 }
 
 // The order of a task's terminals, as the person dragged them (PUT …/tasks/:id/terminals/order, see "Terminal order" in docs/design/terminals.md). One system_state
@@ -541,6 +561,7 @@ function createTerminal(taskId, options = {}) {
   const id = require('crypto').randomUUID();
   const agent = options && options.agent;
   const named = cleanTitle(options && typeof options.title === 'string' ? options.title : '');
+  if (agent === 'notebook') return createNotebook(taskId, id, named, options);
   let sessionId = options && options.session_id ? String(options.session_id) : null;
   let command = startupCommand(agent, sessionId);
   if (command && !sessionId && agent === 'claude') {
@@ -557,6 +578,40 @@ function createTerminal(taskId, options = {}) {
   db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom, work_dir) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null, workDir);
   return { terminal_id: id, title, agent: command ? agent : null, work_dir: workDir };
+}
+
+// A Shell notebook ("Identity and storage" in docs/design/shell-notebook.md): a row with agent 'notebook', its file path relative to its folder in
+// agent_session_id and that folder in work_dir. Without session_id a new notebooks/<slug>.ipynb is made (title "Notebook N" unless named); with one,
+// that existing .ipynb file of the folder is opened (titled after the file), and a notebook row of the task that already has it is answered instead
+// of a second one, so two shells never write the same file. No folder: 409 TASK_HAS_NO_FOLDER; a path outside it, not .ipynb or missing: 400
+// INVALID_NOTEBOOK_PATH. No shell starts here: the kernel starts on the first run.
+function createNotebook(taskId, id, named, options) {
+  const task = db.prepare('SELECT id, work_dir, md_path FROM tasks WHERE id = ?').get(taskId);
+  const folder = notebookFormat.notebookFolder(task, null);
+  if (!folder) throw Object.assign(new Error('TASK_HAS_NO_FOLDER'), { statusCode: 409 });
+  const requested = options && options.session_id != null ? String(options.session_id) : null;
+  let relative;
+  if (requested) {
+    relative = notebookFormat.resolveNotebookPath(folder, requested).relative;
+    const existing = db.prepare("SELECT terminal_id, title, work_dir, agent_session_id FROM task_terminals WHERE task_id = ? AND agent = 'notebook'").all(taskId)
+      .find(row => row.agent_session_id === relative && (row.work_dir || folder) === folder);
+    if (existing) return { terminal_id: existing.terminal_id, title: existing.title, agent: 'notebook', work_dir: existing.work_dir || folder, notebook: relative, existing: true };
+  } else {
+    const user = resolveTerminalUser().user;
+    const owner = user && process.getuid && process.getuid() === 0 ? { uid: user.uid, gid: user.gid } : null;
+    relative = notebookFormat.createNotebookFile(folder, named, { owner }).relative;
+  }
+  // The file's base name, cut (by whole characters) to the longest terminal title.
+  let fromFile = '';
+  if (requested) {
+    const chars = Array.from(path.basename(relative).replace(/\.ipynb$/i, '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim());
+    while (chars.join('').length > MAX_TERMINAL_TITLE) chars.pop();
+    fromFile = cleanTitle(chars.join(''));
+  }
+  const title = named || fromFile || `Notebook ${listTerminals(taskId).length + 1}`;
+  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom, work_dir) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(taskId, id, title, 'notebook', relative, Date.now(), named ? 1 : null, folder);
+  return { terminal_id: id, title, agent: 'notebook', work_dir: folder, notebook: relative };
 }
 
 // A new shell for an agent terminal that was closed or restarted resumes the session it is bound to.
@@ -582,7 +637,12 @@ function reopenCommand(taskId, id, workDir, peer = peerFsOn()) {
 
 // Sessions of an agent CLI that were run in the task's working directory (newest first). A new terminal starts there, so the list of
 // sessions to resume is read from the task's current directory.
+// agent 'notebook': the .ipynb files of the task's folder that a new notebook can open (lib/notebook-format.js listNotebookFiles).
 function listAgentSessions(task, agent) {
+  if (agent === 'notebook') {
+    const folder = notebookFormat.notebookFolder(task, null);
+    return folder ? notebookFormat.listNotebookFiles(folder) : [];
+  }
   return listSessions(agent, task && task.work_dir, sessionHome(agent));
 }
 
@@ -612,7 +672,7 @@ function renameTerminal(taskId, value, requestedTitle) {
     db.prepare('UPDATE task_terminals SET title = ?, title_custom = 1 WHERE task_id = ? AND terminal_id = ?').run(title, taskId, id);
     const row = db.prepare('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id);
     // The agent in a running Claude / Codex terminal is renamed too (typed at once, or after a permission question is answered).
-    if (row && row.agent) agentRenames.request(sessionKey(taskId, id), row.agent, title);
+    if (row && row.agent && row.agent !== 'notebook') agentRenames.request(sessionKey(taskId, id), row.agent, title);
   }
   return { terminal_id: id, title };
 }
@@ -662,6 +722,61 @@ function appendBuffer(taskId, data) {
   }
 }
 
+// The shell a terminal of this server runs: zsh on macOS, bash or sh where zsh is missing (many Linux servers), so node-pty does not fail on a fixed
+// /bin/zsh path. Throws when none of them exists.
+function terminalShell() {
+  const shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
+  if (!shell) throw new Error('No usable shell found (/bin/zsh, /bin/bash, /bin/sh)');
+  return shell;
+}
+
+// How a shell of terminal `id` of a task is started: { shell, cwd, runAs, env }. Shared by the terminals (getOrCreateSession) and the kernels of Shell
+// notebooks (services/notebook-kernels.js), so both get the same environment: the PATH additions, the terminal user drop of a root service, the clipboard
+// shims, a UTF-8 locale, the hook / tcli variables and a T-Attention token for this task and terminal (attentionEnv issues it: whoever starts the
+// shell ends it with endAttentionToken). `peer`: the peer file access reading (peerFsOn); `name`: TA_SESSION_NAME, or null.
+function terminalLaunch(ownerTaskId, id, workDir, { peer = peerFsOn(), name = null } = {}) {
+  // A LaunchAgent starts with a slim PATH, so add the common paths by hand to make sure node/brew/tools are available
+  const fullPath = [
+    '/usr/local/bin',
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+    process.env.PATH,
+  ].filter(Boolean).join(':');
+  const shell = terminalShell();
+
+  // When the service runs as root, drop to TERMINAL_USER (default dev), otherwise Claude Code refuses the mode that skips permission prompts.
+  const dropped = resolveTerminalUser();
+  if (!dropped.user && (dropped.reason === 'missing-explicit' || dropped.reason === 'missing-default')) {
+    console.warn(`[terminal] terminal user ${dropped.name} does not exist; the terminal still runs as the service user (root). Create that user or set TERMINAL_USER= in .env to silence this message`);
+  }
+  const runAs = dropped.user;
+  let cwd = workDir || os.homedir();
+  if (runAs && !userCanEnter(cwd, runAs)) {
+    console.warn(`[terminal] user ${runAs.name} cannot enter ${cwd}; the terminal starts from its home directory ${runAs.home} instead. Adjust the owner or permissions of that directory`);
+    cwd = runAs.home;
+  }
+  const baseEnv = withoutInheritedHookEnv(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env);
+  const env = {
+    ...baseEnv,
+    TERM: 'xterm-256color',
+    // The clipboard shims come first, so a copy by a program in the terminal (`| pbcopy`, Neovim, Claude Code)
+    // also reaches the browser clipboard as OSC 52, and a web link it opens (`open`, `xdg-open`, $BROWSER) goes to the
+    // page that shows this terminal (lib/clipboard-shims.js, routes/open-link.js).
+    ...clipboardShimEnv(fullPath, runAs, { env: baseEnv }),
+    // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
+    // otherwise zsh shows Chinese directory names as \M-^ garbage.
+    ...utf8LocaleEnv(process.env),
+    ...hookEnv(ownerTaskId, id, peer, baseEnv),
+    ...attentionEnv(ownerTaskId, id, baseEnv),
+    ...(name ? { TA_SESSION_NAME: name } : {}),
+  };
+  return { shell, cwd, runAs, env };
+}
+
 function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   const taskId = sessionKey(ownerTaskId, id);
   if (sessions.has(taskId)) return sessions.get(taskId);
@@ -677,54 +792,15 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   try {
     repairSpawnHelperPermissions(path.resolve(__dirname, '..'));
     const nodePty = require('node-pty');
-    // A LaunchAgent starts with a slim PATH, so add the common paths by hand to make sure node/brew/tools are available
-    const fullPath = [
-      '/usr/local/bin',
-      '/opt/homebrew/bin',
-      '/opt/homebrew/sbin',
-      '/usr/bin',
-      '/bin',
-      '/usr/sbin',
-      '/sbin',
-      process.env.PATH,
-    ].filter(Boolean).join(':');
-    // macOS usually uses zsh while Linux servers often only have bash/sh. Pick the shell that
-    // actually exists, so node-pty does not fail to start because the fixed /bin/zsh path is missing.
-    shell = ['/bin/zsh', '/bin/bash', '/bin/sh'].find(candidate => fs.existsSync(candidate));
-    if (!shell) throw new Error('No usable shell found (/bin/zsh, /bin/bash, /bin/sh)');
-
-    // When the service runs as root, drop to TERMINAL_USER (default dev), otherwise Claude Code refuses the mode that skips permission prompts.
-    const dropped = resolveTerminalUser();
-    if (!dropped.user && (dropped.reason === 'missing-explicit' || dropped.reason === 'missing-default')) {
-      console.warn(`[terminal] terminal user ${dropped.name} does not exist; the terminal still runs as the service user (root). Create that user or set TERMINAL_USER= in .env to silence this message`);
-    }
-    const runAs = dropped.user;
-    let cwd = workDir || os.homedir();
-    if (runAs && !userCanEnter(cwd, runAs)) {
-      console.warn(`[terminal] user ${runAs.name} cannot enter ${cwd}; the terminal starts from its home directory ${runAs.home} instead. Adjust the owner or permissions of that directory`);
-      cwd = runAs.home;
-    }
-    const baseEnv = withoutInheritedHookEnv(runAs ? { ...terminalEnvFor(runAs, process.env), SHELL: shell } : process.env);
+    const launch = terminalLaunch(ownerTaskId, id, workDir, { peer, name });
+    shell = launch.shell;
     pty = nodePty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 220,
       rows: 50,
-      cwd,
-      ...(runAs ? { uid: runAs.uid, gid: runAs.gid } : {}),
-      env: {
-        ...baseEnv,
-        TERM: 'xterm-256color',
-        // The clipboard shims come first, so a copy by a program in the terminal (`| pbcopy`, Neovim, Claude Code)
-        // also reaches the browser clipboard as OSC 52, and a web link it opens (`open`, `xdg-open`, $BROWSER) goes to the
-        // page that shows this terminal (lib/clipboard-shims.js, routes/open-link.js).
-        ...clipboardShimEnv(fullPath, runAs, { env: baseEnv }),
-        // Pick UTF-8 from the locales actually installed on this machine (C.UTF-8 / en_US / zh_CN ...),
-        // otherwise zsh shows Chinese directory names as \M-^ garbage.
-        ...utf8LocaleEnv(process.env),
-        ...hookEnv(ownerTaskId, id, peer, baseEnv),
-        ...attentionEnv(ownerTaskId, id, baseEnv),
-        ...(name ? { TA_SESSION_NAME: name } : {}),
-      },
+      cwd: launch.cwd,
+      ...(launch.runAs ? { uid: launch.runAs.uid, gid: launch.runAs.gid } : {}),
+      env: launch.env,
     });
   } catch (e) {
     endAttentionToken(ownerTaskId, id);
@@ -866,6 +942,19 @@ function controlSession(taskId, action, requestedTerminalId) {
   }
 
   const selectedId = assertTerminal(id, requestedTerminalId);
+  // A notebook row has no terminal shell: close stops its kernel, restart-workdir starts a fresh one, delete stops it and forgets the notebook (its
+  // file stays).
+  if (isNotebookRow(id, selectedId)) {
+    const service = kernels();
+    if (action === 'restart-workdir') service.restartKernel(id, selectedId);
+    else if (action === 'close') service.stopKernel(id, selectedId);
+    else {
+      service.forget(id, selectedId);
+      db.prepare('DELETE FROM task_terminals WHERE task_id = ? AND terminal_id = ?').run(id, selectedId);
+      dropFromOrder(id, selectedId);
+    }
+    return { success: true, action, had_session: false };
+  }
   const session = detachSession(id, selectedId, `terminal ${action}`);
   endShells([session]);
 
@@ -910,6 +999,11 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     selectedId = assertTerminal(taskId, requestedTerminalId ?? new URL(req.url, 'http://x').searchParams.get('terminalId'));
   } catch (error) {
     ws.close(1008, error.message);
+    return;
+  }
+  // A notebook row is not a terminal: no shell is started for it (its kernel runs through /notebooks). 1008, so the page does not reconnect.
+  if (isNotebookRow(taskId, selectedId)) {
+    ws.close(1008, 'NOTEBOOK_NOT_A_TERMINAL');
     return;
   }
   const key = sessionKey(taskId, selectedId);
@@ -1125,6 +1219,10 @@ function activitySnapshot(taskIds) {
     if (state === 'idle' || !isListedTerminal(s.taskId, s.terminalId)) continue;
     (result[s.taskId] ||= {})[s.terminalId] = state;
   }
+  // A notebook that runs a cell is a running terminal (its kernel is no session here).
+  if (notebookKernels) {
+    for (const [taskId, terminals] of Object.entries(notebookKernels.activity(wanted))) Object.assign(result[taskId] ||= {}, terminals);
+  }
   return result;
 }
 
@@ -1195,6 +1293,7 @@ function updateIdleTerminals() {
       resumable: Boolean(agent) && foreground.includes(agent) && agentResumable(s, agent),
     });
   }
+  if (notebookKernels) terminals.push(...notebookKernels.idleTerminals());
   return terminals;
 }
 
@@ -1205,6 +1304,8 @@ const activityStream = createActivityStream({
   waitingKinds: waitingKindSnapshot,
   subagents: () => subagentSnapshot(null),
 });
+// The notebook kernels tell the feeds when a cell starts or ends (services/notebook-kernels.js).
+function notifyActivity() { activityStream.notify(); }
 function serveActivityStream(req, res, taskIds, options) {
   activityStream.serve(req, res, taskIds, options);
   sharedClock.wake();
@@ -1236,6 +1337,7 @@ function liveTerminalIds(taskId) {
   const prefix = `${Number(taskId)}:`;
   const ids = [];
   for (const [key, s] of sessions) if (key.startsWith(prefix) && s.pty && !s.startupError) ids.push(s.terminalId);
+  if (notebookKernels) ids.push(...notebookKernels.liveIds(taskId)); // a notebook's shell has the folder open too
   return ids;
 }
 
@@ -1249,7 +1351,7 @@ const liveSession = (taskId, requestedTerminalId) => {
 
 // What the window shows about a terminal named by an item's context.tagent: { agent: 'claude' | 'codex' | 'opencode' | null (the task_terminals row), live (its shell runs) }.
 function terminalInfo(taskId, requestedTerminalId) {
-  const live = Boolean(liveSession(taskId, requestedTerminalId));
+  const live = Boolean(liveSession(taskId, requestedTerminalId)) || Boolean(notebookKernels && notebookKernels.isLive(taskId, requestedTerminalId));
   let agent = null;
   if (Number.isInteger(Number(taskId)) && Number(taskId) > 0 && typeof requestedTerminalId === 'string' && requestedTerminalId !== 'default') {
     try {
@@ -1449,6 +1551,13 @@ function liveTerminalActivity() {
       out.push({ task_id: String(taskId), task_title: task.title || '', terminal_id: s.terminalId, title: title || '', agent: row.agent || null, state, ...(state === 'waiting' && kind ? { waiting_kind: kind } : {}), since: s.activity.since() });
     });
   }
+  // Notebooks that run a cell are listed as running, under the notebook's own title.
+  for (const item of notebookKernels ? notebookKernels.running() : []) {
+    const task = prepared('SELECT title FROM tasks WHERE id = ?').get(item.task_id);
+    const row = task && listedTerminal(item.task_id, item.terminal_id);
+    if (!row) continue;
+    out.push({ task_id: String(item.task_id), task_title: task.title || '', terminal_id: item.terminal_id, title: row.title || '', agent: 'notebook', state: 'running', since: item.since });
+  }
   return out;
 }
 
@@ -1501,6 +1610,7 @@ function closeTaskTerminals(taskId) {
   }
   sessionNames.delete(Number(taskId));
   endShells(closed);
+  if (notebookKernels) notebookKernels.closeTask(taskId);
 }
 
 // On server exit (signal, update restart): end every terminal's foreground job (see endShells), then the shells; the shells of terminals
@@ -1515,6 +1625,7 @@ function shutdownTerminals() {
     reapSync(live.map(session => session.pty && session.pty.pid));
     for (const session of live) { try { session.pty.kill(); } catch {} }
   } catch {}
+  try { if (notebookKernels) notebookKernels.shutdown(); } catch {}
 }
 
-module.exports = { offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };
+module.exports = { terminalLaunch, terminalShell, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

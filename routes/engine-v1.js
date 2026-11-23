@@ -187,6 +187,9 @@ function infoHandler(req, res) {
       // lists its sessions. An older Engine makes a plain shell for that agent and answers 400 INVALID_AGENT to the listing, so the page offers
       // OpenCode only for an Engine with this (docs/design/opencode-terminals.md).
       'terminal:opencode',
+      // terminal:notebook: POST /v1/tasks/:id/terminals takes agent 'notebook' (a Shell notebook), GET /v1/tasks/:id/agent-sessions?agent=notebook lists
+      // the task folder's .ipynb files, and /v1/tasks/:id/notebooks/:tid/... runs it (routes/notebooks.js, docs/design/shell-notebook.md).
+      'terminal:notebook',
       // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.
@@ -365,6 +368,11 @@ router.post('/workspace/restore', workspaceWrite, async (req, res) => {
 
 // Reuse the local conversation API with token authentication and the token's task owner.
 router.use('/tasks/:id/agent', require('./agent-chat').createAgentChatRouter({
+  authenticate: requireEngineAuth('terminal:execute'),
+  ownerOf: principal,
+}));
+// The same for Shell notebooks (routes/notebooks.js); the task visibility guard above covers these paths and ends their event streams.
+router.use('/tasks/:id/notebooks', require('./notebooks').createNotebookRouter({
   authenticate: requireEngineAuth('terminal:execute'),
   ownerOf: principal,
 }));

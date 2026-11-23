@@ -252,7 +252,7 @@ router.put('/:id/terminals/order', (req, res) => {
 });
 
 router.get('/:id/agent-sessions', (req, res) => {
-  const task = db.prepare('SELECT id, work_dir FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  const task = db.prepare('SELECT id, work_dir, md_path FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
   try { res.json(terminal.listAgentSessions(task, req.query.agent)); }
   catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'AGENT_SESSIONS_FAILED' }); }

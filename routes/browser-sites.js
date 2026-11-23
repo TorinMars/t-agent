@@ -19,7 +19,8 @@ function sendError(res, error) {
   const status = error instanceof BrowserSiteError ? error.statusCode : 500;
   const code = error instanceof BrowserSiteError ? error.code : 'INTERNAL';
   const message = error instanceof BrowserSiteError ? error.message : 'The request failed';
-  res.status(status).set('Cache-Control', 'no-store').json({ error: code, message });
+  const problems = error instanceof BrowserSiteError && Array.isArray(error.problems) ? { problems: error.problems } : {}; // every "field: problem" of a save
+  res.status(status).set('Cache-Control', 'no-store').json({ error: code, message, ...problems });
 }
 
 const defaultSites = () => require('../services/browser-sites').getBrowserSites();

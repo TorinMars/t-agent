@@ -7,10 +7,14 @@
 //  - relay: /api/tcli/browser/* for `tcli browser` (scripts/tcli-browser.js): the terminal hook token in X-T-Agent-Task, X-T-Agent-Terminal and
 //           X-T-Agent-Token (lib/terminal-relay-auth.js) from this machine, mounted like the OSS relay before the body parsers and the gates.
 //           A request without those headers, or not from this machine, is passed on untouched (and meets the login gate).
+//           Recordings: GET /recordings, /recordings/:id, /recordings/:id/items[?kind&type&source&url&status&limit&offset] (JSON lines),
+//           /recordings/:id/requests[?type&all&url&status&limit&offset] (merged requests, JSON lines), DELETE /recordings/:id.
 // Errors are JSON { error, message }. Answers are never cached and never logged.
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
 const express = require('express');
+const { parseItemFilter, parseRequestOptions } = require('../lib/browser-recording-query');
 const { fromThisMachine, isTerminalRequest, verifyTerminalRequest } = require('../lib/terminal-relay-auth');
 
 const EXTENSION_DIR = path.resolve(__dirname, '..', 'extensions', 'chrome');
@@ -125,13 +129,32 @@ function createBrowserRelayRouter({
   router.get('/recordings/:id', (req, res) => {
     try { res.json(recordings().get(req.params.id)); } catch (error) { sendError(res, error); }
   });
+  // Without a filter the file as it is (what tcli before the filters asks for); with kind, type, source, url, status, limit or offset only the
+  // matching lines, marked with X-T-Agent-Filtered so tcli knows it need not filter again ("Reading recordings" in docs/design/tcli.md).
   router.get('/recordings/:id/items', (req, res) => {
+    let filter;
     let stream;
-    try { stream = recordings().itemsStream(req.params.id); } catch (error) { return sendError(res, error); }
-    res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
+    try {
+      filter = parseItemFilter(req.query);
+      if (filter) {
+        const lines = recordings().filterItems(req.params.id, filter);
+        stream = Readable.from((async function* withNewlines() { for await (const line of lines) yield `${line}\n`; })());
+      }
+      else stream = recordings().itemsStream(req.params.id);
+    } catch (error) { return sendError(res, error); }
+    res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'X-Content-Type-Options': 'nosniff', ...(filter ? { 'X-T-Agent-Filtered': '1' } : {}) });
     stream.on('error', () => res.destroy());
     res.on('close', () => { if (typeof stream.destroy === 'function') stream.destroy(); });
     return stream.pipe(res);
+  });
+  // Request and response merged per request (JSON lines), static files left out unless all=1 or type names them; X-T-Agent-Left-Out counts them.
+  router.get('/recordings/:id/requests', async (req, res) => {
+    try {
+      const options = parseRequestOptions(req.query);
+      const { requests, left_out: leftOut } = await recordings().requests(req.params.id, options);
+      res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-T-Agent-Left-Out': String(leftOut) });
+      return Readable.from(requests.map(entry => `${JSON.stringify(entry)}\n`)).pipe(res);
+    } catch (error) { return res.headersSent ? res.destroy() : sendError(res, error); }
   });
   router.delete('/recordings/:id', (req, res) => {
     try { res.json(recordings().remove(req.params.id)); } catch (error) { sendError(res, error); }

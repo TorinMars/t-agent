@@ -5,9 +5,13 @@
 //                                                         origins, items, bytes, kinds, dropped_items, truncated, task_id, terminal_id }
 // Limits: 200 MiB per recording (items after that are dropped and counted, `truncated: true`), 2 GiB in all (the oldest recordings are removed
 // first), and 14 days (counted from the last item or the stop; checked at start, every 6 hours and after appends).
+// Reading: itemsStream (the file as it is), and filterItems / requests, which read it line by line through lib/browser-recording-query.js (the
+// filters of `tcli browser record items` and the merge of `record requests`; "Reading recordings" in docs/design/tcli.md).
 const fs = require('node:fs');
 const path = require('node:path');
+const readline = require('node:readline');
 const { redactDeep } = require('../lib/browser-redact');
+const { filterLines, mergeRequests } = require('../lib/browser-recording-query');
 
 const MiB = 1024 * 1024;
 const DEFAULTS = { maxRecordingBytes: 200 * MiB, maxTotalBytes: 2048 * MiB, keepMs: 14 * 24 * 3600 * 1000, cleanupEveryMs: 6 * 3600 * 1000 };
@@ -184,6 +188,28 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
     return fs.createReadStream(file);
   }
 
+  // The items file line by line (an empty run for a recording without items yet). Throws RECORDING_NOT_FOUND at once, before the first line.
+  function itemLines(id) {
+    get(id);
+    const file = itemsPath(id);
+    return (async function* lines() {
+      if (!fs.existsSync(file)) return;
+      const input = fs.createReadStream(file);
+      const reader = readline.createInterface({ input, crlfDelay: Infinity });
+      try { for await (const line of reader) yield line; } finally { reader.close(); input.destroy(); } // also when the reader stops early
+    })();
+  }
+
+  // The lines that pass a filter of lib/browser-recording-query.js parseItemFilter (an async iterator of JSON text without the newline).
+  function filterItems(id, filter) {
+    return filterLines(itemLines(id), filter);
+  }
+
+  // The requests of a recording, request and response merged (lib/browser-recording-query.js mergeRequests): { requests, left_out }.
+  function requests(id, options) {
+    return mergeRequests(itemLines(id), options);
+  }
+
   function remove(id) {
     get(id);
     removeFiles(id);
@@ -200,7 +226,7 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
   }
   function stopCleanup() { if (timer) clearInterval(timer); timer = null; }
 
-  return { dir, start, append, stop, list, get, itemsStream, remove, cleanup, startCleanup, stopCleanup, validId };
+  return { dir, start, append, stop, list, get, itemsStream, itemLines, filterItems, requests, remove, cleanup, startCleanup, stopCleanup, validId };
 }
 
 let shared = null;

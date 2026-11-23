@@ -1,11 +1,12 @@
 // services/browser-recordings.js in a temporary folder: append with redaction, the summary fields, ids that are refused, the per-recording limit,
-// the total limit (oldest first), the 14-day cleanup, reloading from disk, the items stream and removal.
+// the total limit (oldest first), the 14-day cleanup, reloading from disk, the items stream and removal, and reading with filters and the merged requests.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createBrowserRecordings } = require('../services/browser-recordings');
+const { parseItemFilter, parseRequestOptions } = require('../lib/browser-recording-query');
 
 const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'browser-rec-'));
 const DAY = 24 * 3600 * 1000;
@@ -92,5 +93,33 @@ test('cleanup: recordings without activity for 14 days are removed; the items st
     assert.deepEqual(recordings.remove('rec_new_0001'), { removed: true, recording_id: 'rec_new_0001' });
     assert.equal(fs.existsSync(path.join(dir, 'rec_new_0001.json')), false);
     assert.throws(() => recordings.remove('rec_new_0001'), { code: 'RECORDING_NOT_FOUND' });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('reading: filterItems reads the file line by line with the record items filters; requests merges request and response', async () => {
+  const dir = tempDir();
+  try {
+    const recordings = createBrowserRecordings({ dir });
+    recordings.start('rec_read_0001', {});
+    recordings.append('rec_read_0001', [
+      { seq: 1, kind: 'request', req_id: 'r1', method: 'GET', url: 'https://a.test/api/x?token=abc', type: 'XHR', status: 0 },
+      { seq: 2, kind: 'click', url: 'https://a.test/', source: 'agent' },
+      { seq: 3, kind: 'response', req_id: 'r1', url: 'https://a.test/api/x?token=abc', type: 'XHR', status: 200, request: { headers: { Authorization: 'Bearer abc.def.ghi' } } },
+      { seq: 4, kind: 'request', req_id: 'r2', url: 'https://a.test/app.js', type: 'Script', status: 0 },
+    ]);
+    const read = async iterator => { const out = []; for await (const line of iterator) out.push(JSON.parse(line)); return out; };
+    assert.deepEqual((await read(recordings.filterItems('rec_read_0001', parseItemFilter({ kind: 'net', type: 'xhr' })))).map(item => item.seq), [1, 3]);
+    assert.deepEqual((await read(recordings.filterItems('rec_read_0001', parseItemFilter({ source: 'agent' })))).map(item => item.seq), [2]);
+    assert.deepEqual((await read(recordings.filterItems('rec_read_0001', parseItemFilter({ limit: '1' })))).map(item => item.seq), [1], 'stops early (and closes the file)');
+    const { requests, left_out: leftOut } = await recordings.requests('rec_read_0001', parseRequestOptions({}));
+    assert.equal(leftOut, 1);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].status, 200);
+    assert.equal(requests[0].url, 'https://a.test/api/x?token=<redacted:3>', 'what was stored, redacted');
+    assert.doesNotMatch(JSON.stringify(requests[0]), /abc\.def\.ghi/);
+    recordings.start('rec_none_0002', {});
+    assert.deepEqual(await read(recordings.filterItems('rec_none_0002', parseItemFilter({ kind: 'nav' }))), [], 'no items file yet');
+    assert.throws(() => recordings.filterItems('rec_gone_0001', parseItemFilter({ kind: 'nav' })), { code: 'RECORDING_NOT_FOUND' });
+    assert.throws(() => recordings.requests('rec_gone_0001', parseRequestOptions({})), { code: 'RECORDING_NOT_FOUND' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,6 +1,7 @@
 // `tcli browser ...` (scripts/tcli.js with scripts/tcli-browser.js), spawned as a terminal runs it, against the relay (routes/browser-ext.js), the
 // bridge and a fake extension (no real browser): parsing (targets, flags, short options), the params sent, the readable output, --json, the
-// screenshot file, record items to a file, exit codes, and the message outside a T-Agent terminal.
+// screenshot file, record items to a file and with filters, record requests (also against an older T-Agent without the filters), the slim status
+// and --verbose, exit codes, and the message outside a T-Agent terminal.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -19,6 +20,7 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 let env;
 let ext;
 let behaviour = {};
+let olderServer = false; // the relay answers like a T-Agent from before the recording filters
 
 const ELEMENTS = [
   { ref: 'e1', tag: 'a', role: 'link', name: 'Docs', href: 'https://shop.test/docs', rect: { x: 0, y: 0, w: 10, h: 10 }, in_viewport: true },
@@ -52,6 +54,13 @@ test.before(async () => {
   const recordings = createBrowserRecordings({ dir: path.join(work, 'recordings') });
   const holder = {};
   const app = express();
+  app.use('/api/tcli/browser/recordings', (req, res, next) => {
+    if (!olderServer) return next();
+    if (/\/requests$/.test(req.path)) return res.status(404).json({ error: 'UNKNOWN_ROUTE', message: 'tcli browser has no such route; update tcli or T-Agent' });
+    req.url = req.url.split('?')[0];
+    req.query = {};
+    return next();
+  });
   app.use('/api/tcli/browser', createBrowserRelayRouter({ bridge: () => holder.bridge, recordings: () => recordings, db, isLocal: () => true, verifyToken: (task, terminal, token) => task === 21 && terminal === 'term-b' && token === TOKEN }));
   env = await bridgeServer({ app, db, bridgeOptions: { recordings } });
   holder.bridge = env.bridge;
@@ -102,6 +111,21 @@ test('status, tabs, open, go, back, close', async () => {
   const status = await run(['status']);
   assert.equal(status.code, 0);
   assert.match(status.out, /^Connected: Work Chrome \(br_[0-9a-f]{12}\) · extension 1\.0\.0 · Chrome/);
+  assert.match(status.out, /connected since \d{4}-\d\d-\d\d \d\d:\d\d · paired /);
+  assert.doesNotMatch(status.out, /Methods:/);
+  const slim = JSON.parse((await run(['status', '--json'])).out);
+  assert.equal(slim.connected, true);
+  assert.equal(typeof slim.method_count, 'number');
+  assert.equal(slim.methods, undefined, 'the method names only with --verbose');
+  assert.deepEqual(Object.keys(slim.browsers[0]).sort(), ['active', 'browser', 'browser_id', 'connected_at', 'last_seen_at', 'methods', 'name', 'online', 'paired_at', 'recent_event_count', 'version']);
+  assert.equal(slim.browsers[0].name, 'Work Chrome');
+  assert.equal(slim.browsers[0].recent_events, undefined);
+  const full = JSON.parse((await run(['status', '--json', '--verbose'])).out);
+  assert.ok(Array.isArray(full.methods) && full.methods.includes('tabs.list'));
+  assert.ok(Array.isArray(full.browsers[0].recent_events));
+  assert.equal(slim.method_count, full.methods.length);
+  assert.ok((await run(['status', '--json'])).out.length < (await run(['status', '--json', '--verbose'])).out.length);
+  assert.match((await run(['status', '--verbose'])).out, /\nMethods: .*tabs\.list/);
   const tabs = await run(['tabs']);
   assert.match(tabs.out, /11\* \[group, net\] Shop  https:\/\/shop\.test\//);
   assert.match(tabs.out, /12  \[handed, rec rec_a_b\] Mail/);
@@ -218,6 +242,63 @@ test('record start / stop / list / show / items / rm', async () => {
   assert.equal((await run(['record', 'show', 'rec_none_0000'])).code, 3);
   assert.match((await run(['record', 'rm', 'rec_kz9_abcd', '--yes'])).out, /^Removed rec_kz9_abcd/);
   assert.equal((await run(['record', 'items', 'rec_kz9_abcd'])).code, 3);
+});
+
+test('record items filters and record requests, the same against an older T-Agent', async () => {
+  ext.event('record.items', { recording_id: 'rec_rd_abcd', items: [
+    { seq: 1, at: 1000, kind: 'nav', tab_id: 11, url: 'https://shop.test/' },
+    { seq: 2, at: 1001, kind: 'request', tab_id: 11, req_id: 'r1', method: 'POST', url: 'https://shop.test/api/cart', type: 'Fetch', status: 0 },
+    { seq: 3, at: 1002, kind: 'request', tab_id: 11, req_id: 'r2', method: 'GET', url: 'https://cdn.shop.test/app.js', type: 'Script', status: 0 },
+    { seq: 4, at: 1003, kind: 'click', tab_id: 11, url: 'https://shop.test/', source: 'agent', target: { tag: 'button', name: 'Buy' } },
+    { seq: 5, at: 1031, kind: 'response', tab_id: 11, req_id: 'r1', method: 'POST', url: 'https://shop.test/api/cart', type: 'Fetch', status: 201,
+      request: { headers: { 'Content-Type': 'application/json' }, post_data: '{"sku":7}' }, response: { headers: { 'content-type': 'application/json' }, mime: 'application/json', size: 11, body: '{"ok":true}' }, timing: { started_at: 1001, finished_at: 1031 } },
+    { seq: 6, at: 1040, kind: 'response', tab_id: 11, req_id: 'r2', url: 'https://cdn.shop.test/app.js', type: 'Script', status: 200, response: { body: 'code()' } },
+    { seq: 7, at: 1050, kind: 'request', tab_id: 11, req_id: 'r3', method: 'GET', url: 'https://shop.test/api/stock', type: 'XHR', status: 0 },
+    { seq: 8, at: 1060, kind: 'response', tab_id: 11, req_id: 'r4', method: 'GET', url: 'https://shop.test/api/me', type: 'XHR', status: 403, response: {} },
+  ] });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const seqs = text => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).seq);
+  const reads = async () => ({
+    net: seqs((await run(['record', 'items', 'rec_rd_abcd', '--kind', 'net', '--type', 'fetch'])).out),
+    agent: seqs((await run(['record', 'items', 'rec_rd_abcd', '--source', 'agent'])).out),
+    errors: seqs((await run(['record', 'items', 'rec_rd_abcd', '--url', '/\\/api\\//', '--status', '4xx,201'])).out),
+    page: seqs((await run(['record', 'items', 'rec_rd_abcd', '--kind', 'request,response', '--offset', '1', '--limit', '2'])).out),
+    requests: (await run(['record', 'requests', 'rec_rd_abcd', '--json'])).out,
+    human: (await run(['record', 'requests', 'rec_rd_abcd'])).out,
+  });
+  const now = await reads();
+  assert.deepEqual([now.net, now.agent, now.errors, now.page], [[2, 5], [4], [5, 8], [3, 5]]);
+  const entries = now.requests.trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(entries.map(entry => [entry.req_id, entry.status, entry.missing || '']), [['r1', 201, ''], ['r3', null, 'response'], ['r4', 403, 'request']]);
+  assert.deepEqual([entries[0].request.post_data, entries[0].response.body, entries[0].duration_ms], ['{"sku":7}', '{"ok":true}', 30]);
+  const human = now.human.trim().split('\n');
+  assert.match(human[0], /^r1\s+POST\s+201 Fetch\s+11 B\s+30ms body 9 B {2}https:\/\/shop\.test\/api\/cart$/);
+  assert.match(human[1], /^r3\s+GET\s+\.\.\. XHR .*\(no response\) {2}https:\/\/shop\.test\/api\/stock$/);
+  assert.match(human[2], /^r4 .* 403 .*\(request not recorded\)/);
+  assert.equal(human[3], '(1 static files left out: --all keeps them)');
+  assert.match(human[4], /--json or -o file\.jsonl/);
+
+  olderServer = true;
+  try { assert.deepEqual(await reads(), now, 'tcli filters and merges itself when T-Agent cannot'); } finally { olderServer = false; }
+
+  const all = (await run(['record', 'requests', 'rec_rd_abcd', '--all', '--json'])).out.trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(all.map(entry => entry.req_id), ['r1', 'r2', 'r3', 'r4']);
+  const scripts = (await run(['record', 'requests', 'rec_rd_abcd', '--type', 'script'])).out;
+  assert.match(scripts, /^r2 .*app\.js\n/);
+  assert.doesNotMatch(scripts, /left out/);
+  const saved = await run(['record', 'requests', 'rec_rd_abcd', '--status', '2xx', '-o', 'req.jsonl']);
+  assert.match(saved.out, /^Saved .*req\.jsonl \(1 requests, /);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(work, 'req.jsonl'), 'utf8')).req_id, 'r1');
+  assert.equal((await run(['record', 'requests', 'rec_rd_abcd', '-o', 'req.jsonl'])).code, 1, 'no overwrite without --force');
+  const filteredFile = await run(['record', 'items', 'rec_rd_abcd', '--kind', 'click', '-o', 'clicks.jsonl', '--json']);
+  assert.equal(path.basename(JSON.parse(filteredFile.out).file), 'clicks.jsonl');
+  assert.deepEqual(seqs(fs.readFileSync(path.join(work, 'clicks.jsonl'), 'utf8')), [4]);
+  assert.match((await run(['record', 'requests', 'rec_rd_abcd', '--url', 'nothing-here'])).out, /^No requests match/);
+  const bad = await run(['record', 'items', 'rec_rd_abcd', '--status', '6xx']);
+  assert.deepEqual([bad.code, /--status takes codes like 200, 4xx/.test(bad.err)], [1, true]);
+  assert.equal((await run(['record', 'items', 'rec_rd_abcd', '--source', 'robot'])).code, 1);
+  assert.equal((await run(['record', 'requests', 'rec_none_0000'])).code, 3);
+  assert.match((await run(['help'])).out, /record requests <id>/);
 });
 
 test('status when nothing is connected: exit 4 and how to pair', async () => {

@@ -65,6 +65,17 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record stop
 
 `tcli browser help` lists every command. Read a request's shape (method, URL template, which parameters it takes) rather than its exact values.
 
+Read a recording in parts, never all of it:
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record requests <rec_id>              # the API calls, request and response together, one line each
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record requests <rec_id> --url /api/ --json   # with headers and bodies, for the apis of the entry
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items <rec_id> --kind click,input,submit,nav --source user   # the steps the user took
+```
+
+- Use `record requests` for the `apis` of the entry: static files (scripts, styles, images, fonts, media) are left out (`--all` keeps them), and `--type`, `--url`, `--status` narrow it further.
+- Use `record items` with `--kind` (`net`, `click`, `input`, `submit`, `nav`, `dom`, `console`, ...) for the `actions` of the entry. `--source agent` shows what your own commands did, `--source user` what the user did.
+
 ## Write it down with `tcli site`
 
 Turn what you learnt into a site entry. The entry is **authored content you write**, from what you saw — not a dump of the recording. Keep it short and useful for next time.
@@ -76,6 +87,14 @@ An entry (one host) has:
 - `actions`: `{ name, description, steps, selectors }` — how to do a thing, as plain steps or as `tcli browser` commands,
 - `apis`: `{ name, method, url (a template with {param}), description, auth, params, request_example, response_shape }`,
 - `notes`, `sources` (the `recording_id` you learnt from).
+
+The exact format (every field, its type, which are required, the limits, and an example) is printed by:
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" site schema            # --json for the machine form
+```
+
+It is the same description the server checks a save against. A save that is not valid fails with exit `1` and lists **every** problem at once, one `field: problem` line each (for example `apis[0].params: must be a list`, `sources[0]: must be an object`): fix them all, then save once more.
 
 Write the whole entry as a JSON file and save it, or save a Markdown summary and add the rest with `edit`:
 
@@ -139,7 +158,7 @@ The site library is **documentation, shared across the user's devices**. It must
 | Code | Meaning | What to do |
 |---|---|---|
 | `0` | Done | Report the result. |
-| `1` | Wrong usage, or the server refused (bad entry, `SITE_HAS_SECRET`, no such request) | Read the message, fix once. |
+| `1` | Wrong usage, or the server refused (bad entry: `INVALID_SITE` / `SITE_TOO_LARGE` with every problem listed, `SITE_HAS_SECRET`, a bad filter) | Read the message, fix every problem it lists, try once more. |
 | `2` | Not in a T-Agent terminal, or access is off | Tell the user to run the session in a T-Agent terminal. |
 | `3` | Not found (no such site entry, tab or request) | Tell the user what was not found. |
 | `4` | Server or network failed (the browser may be offline) | Check `browser status`; tell the user if the browser is not reachable. |

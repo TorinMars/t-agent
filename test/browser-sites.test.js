@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Database = require('better-sqlite3');
-const { createBrowserSites, BrowserSiteError } = require('../services/browser-sites');
+const { createBrowserSites, BrowserSiteError, ENTRY_SCHEMA, ENTRY_EXAMPLE, validateEntry, buildEntry } = require('../services/browser-sites');
 
 function store() {
   const db = new Database(':memory:');
@@ -54,6 +54,63 @@ test('invalid shapes and oversize fields are refused', () => {
   assert.throws(() => service.save('x.com', { title: 'x'.repeat(201) }), e => e.code === 'SITE_TOO_LARGE');
   assert.throws(() => service.save('x.com', { summary: 'y'.repeat(256 * 1024 + 1) }), e => e.code === 'SITE_TOO_LARGE');
   assert.throws(() => service.save('x.com', 'not an object'), e => e.code === 'INVALID_SITE');
+});
+
+test('a save reports every problem at once, "field: problem", with the error code kept', () => {
+  const { service } = store();
+  let caught;
+  try {
+    service.save('x.com', { title: 7, pages: [{ purpose: 'no pattern' }, 'nope'], actions: [{ steps: ['ok', 3] }], apis: [{ name: 'a', params: 'id', method: ['GET'] }], sources: ['rec_1', { at: 'soon' }] });
+  } catch (error) { caught = error; }
+  assert.ok(caught instanceof BrowserSiteError);
+  assert.equal(caught.code, 'INVALID_SITE');
+  assert.deepEqual(caught.problems.map(item => `${item.field}: ${item.problem}`), [
+    'title: must be text',
+    'pages[0].pattern: is required',
+    'pages[1]: must be an object',
+    'actions[0].name: is required',
+    'actions[0].steps[1]: must be text',
+    'apis[0].method: must be text',
+    'apis[0].params: must be a list',
+    'sources[0]: must be an object',
+    'sources[1].at: must be a time (milliseconds since 1970)',
+  ]);
+  assert.match(caught.message, /^The entry has 9 problems \(the entry format: tcli site schema\):\n {2}title: must be text\n {2}pages\[0\]\.pattern: is required\n/);
+  assert.equal(service.get('x.com'), null, 'nothing saved');
+  // Only sizes wrong: SITE_TOO_LARGE, still every one.
+  assert.throws(() => service.save('x.com', { title: 'x'.repeat(201), notes: 'n'.repeat(64 * 1024 + 1) }), e => e.code === 'SITE_TOO_LARGE' && e.problems.length === 2);
+  // A size among other problems: INVALID_SITE.
+  assert.throws(() => service.save('x.com', { title: 'x'.repeat(201), pages: 'p' }), e => e.code === 'INVALID_SITE' && e.problems.length === 2);
+  // One problem: one line.
+  assert.throws(() => service.save('x.com', { pages: {} }), e => e.message === 'pages: must be a list (the entry format: tcli site schema)');
+  assert.throws(() => service.edit('x.com', { pages: [{}], apis: [{}] }), e => e.problems.length === 2, 'edit validates the same way');
+});
+
+test('ENTRY_SCHEMA is what the validator checks: the example passes unchanged, every schema field is kept, other keys are dropped', () => {
+  assert.deepEqual(validateEntry(ENTRY_EXAMPLE), []);
+  assert.deepEqual(buildEntry('github.com', ENTRY_EXAMPLE), { site: 'github.com', ...ENTRY_EXAMPLE });
+  // Every field the schema names (top level and inside the example's objects) is in the example, so the round trip above covers each.
+  const walk = (spec, value, where) => {
+    if (spec.type === 'object') for (const name of Object.keys(spec.fields)) { assert.ok(value && name in value, `${where}${name} is in the example`); walk(spec.fields[name], value[name], `${where}${name}.`); }
+    if (spec.type === 'list' && value.length) {
+      const objectSpec = spec.items.type === 'one_of' ? spec.items.options.find(option => option.type === 'object') : spec.items;
+      walk(objectSpec, spec.items.type === 'one_of' ? value.find(item => typeof item === 'object') : value[0], `${where}[0].`);
+    }
+  };
+  walk(ENTRY_SCHEMA, ENTRY_EXAMPLE, '');
+  const extra = buildEntry('a.com', { title: 'A', bogus: 1, pages: [{ pattern: '/x', bogus: 2 }] });
+  assert.deepEqual(extra, { site: 'a.com', title: 'A', pages: [{ pattern: '/x' }], actions: [], apis: [], sources: [] });
+  // A required field of the schema is the one the validator asks for.
+  const required = [];
+  const collect = (spec, where) => {
+    if (spec.required) required.push(where);
+    if (spec.type === 'object') for (const [name, child] of Object.entries(spec.fields)) collect(child, where ? `${where}.${name}` : name);
+    if (spec.type === 'list') collect(spec.items, `${where}[0]`);
+    if (spec.type === 'one_of') for (const option of spec.options) if (option.type === 'object') collect(option, where);
+  };
+  collect(ENTRY_SCHEMA, '');
+  const missing = validateEntry({ pages: [{}], actions: [{ steps: [''] }], apis: [{ params: [{}] }] }).filter(item => item.problem === 'is required').map(item => item.field);
+  assert.deepEqual(missing.sort(), required.sort());
 });
 
 test('redaction rewrites secret-named keys and JWT / bearer values', () => {

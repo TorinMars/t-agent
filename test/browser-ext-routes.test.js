@@ -1,6 +1,6 @@
 // routes/browser-ext.js mounted as server.js does: the pairing route (this machine only, extension or no Origin, CORS for the extension, one answer
 // for every bad code), the page routes (list with the extension folder, pair code, rename, remove), and the tcli relay (no terminal headers or
-// not this machine: passed on untouched; a wrong token: 403; commands through a fake extension; recordings list / summary / items / delete).
+// not this machine: passed on untouched; a wrong token: 403; commands through a fake extension; recordings list / summary / items with and without filters / merged requests / delete).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -151,6 +151,33 @@ test('relay commands: not connected 503, the result, extension errors with their
     const items = await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items', { headers: HOOK });
     assert.match(items.headers.get('content-type'), /ndjson/);
     assert.equal(JSON.parse(items.text.trim()).url, 'https://a.test/?token=<redacted:2>');
+    assert.equal(items.headers.get('x-t-agent-filtered'), null, 'no filter: the file as it is');
+    ext.event('record.items', { recording_id: 'rec_m1_abcd', items: [
+      { seq: 2, kind: 'request', tab_id: 2, req_id: 'r1', method: 'GET', url: 'https://a.test/api/cart', type: 'XHR', status: 0 },
+      { seq: 3, kind: 'click', tab_id: 2, url: 'https://a.test/', source: 'agent' },
+      { seq: 4, kind: 'response', tab_id: 2, req_id: 'r1', method: 'GET', url: 'https://a.test/api/cart', type: 'XHR', status: 500, response: { body: '{}' } },
+      { seq: 5, kind: 'request', tab_id: 2, req_id: 'r2', method: 'GET', url: 'https://a.test/app.js', type: 'Script', status: 0 },
+    ] });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const seqs = text => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).seq);
+    const filtered = await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items?kind=net&type=xhr', { headers: HOOK });
+    assert.deepEqual([filtered.status, filtered.headers.get('x-t-agent-filtered'), seqs(filtered.text)], [200, '1', [2, 4]]);
+    assert.deepEqual(seqs((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items?source=agent', { headers: HOOK })).text), [3]);
+    assert.deepEqual(seqs((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items?status=5xx', { headers: HOOK })).text), [4]);
+    assert.deepEqual(seqs((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items?offset=1&limit=2', { headers: HOOK })).text), [2, 3]);
+    assert.deepEqual(seqs((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items', { headers: HOOK })).text), [1, 2, 3, 4, 5]);
+    const badFilter = await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items?status=6xx', { headers: HOOK });
+    assert.deepEqual([badFilter.status, badFilter.body.error], [400, 'BAD_FILTER']);
+    const merged = await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/requests', { headers: HOOK });
+    assert.deepEqual([merged.status, merged.headers.get('x-t-agent-left-out')], [200, '1']);
+    assert.match(merged.headers.get('content-type'), /ndjson/);
+    const entries = merged.text.trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(entries.map(entry => [entry.req_id, entry.status, entry.response.body]), [['r1', 500, '{}']]);
+    const everything = await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/requests?all=1', { headers: HOOK });
+    assert.equal(everything.text.trim().split('\n').length, 2);
+    assert.equal((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/requests?status=2xx', { headers: HOOK })).text, '');
+    assert.equal((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_none_0000/requests', { headers: HOOK })).status, 404);
+    assert.equal((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/requests?limit=0', { headers: HOOK })).body.error, 'BAD_FILTER');
     assert.equal((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_none_0000', { headers: HOOK })).status, 404);
     assert.equal((await call(env.base, 'DELETE', '/api/tcli/browser/recordings/rec_m1_abcd', { headers: HOOK })).body.removed, true);
     assert.equal((await call(env.base, 'GET', '/api/tcli/browser/recordings/rec_m1_abcd/items', { headers: HOOK })).status, 404);

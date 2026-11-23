@@ -203,6 +203,8 @@
   let wantedTerminal = null; // the terminal to show when the terminals of the task just selected arrive
   let terminalsLoaded = Promise.resolve(); // settles when the list of the task just selected has been read
   let session = null;
+  // The shell notebook shown instead of a terminal ({ key, source, taskId, terminalId, view, status }), see `showNotebook`; null when none is.
+  let notebook = null;
   let mods = {};
   let uploading = false;
 
@@ -322,6 +324,7 @@
     fitViewport();
     if (agentChat) fitAgentView();
     if (mindmap) fitMindmapView();
+    if (notebook) fitNotebookView();
   }
   document.addEventListener('focusin', settleViewport);
   document.addEventListener('focusout', () => { focusLeftAt = performance.now(); settleViewport(); });
@@ -492,12 +495,22 @@
     }
     return states;
   }
+  // A session row of the task list: a terminal, or a shell notebook whose second line says what its shell does ("Notebook · Running cell 3" while it is
+  // shown here, from its view; "Notebook · Running" / "Notebook · Idle" from the activity feed otherwise: the feed knows only whether a cell runs).
+  function sessionRow(from, item, row, current) {
+    const status = sessionState(from, item.id, row.terminal_id);
+    const entry = { kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current, more: true, status, waiting: sessionKind(from, item.id, row.terminal_id) };
+    if (row.agent !== 'notebook') return entry;
+    const live = notebook && notebook.key === warmKey(from, item.id, row.terminal_id) && notebook.status ? notebook.status : null;
+    const running = live ? live.running : status === 'running';
+    return { ...entry, waiting: null, status: status === null && !live ? null : running ? 'running' : 'idle', line: live ? live.line : running ? 'Notebook · Running' : 'Notebook · Idle' };
+  }
   // The sessions of the selected task: its terminals, each with "⋯" actions. Agent chats are not listed in the task sheet.
   function ownSessions() {
     return {
       label: 'Phone terminals', note: null, movable: ordersTerminals(source) && terminals.length > 1,
       rows: [
-        ...terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, task), current: row.terminal_id === terminalId && !agentChat, more: true, status: sessionState(source, task.id, row.terminal_id), waiting: sessionKind(source, task.id, row.terminal_id) })), // no row is current while a chat covers the terminal
+        ...terminals.map(row => sessionRow(source, task, row, row.terminal_id === terminalId && !agentChat)), // no row is current while a chat covers the terminal
       ],
     };
   }
@@ -508,7 +521,7 @@
     if (!peek || peek.status === 'loading') return { label, note: 'Loading…', rows: [] };
     if (peek.status === 'error') return { label, note: 'Could not load the sessions', rows: [] };
     const rows = [
-      ...peek.terminals.map(row => ({ kind: 'terminal', id: row.terminal_id, title: row.title, agent: row.agent || null, otherDir: otherDir(row, item), current: false, more: true, status: sessionState(from, item.id, row.terminal_id), waiting: sessionKind(from, item.id, row.terminal_id) })),
+      ...peek.terminals.map(row => sessionRow(from, item, row, false)),
     ];
     if (!rows.length) rows.push({ kind: 'open', id: 'open', title: tr('Open this task'), agent: null, current: false, more: false });
     return { label, note: null, rows, movable: ordersTerminals(from) && peek.terminals.length > 1 };
@@ -924,6 +937,7 @@
     fitViewport();
     if (agentChat) fitAgentView();
     if (mindmap) fitMindmapView();
+    if (notebook) fitNotebookView();
   }
   wideQuery.addEventListener('change', syncLayout);
 
@@ -1878,6 +1892,7 @@
   // The selected task has no terminal: nothing connects and nothing is spawned, and nothing of a terminal that is gone is kept (the one remembered for this task,
   // an early socket, hidden warm views). A terminal only comes from the person: the button of the empty state opens the same New session dialog as the "+" of the task.
   function showNoTerminal() {
+    closeNotebook();
     terminalId = null;
     wantedTerminal = null;
     const from = source;
@@ -1899,6 +1914,7 @@
   // is on its way (the terminal may be the one going away). Without known terminals the list is read first, as for a task never expanded ("Loading…").
   async function loadTerminals(known = null) {
     hideShown(); // another task: the terminal shown so far stays warm (WARM_MAX)
+    if (notebook && !(task && notebook.source === source && String(notebook.taskId) === String(task.id))) closeNotebook(); // a notebook is not kept warm
     const carried = task && Array.isArray(known) && known.length ? [...known] : null;
     terminals = carried || [];
     terminalsState = carried ? 'ready' : 'loading';
@@ -2186,11 +2202,15 @@
   }
   function renderTabs() { renderTasks(); renderSessionName(); }
 
-  // ── Session: a plain terminal, or a Claude / Codex / OpenCode session of the task directory (new or resumed) ──
-  const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session'], ['opencode', 'OpenCode session']];
+  // ── Session: a plain terminal, a Claude / Codex / OpenCode session of the task directory (new or resumed), or a shell notebook ──
+  // The kinds of the first list in their order; New Terminal comes after the agents, the shell notebook ("Shell notebook: the page" in
+  // docs/design/shell-notebook-page.md) after New Terminal. A kind's caption (`KIND_NOTES`) is its second line.
+  const SESSION_KINDS = [['claude', 'Claude session'], ['codex', 'Codex session'], ['opencode', 'OpenCode session'], ['notebook', 'Shell notebook']];
+  const AFTER_TERMINAL = new Set(['notebook']);
+  const KIND_NOTES = { notebook: 'Cells of shell commands that share one shell' };
   // An agent that came after the first Engines: offered only on an Engine whose `/info` lists its capability (this machine always runs it). An older Engine
   // would start a plain shell for it, so the row is greyed with "<engine> needs an update first" ("Session menu" in docs/design/page-task-list.md).
-  const AGENT_CAPABILITY = { opencode: 'terminal:opencode' };
+  const AGENT_CAPABILITY = { opencode: 'terminal:opencode', notebook: 'terminal:notebook' };
   const runsAgent = (from, agent) => !AGENT_CAPABILITY[agent] || from.key === 'local' || Boolean(Array.isArray(from.capabilities) && from.capabilities.includes(AGENT_CAPABILITY[agent]));
   // The time an earlier session was last used, on the second line of its row in a sub-list: "11-22 18:40" (local time), '' without a time.
   const two = value => String(value).padStart(2, '0');
@@ -2215,11 +2235,13 @@
     const hit = resolveRef(menuTask);
     const from = hit ? hit.from : source;
     const known = from.key === 'local' || Array.isArray(from.capabilities);
+    const kind = ([agent, label]) => (runsAgent(from, agent)
+      ? [label, () => void openAgentSessions(agent, label), null, false, () => void startSession({ agent }), false, { icon: agent, note: KIND_NOTES[agent] ? tr(KIND_NOTES[agent]) : '' }]
+      : [label, null, null, false, null, true, { icon: agent, note: known ? tr(`${sourceName(from)} needs an update first`) : KIND_NOTES[agent] ? tr(KIND_NOTES[agent]) : '' }]);
     showSessionMenu(null, [
-      ...SESSION_KINDS.map(([agent, label]) => (runsAgent(from, agent)
-        ? [label, () => void openAgentSessions(agent, label), null, false, () => void startSession({ agent }), false, { icon: agent }]
-        : [label, null, null, false, null, true, { icon: agent, note: known ? tr(`${sourceName(from)} needs an update first`) : '' }])),
+      ...SESSION_KINDS.filter(([agent]) => !AFTER_TERMINAL.has(agent)).map(kind),
       ['New Terminal', () => void startSession({}), null, false, () => void startSession({}), false, { icon: 'shell' }],
+      ...SESSION_KINDS.filter(([agent]) => AFTER_TERMINAL.has(agent)).map(kind),
     ]);
     if (known || !ask) return;
     const shown = ui.get().menu;
@@ -2354,7 +2376,7 @@
   }
   // The phone's bottom navigation appeared or went away (BottomNav.jsx): the full-window views that end above it fit again (the terminal refits by itself:
   // its box changed size).
-  ui.actions.fitAboveBottomNav = () => { if (mindmap) fitMindmapView(); if (agentChat) fitAgentView(); };
+  ui.actions.fitAboveBottomNav = () => { if (mindmap) fitMindmapView(); if (agentChat) fitAgentView(); if (notebook) fitNotebookView(); };
   // Which chat of which task is shown. It is not brought back by a refresh: the page opens on a terminal, whatever earlier versions saved (the open flag of the
   // conversation on the server, `h5-agent:...` in localStorage).
   let agentFor = null;
@@ -2395,6 +2417,98 @@
     renderTabs();
     queueMicrotask(syncPresence); // a terminal hidden under the chat is not in the foreground
   }
+  // ── Shell notebook ("Shell notebook: the page" in docs/design/shell-notebook-page.md): a session row with agent 'notebook' has no terminal. Its view
+  // (public/js/notebook.js, the bundle notebook-ui.js) lies over the terminal area as the chat does: below the page header, above the phone's bottom
+  // navigation, following the visual viewport (the on-screen keyboard). It is not kept warm: another row or task unmounts it (what was typed is sent).
+  const notebookHost = $('h5-notebook');
+  const notebookApi = { get: url => api('GET', url), post: (url, body) => api('POST', url, body) };
+  function fitNotebookView() {
+    const header = PANE ? null : document.querySelector('.h5-header');
+    const top = header ? header.getBoundingClientRect().bottom : 0;
+    const viewport = window.visualViewport;
+    const visible = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    const bottom = (pointerMode() || keyboardOpen || raisesKeyboard(document.activeElement) ? visible : Math.max(visible, window.innerHeight)) - bottomNavSpace();
+    notebookHost.style.top = `${top}px`;
+    notebookHost.style.height = `${Math.max(0, bottom - top)}px`;
+  }
+  // What the page header shows for the notebook (Header.jsx): its path and save state, the shell's state, and its menu.
+  const notebookHeader = status => ({ path: (status && status.path) || '', saved: (status && status.saved) || '', live: Boolean(status && status.live), kernel: status ? status.kernel : null });
+  function showNotebook(row) {
+    const from = source;
+    const current = task;
+    const key = warmKey(from, current.id, row.terminal_id);
+    if (earlySocket && earlySocket.source === from && earlySocket.taskId === current.id && earlySocket.terminalId === row.terminal_id) dropEarlySocket(); // it never becomes a terminal
+    ui.set({ empty: null });
+    if (notebook && notebook.key === key) { fitNotebookView(); return; }
+    closeNotebook();
+    notebookHost.hidden = false;
+    window.visualViewport?.addEventListener('resize', fitNotebookView);
+    window.visualViewport?.addEventListener('scroll', fitNotebookView);
+    fitNotebookView();
+    const mine = { key, source: from, taskId: current.id, terminalId: row.terminal_id, view: null, status: null };
+    notebook = mine;
+    mine.view = Notebook.mount(notebookHost, {
+      api: notebookApi, base: `${from.tasksBase}/${current.id}/notebooks/${encodeURIComponent(row.terminal_id)}`, notebookId: row.terminal_id,
+      title: row.title, taskTitle: current.title, embedded: Boolean(PANE), active: true,
+      notify: (message, kind) => tell(message, kind || 'error'),
+      onTitle: title => {
+        const entry = isShown(from, current.id) ? terminals.find(item => item.terminal_id === row.terminal_id) : null;
+        if (entry && title && entry.title !== title) { entry.title = title; renderTabs(); }
+      },
+      onStatus: status => {
+        if (notebook !== mine) return;
+        mine.status = status;
+        ui.set({ notebook: notebookHeader(status) });
+        renderTasks();
+      },
+      onOpenTerminal: () => void openTerminalBeside(from, current),
+      // The row was deleted (here or on another device): the list is read again, which closes the view and shows another session.
+      onGone: () => { if (notebook === mine && isShown(from, current.id)) terminalsLoaded = loadTerminals(); },
+      onRename: () => renameShown(),
+    });
+    ui.set({ notebook: notebookHeader(null) });
+    ackNotebook();
+  }
+  function closeNotebook() {
+    if (!notebook) return;
+    const { view } = notebook;
+    notebook = null;
+    view.destroy(); // sends what was typed first
+    notebookHost.hidden = true;
+    notebookHost.style.height = notebookHost.style.top = '';
+    window.visualViewport?.removeEventListener('resize', fitNotebookView);
+    window.visualViewport?.removeEventListener('scroll', fitNotebookView);
+    ui.set({ notebook: null });
+  }
+  // A notebook whose cell finished while it is shown is seen (as `ackShown` does for a terminal).
+  function ackNotebook() {
+    if (!notebook || agentChat || document.visibilityState !== 'visible') return;
+    api('POST', `${notebook.source.tasksBase}/${notebook.taskId}/terminal/ack`, { terminal_id: notebook.terminalId }).catch(() => { /* an older Engine, or offline */ });
+  }
+  // "Open in a terminal" of a cell whose program draws a full screen: a New Terminal in the same task, as the New session dialog makes it.
+  async function openTerminalBeside(from, current) {
+    if (!isShown(from, current.id)) return;
+    try { await createTerminal({}); } catch (error) { tell(`Could not create the terminal: ${error.message}`, 'error'); }
+  }
+  // Rename of the session shown (the notebook's menu, a column's header): the task sheet opens with the name field in place of its row.
+  function renameShown() {
+    const row = task && terminalId && !agentChat ? terminals.find(entry => entry.terminal_id === terminalId) || null : null;
+    if (!row) return false;
+    ui.actions.openTasks();
+    menuRow = row;
+    menuScope = { from: source, taskId: task.id, row };
+    menuRuns = [];
+    menuCreate = -1;
+    menuQuick = [];
+    ui.set({ menu: { title: row.title, items: [], rename: { kind: 'terminal', id: row.terminal_id, task: taskRef(source, task.id) }, renameValue: row.title, naming: false, task: null, name: '', anchor: null } });
+    return true;
+  }
+  // The menu of the page header while a notebook is shown (Header.jsx): Rename, Download .ipynb, Clear outputs, Stop shell, Restart shell.
+  ui.actions.notebookAction = name => {
+    if (name === 'rename') { renameShown(); return; }
+    if (notebook) notebook.view.action(name);
+  };
+
   async function openAgentSessions(agent, label) {
     const current = task;
     const from = source;
@@ -2405,12 +2519,14 @@
     catch (error) { if (current === task) tell(`Could not load sessions: ${error.message}`, 'error'); }
     if (current !== task || ui.get().menu !== loading) return;
     const start = sessionId => () => void startSession({ agent, session_id: sessionId });
+    // A notebook's row says its file and when it last changed ("release-check.ipynb · 11-23 14:21"); New notebook makes notebooks/<name>.ipynb.
+    const note = row => (agent === 'notebook' ? [String(row.id || '').split('/').pop(), sessionTime(row.updated_at)].filter(Boolean).join(' \u00b7 ') : sessionTime(row.updated_at));
     showSessionMenu(label, [
-      [`New ${label}`, start(undefined), null, true, null, false, { icon: agent }],
+      [agent === 'notebook' ? 'New notebook' : `New ${label}`, start(undefined), null, true, null, false, { icon: agent }],
       // An OpenCode session still on its default title comes `untitled` (its title is then a piece of its id): it reads "Untitled session".
       ...(Array.isArray(rows) ? rows : []).map(row => (row.untitled
-        ? ['Untitled session', start(row.id), null, false, null, false, { icon: agent, note: sessionTime(row.updated_at) }]
-        : [row.title, start(row.id), 'raw', false, null, false, { icon: agent, note: sessionTime(row.updated_at) }])),
+        ? ['Untitled session', start(row.id), null, false, null, false, { icon: agent, note: note(row) }]
+        : [row.title, start(row.id), 'raw', false, null, false, { icon: agent, note: note(row) }])),
       ['Back', openSessionMenu, null, false, null, false, { icon: 'back' }],
     ]);
   }
@@ -2428,7 +2544,8 @@
       const row = await api('POST', `${from.tasksBase}/${current.id}/terminals`, options);
       if (!row || !row.terminal_id) throw new Error('The engine returned no terminal');
       if (current !== task) return false;
-      terminals.push(row);
+      // A notebook file that already has a row answers that row (`existing: true`): it is opened, not listed twice.
+      if (!terminals.some(entry => entry.terminal_id === row.terminal_id)) terminals.push(row);
       terminalId = row.terminal_id;
       store.set(`terminal:${from.key}:${current.id}`, terminalId);
       renderTabs();
@@ -2586,7 +2703,11 @@
 
   function connect() {
     hideShown();
-    if (!task || !terminalId || columnsShown()) return; // the multi-column view shows its own columns: this page opens no terminal (see below)
+    if (!task || !terminalId || columnsShown()) { closeNotebook(); return; } // the multi-column view shows its own columns: this page opens no terminal (see below)
+    // A shell notebook has no terminal socket: its view is mounted over the terminal area instead (`showNotebook`).
+    const shownRow = terminals.find(row => row.terminal_id === terminalId);
+    if (shownRow && shownRow.agent === 'notebook') { showNotebook(shownRow); return; }
+    closeNotebook();
     const key = warmKey(source, task.id, terminalId);
     const kept = warm.find(item => item.key === key && !item.disposed);
     if (kept) { showWarm(kept); return; }
@@ -3137,6 +3258,7 @@
     const s = session;
     session = null;
     if (s) disposeSession(s);
+    closeNotebook();
   }
   // ── Multi-column view (scripts/h5-shell/Columns.jsx) ──
   // While the column strip of a wide screen is shown, every column is an iframe of this page in pane mode, with its own terminals. This page's own
@@ -3148,7 +3270,7 @@
     const shown = columnsShown();
     if (shown === columnsParked) return;
     columnsParked = shown;
-    if (shown) { ui.actions.closeSwitcher(); dropEarlySocket(); closeWarm(); return; }
+    if (shown) { ui.actions.closeSwitcher(); dropEarlySocket(); closeWarm(); closeNotebook(); return; }
     setTimeout(() => { if (!columnsShown()) connect(); }, 0); // after the shell has drawn the page again, so the terminal box has its size
   });
   function disposeSession(s) {
@@ -3207,7 +3329,7 @@
   const shownTerminal = () => (session && !session.disposed && !agentChat && document.visibilityState === 'visible' ? session : null);
   function ackShown() {
     const s = shownTerminal();
-    if (!s) return;
+    if (!s) { ackNotebook(); return; }
     api('POST', `${s.source.tasksBase}/${s.task.id}/terminal/ack`, { terminal_id: s.terminalId }).catch(() => { /* an older Engine, or offline: it stays pending */ });
   }
 
@@ -3359,6 +3481,7 @@
     // The shown terminal finished while the person is looking at it: it is seen (a question stays until it is answered; the server keeps it).
     const s = shownTerminal();
     if (s && s.source === from && ((next.activity[s.task.id] || {})[s.terminalId]) === 'done' && !waitKind(next, s.task.id, s.terminalId)) ackShown();
+    else if (!s && notebook && notebook.source === from && ((next.activity[notebook.taskId] || {})[notebook.terminalId]) === 'done') ackNotebook();
   }
   function stopFeed(f) {
     if (f.ctrl) f.ctrl.abort();
@@ -4643,18 +4766,7 @@
     // The terminal shown (none under a chat or with no task): Rename and Restart act on it as its row's menu does.
     const shownRow = () => (task && terminalId && !agentChat ? terminals.find(entry => entry.terminal_id === terminalId) || null : null);
     // Rename: the task sheet opens with the name field in place of the session's row (the field the row's menu shows).
-    ui.actions.paneRename = () => {
-      const row = shownRow();
-      if (!row) return false;
-      ui.actions.openTasks();
-      menuRow = row;
-      menuScope = { from: source, taskId: task.id, row };
-      menuRuns = [];
-      menuCreate = -1;
-      menuQuick = [];
-      ui.set({ menu: { title: row.title, items: [], rename: { kind: 'terminal', id: row.terminal_id, task: taskRef(source, task.id) }, renameValue: row.title, naming: false, task: null, name: '', anchor: null } });
-      return true;
-    };
+    ui.actions.paneRename = () => renameShown();
     // Restart in the working directory, with the row menu's confirmation.
     ui.actions.paneRestart = () => {
       const row = shownRow();

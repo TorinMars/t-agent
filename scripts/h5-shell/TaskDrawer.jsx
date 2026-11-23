@@ -48,14 +48,16 @@ export const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Id
 export const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };
 export const STATE_TEXT = { running: 'success.light', waiting: 'warning.light', idle: 'text.secondary' };
 
-// What a session row is: "Claude session", "Codex session", "OpenCode session" or "Terminal" (the glyph of its tile shows it; screen readers get the words).
-const kindOf = row => (AGENT_NAMES[row.agent] ? `${AGENT_NAMES[row.agent]} session` : 'Terminal');
+// What a session row is: "Claude session", "Codex session", "OpenCode session", "Shell notebook" or "Terminal" (the glyph of its tile shows it; screen
+// readers get the words).
+const kindOf = row => (row.agent === 'notebook' ? 'Shell notebook' : AGENT_NAMES[row.agent] ? `${AGENT_NAMES[row.agent]} session` : 'Terminal');
 
 // The second line of a session row: its live state ("Running", "Needs you", "Idle", and for a question h5.js names in `row.waiting` "Needs
 // selection" / "Needs acceptance"; what it is while the state is not known), then the folder of a terminal that kept its own directory after the
 // task's working directory changed (the full path is the row's tooltip).
+// A shell notebook says what its shell does instead (`row.line`, h5.js `sessionRow`: "Notebook · Running cell 3", "Notebook · Idle").
 function subtitle(row) {
-  const state = row.status ? t(stateWord(STATE_WORDS, row.status, row.waiting)) : row.kind === 'terminal' ? t(kindOf(row)) : '';
+  const state = row.line ? t(row.line) : row.status ? t(stateWord(STATE_WORDS, row.status, row.waiting)) : row.kind === 'terminal' ? t(kindOf(row)) : '';
   const folder = row.otherDir ? row.otherDir.replace(/\/+$/, '').split('/').pop() || row.otherDir : '';
   return [state, folder].filter(Boolean).join(' \u00B7 ');
 }
@@ -238,10 +240,11 @@ export function NewSessionDialog({ state, ui }) {
 }
 
 // The mark at the start of a row of the New session dialog, 24px in MD2's list icon slot: the agent's mark as on the session tiles (Claude's sparkle in its
-// colour), `>_` for a plain terminal, the back arrow for Back. The two text marks are drawn by CSS (`data-glyph`), so a row's text is only its words.
+// colour), `>_` for a plain terminal, the flask of a shell notebook, the back arrow for Back. The two text marks are drawn by CSS (`data-glyph`), so a
+// row's text is only its words.
 function ChoiceMark({ icon }) {
   const glyph = icon === 'shell' || icon === 'claude' ? GLYPHS[icon] : '';
-  const mark = icon === 'back' ? <Icon name="back" size={24} /> : glyph ? null : <DomIcon make={terminalMark(icon)} />;
+  const mark = icon === 'back' ? <Icon name="back" size={24} /> : icon === 'notebook' ? <Icon name="notebook" size={22} /> : glyph ? null : <DomIcon make={terminalMark(icon)} />;
   return (
     <ListItemIcon
       className="h5-choice-mark" data-mark={icon} data-glyph={glyph || undefined} aria-hidden="true"
@@ -329,11 +332,12 @@ function Sessions({ ui, taskId, sessions, menu, drag }) {
   );
 }
 
-// The tile that says what a session is: the Claude, Codex or OpenCode mark, or `>_` for a plain shell. Also the cards of the session switcher (Switcher.jsx).
+// The tile that says what a session is: the Claude, Codex or OpenCode mark, the flask of a shell notebook (self-drawn, Icons.jsx), or `>_` for a plain
+// shell. Also the cards of the session switcher (Switcher.jsx) and the Recent tab.
 export function SessionKindIcon({ agent, title, size = 28, children }) {
   return (
     <Box component="span" className={`h5-terminal-icon ${agent || 'shell'}`} aria-hidden="true" title={title} sx={{ position: 'relative', flex: `0 0 ${size}px`, width: size, height: size, borderRadius: 1.5, bgcolor: 'action.hover', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', typography: 'caption', fontFamily: 'monospace', color: agent === 'claude' ? CLAUDE_COLOR : 'text.secondary', '& svg': { width: Math.round(size * 0.64), height: Math.round(size * 0.64) } }}>
-      {agent ? <DomIcon make={terminalMark(agent)} /> : GLYPHS.shell}
+      {agent === 'notebook' ? <Icon name="notebook" size={Math.round(size * 0.64)} /> : agent ? <DomIcon make={terminalMark(agent)} /> : GLYPHS.shell}
       {children}
     </Box>
   );

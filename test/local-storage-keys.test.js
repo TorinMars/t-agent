@@ -17,7 +17,7 @@ const RULE = 'AGENTS.md, "One experience on every device and engine": state that
   + 'public/js/local-keys.js with its category and reason (and in the "Key audit" table of docs/design/shared-page-state.md).';
 const REGISTRY = 'public/js/local-keys.js';
 // Built bundles and vendored or generated files: their sources are scanned instead.
-const BUILT = new Set(['public/js/h5-shell.js', 'public/js/agent-chat-ui.js', 'public/js/mindmap-ui.js', 'public/js/markdown-view.js']);
+const BUILT = new Set(['public/js/h5-shell.js', 'public/js/agent-chat-ui.js', 'public/js/mindmap-ui.js', 'public/js/notebook-ui.js', 'public/js/markdown-view.js']);
 
 function walk(dir) {
   const out = [];
@@ -31,7 +31,7 @@ function walk(dir) {
 function sources() {
   const page = fs.readdirSync(path.join(ROOT, 'public/js')).filter(name => name.endsWith('.js')).map(name => `public/js/${name}`)
     .filter(file => !BUILT.has(file) && !/^public\/js\/i18n-zh-/.test(file));
-  return [...page, ...walk('scripts/h5-shell'), ...walk('scripts/agent-chat'), ...walk('scripts/mindmap')].filter(file => file !== REGISTRY);
+  return [...page, ...walk('scripts/h5-shell'), ...walk('scripts/agent-chat'), ...walk('scripts/mindmap'), ...walk('scripts/notebook')].filter(file => file !== REGISTRY);
 }
 // The code without its comments (line comments not inside a string or after a scheme's `:`, block comments), lines kept.
 const code = text => text.replace(/\/\*[\s\S]*?\*\//g, block => block.replace(/[^\n]/g, ' ')).split('\n').map(line => line.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');

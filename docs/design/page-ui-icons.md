@@ -97,6 +97,12 @@
 | Terminal on-screen keyboard: Shift / Backspace / Enter | `keyShift` / `keyBackspace` / `keyEnter` | none / none / 4767097 | the same icons as row 1 (Shift 24px, the others 22px), `aria-label` = `title` |
 | Terminal on-screen keyboard: Caps lock | self-drawn `keyCapsLock` | none | self-drawn: the Shift arrow, shorter, over a bar (Shift tapped twice) |
 | Session kind mark: OpenCode (task rows, Recent, switcher cards, the New session dialog) | self-drawn, in `icon()` of `public/js/agent-chat.js` beside the Claude and Codex marks | none | self-drawn after OpenCode's logo: an outlined rounded rectangle x5-19 y4-20 (rx 2, stroke 1.5, round joins) with a filled block x8-16 y12-17, `currentColor`; an unknown agent gets `>_`, never Claude's sparkle |
+| Session kind mark: Shell notebook (task rows, Recent, switcher cards, the New session dialog, the notebook's session header) | self-drawn `notebook` | none | self-drawn: a lab flask on the 24 grid (neck 9-15 at y3, body widening to y21 with rounded corners, a liquid line at y15), stroke 1.5, round caps and joins, `currentColor`; the library's experiment icon has bubbles that blur at 18px |
+| Shell notebook: Run, run button of a cell | caret-right | not looked up | `play` (Ant Design CaretRightOutlined) |
+| Shell notebook: Run all | forward | not looked up | `runAll` (Ant Design ForwardOutlined) |
+| Shell notebook: Stop, stop button of a running cell, Stop shell | border | not looked up | `stopSquare` (Ant Design BorderOutlined) |
+| Shell notebook: a cell that ended with exit 0 | check | not looked up | `check` (Ant Design CheckOutlined), 14px in the success colour |
+| Shell notebook: Restart shell, menu items Rename / Download .ipynb / Clear outputs | reload, edit, download, close | as listed above | the existing `reload`, `edit`, `download`, `close`; + Code, + Text, + Cell and Clear outputs are text labels |
 | Wheel strip spring (full-screen program): up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the spring thumb, 14px (direction marks inside the thin strip, not buttons) |
 | Terminal width switch (header, Fit / Wide) | column-width | not looked up (Ant Design `ColumnWidthOutlined`, the same outline as in collection 9402) | `columnWidth` in `Icons.jsx`, 22px |
 | Add column ("+ Column", multi-column view bar) | plus | 7834345 | `add`, 14px, the start icon of the text button |

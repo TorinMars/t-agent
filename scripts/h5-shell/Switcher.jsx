@@ -29,7 +29,7 @@ import { cardPlace, recentKey, recentTaskRef, rowPick, rowScrollFor, settleIndex
 import { useStoreKeys } from './use-store.mjs';
 
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
-const kindOf = agent => (AGENT_NAMES[agent] ? `${AGENT_NAMES[agent]} session` : 'Terminal');
+const kindOf = agent => (agent === 'notebook' ? 'Shell notebook' : AGENT_NAMES[agent] ? `${AGENT_NAMES[agent]} session` : 'Terminal');
 // The words and colours of a state, as the task list rows show them (TaskDrawer.jsx).
 const STATE_WORDS = { running: 'Running', waiting: 'Needs you', idle: 'Idle' };
 const STATE_DOT = { running: 'success.main', waiting: 'warning.main', idle: 'text.disabled' };

@@ -13,7 +13,7 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const LOCAL_TASKS = [{ id: 1, title: 'Alpha', status: 'doing' }, { id: 2, title: 'Beta', status: 'doing' }, { id: 3, title: 'Gamma', status: 'doing' }];
 const REMOTE_TASKS = [{ id: 1, title: 'Remote one', status: 'doing' }]; // the same id as Alpha: ids alone do not say which task a list belongs to
-const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'];
+const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal', 'Shell notebook'];
 const SHORT = { timeout: 1500 };
 
 async function openPage(browser, wide) {

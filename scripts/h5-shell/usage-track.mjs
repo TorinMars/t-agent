@@ -7,7 +7,8 @@
 // The fixed labels of the task and session menus (public/js/h5.js showMenu) that may be recorded as the detail of a menu row. Anything else (a device
 // or service name in "New session") is not.
 export const MENU_ACTIONS = new Set(['Copy text', 'Rename', 'Reopen', 'Open', 'Restart in the working directory', 'Delete', 'Delete session', 'Remove from Recent', 'New session', 'Edit working directory',
-  'Archive', 'Visible to', 'Move up', 'Move down', 'Move to top', 'Move to bottom', 'Terminal', 'Claude', 'Codex', 'OpenCode', 'Claude Code']);
+  'Archive', 'Visible to', 'Move up', 'Move down', 'Move to top', 'Move to bottom', 'Terminal', 'Claude', 'Codex', 'OpenCode', 'Claude Code',
+  'Shell notebook', 'New notebook']);
 // The data-track-detail of a menu row (TaskDrawer.jsx, TermMenu.jsx): its label when it is one of the fixed ones above, else nothing.
 export const menuDetail = item => (item && item.kind !== 'raw' && MENU_ACTIONS.has(item.label) ? item.label : undefined);
 

@@ -80,7 +80,10 @@ export const initialState = () => ({
   learnOpen: false, // the Learn page (screen-learn.jsx) is open: ui.actions.openLearn() / closeLearn()
   taskName: '', // empty: "Choose a task"
   sessionName: '',
-  terminalAgent: null, // 'claude' / 'codex' / 'opencode' when the current terminal is that agent's, null for a plain shell: picks the presets of the saved commands list
+  terminalAgent: null, // 'claude' / 'codex' / 'opencode' / 'notebook' when the current session is that agent's, null for a plain shell: picks the presets of the saved commands list
+  // The shell notebook shown instead of a terminal (h5.js `showNotebook`): { path, saved, live, kernel: { text, tone } | null }; null when none is. The
+  // session header shows it (Header.jsx) and its menu acts on it (`ui.actions.notebookAction`).
+  notebook: null,
   sources: [{ key: 'local', label: 'This machine' }], // every connected service: { key, label, name, offline, hidden, listed, instanceId, capabilities }
   sourceKey: 'local', // the service of the shown task
   sourceLabel: '', // its name when it is not this machine (shown in the header)

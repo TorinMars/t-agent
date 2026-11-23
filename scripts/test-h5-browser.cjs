@@ -1440,7 +1440,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').tap();
     await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     await page.locator('#h5-new-session #h5-term-menu-actions button').first().waitFor();
-    assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'], 'the "+" opens the New session dialog');
+    assert.deepEqual(await page.locator('#h5-new-session #h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal', 'Shell notebook'], 'the "+" opens the New session dialog');
     // The optional name field above the choices: placeholder, limit, the name stays when moving between the lists, and Enter creates.
     const nameField = page.locator('#h5-new-name-input');
     assert.equal(await nameField.getAttribute('placeholder'), 'Name (optional)');
@@ -1932,7 +1932,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await remote.page.locator('[data-source="remote:7"] .h5-task-more').tap();
     await remote.page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     await remote.page.waitForTimeout(300);
-    assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal']);
+    assert.deepEqual(await remote.page.locator('#h5-term-menu-actions button .h5-choice-label').allTextContents(), ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal', 'Shell notebook']);
     assert.ok(!remote.calls.some(call => call.includes('/agent/conversations')), 'no chat is read');
     await remote.context.close();
     assert.deepEqual(pageErrors, [], 'the phone shell has no browser runtime errors');

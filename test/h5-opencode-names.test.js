@@ -41,8 +41,8 @@ test('the JSX maps name OpenCode, and the names have Chinese translations', () =
     ['scripts/h5-shell/Attention.jsx', /const AGENT_NAME = \{[^}]*opencode: 'OpenCode'/],
     ['scripts/h5-shell/Attention.jsx', /const AGENT_LABEL = \{[^}]*opencode: 'OpenCode'/],
     ['scripts/h5-shell/Terminal.jsx', /const LINK_TITLES = \{[^}]*OpenCode: 'OpenCode wants to open a link'/],
-    ['public/js/h5.js', /const SESSION_KINDS = \[\['claude', 'Claude session'\], \['codex', 'Codex session'\], \['opencode', 'OpenCode session'\]\]/],
-    ['public/js/h5.js', /const AGENT_CAPABILITY = \{ opencode: 'terminal:opencode' \}/],
+    ['public/js/h5.js', /const SESSION_KINDS = \[\['claude', 'Claude session'\], \['codex', 'Codex session'\], \['opencode', 'OpenCode session'\], \['notebook', 'Shell notebook'\]\]/],
+    ['public/js/h5.js', /const AGENT_CAPABILITY = \{ opencode: 'terminal:opencode', notebook: 'terminal:notebook' \}/],
   ];
   for (const [file, pattern] of maps) assert.match(read(file), pattern, file);
   const I18n = chinese();

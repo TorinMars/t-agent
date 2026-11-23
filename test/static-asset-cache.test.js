@@ -195,10 +195,11 @@ test('every script of the phone page is deferred, in its old order, and the page
   before('/js/local-keys.js', '/js/i18n.js'); // the registry of browser storage, before anything reads a key
   before('/js/page-state.js', '/js/h5-shell.js'); // the shell reads the shared page state's cache when it starts
   before('/js/mindmap.js', '/js/h5.js');
+  before('/js/notebook.js', '/js/h5.js'); // the shell notebook's loader (h5.js mounts it)
   assert.equal(order.at(-1), '/js/h5.js');
   // The scripts sent in one request (data-combine) are the small hand-written ones; the big and the vendored ones and the dictionaries stay on their own.
   const combine = scripts.filter(attrs => attrs.endsWith(' data-combine')).map(attrs => /src="([^"]+)"/.exec(attrs)[1]);
-  assert.equal(combine.length, 24);
+  assert.equal(combine.length, 25);
   for (const src of combine) {
     assert.match(src, /^\/js\/[\w.-]+\.js$/);
     assert.doesNotMatch(src, /h5-shell|\/h5\.js|i18n-zh-/, `${src} stays a request of its own`);

@@ -109,6 +109,10 @@ html[data-voice-off] .h5-voice, html[data-voice-off] .ac-mic, html[data-voice-of
 .h5-agent .ac-box { padding: 3px 6px; border-radius: 20px; }
 .h5-agent .ac-input { min-height: 32px; padding: 5px 4px; }
 .h5-agent[hidden] { display: none; }
+/* A shell notebook (h5.js `showNotebook`; the view's own styles come with its bundle, scripts/notebook/notebook.css): over the terminal area like the
+   chat, its top and height set by fitNotebookView. */
+.h5-notebook { position: fixed; top: 0; left: 0; right: 0; height: 100dvh; z-index: 107; width: 100%; background: var(--h5-bg); color: var(--h5-text);
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); }
 /* The phone's bottom navigation (BottomNav.jsx, #h5-bnav, fixed at the bottom; `html[data-bnav]` while it is shown, never on the wide layout): the page
    keeps its room free, so the terminal refits when the bar comes or goes; the bottom area leaves the safe-area inset to the bar. While the bar is away for
    typing without a system keyboard (`html[data-bnav-room]`) the room stays, so the terminal keeps its size. T-Attention and
@@ -158,6 +162,7 @@ html[data-bnav] #h5-attention-sheet > .MuiDrawer-paper { max-height: 100%; paddi
   html[data-nav-rail] { --h5-nav-width: 72px; }
   .h5-app { inset: 0 0 auto calc(var(--h5-nav-width) + var(--h5-sidebar-width)); width: auto; }
   .h5-agent { left: calc(var(--h5-nav-width) + var(--h5-sidebar-width)); width: auto; }
+  .h5-notebook { left: calc(var(--h5-nav-width) + var(--h5-sidebar-width)); width: auto; }
   /* The mind maps over the whole window (a page without the columns view) leave the rail visible. `!important`: mindmap.js puts the view's
      position (left: 0) in its style attribute when it mounts. */
   html[data-nav-rail] #h5-mindmap { left: var(--h5-nav-width) !important; }

@@ -8,7 +8,7 @@
 // list draws the same list as rows (recent-rows.mjs, RecentList.jsx; "Recent tab" in docs/design/page-task-list.md).
 
 export const RECENT_MAX = 12;
-const AGENTS = new Set(['claude', 'codex', 'opencode']);
+const AGENTS = new Set(['claude', 'codex', 'opencode', 'notebook']);
 const CLIENTS = new Set(['phone', 'computer', 'mac', 'home']);
 const DEVICE = /^[a-z0-9]{8,32}$/;
 

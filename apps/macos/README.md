@@ -1,6 +1,6 @@
 # T-Agent.app (macOS shell app)
 
-A native window for the T-Agent web service: the page in a WKWebView, a menu bar item with the service's state, its web addresses and Start / Restart / Stop, and `t-agent://` links. The Node server is not part of the app; PM2 or launchd keeps running it, and browsers, phones and linked devices keep using it. Quitting the app never stops the server. AppKit and WebKit only, built with the Command Line Tools. The design is in `docs/design/mac-app.md`.
+A native window for the T-Agent web service: the page in a WKWebView, a menu bar item with the service's state, its web addresses and Start / Restart / Stop, and `t-agent://` links. The Node server is not part of the app; PM2 or launchd keeps running it, and browsers, phones and linked devices keep using it. Quitting the app never stops the server. AppKit and WebKit (plus Carbon's input source calls) only, built with the Command Line Tools. The design is in `docs/design/mac-app.md`.
 
 | File | What is in it |
 |------|---------------|
@@ -14,7 +14,8 @@ A native window for the T-Agent web service: the page in a WKWebView, a menu bar
 | `Placeholder.swift` | The not-running view and its text per state |
 | `StatusMenu.swift` | The menu bar item: entries per state, the web addresses, the icon drawn in code |
 | `MainMenu.swift` | The main menu; the Edit menu makes Cmd+C / V / X / A / Z work in the page |
-| `MainWindow.swift` | The window, the web view and its navigation, UI and download delegates, the `tagentOpen` message handler |
+| `MainWindow.swift` | The window, the web view and its navigation, UI and download delegates, the `tagentOpen` and `tagentInputSource` message handlers |
+| `InputSource.swift` | English input while spelling: the `tagentInputSource` messages (`inputSourceRequest`), the remember / switch / restore state, the injected input source calls (Carbon TIS) |
 | `AppDelegate.swift` | The wiring, the Apple Event for links, the alerts, the preferences, the real services |
 | `SelfTest.swift` | `--self-test` and its fakes |
 
@@ -26,7 +27,7 @@ swiftc -O -swift-version 5 -target x86_64-apple-macos12.0 -framework AppKit -fra
 "$TMPDIR/tagent-app" --version     # CFBundleShortVersionString, "dev" outside a bundle
 ```
 
-`scripts/build-mac-app.js` builds the bundle (both architectures, Info.plist, icon, signing). The self-test replaces every outside effect with a fake (files, environment, health checks, processes, timers, clock, browser, pasteboard): it puts no window on screen, opens no connection, runs no process and never reads the real `~/.tagent` or the app's defaults. `test/mac-app-swift.test.js` compiles the files to a temporary folder and runs it (skipped off macOS or without `swiftc`; `TA_SKIP_SWIFT_APP=1` skips it on a Mac).
+`scripts/build-mac-app.js` builds the bundle (both architectures, Info.plist, icon, signing). The self-test replaces every outside effect with a fake (files, environment, health checks, processes, timers, clock, browser, pasteboard, input sources): it puts no window on screen, opens no connection, runs no process and never reads the real `~/.tagent` or the app's defaults. `test/mac-app-swift.test.js` compiles the files to a temporary folder and runs it (skipped off macOS or without `swiftc`; `TA_SKIP_SWIFT_APP=1` skips it on a Mac).
 
 ## Rules
 

@@ -232,11 +232,12 @@ export function mixCards(lists, limit = 20) {
 }
 
 // The keys of an exercise on a computer: Enter checks (and, once checked, continues with the offered grade); 1 / 2 / 3 grade a checked answer.
+// `practice`: the key is typed in the "Type it yourself" row, which takes only letters, so digits there still grade and letters are nothing here.
 // Returns { action: 'check' | 'grade', grade? } or null.
-export function exerciseKey({ key, checked, inField = false, modifiers = false }) {
+export function exerciseKey({ key, checked, inField = false, practice = false, modifiers = false }) {
   if (modifiers) return null;
   if (key === 'Enter') return checked ? { action: 'grade' } : { action: 'check' };
-  if (!checked || inField) return null;
+  if (!checked || (inField && !practice)) return null;
   const grade = { 1: 'again', 2: 'hard', 3: 'good' }[key];
   return grade ? { action: 'grade', grade } : null;
 }

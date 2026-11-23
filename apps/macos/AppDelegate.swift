@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MainMenuActions, NSMen
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = MainWindowController(version: appVersion(), dataStore: .default(), autosave: true, inspectable: preferences.webInspector,
+                                          inputSources: .system,
                                           server: { [weak self] in self?.failover.shown?.url ?? self?.monitor.config.url ?? AppConfig.defaultURL },
                                           openExternal: services.openURL)
         window.onLoadFailed = { [weak self] in self?.monitor.send(.checkNow) }

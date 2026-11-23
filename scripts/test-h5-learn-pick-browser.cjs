@@ -449,7 +449,11 @@ async function openSettings(page, touch) {
       const feedback = await page.locator('#h5-learn-feedback').boundingBox();
       const grades = await page.locator('#h5-learn-mode-pane .h5-learn-grades, .h5-learn-pane .h5-learn-grades').first().boundingBox();
       assert.ok(grades.y >= feedback.y + feedback.height, 'the grades under the result');
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-hard');
+      // The focus goes to "Type it yourself" (between the result and the grades); Enter there takes the offered grade.
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-practice-input');
+      const row = await page.locator('.h5-learn-practice').boundingBox();
+      assert.ok(row.y >= feedback.y + feedback.height && grades.y >= row.y + row.height, 'the practice row between the result and the grades');
+      assert.match(await page.locator('#h5-learn-grade-hard').getAttribute('class'), /MuiButton-contained/);
       await shot(page, 'learn-pick-desktop.png');
       await page.keyboard.press('Enter');
       await waitFor(() => lastAnswer(mock) && lastAnswer(mock).id === '31', 'graded with Enter');

@@ -47,10 +47,23 @@ final class OpenLinkMessages: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// The `tagentInputSource` script message handler ("English input while spelling" in docs/design/mac-app.md); the window is
+/// held weakly, as in OpenLinkMessages.
+final class InputSourceMessages: NSObject, WKScriptMessageHandler {
+    weak var target: MainWindowController?
+    init(_ target: MainWindowController) { self.target = target }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        let origin = message.frameInfo.securityOrigin
+        target?.inputSourceMessage(body: message.body, scheme: origin.protocol, host: origin.host, port: origin.port)
+    }
+}
+
 final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     static let autosaveName = "T-Agent Main Window"
     /// The script message the page sends a link to open in the default browser (linkToOpen, docs/design/open-links.md).
     static let openLinkMessage = "tagentOpen"
+    /// The script message the page sends while the person spells a word ("English input while spelling" in docs/design/mac-app.md).
+    static let inputSourceMessage = "tagentInputSource"
 
     let window: NSWindow
     let webView: WKWebView
@@ -72,13 +85,20 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     /// Where each running download goes.
     private var downloadPaths: [ObjectIdentifier: String] = [:]
     private(set) var openLinkMessages: OpenLinkMessages?
+    private(set) var inputSourceMessages: InputSourceMessages?
+    /// English input while spelling: remembers the person's input source and gives it back.
+    let inputSource: InputSourceSwitcher
+    /// English is selected only while this window is the key window of the active app, so another app's input never changes.
+    var canSwitchInputSource: () -> Bool = { false }
+    private var appObservers: [NSObjectProtocol] = []
 
     /// `autosave` false (the self-test) neither restores nor saves the frame. `inspectable` lets Safari's Web Inspector
-    /// attach (macOS 13.3 and newer).
-    init(version: String, dataStore: WKWebsiteDataStore, autosave: Bool, inspectable: Bool, server: @escaping () -> URL,
-         openExternal: @escaping (URL) -> Void) {
+    /// attach (macOS 13.3 and newer). `inputSources` are the real input source calls (`.system`) or the self-test's fakes.
+    init(version: String, dataStore: WKWebsiteDataStore, autosave: Bool, inspectable: Bool, inputSources: InputSources,
+         server: @escaping () -> URL, openExternal: @escaping (URL) -> Void) {
         self.server = server
         self.openExternal = openExternal
+        inputSource = InputSourceSwitcher(sources: inputSources)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: true)
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 820),
@@ -101,6 +121,16 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
         let messages = OpenLinkMessages(self)
         webView.configuration.userContentController.add(messages, name: MainWindowController.openLinkMessage)
         openLinkMessages = messages
+        let inputMessages = InputSourceMessages(self)
+        webView.configuration.userContentController.add(inputMessages, name: MainWindowController.inputSourceMessage)
+        inputSourceMessages = inputMessages
+        canSwitchInputSource = { [weak self] in NSApp.isActive && self?.window.isKeyWindow == true }
+        // Never left switched: the app going to the background or quitting gives the person's input source back.
+        for name in [NSApplication.didResignActiveNotification, NSApplication.willTerminateNotification] {
+            appObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.restoreInputSource()
+            })
+        }
         if #available(macOS 13.3, *) { webView.isInspectable = inspectable }
         webView.autoresizingMask = [.width, .height]
         placeholder.autoresizingMask = [.width, .height]
@@ -125,6 +155,10 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
                 applyPageTitleBar(self.window, color: self.showingPage ? view.themeColor : nil)
             }
         }
+    }
+
+    deinit {
+        for observer in appObservers { NotificationCenter.default.removeObserver(observer) }
     }
 
     /// The page's title (or T-Agent), then the note when there is one.
@@ -162,6 +196,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
 
     /// Shows the placeholder and remembers the page that was open.
     func showPlaceholder(_ content: PlaceholderContent) {
+        restoreInputSource()
         if showingPage, let path = pagePath(of: webView.url, server: server()) { lastPath = path }
         showingPage = false
         applyPageTitleBar(window, color: nil) // the placeholder has no theme colour: back to the page's usual one
@@ -189,9 +224,16 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
 
     /// Closing the window only hides it: the app keeps running in the menu bar.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        restoreInputSource()
         window.orderOut(nil)
         return false
     }
+
+    /// Another window or app takes the keyboard: the person's input source back. Becoming key again switches nothing by
+    /// itself; the page asks for English again on the next focus of a spelling field.
+    func windowDidResignKey(_ notification: Notification) { restoreInputSource() }
+
+    func windowDidResignMain(_ notification: Notification) { restoreInputSource() }
 
     // MARK: Navigation
 
@@ -233,6 +275,11 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
         download.delegate = self
     }
 
+    /// A main-frame load or reload starts: the spelling field is gone, so the person's input source comes back.
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        restoreInputSource()
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         handleLoadError(error)
     }
@@ -250,6 +297,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        restoreInputSource()
         if showingPage { webView.reload() }
     }
 
@@ -281,6 +329,20 @@ final class MainWindowController: NSObject, NSWindowDelegate, WKNavigationDelega
     func openLink(body: Any?, scheme: String, host: String, port: Int) {
         if let url = linkToOpen(body: body, frameScheme: scheme, frameHost: host, framePort: port, server: server()) { openExternal(url) }
     }
+
+    // MARK: English input while spelling
+
+    /// A `tagentInputSource` message ("English input while spelling" in docs/design/mac-app.md): "english" from the server's
+    /// own origin selects English while the window is key in the active app, "restore" gives the person's source back.
+    func inputSourceMessage(body: Any?, scheme: String, host: String, port: Int) {
+        switch inputSourceRequest(body: body, frameScheme: scheme, frameHost: host, framePort: port, server: server()) {
+        case .english?: if canSwitchInputSource() { inputSource.english() }
+        case .restore?: inputSource.restore()
+        case nil: break
+        }
+    }
+
+    func restoreInputSource() { inputSource.restore() }
 
     // MARK: UI delegate
 

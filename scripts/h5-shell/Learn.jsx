@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
@@ -37,6 +37,8 @@ import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
 import { ProgressView } from './LearnProgress.jsx';
 import { gradeIntervals } from './learn-progress.mjs';
+import { PRACTICE_FLASH_MS, PRACTICE_ROUND_MS, practiceChange, practiceClearFlash, practiceNewRound, practiceSlots, practiceStart, practiceText } from './learn-practice.mjs';
+import { cleanTyped, createComposer, hasImeText, inputSourceBridge, isImeKey, keyLetter } from './learn-input.mjs';
 
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
@@ -134,6 +136,7 @@ function Learn({ state, ui }) {
   const openTranslator = () => { ui.actions.closeLearn(); ui.actions.openSettings('voice-translate'); };
   const modes = availableModes(speech);
   const common = { ui, phone, keys, speech, openTranslator, data, open, back };
+  const input = useLearnInputState();
 
   // Computer: Escape closes the open mode, then the page (unless something above takes it); the focus goes into the page and back to the opener.
   const root = useRef(null);
@@ -159,6 +162,7 @@ function Learn({ state, ui }) {
     // English chat fills the pane (its chats list and the conversation, LearnChat.jsx); Earlier chats is a phone's screen, on a computer the list is there.
     const chat = view && (view.kind === 'chat' || view.kind === 'chats');
     return (
+      <LearnInput.Provider value={input}>
       <Box ref={root} id="h5-learn" role="region" aria-labelledby="h5-learn-title" data-layout="wide"
         sx={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: state.pane ? 0 : NAV_WIDTH, zIndex: 1255, display: 'flex', bgcolor: 'background.default', color: 'text.primary' }}>
         <Box className="h5-learn-home" sx={{ flex: '0 0 420px', width: 420, boxSizing: 'border-box', overflowY: 'auto', p: 3, display: 'flex', flexDirection: 'column', gap: 1.5, borderRight: 1, borderColor: 'divider', '& > *': { flexShrink: 0 } }}>
@@ -181,9 +185,99 @@ function Learn({ state, ui }) {
           </Box>
         )}
       </Box>
+      </LearnInput.Provider>
     );
   }
-  return <PhoneLearn {...common} view={view} close={close} home={home} />;
+  return <LearnInput.Provider value={input}><PhoneLearn {...common} view={view} close={close} home={home} /></LearnInput.Provider>;
+}
+
+// ── English input while spelling ("English input" in docs/design/learn-spell-practice.md) ──
+// The Mac app's input source switch (learn-input.mjs `inputSourceBridge`: 'english' while a Spell answer field or the practice row has the focus,
+// 'restore' after it, and when Learn closes or the page goes away; nothing outside the app). The notice that an input method is on shows from the
+// first composition of this Learn session until OK, and not again after OK while Learn stays open (state of this page only: nothing is stored); never
+// in the Mac app, which switches the input source instead.
+const inputSource = inputSourceBridge();
+const LearnInput = createContext({ notice: false, seen: () => {}, dismiss: () => {} });
+function useLearnInputState() {
+  const [notice, setNotice] = useState('off'); // off | shown | dismissed
+  useEffect(() => {
+    const away = () => inputSource.close();
+    window.addEventListener('pagehide', away);
+    return () => { window.removeEventListener('pagehide', away); inputSource.close(); };
+  }, []);
+  return useMemo(() => ({
+    notice: notice === 'shown',
+    seen: () => { if (!inputSource.available()) setNotice(now => (now === 'off' ? 'shown' : now)); },
+    dismiss: () => setNotice('dismissed'),
+  }), [notice]);
+}
+
+// A field that takes English letters even while an input method composes: during a composition the field keeps the input method's own text (so it
+// keeps working) while `change` gets the letters typed (createComposer); the text it commits (Chinese characters) is dropped; a value an input method
+// changed without a composition is mended (cleanTyped). `change(text, { composing })`. Returns the field's `value`, its `onChange` and the native
+// `props` (keydown and the composition events) for inputProps.
+function useLatinInput({ value, change, onIme }) {
+  const composer = useRef(null);
+  const pending = useRef(''); // letters of input method keys pressed outside a composition (the keydown that starts one comes first)
+  const ended = useRef(null);
+  const [raw, setRaw] = useState(null);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const props = {
+    onKeyDown: event => {
+      if (!isImeKey(event)) { pending.current = ''; return; }
+      onIme();
+      const letter = keyLetter(event);
+      const back = event.key === 'Backspace' || event.code === 'Backspace';
+      if (composer.current) composer.current.key({ letter, back });
+      else if (letter) pending.current += letter;
+      else if (back) pending.current = pending.current.slice(0, -1);
+    },
+    onCompositionStart: event => {
+      onIme();
+      const el = event.target;
+      composer.current = createComposer(valueRef.current, el.selectionStart, el.selectionEnd, pending.current);
+      pending.current = '';
+      setRaw(el.value);
+    },
+    onCompositionUpdate: event => { if (composer.current) change(composer.current.update(event.data), { composing: true }); },
+    onCompositionEnd: event => {
+      const current = composer.current;
+      if (!current) return;
+      composer.current = null;
+      const final = current.end(event.data);
+      // Safari sends the input event of the committed text after compositionend: a value with the input method's text is taken as this same text.
+      ended.current = final;
+      setRaw(null);
+      change(final, { composing: false });
+    },
+  };
+  const onChange = event => {
+    const dom = event.target.value;
+    if (composer.current) { setRaw(dom); return; }
+    const final = ended.current;
+    ended.current = null;
+    if (final !== null && hasImeText(dom)) { change(final, { composing: false }); return; }
+    const clean = cleanTyped(dom, pending.current);
+    if (clean.ime) onIme();
+    pending.current = '';
+    change(clean.text, { composing: false });
+  };
+  return { value: raw !== null ? raw : value, onChange, props, composing: raw !== null };
+}
+const Kbd = ({ children }) => (
+  <Box component="kbd" sx={theme => ({ fontFamily: MONO, fontSize: '0.85em', px: 0.5, borderRadius: 0.5, bgcolor: alpha(theme.palette.text.primary, 0.12), whiteSpace: 'nowrap' })}>{children}</Box>
+);
+// Key names stay as printed on the keys (not translated).
+const CTRL_SPACE = <><Kbd>Ctrl</Kbd>+<Kbd>Space</Kbd></>;
+// The notice above the letters (an MD2 inline banner in the info colour, role=status so it is read without taking the focus).
+function ImeNotice({ onOk, field }) {
+  return (
+    <Alert severity="info" role="status" id="h5-learn-ime-notice" sx={{ mb: 1, alignItems: 'center' }}
+      action={<Button color="inherit" id="h5-learn-ime-ok" onClick={onOk} {...keepFocus(field)}>{t('OK')}</Button>}>
+      <Fmt template="Chinese input is on. Your letters still count; to switch, press {1} (on a Mac {2} or {1})." values={[CTRL_SPACE, <Kbd key="caps">{'Caps Lock'}</Kbd>]} />
+    </Alert>
+  );
 }
 
 function PhoneLearn({ view, close, home, back, ...common }) {
@@ -504,7 +598,8 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
   // The keys of a computer (exerciseKey): Enter checks, Enter again takes the offered grade, 1 / 2 / 3 grade a checked answer.
   useEffect(() => {
     const onKey = event => {
-      if (event.defaultPrevented || event.isComposing || !register.current) return;
+      // A key an input method takes (Safari's Enter that commits a composition has keyCode 229 and no isComposing) is never a grade.
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || !register.current) return;
       const target = event.target || document.body;
       // Keys typed in "Ask about this question" are its own; while the phone's sheet is open the card's keys are off.
       if ((target.closest && target.closest('.h5-learn-ask')) || document.querySelector('#h5-learn-ask[data-layout="sheet"]')) return;
@@ -513,7 +608,9 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
       if (event.key === 'Enter' && tag === 'TEXTAREA' && event.shiftKey) return;
       if (target !== document.body && !(target.closest && target.closest('#h5-learn, #h5-learn-mode'))) return;
       const inField = (tag === 'INPUT' || tag === 'TEXTAREA') && !target.readOnly;
-      const action = exerciseKey({ key: event.key, checked: register.current.checked, inField, modifiers: event.altKey || event.ctrlKey || event.metaKey });
+      // The "Type it yourself" row takes letters only: Enter and 1 / 2 / 3 still grade there.
+      const practice = Boolean(target.dataset && target.dataset.practice === 'true');
+      const action = exerciseKey({ key: event.key, checked: register.current.checked, inField, practice, modifiers: event.altKey || event.ctrlKey || event.metaKey });
       if (!action) return;
       event.preventDefault();
       if (action.action === 'check') register.current.check(); else register.current.grade(action.grade);
@@ -690,7 +787,8 @@ const pickExercise = (exercise, speech) => ((exercise === 'dictation' && !speech
 const GRADES = [['again', 'Again', '1'], ['hard', 'Hard', '2'], ['good', 'Good', '3']];
 // `next`: when each grade brings the card back (the queue card's `next` of the FSRS server, milliseconds), shown under each label in caption size
 // ("Again · 10 min", "Grade intervals" in docs/design/learn-english-page.md); without it (an older server) the buttons are the plain labels.
-function Grades({ suggested, onGrade, busy, keys, next = null }) {
+// `focus`: the offered grade takes the focus (Spell gives it to its "Type it yourself" row instead; Enter there takes the offered grade).
+function Grades({ suggested, onGrade, busy, keys, next = null, focus = true }) {
   const intervals = gradeIntervals(next);
   return (
     <Box className="h5-learn-grades" role="group" aria-label={t('How well did you know it?')}
@@ -698,7 +796,7 @@ function Grades({ suggested, onGrade, busy, keys, next = null }) {
       {GRADES.map(([grade, label, key]) => {
         const when = intervals ? tf(intervals[grade][0], intervals[grade][1]) : '';
         return (
-          <Button key={grade} id={`h5-learn-grade-${grade}`} data-grade={grade} variant={grade === suggested ? 'contained' : 'outlined'} autoFocus={grade === suggested}
+          <Button key={grade} id={`h5-learn-grade-${grade}`} data-grade={grade} variant={grade === suggested ? 'contained' : 'outlined'} autoFocus={focus && grade === suggested}
             disabled={busy} onClick={() => onGrade(grade)} aria-keyshortcuts={keys ? key : undefined} aria-label={intervals ? `${t(label)}, ${when}` : undefined}
             sx={intervals ? { flex: '1 1 0', minWidth: 0, maxWidth: 200, flexDirection: 'column', py: 0.5, lineHeight: 1.3 } : undefined}>
             <span>{t(label)}{keys ? <Box component="span" aria-hidden="true" sx={{ ml: 1, opacity: 0.7, typography: 'caption' }}>{key}</Box> : null}</span>
@@ -756,13 +854,17 @@ function PatternNote({ expected, answer, tip = '' }) {
     </Box>
   );
 }
-// The result of a checked answer, with the grades on a computer (a phone has them in its pinned actions).
-function Feedback({ correct, near = false, phone, keys, busy, suggested, onGrade, next = null, children }) {
+// The result of a checked answer, with the grades on a computer (a phone has them in its pinned actions). `practice`: Spell's "Type it yourself"
+// row, between the result (the status that is read out) and the grades. `focus`: the offered grade takes the focus.
+function Feedback({ correct, near = false, phone, keys, busy, suggested, onGrade, next = null, practice = null, focus = true, children }) {
   return (
-    <Card id="h5-learn-feedback" data-correct={correct ? 'true' : 'false'} data-near={near && !correct ? 'true' : undefined} role="status" sx={{ p: 2 }}>
-      <ResultTitle correct={correct} near={near} />
-      <Box sx={{ mt: 0.75 }}>{children}</Box>
-      {phone ? null : <Box sx={{ mt: 1.5, display: 'flex' }}><Grades suggested={suggested} onGrade={onGrade} busy={busy} keys={keys} next={next} /></Box>}
+    <Card id="h5-learn-feedback" data-correct={correct ? 'true' : 'false'} data-near={near && !correct ? 'true' : undefined} sx={{ p: 2 }}>
+      <Box role="status">
+        <ResultTitle correct={correct} near={near} />
+        <Box sx={{ mt: 0.75 }}>{children}</Box>
+      </Box>
+      {practice}
+      {phone ? null : <Box sx={{ mt: 1.5, display: 'flex' }}><Grades suggested={suggested} onGrade={onGrade} busy={busy} keys={keys} next={next} focus={focus} /></Box>}
     </Card>
   );
 }
@@ -984,8 +1086,10 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
     if (!el || el.readOnly) return;
     if (document.activeElement !== el) el.focus({ preventScroll: true });
     const text = el.value;
-    let start = el.selectionStart ?? text.length;
-    const end = el.selectionEnd ?? start;
+    // The "Type it yourself" field types only at its end (data-practice).
+    const atEnd = el.dataset.practice === 'true';
+    let start = atEnd ? text.length : el.selectionStart ?? text.length;
+    const end = atEnd ? text.length : el.selectionEnd ?? start;
     if (key === 'Backspace') {
       if (start === end && !start) { if (!text && emptyBack) emptyBack(); return; }
       if (start === end) start -= 1;
@@ -1007,6 +1111,130 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
 }
 
 // ── Spell the word ──
+
+// The width a box has for its letter slots (slotLayout), measured again when it changes. `on`: the box is drawn.
+function useRoom(ref, on = true) {
+  const [room, setRoom] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!on || !el) return undefined;
+    const measure = () => setRoom(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [on, ref]);
+  return room;
+}
+
+// "Type it yourself" (learn-practice.mjs; "Type it yourself" in docs/design/learn-spell-practice.md): after a Spell answer, empty slots of the right
+// word typed letter by letter; a wrong key shows in its slot in the error colour for PRACTICE_FLASH_MS and is not kept, the word typed in full counts
+// a round and the row empties after PRACTICE_ROUND_MS. Not graded and never sent. The field is a hidden input over the slots, like the answer's:
+// `field` and `change` also serve the page's keyboard (useLearnKeys) and the input method handling (useLatinInput).
+function usePractice({ word, onIme }) {
+  const [state, setState] = useState(() => practiceStart(word));
+  const stateRef = useRef(state);
+  const field = useRef(null);
+  const before = useRef(''); // the field text the last change was taken from (while an input method composes, its letters, wrong ones too)
+  const composing = useRef(false);
+  const commit = next => { stateRef.current = next; setState(next); };
+  const change = (text, { composing: now = false } = {}) => {
+    const next = practiceChange(stateRef.current, before.current, text);
+    composing.current = now;
+    before.current = now ? text : practiceText(next);
+    commit(next);
+  };
+  const latin = useLatinInput({ value: practiceText(state), change, onIme });
+  useEffect(() => {
+    if (!state.flash) return undefined;
+    const timer = setTimeout(() => commit(practiceClearFlash(stateRef.current)), PRACTICE_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [state.flash]);
+  useEffect(() => {
+    if (!state.done) return undefined;
+    const timer = setTimeout(() => {
+      if (!stateRef.current.done) return;
+      const next = practiceNewRound(stateRef.current);
+      if (!composing.current) before.current = practiceText(next);
+      commit(next);
+    }, PRACTICE_ROUND_MS);
+    return () => clearTimeout(timer);
+  }, [state.done, state.count]);
+  return { state, field, change, latin };
+}
+
+// The row under the result: "TYPE IT YOURSELF" with the count at the right (read out politely), the slots, and the note under them ("Practice only,
+// not graded", on a computer with the keys that grade; "Not that letter" after a wrong key; "Again? Just keep typing" after a round).
+const PRACTICE_SLOT = {
+  kept: { tone: 'success.light', line: 'success.light' },
+  flash: { tone: 'error.light', line: 'error.light', tint: 'error' },
+  caret: { line: 'primary.main' },
+  empty: {},
+  auto: { line: 'transparent' },
+};
+function PracticeRow({ practice, keys, suggested, kb, onFocus, onBlur }) {
+  const { state, field, latin } = practice;
+  const box = useRef(null);
+  const room = useRoom(box);
+  const [focused, setFocused] = useState(false);
+  const layout = slotLayout(state.letters.length, room);
+  const slots = practiceSlots(state);
+  const rows = [];
+  layout.rows.reduce((at, size) => { rows.push([at, size]); return at + size; }, 0);
+  const done = state.note === 'again' || state.done;
+  const grade = suggested ? t(GRADES.find(([id]) => id === suggested)[1]) : '';
+  // One template for the computer's line (a template is matched against any text by the translation layer, so it stays specific).
+  const note = state.note === 'wrong' ? t('Not that letter') : state.note === 'again' ? t('Again? Just keep typing') : keys && grade ? (
+    <Fmt template="Practice only, not graded · {1} takes {2} · {3} {4} {5} grade" values={[<Kbd key="enter">Enter</Kbd>, grade, <Kbd key="1">1</Kbd>, <Kbd key="2">2</Kbd>, <Kbd key="3">3</Kbd>]} />
+  ) : t('Practice only, not graded');
+  const keepCaret = event => {
+    const el = event.target;
+    if (latin.composing) return;
+    const end = el.value.length;
+    if (el.selectionStart !== end || el.selectionEnd !== end) el.setSelectionRange(end, end);
+  };
+  return (
+    <Box className="h5-learn-practice" role="group" aria-label={t('Type the word yourself')}
+      onClick={() => { if (field.current) field.current.focus({ preventScroll: true }); kb.show(); }}
+      sx={theme => ({ mt: 1.5, px: 1.5, py: 1, borderRadius: 1, bgcolor: alpha(theme.palette.text.primary, 0.05), cursor: 'text' })}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography variant="overline" component="p" color="text.secondary" aria-hidden="true" sx={{ flex: '1 1 auto', lineHeight: 2 }}>{t('Type it yourself')}</Typography>
+        <Typography variant="caption" id="h5-learn-practice-count" role="status" aria-live="polite" data-done={done ? 'true' : undefined}
+          sx={{ color: done ? 'success.light' : 'text.secondary' }}>
+          {state.count ? <Fmt template={state.count === 1 ? 'Typed right {1} time' : 'Typed right {1} times'} values={[state.count]} /> : null}
+        </Typography>
+      </Box>
+      <Box ref={box} className="h5-learn-practice-letters" translate="no" data-rows={layout.rows.length}
+        sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', rowGap: 1, mt: 0.5 }}>
+        {rows.map(([from, size]) => (
+          <Box key={from} className="h5-learn-letter-row" sx={{ display: 'flex', flexWrap: 'nowrap', justifyContent: 'center', columnGap: `${layout.gap}px` }}>
+            {slots.slice(from, from + size).map((slot, offset) => {
+              const look = PRACTICE_SLOT[slot.kind];
+              const line = slot.kind === 'caret' && !focused ? 'text.disabled' : look.line || 'text.disabled';
+              return (
+                <Box key={from + offset} className="h5-learn-practice-slot" data-kind={slot.kind} aria-hidden="true" sx={theme => ({
+                  ...theme.typography.h5, fontSize: layout.font, width: layout.slot, height: layout.height, flex: '0 0 auto', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', fontFamily: MONO, color: look.tone || 'text.primary', borderBottom: 2, borderBottomStyle: 'solid', borderColor: line,
+                  borderRadius: '4px 4px 0 0', bgcolor: look.tint ? alpha(theme.palette[look.tint].main, 0.16) : 'transparent',
+                })}>{slot.ch}</Box>
+              );
+            })}
+          </Box>
+        ))}
+        <InputBase inputRef={field} value={latin.value}
+          onFocus={() => { setFocused(true); onFocus(); }} onBlur={() => { setFocused(false); onBlur(); }} onChange={latin.onChange}
+          inputProps={{ id: 'h5-learn-practice-input', 'aria-label': t('Type the word yourself'), 'data-practice': 'true', 'aria-describedby': 'h5-learn-practice-note',
+            onSelect: keepCaret, onKeyUp: keepCaret, onClick: keepCaret, ...fieldProps, ...latin.props, ...kb.inputProps }}
+          sx={{ position: 'absolute', inset: 0, opacity: 0, '& input': { height: '100%', cursor: 'text', p: 0 } }} />
+      </Box>
+      <Typography variant="caption" component="p" align="center" id="h5-learn-practice-note" data-note={state.note}
+        sx={{ mt: 0.5, color: state.note === 'wrong' ? 'error.light' : 'text.secondary' }}>
+        {note}
+      </Typography>
+    </Box>
+  );
+}
 
 // The meaning of a word card: its own, else looked up once (POST /api/learn/meaning). `state`: ok, loading, none or no-translator.
 function useMeaning(card, word) {
@@ -1047,7 +1275,30 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   useCardAudio(audio, exercise, spoken, result);
   useAutoCheck({ register, ready: typedInFull(value, word), value, result });
   const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '').slice(0, word.length)); } };
-  const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
+  // English letters even with an input method on (useLatinInput), and in the Mac app an English input source while the field has the focus.
+  const learnInput = useContext(LearnInput);
+  const latin = useLatinInput({ value, change, onIme: learnInput.seen });
+  // "Type it yourself" under the result: it takes the focus at once, and the page's keyboard types into it once the answer is checked.
+  const practice = usePractice({ word, onIme: learnInput.seen });
+  const checked = Boolean(result);
+  const kb = useLearnKeys({ ui, keys, field: checked ? practice.field : input, change: checked ? practice.change : change, letters: true });
+  useEffect(() => {
+    const el = practice.field.current;
+    if (!checked || !el) return;
+    el.focus({ preventScroll: true });
+    // Into sight once its slots are measured and drawn: on a phone above the pinned grades (scrollIntoView does not know the sticky footer).
+    const row = el.closest('.h5-learn-practice');
+    requestAnimationFrame(() => {
+      const scroller = row && row.isConnected && row.closest('.h5-learn-scroll, .h5-learn-pane');
+      if (!scroller) return;
+      const footer = scroller.querySelector('.h5-learn-footer');
+      const box = row.getBoundingClientRect();
+      const view = scroller.getBoundingClientRect();
+      const bottom = view.bottom - (footer ? footer.offsetHeight : 0) - 8;
+      if (box.bottom > bottom) scroller.scrollTop += box.bottom - bottom;
+      else if (box.top < view.top) scroller.scrollTop -= view.top - box.top;
+    });
+  }, [checked]); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the answer is checked
   const ask = useAsk({ card, exercise, result, answer: () => value, gap: Boolean(cloze), field: input, phone, keys, openTranslator });
   const giveUp = () => { if (!result) setResult({ ...spellCheck(word, value), ok: false, correct: false, helped: true, gaveUp: true }); };
   const showFirst = () => { setHelped(true); setValue(now => (now ? now : word.slice(0, 1))); if (input.current) input.current.focus({ preventScroll: true }); };
@@ -1057,17 +1308,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   const context = cloze ? '' : maskedContext(card);
   // The letter slots on one line (slotLayout): the width of the box is measured, and the slots shrink together for a long word.
   const letters = useRef(null);
-  const [room, setRoom] = useState(0);
-  useLayoutEffect(() => {
-    const el = letters.current;
-    if (!el) return undefined;
-    const measure = () => setRoom(el.clientWidth);
-    measure();
-    if (typeof ResizeObserver !== 'function') return undefined;
-    const watch = new ResizeObserver(measure);
-    watch.observe(el);
-    return () => watch.disconnect();
-  }, []);
+  const room = useRoom(letters);
   // After a wrong answer (not "I don't know") the slots become two rows, the right spelling above what was typed, lined up letter by letter by the
   // closest match (alignSpelling), so the column count can exceed the word's length; a long word wraps the two rows as pairs. See "Spell the word" in
   // docs/design/learn-english-page.md.
@@ -1078,7 +1319,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   const layout = slotLayout(aligned ? aligned.columns.length : word.length, room);
   const rows = [];
   layout.rows.reduce((at, size) => { rows.push([at, size]); return at + size; }, 0);
-  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
+  const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} focus={false} /> : actionsRow(<>
     <Button id="h5-learn-dont-know" onClick={giveUp}>{t("I don't know")}</Button>
     <Box sx={{ flex: '1 1 auto' }} />
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
@@ -1114,6 +1355,9 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       {ask.button}
     </Box>
   );
+  const practiceRow = result && word ? (
+    <PracticeRow practice={practice} keys={keys} suggested={suggested} kb={kb} onFocus={() => inputSource.focus()} onBlur={() => inputSource.blur()} />
+  ) : null;
   const meaningState = <>
     {meaning.state === 'loading' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t('Looking up the meaning…')}</Typography> : null}
     {meaning.state === 'none' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{tts ? t('No meaning found. Listen to the word instead.') : t('No meaning found for this word.')}</Typography> : null}
@@ -1147,6 +1391,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       </Prompt>
       )}
       <Box>
+        {learnInput.notice ? <ImeNotice onOk={learnInput.dismiss} field={checked ? practice.field : input} /> : null}
         <Box ref={letters} className="h5-learn-letters" translate="no" data-rows={layout.rows.length} onClick={() => { if (input.current) input.current.focus(); kb.show(); }}
           data-aligned={aligned ? 'true' : undefined}
           sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', rowGap: aligned ? 2 : 1, py: 1 }}>
@@ -1160,9 +1405,9 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
               {Array.from({ length: size }, (_, offset) => slot(from + offset))}
             </Box>
           )))}
-          <InputBase inputRef={input} value={value} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-            onChange={event => change(event.target.value)}
-            inputProps={{ id: 'h5-learn-spell-input', 'aria-label': t('Type the word'), maxLength: word.length, readOnly: Boolean(result), ...fieldProps, ...kb.inputProps }}
+          <InputBase inputRef={input} value={latin.value} onFocus={() => { setFocused(true); inputSource.focus(); }} onBlur={() => { setFocused(false); inputSource.blur(); }}
+            onChange={latin.onChange}
+            inputProps={{ id: 'h5-learn-spell-input', 'aria-label': t('Type the word'), maxLength: latin.composing ? undefined : word.length, readOnly: Boolean(result), ...fieldProps, ...latin.props, ...kb.inputProps }}
             sx={{ position: 'absolute', inset: 0, opacity: 0, '& input': { height: '100%', cursor: 'text', p: 0 } }} />
         </Box>
         {cloze && result ? (
@@ -1182,10 +1427,12 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
             <Fmt template="{1} letters · type with the keyboard" values={[word.length]} />
           </Typography>
         )}
+        {cloze ? practiceRow : null}
         {phone || (result && !cloze) ? null : <Box sx={{ mt: 2 }}>{actions}</Box>}
       </Box>
       {result && !cloze ? (
-        <Feedback correct={result.correct} near={result.near} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
+        <Feedback correct={result.correct} near={result.near} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}
+          practice={practiceRow} focus={false}>
           <WordLine word={word} phonetic={meaning.phonetic} variant="h6" className="h5-learn-word" sx={{ color: 'success.light' }} phoneticId="h5-learn-feedback-phonetic" />
           {!result.correct && value ? <Typography variant="body2" color="text.secondary"><Fmt template="You wrote: {1}" values={[value]} /></Typography> : null}
           {!result.gaveUp ? <Typography variant="body2" color="text.secondary"><Fmt template="{1} of {2} letters right" values={[rightLetters, result.total]} /></Typography> : null}

@@ -326,7 +326,9 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-feedback[data-correct="false"]').waitFor();
       assert.equal(await text(page, '#h5-learn-feedback .h5-learn-result-title'), 'Not quite', 'two letters off is not almost');
       assert.equal(await page.locator('#h5-learn-pattern').count(), 0, 'no pattern');
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-again');
+      // The focus goes to "Type it yourself"; Enter there takes the offered grade (contained).
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-practice-input');
+      assert.match(await page.locator('#h5-learn-grade-again').getAttribute('class'), /MuiButton-contained/);
       await page.keyboard.press('Enter');
       await waitFor(() => mock.posts(/\/answer$/).length === 1, 'graded');
       assert.equal(lastAnswer(mock).grade, 'again');
@@ -351,7 +353,8 @@ async function toTerminal(page) {
       await page.locator('.h5-learn-letters').click();
       await page.keyboard.type('dpeloy');
       await page.locator('#h5-learn-feedback[data-near="true"]').waitFor();
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-hard');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-practice-input');
+      assert.match(await page.locator('#h5-learn-grade-hard').getAttribute('class'), /MuiButton-contained/);
       assert.equal(await page.locator('#h5-learn-pattern').count(), 0, 'a swap has no pattern note');
       await shot(page, 'pace-almost-desktop.png');
       await page.keyboard.press('Enter');

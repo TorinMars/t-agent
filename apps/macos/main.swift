@@ -13,6 +13,7 @@
 //   StatusMenu      the menu bar item
 //   MainMenu        the main menu (the Edit menu makes Cmd+C / V / X / A / Z work in the page)
 //   MainWindow      the window, the web view and its delegates
+//   InputSource     English input while the person spells a word on the Learn page (Carbon TIS, injected)
 //   AppDelegate     the wiring, the links, the preferences, the real services
 //   SelfTest        --self-test
 //

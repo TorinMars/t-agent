@@ -9,7 +9,7 @@
   (`#h5-bnav-learn`), library icon `read` (an open book). `state.learnOpen` (store), `ui.actions.openLearn()` / `closeLearn()` (h5.js);
   `railView` / `phoneView` in `columns.mjs` mark it current; any other destination (or Settings) closes it first; Sessions returns. See
   [page-navigation.md](page-navigation.md).
-- **Chunk**: `Learn.jsx` with `LearnAsk.jsx`, `LearnChat.jsx`, `LearnProgress.jsx`, `learn-progress.mjs`, `learn-chat.mjs`, `learn-grade.mjs`, `learn-model.mjs`, `learn-speech.mjs` and `learn-icons.mjs` is the lazy chunk
+- **Chunk**: `Learn.jsx` with `LearnAsk.jsx`, `LearnChat.jsx`, `LearnProgress.jsx`, `learn-progress.mjs`, `learn-chat.mjs`, `learn-grade.mjs`, `learn-model.mjs`, `learn-practice.mjs`, `learn-input.mjs`, `learn-speech.mjs` and `learn-icons.mjs` is the lazy chunk
   `screen-learn.jsx` (`LearnScreen` in `lazy-screens.jsx`, preloaded from the two destination buttons). The first screen only got the two
   destinations, the `learn` icon, the store key and the back layer: 775,336 -> 777,246 bytes (budget 778,240, `test/page-bundles.test.js`, which
   also checks that the page is not in the first download). The page's keyboard (below) reuses the terminal's `Keyboard` of `Osk.jsx`, which is in
@@ -153,7 +153,8 @@
   A key edits the field at its caret through the exercise's own change handling (the React state, never the DOM value), the caret is put back
   after the new value is drawn, and Backspace in Build's empty field takes the last tile back. While it is open on a phone `state.learnKeys` is
   true, the bottom navigation steps aside as for the terminal keyboard (BottomNav.jsx), the page reaches the bottom of the screen and the pinned
-  actions stay right above the keys. It stays open after Check (the keys do nothing then) so the layout does not jump between cards. Say it keeps
+  actions stay right above the keys. It stays open after Check so the layout does not jump between cards (in Spell it types into "Type it
+  yourself" then; elsewhere the keys do nothing). Say it keeps
   the system keyboard for its box. A computer (or a touch device where a hardware key was seen) has no page keyboard. Not tried on a real iPhone
   or Android phone.
 - **Key feel** (`key-feedback.mjs`, a chunk of its own loaded at the first key press by `Osk.jsx` `feel`, so the first screen carries about 130
@@ -167,7 +168,11 @@
   from the answer field: `mousedown` is cancelled (as with the terminal's keys) and, should a browser move the focus anyway, a pointer press gives
   it back to the field that had it, so the caret stays where it was; a button reached with Tab keeps its focus.
 - **Keys of a computer** (`exerciseKey`): Enter checks, Enter again takes the offered grade; 1 / 2 / 3 grade a checked answer (the fields are
-  read-only then); Enter on a focused button is the button's own.
+  read-only then); Enter on a focused button is the button's own. In Spell's "Type it yourself" row (`data-practice="true"`, `practice` of
+  `exerciseKey`) letters are nothing to the grades while Enter and 1 / 2 / 3 still grade (a word has no digits). A key an input method takes
+  (`isComposing`, or keyCode 229 as Safari's Enter that commits a composition) is never a check or a grade.
+- **Type it yourself** (after every Spell answer) and **English input** (letters while an input method composes, the notice, the Mac app's input
+  source switch): see [learn-spell-practice.md](learn-spell-practice.md).
 - **Mistakes** (`LearnMistakes.jsx`, in the same chunk): the card "Why do I get these wrong?" (`#h5-learn-analyze-card`): "38 mistakes since the last report (11-13). The analysis uses your translation model." with Analyze (contained, `#h5-learn-analyze`; off with no new mistakes, no model or a run going on; "Analyzing your mistakes…" with an indeterminate bar while `POST /reports { lang }` waits), Last report and All reports; without a usable model an info Alert with Open Settings (`#h5-learn-analyze-no-model`) and Analyze off; a failed run in an error Alert in the card (`#h5-learn-analyze-error`). Then "Mistakes, newest first" with Practise them (`GET /queue?mode=mistakes`) and every wrong answer (`GET /mistakes`, 50 at a time, Show more): what was asked for (success light), "You wrote: …" or "You didn't know it" (error light), the time (today, yesterday, 11-18), a mode chip (the mode's name), the tag chip (warning, outlined) and "with help". On a company computer whose home is away an info Alert says only this computer's mistakes are shown.
 - **A report** (`#h5-learn-report`): "11-13 – 11-20 · 38 mistakes in 212 answers", the summary (subtitle1), the kinds as rows of label, determinate bar (relative to the largest) and count; then per finding its title, "Cause · …", "What to do · …" and the first three cards "+N"; "Practise these N cards" (`POST /cards/find` with the findings' cards, then a session in the Mistakes mode). The model's text is `translate="no"`. All reports lists them (range, count, Weekly / Asked for, two lines of summary). A report opened from Mistakes goes back there (`parent` of the view). Opening an automatic report sets `report_seen` (`PUT /settings`), so the home's line goes away on every device.
 - **Home line**: while `summary.new_report` is set, an info Alert under the numbers "Your weekly mistake report is ready (38 mistakes)." with View (`#h5-learn-new-report`).
@@ -365,6 +370,7 @@ The chat page (the list, a conversation, journal frames, the meta line, company 
 
 ## Tests
 
+- `scripts/test-h5-learn-practice-browser.cjs` and `test/h5-learn-practice.test.js`: see "Tests" in [learn-spell-practice.md](learn-spell-practice.md).
 - `scripts/test-h5-learn-pace-browser.cjs` (mocked summary with `new_per_day` / `new_today` / `new_left` / `minutes_today`, queue cards with `leech`,
   `missed`, `parts`, `tip`, `POST /new-words`, settings with `new_per_day`; 390x844 touch and 1440x900): the home's new-words line; Almost (warning
   colour, Hard offered and sent with `correct: false`, the pattern note); Keeps slipping step 1 (chip, parts in turns of colour, tip, Next step only

@@ -69,6 +69,30 @@ final class FakeRunner {
     }
 }
 
+/// Input sources by id; selecting one only changes `current` here, never the real input source.
+final class FakeInputSources {
+    static let pinyin = "com.apple.inputmethod.SCIM.ITABC"
+    static let abc = "com.apple.keylayout.ABC"
+    var current = FakeInputSources.pinyin
+    var englishLayouts: Set<String> = [FakeInputSources.abc, "com.apple.keylayout.US", "com.apple.keylayout.British"]
+    var englishTarget: String? = FakeInputSources.abc
+    var selectWorks = true
+    var selections: [String] = []
+
+    var sources: InputSources {
+        return InputSources(
+            current: { [unowned self] in
+                InputSourceInfo(token: InputSourceToken(id: self.current, source: nil), isEnglishLayout: self.englishLayouts.contains(self.current))
+            },
+            select: { [unowned self] token in
+                self.selections.append(token.id)
+                if self.selectWorks { self.current = token.id }
+                return self.selectWorks
+            },
+            english: { [unowned self] in self.englishTarget.map { InputSourceToken(id: $0, source: nil) } })
+    }
+}
+
 // MARK: - Self test
 
 func runSelfTest() -> Never {
@@ -212,6 +236,49 @@ func runSelfTest() -> Never {
           && !grantsMediaCapture(scheme: "http", host: "evil.example", port: 3000, server: base3000))
     check("mic: denied for another scheme", !grantsMediaCapture(scheme: "https", host: "127.0.0.1", port: 3000, server: base3000)
           && !grantsMediaCapture(scheme: "file", host: "", port: 0, server: base3000))
+    // English input while spelling: the messages and the remember / switch / restore state, with fake input sources.
+    func inputRequest(_ body: Any?, scheme: String = "http", host: String = "127.0.0.1", port: Int = 3000) -> InputSourceRequest? {
+        inputSourceRequest(body: body, frameScheme: scheme, frameHost: host, framePort: port, server: base3000)
+    }
+    check("input source: english and restore from the server's page", inputRequest("english") == .english && inputRequest("restore") == .restore)
+    check("input source: a message from another origin is ignored", inputRequest("english", port: 3001) == nil
+          && inputRequest("english", host: "evil.example") == nil && inputRequest("restore", scheme: "https") == nil
+          && inputRequest("english", scheme: "file", host: "", port: 0) == nil)
+    check("input source: any other body is ignored", inputRequest("English") == nil && inputRequest(" english") == nil
+          && inputRequest("") == nil && inputRequest(nil) == nil && inputRequest(1) == nil && inputRequest(["english"]) == nil)
+    let fakeInput = FakeInputSources()
+    let switcher = InputSourceSwitcher(sources: fakeInput.sources)
+    switcher.english()
+    check("input source: english from Pinyin selects ABC and remembers Pinyin", fakeInput.selections == [FakeInputSources.abc]
+          && fakeInput.current == FakeInputSources.abc && switcher.remembered?.id == FakeInputSources.pinyin)
+    switcher.english()
+    check("input source: english twice switches once and keeps the first original", fakeInput.selections == [FakeInputSources.abc]
+          && switcher.remembered?.id == FakeInputSources.pinyin)
+    fakeInput.current = "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese" // the person switched by hand in between
+    switcher.english()
+    check("input source: english again after a change by hand selects ABC and still keeps the first original",
+          fakeInput.selections == [FakeInputSources.abc, FakeInputSources.abc] && switcher.remembered?.id == FakeInputSources.pinyin)
+    switcher.restore()
+    check("input source: restore switches back once", fakeInput.selections.last == FakeInputSources.pinyin && fakeInput.selections.count == 3
+          && fakeInput.current == FakeInputSources.pinyin && switcher.remembered == nil)
+    switcher.restore()
+    check("input source: restore with nothing remembered does nothing", fakeInput.selections.count == 3)
+    fakeInput.current = "com.apple.keylayout.British"
+    switcher.english()
+    switcher.restore()
+    check("input source: already an English layout does nothing and remembers nothing", fakeInput.selections.count == 3
+          && switcher.remembered == nil && fakeInput.current == "com.apple.keylayout.British")
+    fakeInput.current = FakeInputSources.pinyin
+    fakeInput.englishTarget = nil
+    switcher.english()
+    check("input source: no English layout enabled, nothing changes or is remembered", fakeInput.selections.count == 3 && switcher.remembered == nil)
+    fakeInput.englishTarget = FakeInputSources.abc
+    fakeInput.selectWorks = false
+    switcher.english()
+    switcher.restore()
+    check("input source: a select that fails remembers nothing, so nothing is restored", fakeInput.selections == [FakeInputSources.abc,
+          FakeInputSources.abc, FakeInputSources.pinyin, FakeInputSources.abc] && switcher.remembered == nil)
+
     check("mic: port 0 means the default port", grantsMediaCapture(scheme: "https", host: "ta.example.com", port: 0, server: URL(string: "https://ta.example.com")!))
     check("mic: an IPv6 host", grantsMediaCapture(scheme: "http", host: "::1", port: 4000, server: URL(string: "http://[::1]:4000")!))
 
@@ -619,8 +686,9 @@ func runSelfTest() -> Never {
 
     // The window, built offscreen with a website data store that is not persistent and no frame autosave.
     var externals: [URL] = []
+    let windowInput = FakeInputSources()
     let window = MainWindowController(version: "9.9.9", dataStore: .nonPersistent(), autosave: false, inspectable: false,
-                                      server: { base3000 }, openExternal: { externals.append($0) })
+                                      inputSources: windowInput.sources, server: { base3000 }, openExternal: { externals.append($0) })
     check("window: swipe back and forward", window.webView.allowsBackForwardNavigationGestures)
     check("window: the user agent ends with T-AgentApp/<version>", window.webView.configuration.applicationNameForUserAgent == "T-AgentApp/9.9.9")
     if #available(macOS 13.3, *) {
@@ -657,6 +725,42 @@ func runSelfTest() -> Never {
     window.openLink(body: "file:///etc/passwd", scheme: "http", host: "127.0.0.1", port: 3000)
     check("window: a link from the page opens in the default browser, others do not",
           externals.map { $0.absoluteString } == ["https://example.com/pr/42"])
+
+
+    // English input while spelling, through the window (its key state is faked: the window is never on screen here).
+    check("window: the tagentInputSource handler is installed and holds the window weakly", window.inputSourceMessages?.target === window)
+    check("window: English is never selected while the window is not key in the active app", !window.canSwitchInputSource())
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    check("window: english while not key does nothing", windowInput.selections.isEmpty && window.inputSource.remembered == nil)
+    window.canSwitchInputSource = { true }
+    window.inputSourceMessage(body: "english", scheme: "http", host: "evil.example", port: 3000)
+    window.inputSourceMessage(body: "on", scheme: "http", host: "127.0.0.1", port: 3000)
+    check("window: a message from another origin or with another body is ignored", windowInput.selections.isEmpty)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    check("window: english from the page selects ABC", windowInput.selections == [FakeInputSources.abc]
+          && window.inputSource.remembered?.id == FakeInputSources.pinyin)
+    window.inputSourceMessage(body: "restore", scheme: "http", host: "127.0.0.1", port: 3000)
+    check("window: restore from the page gives Pinyin back", windowInput.selections.last == FakeInputSources.pinyin && window.inputSource.remembered == nil)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    window.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification, object: window.window))
+    check("window: resigning key restores", windowInput.current == FakeInputSources.pinyin && window.inputSource.remembered == nil)
+    (window as NSWindowDelegate).windowDidBecomeKey?(Notification(name: NSWindow.didBecomeKeyNotification, object: window.window))
+    check("window: becoming key again switches nothing by itself", windowInput.current == FakeInputSources.pinyin && windowInput.selections.count == 4)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+    check("window: the app going to the background restores", windowInput.current == FakeInputSources.pinyin && window.inputSource.remembered == nil)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    window.webView(window.webView, didStartProvisionalNavigation: nil)
+    check("window: a page load or reload restores", windowInput.current == FakeInputSources.pinyin && window.inputSource.remembered == nil)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    window.webViewWebContentProcessDidTerminate(window.webView)
+    check("window: a web content process that ended restores", windowInput.current == FakeInputSources.pinyin && window.inputSource.remembered == nil)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    window.showPlaceholder(placeholderContent(stopped, config: missing))
+    check("window: showing the placeholder restores", windowInput.current == FakeInputSources.pinyin && window.inputSource.remembered == nil)
+    window.inputSourceMessage(body: "english", scheme: "http", host: "127.0.0.1", port: 3000)
+    _ = window.windowShouldClose(window.window)
+    check("window: closing restores", windowInput.current == FakeInputSources.pinyin && windowInput.selections.count == 14)
 
     print("\(passes) passed, \(failures) failed")
     exit(failures == 0 ? 0 : 1)

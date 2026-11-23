@@ -190,4 +190,9 @@ I18n.add({
   '{1} extra letters, {2} missing': '多了 {1} 个字母，少了 {2} 个',
   '1 letter different, {1} extra, {2} missing': '1 个字母不同，多了 {1} 个，少了 {2} 个',
   '{1} letters different, {2} extra, {3} missing': '{1} 个字母不同，多了 {2} 个，少了 {3} 个',
+
+  // ---- Learn, Almost: the spelling pattern note (spellingPattern in scripts/h5-shell/learn-grade.mjs) and the pace texts ----
+  '{1}, not {2} here': '这里是 {1}，不是 {2}',
+  'Double {1}': '{1} 要双写',
+  'Only one {1}': '只有一个 {1}',
 });

@@ -444,15 +444,17 @@ async function openSettings(page, touch) {
       await page.locator('#h5-learn-sentence-word').waitFor();
       assert.equal(await page.locator('#h5-learn-sentence-word').getAttribute('data-correct'), 'false');
       assert.equal(await text(page, '#h5-learn-sentence-word'), 'expires', 'the right word in the sentence');
-      assert.deepEqual(await lines(page, '#h5-learn-feedback'), ['Not quite', 'You wrote: expirez', '6 of 7 letters right']);
+      // One letter off: Almost, and Hard is offered ("Almost" in docs/design/learn-english-page.md).
+      assert.deepEqual(await lines(page, '#h5-learn-feedback'), ['Almost', 'You wrote: expirez', '6 of 7 letters right']);
       const feedback = await page.locator('#h5-learn-feedback').boundingBox();
       const grades = await page.locator('#h5-learn-mode-pane .h5-learn-grades, .h5-learn-pane .h5-learn-grades').first().boundingBox();
       assert.ok(grades.y >= feedback.y + feedback.height, 'the grades under the result');
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-again');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-hard');
       await shot(page, 'learn-pick-desktop.png');
       await page.keyboard.press('Enter');
       await waitFor(() => lastAnswer(mock) && lastAnswer(mock).id === '31', 'graded with Enter');
-      assert.equal(lastAnswer(mock).grade, 'again');
+      assert.equal(lastAnswer(mock).grade, 'hard');
+      assert.equal(lastAnswer(mock).correct, false, 'still a wrong answer');
       assert.equal(lastAnswer(mock).tag !== undefined, true, 'a wrong answer keeps its tag');
       // Review asks a picked word the same way.
       await page.locator('#h5-learn-start').click();

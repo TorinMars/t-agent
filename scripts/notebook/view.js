@@ -6,7 +6,8 @@ import { PATHS, DRAWN } from '../h5-shell/Icons.jsx';
 import { applyEvent, createOpQueue, newCellId, normalCell, normalDoc, SOURCE_BYTES } from './ops.mjs';
 import { outputWindow, parseLine, plainStyle, styleAfter, styleCss, WINDOW_LINES } from './sgr.mjs';
 import {
-  codeNumber, countLabel, fileName, ipynbOf, kernelStatus, metaOf, outputText, programOf, queuedAfter, rowLine, shellTokens,
+  codeNumber, countLabel, fileName, foldLabel, foldOf, FOLD_SHOW, ipynbOf, kernelStatus, lineCount, metaOf, outputText, programOf, queuedAfter,
+  rowLine, screenLines, shellTokens,
 } from './model.mjs';
 import { renderMarkdown } from './markdown.mjs';
 
@@ -124,6 +125,9 @@ export function mountView(host, options) {
   let lastStatus = '';
   let ddAt = 0;
   const showAll = new Set();
+  // Long cells opened by the person (Show all, Z, a click into the folded text, or the editor's focus while long): they stay open while the
+  // notebook is open. Not saved anywhere ("Long cells fold" in docs/design/shell-notebook-page.md): every page folds long cells when it opens.
+  const opened = new Set();
   const stoppedRun = new Set(); // cells whose failure or stop cleared the queue of a run: "Run all stopped here"
   const views = new Map(); // cell id -> its view
   const dirty = new Map(); // cell id -> the first output line to draw again (Infinity: only the meta line)
@@ -365,7 +369,7 @@ export function mountView(host, options) {
     const ids = new Set(doc.cells.map(cell => cell.id));
     for (const [id, view] of views) {
       const cell = findCell(id);
-      if (!ids.has(id) || (cell && cell.type !== view.type)) { view.item.remove(); views.delete(id); }
+      if (!ids.has(id) || (cell && cell.type !== view.type)) { view.item.remove(); views.delete(id); sizes.unobserve(view.type === 'code' ? view.hl : view.md); }
     }
     let ref = list.firstChild;
     for (const cell of doc.cells) {
@@ -430,6 +434,7 @@ export function mountView(host, options) {
         'aria-label': tr('Shell commands'), placeholder: tr('Shell commands'),
       });
       view.code.append(view.hl, view.input);
+      view.foldBtn = foldButton(first.id);
       view.output = el('div', 'nb-output');
       view.note = el('div', 'nb-out-note', { hidden: true });
       view.lines = el('div', 'nb-lines', { translate: 'no' });
@@ -437,18 +442,37 @@ export function mountView(host, options) {
       view.output.append(view.note, view.lines, view.full);
       view.meta = el('div', 'nb-meta', { 'aria-live': 'polite' });
       view.stdin = null;
-      cell.append(view.run, view.count, view.code, view.output, view.meta);
+      cell.append(view.run, view.count, view.code, view.foldBtn, view.output, view.meta);
       bindEditor(view, first.id);
+      foldBoxes.set(view.hl, view);
+      sizes.observe(view.hl);
     } else {
       view.md = el('div', 'nb-md markdown-body');
       view.md.addEventListener('dblclick', () => editText(first.id));
+      // The rendered text in a box that is cut at the fold; a click into folded text (not on a link) opens it, a double-click still edits.
+      view.mdBox = el('div', 'nb-md-box');
+      view.mdBox.append(view.md);
+      view.mdBox.addEventListener('click', event => {
+        if (!cell.hasAttribute('data-folded') || event.target.closest('a')) return;
+        opened.add(first.id);
+        applyFold(view);
+      });
+      view.foldBtn = foldButton(first.id);
       view.input = el('textarea', 'nb-input nb-md-input', { rows: '1', spellcheck: 'true', hidden: true, 'aria-label': tr('Text (Markdown)'), placeholder: tr('Text (Markdown)') });
-      cell.append(view.md, view.input);
+      cell.append(view.mdBox, view.foldBtn, view.input);
       bindEditor(view, first.id);
+      foldBoxes.set(view.md, view);
+      sizes.observe(view.md);
       const grow = () => { view.input.style.height = 'auto'; view.input.style.height = `${view.input.scrollHeight}px`; };
       view.input.addEventListener('input', grow);
       view.input.addEventListener('focus', grow);
-      view.input.addEventListener('blur', () => { if (!destroyed) { view.input.hidden = true; view.md.hidden = false; view.drawText(findCell(first.id)); } });
+      view.input.addEventListener('blur', () => {
+        if (destroyed) return;
+        view.input.hidden = true;
+        view.md.hidden = false;
+        view.drawText(findCell(first.id));
+        applyFold(view, { edited: true }); // text just written stays open when it is long
+      });
     }
     const insert = el('div', 'nb-insert');
     const addCode = button('nb-insert-btn', '+ Code');
@@ -476,6 +500,7 @@ export function mountView(host, options) {
         if (view.input.value !== now.source) setValue(view.input, now.source);
         if (type === 'code') drawHighlight(view);
         else view.drawText(now);
+        foldSoon(view); // a size change is seen by the ResizeObserver at once; this keeps "Show all N lines" right when the size stays
       }
       if (type !== 'code') return;
       view.count.textContent = countLabel(now);
@@ -518,7 +543,12 @@ export function mountView(host, options) {
 
   function bindEditor(view, id) {
     const input = view.input;
-    input.addEventListener('focus', () => { editing = id; if (selected !== id) select(id, { scroll: false }); view.cell.setAttribute('data-editing', ''); });
+    input.addEventListener('focus', () => {
+      editing = id;
+      applyFold(view); // the editor's focus opens a folded cell at once, so nothing is typed into hidden lines
+      if (selected !== id) select(id, { scroll: false });
+      view.cell.setAttribute('data-editing', '');
+    });
     input.addEventListener('blur', () => { if (editing === id) editing = null; view.cell.removeAttribute('data-editing'); });
     input.addEventListener('input', () => {
       const cell = findCell(id);
@@ -531,6 +561,81 @@ export function mountView(host, options) {
       reportStatus();
     });
     input.addEventListener('keydown', event => editKey(event, id, view));
+  }
+
+  // ── Folding long cells ("Long cells fold" in docs/design/shell-notebook-page.md) ──
+  // The screen lines of each cell's text are measured on the drawn text (the highlighted copy of a code cell, the rendered text of a text cell),
+  // so long lines count as the lines they wrap to at the width they have now. A ResizeObserver sees every change of that size (typing, ops from
+  // another device, a new width, the touch font, Markdown that finished loading) and folds or opens the cell before the frame is painted.
+  // Folding only cuts the box around the text (max-height on .nb-code / .nb-md-box): the textarea, its highlighted copy and their growing stay.
+  const foldBoxes = new WeakMap(); // the measured element -> its view
+  const sizes = new ResizeObserver(entries => {
+    if (destroyed) return;
+    const seen = new Set();
+    for (const entry of entries) { const view = foldBoxes.get(entry.target); if (view && views.get(view.id) === view) seen.add(view); }
+    foldViews([...seen]);
+  });
+  let foldFrame = 0;
+  const foldWaiting = new Set();
+  function foldSoon(view) {
+    foldWaiting.add(view);
+    if (!foldFrame) foldFrame = requestAnimationFrame(() => { foldFrame = 0; const list = [...foldWaiting].filter(one => views.get(one.id) === one); foldWaiting.clear(); foldViews(list); });
+  }
+  // Measures first, then changes the cells (one layout for all of them).
+  function foldViews(list) {
+    const measured = list.map(view => measureFold(view));
+    list.forEach((view, at) => applyFold(view, { measured: measured[at] }));
+  }
+  // { lines, lineHeight, top } of the drawn text; null while it is not laid out (a hidden view, a text cell being edited).
+  function measureFold(view) {
+    const box = view.type === 'code' ? view.hl : view.md;
+    if (!box || !box.isConnected || (view.type === 'markdown' && !view.input.hidden)) return null;
+    const css = getComputedStyle(box);
+    const top = parseFloat(css.paddingTop) || 0;
+    const pad = top + (parseFloat(css.paddingBottom) || 0);
+    const lineHeight = parseFloat(css.lineHeight) || (parseFloat(css.fontSize) || 13) * 1.6;
+    const lines = screenLines(box.scrollHeight, lineHeight, pad);
+    return lines === null ? null : { lines, lineHeight, top };
+  }
+  function applyFold(view, { measured, edited = false } = {}) {
+    const cell = findCell(view.id);
+    if (!cell || !view.foldBtn) return;
+    const size = measured !== undefined ? measured : measureFold(view);
+    if (size) view.foldSize = size;
+    // Not laid out yet: the lines of the text stand in until it is measured.
+    const lines = view.foldSize ? view.foldSize.lines : lineCount(cell.source);
+    const writing = view.type === 'markdown' && !view.input.hidden;
+    const focused = document.activeElement === view.input;
+    const state = foldOf(lines, { opened: opened.has(view.id), focused: focused || edited });
+    if (state.hold) opened.add(view.id);
+    const folded = state.folded && !writing;
+    const box = view.type === 'code' ? view.code : view.mdBox;
+    view.cell.toggleAttribute('data-folded', folded);
+    const lineHeight = view.foldSize ? view.foldSize.lineHeight : 20.8;
+    const top = view.foldSize ? view.foldSize.top : 8;
+    // A code cell: the first lines and its padding top and bottom; a text cell: its first lines after its padding.
+    box.style.maxHeight = folded ? `${Math.round(FOLD_SHOW * lineHeight + top * (view.type === 'code' ? 2 : 1))}px` : '';
+    view.foldBtn.hidden = !state.long || writing;
+    view.foldBtn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    const label = tr(foldLabel(folded, cell.source, lines));
+    if (view.foldBtn.lastChild.textContent !== label) view.foldBtn.lastChild.textContent = label;
+  }
+  // Show all / Show less, Z in command mode: opens a folded long cell or folds an open one (never one whose editor has the focus).
+  function toggleFold(id) {
+    const view = views.get(id);
+    if (!view || !view.foldBtn || view.foldBtn.hidden) return false;
+    const wasFolded = view.cell.hasAttribute('data-folded');
+    if (wasFolded) opened.add(id); else opened.delete(id);
+    applyFold(view);
+    // Folded again: the button moves up with the end of the cell; it stays in sight.
+    if (!wasFolded && view.cell.hasAttribute('data-folded')) view.foldBtn.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+  function foldButton(id) {
+    const node = el('button', 'nb-text-btn nb-fold', { type: 'button', 'aria-expanded': 'true', hidden: true });
+    node.append(icon('down', 14), el('span', 'nb-btn-label'));
+    node.addEventListener('click', () => toggleFold(id));
+    return node;
   }
 
   // The output of a code cell: the last WINDOW_LINES lines (all of them on Show all), drawn from the first changed line on.
@@ -908,6 +1013,7 @@ export function mountView(host, options) {
     if (key === 'a') { event.preventDefault(); insertCell(at, 'code'); return; }
     if (key === 'b') { event.preventDefault(); insertCell(at + 1, 'code'); return; }
     if (key === 'm') { event.preventDefault(); setType(id, 'markdown'); return; }
+    if (key === 'z') { event.preventDefault(); toggleFold(id); return; }
     if (key === 'y') { event.preventDefault(); setType(id, 'code'); return; }
     if (key === 'd') {
       event.preventDefault();
@@ -946,6 +1052,8 @@ export function mountView(host, options) {
       document.removeEventListener('pointerdown', outside, true);
       if (streamCtrl) streamCtrl.abort();
       if (frame) cancelAnimationFrame(frame);
+      if (foldFrame) cancelAnimationFrame(foldFrame);
+      sizes.disconnect();
       if (ticker) clearInterval(ticker);
       void queue.flush().catch(() => {}).finally(() => queue.dispose()); // what was typed is still sent
       host.textContent = '';

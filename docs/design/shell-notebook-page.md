@@ -61,10 +61,21 @@ A shell notebook is a session of a task after Claude, Codex, OpenCode and New Te
 
 A textarea over its own highlighted copy (`pre.nb-hl`) in one grid cell with the same font, padding, wrapping and tab size, so the textarea sets the caret and selection and the copy shows the colours (its text is transparent). It grows with its content (the copy has a trailing newline). Tab inserts two spaces. Highlighting (`shellTokens` in model.mjs): shell keywords and builtins in a command's place, strings, `$VAR` / `${…}`, comments; it never changes what runs.
 
+## Long cells fold
+
+Confirmed on the artboard `NotebookFold.dc.html` (2026-11-23).
+
+- A code or text cell of more than 12 screen lines (`FOLD_OVER`; a long line counts as the lines it wraps to) shows its first 8 (`FOLD_SHOW`), the end faded into the box's colour, and "Show all 42 lines" under it (the down chevron, `down` in Icons.jsx). Open, the same button at the end says "Show less" (the chevron turned up). A short cell has no button and never folds. N is the lines of the text (`lineCount`); a few very long lines that wrap past the fold count as their screen lines (`foldLabel`), so N is never less than what is already shown.
+- Measured, not guessed: the screen lines are the drawn height of the text (the highlighted copy `pre.nb-hl` of a code cell, `.nb-md` of a rendered text cell) over its line height (`screenLines`), so the wrap width is the one the cell has now. One `ResizeObserver` watches those elements and decides before the frame is painted, so typing, an op from another device, a new width, the touch font and Markdown that finished loading all count. Before a cell is laid out (a hidden view) the lines of its text stand in.
+- Folding only cuts the box around the text (`max-height` on `.nb-code` / `.nb-md-box`, `data-folded` on the cell); the textarea, its highlighted copy and their growing are untouched, and the editor always holds the whole text. Run, Run all and Shift+Enter run every line of a folded cell and leave it folded; the queued / running states and the output do not change it (the output keeps its own "Last 200" fold).
+- Opening: Show all; a click or tap into the folded code (the fade lets it through to the editor), Enter in command mode, or the cursor arriving from the cell above (Shift+Enter there): the editor's focus opens the cell at once, so nothing is typed into hidden lines. A click into folded rendered text (not on a link) opens it; a double-click still edits. Z in command mode folds or opens the selected long cell. The button is a Tab stop (Enter or Space), 32px high, 44px in touch mode.
+- A long cell that was opened, or whose editor had the focus while it was long (or a text cell just written long), stays open while the notebook is open (`opened`, per mount); leaving the editor does not fold it. Show less and Z fold it again. A cell whose editor has the focus is never folded (`foldOf`): an op from another device that makes it long leaves it open; one that makes another cell long folds that cell.
+- Not saved: folding is how this page shows the cell; every page folds long cells the same way when it opens the notebook. The file is unchanged (Jupyter's "hide input" flag is left alone).
+
 ## Keys
 
 - Edit mode (focus in an editor): Shift+Enter runs and goes to the next cell (a new code cell at the end), Cmd/Ctrl+Enter runs in place, Cmd/Ctrl+Shift+Enter runs all, Esc goes to command mode.
-- Command mode (focus on the cell): Enter edits, A / B add a code cell above / below, D D deletes, M makes it text, Y code, Up / Down (and K / J) move the selection; Shift+Enter, Cmd/Ctrl+Enter and Cmd/Ctrl+Shift+Enter as above.
+- Command mode (focus on the cell): Enter edits (and opens a folded cell), A / B add a code cell above / below, D D deletes, M makes it text, Y code, Z folds or opens a long cell, Up / Down (and K / J) move the selection; Shift+Enter, Cmd/Ctrl+Enter and Cmd/Ctrl+Shift+Enter as above.
 - In a column of the multi-column view Cmd/Ctrl+Shift+Enter keeps maximizing the column (pane.mjs takes it first); Run all is the toolbar button there.
 
 ## Text cells
@@ -89,7 +100,7 @@ Made on the page from the notebook shown (`ipynbOf`): nbformat 4.5, bash kernels
 
 ## Tests
 
-`test/notebook-sgr.test.js`, `test/notebook-ops.test.js` (also model.mjs), and `scripts/test-h5-notebook-browser.cjs`: a stand-in engine (express on a free port) with the contract's API and stream and a scripted shell, at 1440x900 and 390x844 touch.
+`test/notebook-sgr.test.js`, `test/notebook-ops.test.js` (also model.mjs, with the fold rule), and `scripts/test-h5-notebook-browser.cjs`: a stand-in engine (express on a free port) with the contract's API and stream and a scripted shell, at 1440x900 and 390x844 touch (also the folding: a 42-line cell shows 8 lines with the button, Show all / Show less, Z, a click into the folded code, Enter, the cursor from the cell above, Run, ops from another device with and without the focus, a text cell).
 
 ## Not verified
 

@@ -5,7 +5,8 @@
 // - Typing (sent 400 ms after typing stops, flushed before a run), Shift+Enter runs and makes a new cell, output streams in, the meta line, the
 //   kernel chip and the task list's "Notebook · Running cell N"; queued cells; the input field sends what is typed; Stop; Run all stops at a
 //   failed cell; the restart dialog; a long output shows its last 200 lines (Show all, Download); a full-screen program offers a terminal; SGR
-//   colours; ops from another device; the header's menu (Download .ipynb); a deleted row closes the view.
+//   colours; ops from another device; the header's menu (Download .ipynb); long cells fold (Show all / Show less, Z, opening to edit, Run,
+//   remote ops, text cells); a deleted row closes the view.
 // - 1440x900 with a mouse and 390x844 touch: 44px targets, the action bar above the bottom navigation, the 44px run button of each cell.
 // SCREENSHOTS=<dir> saves pictures of each step.
 const assert = require('node:assert/strict');
@@ -471,6 +472,8 @@ async function computer(browser, base, engine) {
   await page.waitForFunction(() => document.querySelector('#h5-notebook-sub').textContent.endsWith('Saved'), null, WAIT);
   assert.equal(nb.cells.length, count, `${label}: the engine has the same cells`);
 
+  await folding(t, engine, nb);
+
   // A plain terminal of the task: the notebook view goes away.
   await page.locator('#h5-header-more').waitFor();
   await full.waitFor({ state: 'detached' }).catch(() => {});
@@ -501,6 +504,123 @@ async function setSources(page, engine, nb, sources) {
     return JSON.stringify(values) === JSON.stringify(list);
   }, sources, WAIT);
 }
+// Long cells fold by themselves ("Long cells fold" in docs/design/shell-notebook-page.md): more than 12 screen lines show the first 8 with a fade and
+// "Show all N lines"; Show all / Show less, Z in command mode, a click into the folded code, Enter in command mode and the cursor arriving from the
+// cell above open it; a short cell never folds; Run keeps it folded and runs every line; an op from another device folds a cell unless its editor
+// has the focus; a text cell folds when rendered.
+async function folding(t, engine, nb) {
+  const { page, wide } = t;
+  const label = wide ? 'computer fold' : 'phone fold';
+  const long = Array.from({ length: 42 }, (_, i) => `echo line ${i + 1}`).join('\n');
+  await setSources(page, engine, nb, ['echo above', long, 'echo short']);
+  const cell = codeCell(page, 1);
+  const btn = cell.locator('.nb-fold');
+  const folded = node => node.evaluate(one => one.hasAttribute('data-folded'));
+  const shownLines = node => node.evaluate(one => {
+    const hl = one.querySelector('.nb-hl');
+    const lh = parseFloat(getComputedStyle(hl).lineHeight);
+    return Math.round((one.querySelector('.nb-code').clientHeight - 16) / lh);
+  });
+  await page.waitForFunction(node => node.hasAttribute('data-folded'), await cell.elementHandle(), WAIT);
+  assert.equal(await btn.textContent(), 'Show all 42 lines', `${label}: the button names the lines`);
+  assert.equal(await btn.getAttribute('aria-expanded'), 'false');
+  assert.equal(await shownLines(cell), 8, `${label}: the first 8 lines show`);
+  assert.notEqual(await cell.locator('.nb-code').evaluate(node => getComputedStyle(node, '::after').content), 'none', `${label}: the end fades`);
+  assert.equal(await cell.locator('textarea').inputValue(), long, `${label}: the editor keeps every line`);
+  const height = (await btn.boundingBox()).height;
+  assert.ok(wide ? Math.abs(height - 32) <= 1 : height >= 44, `${label}: the button is ${wide ? 32 : 44}px high (${height})`);
+  // A short cell never folds.
+  assert.equal(await folded(codeCell(page, 0)), false);
+  assert.equal(await codeCell(page, 2).locator('.nb-fold').isVisible(), false, `${label}: no button on a short cell`);
+  await shot(page, `${wide ? 'computer' : 'phone'}-8-folded.png`);
+
+  // Show all / Show less (the button is a Tab stop: Enter presses it).
+  if (wide) { await btn.focus(); await page.keyboard.press('Enter'); } else await btn.tap();
+  await page.waitForFunction(node => !node.hasAttribute('data-folded'), await cell.elementHandle(), WAIT);
+  assert.equal(await btn.textContent(), 'Show less');
+  assert.equal(await btn.getAttribute('aria-expanded'), 'true');
+  assert.equal(await shownLines(cell), 42, `${label}: every line when open`);
+  await shot(page, `${wide ? 'computer' : 'phone'}-9-opened.png`);
+  await t.press(btn);
+  await page.waitForFunction(node => node.hasAttribute('data-folded'), await cell.elementHandle(), WAIT);
+  assert.equal(await btn.textContent(), 'Show all 42 lines');
+
+  // Z in command mode opens and folds the selected long cell; on a short cell it does nothing.
+  await cell.focus();
+  await page.keyboard.press('z');
+  assert.equal(await folded(cell), false, `${label}: Z opens`);
+  await page.keyboard.press('z');
+  assert.equal(await folded(cell), true, `${label}: Z folds`);
+  await codeCell(page, 2).focus();
+  await page.keyboard.press('z');
+  assert.equal(await folded(codeCell(page, 2)), false);
+  assert.equal(await codeCell(page, 2).locator('.nb-fold').isVisible(), false);
+
+  // Run of a folded cell: it stays folded and every line runs.
+  await cell.focus();
+  const runs = engine.state.runs.length;
+  await t.press(cell.locator('.nb-run'));
+  await until(() => engine.state.runs.length === runs + 1, `${label}: the folded cell runs`);
+  assert.deepEqual(engine.state.runs.at(-1).sources, [long], `${label}: every line of the folded cell runs`);
+  await page.waitForFunction(node => node.querySelectorAll('.nb-line').length === 42, await cell.elementHandle(), WAIT);
+  assert.equal(await folded(cell), true, `${label}: still folded after the run`);
+  assert.equal(await cell.locator('.nb-line').last().textContent(), 'line 42');
+
+  // A click or tap into the folded code opens it to edit; leaving the editor does not fold it again.
+  await t.press(cell.locator('textarea'));
+  await page.waitForFunction(node => !node.hasAttribute('data-folded') && document.activeElement === node.querySelector('textarea'), await cell.elementHandle(), WAIT);
+  assert.equal(await btn.textContent(), 'Show less');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('nb-cell')), true, `${label}: command mode`);
+  assert.equal(await folded(cell), false, `${label}: an opened cell stays open`);
+  // Enter on a folded cell in command mode opens it to edit.
+  await page.keyboard.press('z');
+  assert.equal(await folded(cell), true);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(node => !node.hasAttribute('data-folded') && document.activeElement === node.querySelector('textarea'), await cell.elementHandle(), WAIT);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('z');
+  assert.equal(await folded(cell), true);
+  // The cursor arriving from the cell above (Shift+Enter there) opens it.
+  await t.press(codeCell(page, 0).locator('textarea'));
+  await page.keyboard.press('Shift+Enter');
+  await page.waitForFunction(node => !node.hasAttribute('data-folded') && document.activeElement === node.querySelector('textarea'), await cell.elementHandle(), WAIT);
+  await page.keyboard.press('Escape');
+
+  // An op from another device that makes a cell long folds it, unless its editor has the focus.
+  const short = codeCell(page, 2);
+  const shortId = await short.getAttribute('data-id');
+  const thirty = Array.from({ length: 30 }, (_, i) => `echo remote ${i + 1}`).join('\n');
+  await postOps(engine, nb, 'phone', [{ op: 'set', id: shortId, source: thirty }]);
+  await page.waitForFunction(node => node.hasAttribute('data-folded'), await short.elementHandle(), WAIT);
+  assert.equal(await short.locator('.nb-fold').textContent(), 'Show all 30 lines');
+  await postOps(engine, nb, 'phone', [{ op: 'set', id: shortId, source: 'echo short' }]);
+  await page.waitForFunction(node => !node.hasAttribute('data-folded') && node.querySelector('.nb-fold').hidden, await short.elementHandle(), WAIT);
+  await t.press(short.locator('textarea'));
+  await postOps(engine, nb, 'phone', [{ op: 'set', id: shortId, source: thirty }]);
+  await page.waitForFunction(text => document.activeElement?.value === text, thirty, WAIT);
+  await page.waitForFunction(node => !node.querySelector('.nb-fold').hidden, await short.elementHandle(), WAIT);
+  assert.equal(await folded(short), false, `${label}: a focused cell is never folded`);
+  assert.equal(await short.locator('.nb-fold').textContent(), 'Show less');
+  await page.keyboard.press('Escape');
+  assert.equal(await folded(short), false, `${label}: leaving its editor does not fold it`);
+
+  // A text cell folds when rendered; a click into the folded text opens it.
+  const textId = 'fold0text';
+  await postOps(engine, nb, 'phone', [{ op: 'insert', index: 3, cell: { id: textId, type: 'markdown', source: Array.from({ length: 30 }, (_, i) => `- item ${i + 1}`).join('\n') } }]);
+  const text = page.locator(`#h5-notebook .nb-cell[data-id="${textId}"]`);
+  await text.locator('.nb-md li').nth(29).waitFor({ state: 'attached', ...WAIT });
+  await page.waitForFunction(node => node.hasAttribute('data-folded'), await text.elementHandle(), WAIT);
+  assert.equal(await text.locator('.nb-fold').textContent(), 'Show all 30 lines');
+  await t.press(text.locator('.nb-md li').first());
+  await page.waitForFunction(node => !node.hasAttribute('data-folded'), await text.elementHandle(), WAIT);
+  assert.equal(await text.locator('.nb-fold').textContent(), 'Show less');
+  await t.press(text.locator('.nb-fold'));
+  await page.waitForFunction(node => node.hasAttribute('data-folded'), await text.elementHandle(), WAIT);
+  await postOps(engine, nb, 'test', [{ op: 'delete', id: textId }]);
+  await text.waitFor({ state: 'detached', ...WAIT });
+}
+
 async function postOps(engine, nb, client, ops) {
   engine.applyOps(nb, ops);
   engine.send(nb, { type: 'ops', revision: nb.revision, ops, by: client });
@@ -562,6 +682,8 @@ async function phone(browser, base, engine) {
   await page.keyboard.type('echo phone');
   await until(() => nb.cells[2] && nb.cells[2].source === 'echo phone', `${label}: the new cell's text reached the engine`);
   await shot(page, 'phone-2-cells.png');
+  await folding(t, engine, nb);
+
   // The header's menu on the phone keeps Update.
   await page.locator('#h5-header-more').tap();
   await page.locator('#h5-header-more-menu .h5-notebook-action').first().waitFor(WAIT);
@@ -580,9 +702,9 @@ async function phone(browser, base, engine) {
   const browser = await chromium.launch();
   try {
     await computer(browser, base, engine);
-    console.log('ok computer: New session, run, queue, input, stop, run all, restart, long output, full screen, remote ops, menu, keys, delete');
+    console.log('ok computer: New session, run, queue, input, stop, run all, restart, long output, full screen, remote ops, menu, keys, folding long cells, delete');
     await phone(browser, base, engine);
-    console.log('ok phone: open from the list, action bar above the bottom navigation, 44px targets, input, + Cell');
+    console.log('ok phone: open from the list, action bar above the bottom navigation, 44px targets, input, + Cell, folding long cells');
   } finally {
     await browser.close();
     server.closeAllConnections?.();

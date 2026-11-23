@@ -215,6 +215,7 @@ I18n.add({
   'Stopped (Ctrl+C)': '已停止（Ctrl+C）',
   'Last {1} of {2} lines': '共 {2} 行，显示最后 {1} 行',
   'The first {1} lines were not kept': '前 {1} 行没有保留',
+  'Show all {1} lines': '全部显示（共 {1} 行）',
   '{1} draws a full screen, which a cell cannot show. It was stopped.': '{1} 要占满整个屏幕，单元格无法显示，已停止。',
   'Variables, the working directory and the running cell {1} are lost. The outputs stay in the notebook.': '变量、工作目录和正在运行的单元格 {1} 会丢失。输出会保留在笔记本中。',
   'Could not load the notebook: {1}': '无法加载笔记本：{1}',

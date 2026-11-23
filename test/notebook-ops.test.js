@@ -312,3 +312,33 @@ test('model: Download .ipynb is nbformat 4.5 with the outputs, the counts and ou
   assert.equal(fileName('notebooks/release-check.ipynb'), 'release-check.ipynb');
   assert.equal(outputText(['\u001b[1ma\u001b[0m', 'b']), 'a\nb\n');
 });
+
+test('model: long cells fold past 12 screen lines, show 8, and stay open once opened or edited', async () => {
+  const { FOLD_OVER, FOLD_SHOW, foldLabel, foldOf, lineCount, screenLines } = await model();
+  assert.equal(FOLD_OVER, 12);
+  assert.equal(FOLD_SHOW, 8);
+  // The lines of the text: a last newline does not start a new line.
+  assert.equal(lineCount(''), 0);
+  assert.equal(lineCount('a'), 1);
+  assert.equal(lineCount('a\nb\n'), 2);
+  assert.equal(lineCount('a\n\nb'), 3);
+  // Screen lines from the drawn height: 42 lines of 20.8 px plus 16 px of padding; null when not laid out.
+  assert.equal(screenLines(42 * 20.8 + 16, 20.8, 16), 42);
+  assert.equal(screenLines(13 * 25.6 + 16, 25.6, 16), 13);
+  assert.equal(screenLines(0, 20.8, 16), null);
+  assert.equal(screenLines(100, 0, 0), null);
+  // The rule: more than 12 lines is long; a short cell never folds; opened or focused is not folded; focus on a long cell holds it open.
+  assert.deepEqual(foldOf(12), { long: false, folded: false, hold: false });
+  assert.deepEqual(foldOf(13), { long: true, folded: true, hold: false });
+  assert.deepEqual(foldOf(42, { opened: true }), { long: true, folded: false, hold: false });
+  assert.deepEqual(foldOf(42, { focused: true }), { long: true, folded: false, hold: true });
+  assert.deepEqual(foldOf(42, { focused: true, opened: true }), { long: true, folded: false, hold: false });
+  assert.deepEqual(foldOf(5, { focused: true }), { long: false, folded: false, hold: false });
+  assert.deepEqual(foldOf(null), { long: false, folded: false, hold: false });
+  // The button: the lines of the text; a few wrapped lines count as their screen lines.
+  const long = Array.from({ length: 42 }, (_, i) => `echo ${i}`).join('\n');
+  assert.equal(foldLabel(true, long, 42), 'Show all 42 lines');
+  assert.equal(foldLabel(true, `${long}\n`, 50), 'Show all 42 lines');
+  assert.equal(foldLabel(true, 'a very long line\nanother', 20), 'Show all 20 lines');
+  assert.equal(foldLabel(false, long, 42), 'Show less');
+});

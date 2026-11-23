@@ -201,3 +201,39 @@ export function ipynbOf(doc) {
 export const fileName = (path, fallback = 'notebook.ipynb') => String(path || '').split('/').filter(Boolean).pop() || fallback;
 // A cell's kept output as plain text (Download of a long output).
 export const outputText = lines => `${(lines || []).map(stripSgr).join('\n')}\n`;
+
+// ── Folding long cells ("Long cells fold" in docs/design/shell-notebook-page.md) ──
+// A cell of more than FOLD_OVER screen lines (a wrapped line counts as the lines it takes on the screen) is long: it shows its first FOLD_SHOW
+// lines and "Show all N lines" (N: the lines of its text). How the page shows it, never saved: the file and the cell are unchanged.
+export const FOLD_OVER = 12;
+export const FOLD_SHOW = 8;
+
+// The lines of a cell's text, as the person counts them in the file (a last newline does not start a new line).
+export function lineCount(source) {
+  const text = String(source == null ? '' : source);
+  if (!text) return 0;
+  return text.replace(/\n$/, '').split('\n').length;
+}
+
+// The screen lines of a box of `height` px drawn in lines of `lineHeight` px, after its `padding` (top and bottom together); null when it is
+// not laid out (a hidden view), so the last answer stays.
+export function screenLines(height, lineHeight, padding = 0) {
+  if (!(height > 0) || !(lineHeight > 0)) return null;
+  return Math.max(0, Math.round((height - padding) / lineHeight));
+}
+
+// Whether a cell is long and whether it is folded now: `opened` (Show all, Z, or the editor has had the focus while it was long) and `focused`
+// (its editor has the focus: never folded, so nothing is typed into hidden lines). `hold`: the cell becomes opened (it is long while its
+// editor has the focus or was just left, so leaving the editor never folds it).
+export function foldOf(lines, { opened = false, focused = false } = {}) {
+  const long = Number.isFinite(lines) && lines > FOLD_OVER;
+  return { long, folded: long && !opened && !focused, hold: long && focused && !opened };
+}
+
+// The text of the fold button: "Show all 42 lines" (template "Show all {1} lines" in public/js/i18n-zh-extra.js) or "Show less". N is the
+// lines of the text; a few very long lines that wrap past the fold count as their screen lines, so N is never less than what is already shown.
+export function foldLabel(folded, source, screen) {
+  if (!folded) return 'Show less';
+  const lines = lineCount(source);
+  return `Show all ${lines > FOLD_SHOW ? lines : Math.max(lines, Number(screen) || 0)} lines`;
+}

@@ -225,11 +225,17 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net get r7                   # heade
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net stop
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser fetch /api/cart -H 'Accept: application/json'   # fetch inside the page, with its cookies
 
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser open https://example.com --record --types XHR,Fetch,Document   # record from the first load
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record start                 # clicks, input, navigation, network, DOM changes
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record stop
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record show rec_...          # what was recorded
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... -o rec.jsonl   # every item, one JSON per line
 ```
+
+- To record a page from its first load, open it with `browser open <url> --record`: the recording starts before the page loads, so you do not need to reload (and the first requests are not loaded twice). It prints the tab and the recording id. `record start` on a tab that is already open records from now on.
+- Keep recordings small: `--types XHR,Fetch,Document` keeps request and response bodies only for those resource types (other requests stay in the recording without bodies, `body_omitted: "type"`); add `--drop-other-types` to leave them out; `--max-body N` cuts longer bodies (`body_truncated: true`, `body_bytes` is the size before the cut). The same options work with `open --record`.
+- In a recording, the actions of your own commands (click, type, press, select, hover, scroll, go, back, forward, reload, open) have `source: "agent"`; the user's have `source: "user"`. A click or input target has `nearest`: the closest meaningful element around it (`tag`, `role`, `aria_label`, `title`, `alt`, `name`, `text`, `selector`), useful when the click hit an icon. A `dom` item lists in `appeared` the dialogs, alerts, toasts, headings, buttons and links that showed up (texts redacted, at most 20).
+- `UNKNOWN_METHOD` "The extension is older than this command" for one of these options: ask the user to reload the T-Agent extension in `chrome://extensions`.
 
 - To learn how a site works, capture or record while you (or the user) do the task once in the page, then read the XHR / Fetch requests: their URLs, methods, parameters and response shapes are the site's API. Then call it with `browser fetch` from the page, which carries the user's cookies, instead of clicking through the page again.
 - `DEBUGGER_BUSY` means DevTools is open on that tab; ask the user to close it.

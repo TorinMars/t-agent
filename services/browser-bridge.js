@@ -8,7 +8,8 @@
 //    4409 replaced by a newer socket of the same browser, 4426 protocol not supported. Pings get pongs;
 //  - commands: `{ type: 'cmd', id: 'c_<n>', method, params, timeout_ms }` to the extension, its `result` back, with a timeout of our own
 //    (BROWSER_TIMEOUT) a little after the one we gave it; only the methods of METHODS are sent (METHOD_NOT_ALLOWED), to the browser
-//    named by params.browser_id or else to the one that connected last (BROWSER_NOT_CONNECTED when there is none);
+//    named by params.browser_id or else to the one that connected last (BROWSER_NOT_CONNECTED when there is none); a method or a newer
+//    option (PARAM_FEATURES) the extension's hello does not list is refused with UNKNOWN_METHOD;
 //  - events: tab.handed / tab.released / tab.closed (kept as the last few per browser for the status), record.items and record.stopped
 //    (services/browser-recordings.js, which redacts again before it writes).
 // Tokens, cookies and bodies are never logged; results are never logged or kept, and `raw: true` answers go only to the caller.
@@ -38,6 +39,17 @@ const METHODS = Object.freeze([
   // extension does not list it in its hello, so command() answers UNKNOWN_METHOD and the caller falls back.
   'tabs.reveal',
 ]);
+// Options newer than the method itself: param -> [the feature the extension must list in its hello, the tcli flag]. An extension before
+// 1.0.4 sends no `features` and would ignore these params silently, so command() refuses them with UNKNOWN_METHOD and a message to reload
+// the extension ("Recording" in docs/design/browser-extension.md).
+const PARAM_FEATURES = Object.freeze({
+  'tabs.open': { record: ['open.record', 'open --record'] },
+  'record.start': {
+    types: ['record.types', 'record start --types'],
+    drop_other_types: ['record.types', 'record start --drop-other-types'],
+    max_body_bytes: ['record.max_body', 'record start --max-body'],
+  },
+});
 // Answers that the server redacts again unless the caller asked for `raw: true` (they carry headers, URLs and bodies).
 const REDACT_AGAIN = new Set(['net.list', 'net.get', 'page.fetch']);
 
@@ -276,6 +288,7 @@ function createBrowserBridge({
       ws, browserId: entry.browser_id, version: cleanText(message.version, 32) || null,
       browser: { name: cleanText(browser.name, 100) || null, user_agent: cleanText(browser.user_agent, 300) || null },
       methods: Array.isArray(message.methods) ? new Set(message.methods.filter(name => typeof name === 'string')) : null,
+      features: new Set(Array.isArray(message.features) ? message.features.filter(name => typeof name === 'string').slice(0, 100) : []),
       connectedAt: now(), lastMessageAt: now(), seenWrittenAt: now(), pending: new Map(), recentEvents: [], silenceTimer: null,
     };
     connections.set(entry.browser_id, conn);
@@ -342,6 +355,11 @@ function createBrowserBridge({
     if (conn.methods && !conn.methods.has(method)) {
       return Promise.reject(new BridgeError('UNKNOWN_METHOD', `The connected extension (version ${conn.version || '?'}) does not support ${method}; update it`, 400));
     }
+    for (const [param, [feature, flag]] of Object.entries(PARAM_FEATURES[method] || {})) {
+      if (rest[param] !== undefined && !conn.features.has(feature)) {
+        return Promise.reject(new BridgeError('UNKNOWN_METHOD', `The extension is older than this command (version ${conn.version || '?'} does not support ${flag}): reload it in chrome://extensions`, 400));
+      }
+    }
     const timeout = timeoutFor(method, rest, timeoutMs);
     seq += 1;
     const id = `c_${seq}`;
@@ -358,11 +376,14 @@ function createBrowserBridge({
   }
 
   function afterResult(method, params, result, conn, context) {
-    if (recordings && method === 'record.start' && typeof result.recording_id === 'string') {
+    // record.start, and tabs.open with `record` (its tab is in result.tab).
+    if (recordings && (method === 'record.start' || method === 'tabs.open') && typeof result.recording_id === 'string') {
+      const tab = isPlainObject(result.tab) ? result.tab : result;
       try {
         recordings.start(result.recording_id, {
-          tab_id: Number.isInteger(result.tab_id) ? result.tab_id : Number.isInteger(params.tab_id) ? params.tab_id : null,
-          browser_id: conn.browserId, task_id: context.task_id ?? null, terminal_id: context.terminal_id ?? null, url: result.url,
+          tab_id: Number.isInteger(tab.tab_id) ? tab.tab_id : Number.isInteger(params.tab_id) ? params.tab_id : null,
+          browser_id: conn.browserId, task_id: context.task_id ?? null, terminal_id: context.terminal_id ?? null, url: tab.url,
+          options: isPlainObject(result.options) ? result.options : undefined,
         });
       } catch (error) { log(`Browser recording ${result.recording_id} was not registered: ${error.code || error.message}`); }
     }

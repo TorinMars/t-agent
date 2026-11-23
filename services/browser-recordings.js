@@ -2,7 +2,9 @@
 // `record.items` events (services/browser-bridge.js), and they are appended here, redacted again on this side (lib/browser-redact.js redactDeep):
 //   <data dir>/browser-recordings/<recording_id>.jsonl   one item per line (0600)
 //   <data dir>/browser-recordings/<recording_id>.json    the summary: { recording_id, tab_id, browser_id, started_at, stopped_at, stop_reason,
-//                                                         origins, items, bytes, kinds, dropped_items, truncated, task_id, terminal_id }
+//                                                         origins, items, bytes, kinds, dropped_items, truncated, task_id, terminal_id,
+//                                                         options? (the recording's filters: network, dom, bodies, types, drop_other_types,
+//                                                         max_body_bytes; from extension 1.0.4) }
 // Limits: 200 MiB per recording (items after that are dropped and counted, `truncated: true`), 2 GiB in all (the oldest recordings are removed
 // first), and 14 days (counted from the last item or the stop; checked at start, every 6 hours and after appends).
 const fs = require('node:fs');
@@ -20,6 +22,17 @@ class RecordingError extends Error {
 }
 
 const iso = ms => new Date(ms).toISOString();
+// The filters a recording was started with, as the extension reported them (only known keys and plain values are kept).
+function cleanOptions(options) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
+  const out = {};
+  for (const key of ['network', 'dom', 'bodies', 'drop_other_types']) if (typeof options[key] === 'boolean') out[key] = options[key];
+  if (Array.isArray(options.types)) out.types = options.types.filter(type => typeof type === 'string' && /^[A-Za-z]{1,32}$/.test(type)).slice(0, 32);
+  else if (options.types === null) out.types = null;
+  if (Number.isInteger(options.max_body_bytes) && options.max_body_bytes >= 0) out.max_body_bytes = options.max_body_bytes;
+  else if (options.max_body_bytes === null) out.max_body_bytes = null;
+  return out;
+}
 const originOf = url => { try { const parsed = new URL(url); return /^https?:$/.test(parsed.protocol) ? parsed.origin : null; } catch { return null; } };
 
 function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
@@ -76,6 +89,8 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
     if (!validId(id)) throw new RecordingError('BAD_RECORDING_ID', 'The recording id is not valid', 400);
     const summary = summaries.get(id) || blank(id, info);
     for (const field of ['tab_id', 'browser_id', 'task_id', 'terminal_id']) if (info[field] !== undefined && info[field] !== null) summary[field] = info[field];
+    const options = cleanOptions(info.options);
+    if (options) summary.options = options;
     const origin = originOf(info.url);
     if (origin && !summary.origins.includes(origin) && summary.origins.length < MAX_ORIGINS) summary.origins.push(origin);
     summaries.set(id, summary);

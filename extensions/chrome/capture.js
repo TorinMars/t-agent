@@ -3,10 +3,18 @@ export const captures = new Map();
 export const cdp = (id, method, params = {}) => chrome.debugger.sendCommand({
   tabId: id
 }, method, params);
-let emit = () => {};
+let emit = () => {},
+  onPage = () => {};
 export function setCaptureEmitter(fn) {
   emit = fn;
 }
+// Called with (tab id, event, url) when the main frame of a captured tab commits a new document ('commit') or fires DOMContentLoaded
+// ('dom'): background.js installs a running recording's page recorder there, before the document's own scripts run.
+export function setPageListener(fn) {
+  onPage = fn;
+}
+// Whether the body of a request of this CDP resource type is fetched: options.body_types (lower-case names) limits it, null or absent = all.
+export const wantsBody = (options, type) => !Array.isArray(options.body_types) || options.body_types.includes(String(type || '').toLowerCase());
 export async function attach(id, options = {}) {
   let s = captures.get(id);
   if (s) {
@@ -119,6 +127,14 @@ async function handle(id, method, p) {
   const s = captures.get(id);
   if (!s) return;
   const at = Date.now();
+  if (method === 'Page.frameNavigated' && !p.frame?.parentId) {
+    onPage(id, 'commit', p.frame?.url);
+    return;
+  }
+  if (method === 'Page.domContentEventFired') {
+    onPage(id, 'dom');
+    return;
+  }
   if (method === 'Runtime.consoleAPICalled' || method === 'Runtime.exceptionThrown') {
     const entry = {
       at,
@@ -175,6 +191,7 @@ async function handle(id, method, p) {
       r.request.post_data = c.text;
       r.safe_post = cut(redact(q.postData), s.options.max_body_bytes).text;
       r.request.post_data_truncated = c.truncated || new TextEncoder().encode(redact(q.postData || '')).length > s.options.max_body_bytes;
+      r.request.post_data_bytes = new TextEncoder().encode(q.postData).length;
     }
     s.requests.set(p.requestId, r);
     s.lastActivity = at;
@@ -188,6 +205,7 @@ async function handle(id, method, p) {
         r.request.post_data = c.text;
         r.safe_post = cut(redact(d.postData), s.options.max_body_bytes).text;
         r.request.post_data_truncated = c.truncated || new TextEncoder().encode(redact(d.postData)).length > s.options.max_body_bytes;
+        r.request.post_data_bytes = new TextEncoder().encode(d.postData).length;
       } catch {/* Not available. */}
     }
     emit(id, 'request', summary(r));
@@ -239,12 +257,13 @@ async function handle(id, method, p) {
     r.timing.finished_at = at;
     r.response.size = p.encodedDataLength || 0;
     if (p.errorText) r.failed = p.errorText;
-    if (s.options.bodies && method === 'Network.loadingFinished') try {
+    if (s.options.bodies && wantsBody(s.options, r.type) && method === 'Network.loadingFinished') try {
       const b = await cdp(id, 'Network.getResponseBody', {
         requestId: p.requestId
       });
       if (b.base64Encoded) {
         const decoded = Uint8Array.from(atob(b.body), x => x.charCodeAt(0));
+        r.response.body_bytes = decoded.length; // the size before any cut
         const slice = decoded.slice(0, s.options.max_body_bytes);
         if (/text|json|xml|javascript|form/i.test(r.response.mime)) {
           r.response.body = new TextDecoder().decode(slice);
@@ -252,6 +271,7 @@ async function handle(id, method, p) {
         } else r.response.body_base64 = btoa(Array.from(slice, x => String.fromCharCode(x)).join(''));
         r.response.body_truncated = decoded.length > slice.length || new TextEncoder().encode(redact(new TextDecoder().decode(decoded))).length > s.options.max_body_bytes;
       } else {
+        r.response.body_bytes = new TextEncoder().encode(b.body).length;
         const c = cut(b.body, s.options.max_body_bytes);
         r.response.body = c.text;
         r.safe_body = cut(redact(b.body), s.options.max_body_bytes).text;

@@ -60,7 +60,9 @@ const waitFor = async (check, { timeoutMs = 3000, stepMs = 10 } = {}) => {
 // A connected fake extension: hello with the token, then every `cmd` goes to `handler(method, params, cmd)`, which returns a result, throws
 // { code, message } for an error answer, or returns `fakeExtension.SILENT` to never answer.
 const SILENT = Symbol('silent');
-async function fakeExtension(wsUrl, token, { handler = () => ({}), methods = METHODS, protocol = 1, version = '1.0.0', origin } = {}) {
+// The features extension 1.0.4 lists in its hello (extensions/chrome/background.js `features`); pass `features: FEATURES` to act as it.
+const FEATURES = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text'];
+async function fakeExtension(wsUrl, token, { handler = () => ({}), methods = METHODS, features, protocol = 1, version = '1.0.0', origin } = {}) {
   const socket = await openSocket(wsUrl, { origin });
   const commands = [];
   socket.ws.on('message', async data => {
@@ -75,7 +77,7 @@ async function fakeExtension(wsUrl, token, { handler = () => ({}), methods = MET
       socket.ws.send(JSON.stringify({ type: 'result', id: message.id, ok: false, error: { code: error.code || 'INTERNAL', message: error.message } }));
     }
   });
-  socket.ws.send(JSON.stringify({ type: 'hello', token, version, protocol, browser: { name: 'Chrome', user_agent: 'Mozilla/5.0 Test' }, methods }));
+  socket.ws.send(JSON.stringify({ type: 'hello', token, version, protocol, browser: { name: 'Chrome', user_agent: 'Mozilla/5.0 Test' }, methods, ...(features ? { features } : {}) }));
   const first = await Promise.race([waitFor(() => socket.messages[0], { timeoutMs: 3000 }), socket.closed.then(close => ({ type: 'closed', ...close }))]);
   return {
     ...socket, commands, welcome: first,
@@ -86,4 +88,4 @@ async function fakeExtension(wsUrl, token, { handler = () => ({}), methods = MET
 }
 fakeExtension.SILENT = SILENT;
 
-module.exports = { ORIGIN, memoryDb, bridgeServer, openSocket, fakeExtension, waitFor, SILENT };
+module.exports = { ORIGIN, FEATURES, memoryDb, bridgeServer, openSocket, fakeExtension, waitFor, SILENT };

@@ -58,6 +58,7 @@ function generatedVectors() {
   const cases = [];
   for (const e of v.keys || []) cases.push({ input: { [e.name]: e.value }, expected: { [e.name]: e.secret ? markFor(e.value) : e.value } });
   for (const e of v.json || []) cases.push({ input: e.in, expected: e.out });
+  for (const e of v.items || []) cases.push({ input: e.in, expected: e.out });
   return JSON.stringify({ note: 'Generated from test/fixtures/browser-redact-vectors.json by scripts/sync-extension-redact.js', cases }, null, 2) + '\n';
 }
 

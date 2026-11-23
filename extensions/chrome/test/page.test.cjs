@@ -3,7 +3,7 @@ const {
 } = require('node:test');
 const assert = require('node:assert/strict');
 test('isolated page actions: refs, controlled inputs, targets and passwords', async t => {
-  const globals = ['document', 'location', 'innerWidth', 'innerHeight', 'devicePixelRatio', 'CSS', 'getComputedStyle', 'HTMLInputElement', 'HTMLTextAreaElement', 'MouseEvent', 'KeyboardEvent', 'InputEvent', '__tagentPage'];
+  const globals = ['document', 'location', 'innerWidth', 'innerHeight', 'devicePixelRatio', 'CSS', 'getComputedStyle', 'HTMLInputElement', 'HTMLTextAreaElement', 'MouseEvent', 'KeyboardEvent', 'InputEvent', '__tagentPage', '__tagentRecorder', '__tagentAgentBusy'];
   const saved = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   t.after(() => {
     for (const [k, d] of saved) if (d) Object.defineProperty(globalThis, k, d);else delete globalThis[k];
@@ -165,6 +165,29 @@ test('isolated page actions: refs, controlled inputs, targets and passwords', as
       text: 'bad'
     })).ok, false);
     input.readOnly = false;
+  });
+  await t.test('input commands mark themselves for the recorder; resolve gives the recorded target', async () => {
+    const seen = [];
+    const dispatch = input.dispatchEvent;
+    input.dispatchEvent = e => {
+      seen.push(globalThis.__tagentAgentBusy);
+      return dispatch.call(input, e);
+    };
+    try {
+      await run('input.click', { target: { selector: '#name' } });
+    } finally {
+      input.dispatchEvent = dispatch;
+    }
+    assert(seen.length && seen.every(n => n === 1), 'the events of the command are dispatched while __tagentAgentBusy is set');
+    assert.equal(globalThis.__tagentAgentBusy, 0);
+    const plain = await run('resolve', { target: { selector: '#name' }, focus: false, record_target: true });
+    assert.equal(plain.sensitive, undefined);
+    assert.equal(plain.recorded, undefined, 'no recorder: no recorded target');
+    assert.equal((await run('resolve', { target: { selector: '#csrf' }, focus: false })).sensitive, true, 'a secret-named field is sensitive');
+    assert.equal((await run('resolve', { target: { selector: '#password' }, focus: false })).sensitive, true);
+    globalThis.__tagentRecorder = { info: e => ({ tag: e.localName, nearest: { name: 'Name' } }) };
+    assert.deepEqual((await run('resolve', { target: { selector: '#name' }, focus: false, record_target: true })).recorded, { tag: 'input', nearest: { name: 'Name' } });
+    delete globalThis.__tagentRecorder;
   });
   await t.test('stale refs and missing targets return explicit errors', async () => {
     await run('invalidate');

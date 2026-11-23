@@ -539,6 +539,124 @@
         },
         "value": "<redacted:61>"
       }
+    },
+    {
+      "input": {
+        "kind": "dom",
+        "summary": {
+          "added": 3,
+          "removed": 0,
+          "attrs": 1
+        },
+        "appeared": [
+          {
+            "type": "alert",
+            "tag": "div",
+            "role": "alert",
+            "text": "Saved with key eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl"
+          },
+          {
+            "type": "notice",
+            "tag": "div",
+            "text": "Use Bearer abcdefgh12345678 in the header"
+          },
+          {
+            "type": "heading",
+            "tag": "h2",
+            "text": "Author settings"
+          }
+        ]
+      },
+      "expected": {
+        "kind": "dom",
+        "summary": {
+          "added": 3,
+          "removed": 0,
+          "attrs": 1
+        },
+        "appeared": [
+          {
+            "type": "alert",
+            "tag": "div",
+            "role": "alert",
+            "text": "Saved with key <redacted:57>"
+          },
+          {
+            "type": "notice",
+            "tag": "div",
+            "text": "Use Bearer <redacted:16> in the header"
+          },
+          {
+            "type": "heading",
+            "tag": "h2",
+            "text": "Author settings"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "kind": "click",
+        "source": "user",
+        "target": {
+          "tag": "svg",
+          "role": "",
+          "name": "",
+          "text": "",
+          "selector": "#icon",
+          "nearest": {
+            "tag": "span",
+            "depth": 1,
+            "aria_label": "Copy eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl",
+            "name": "Refresh list",
+            "text": "",
+            "selector": "#refresh"
+          }
+        }
+      },
+      "expected": {
+        "kind": "click",
+        "source": "user",
+        "target": {
+          "tag": "svg",
+          "role": "",
+          "name": "",
+          "text": "",
+          "selector": "#icon",
+          "nearest": {
+            "tag": "span",
+            "depth": 1,
+            "aria_label": "Copy <redacted:57>",
+            "name": "Refresh list",
+            "text": "",
+            "selector": "#refresh"
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "kind": "input",
+        "source": "agent",
+        "command": "input.type",
+        "target": {
+          "tag": "input",
+          "name": "api_token",
+          "selector": "#key"
+        },
+        "value": "looks-plain"
+      },
+      "expected": {
+        "kind": "input",
+        "source": "agent",
+        "command": "input.type",
+        "target": {
+          "tag": "input",
+          "name": "api_token",
+          "selector": "#key"
+        },
+        "value": "<redacted:11>"
+      }
     }
   ]
 }

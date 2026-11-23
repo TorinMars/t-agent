@@ -1,5 +1,9 @@
 // This self-contained function executes in the isolated world, only on allowed tabs.
 export async function pageAction(method, p) {
+  // The events an input command dispatches here are the command's own: a running page recorder (installRecorder) leaves them out, because
+  // background.js records the command once, with source 'agent'.
+  const acting = typeof method === 'string' && method.startsWith('input.');
+  if (acting) globalThis.__tagentAgentBusy = (globalThis.__tagentAgentBusy || 0) + 1;
   try {
     return {
       ok: true,
@@ -10,6 +14,8 @@ export async function pageAction(method, p) {
       ok: false,
       error: error.message
     };
+  } finally {
+    if (acting) globalThis.__tagentAgentBusy = Math.max(0, (globalThis.__tagentAgentBusy || 1) - 1);
   }
   async function run() {
     const fail = (code, message) => {
@@ -185,7 +191,11 @@ export async function pageAction(method, p) {
       const e = target(p.target);
       if (p.focus !== false) e.focus();
       if (p.editable && (e.readOnly || !('value' in e) && !e.isContentEditable)) fail('ELEMENT_NOT_INTERACTABLE', 'Element is not editable');
-      return describe(e);
+      const d = describe(e);
+      if (e.type === 'password' || secret(e)) d.sensitive = true;
+      // For the agent item of a recording: the recorder's description (with the nearest meaningful element), else this one.
+      if (p.record_target) d.recorded = globalThis.__tagentRecorder?.info?.(e) || undefined;
+      return d;
     }
     if (method === 'page.wait.check') {
       if (p.selector && [...document.querySelectorAll(p.selector)].some(visible)) return 'selector';
@@ -312,22 +322,34 @@ export async function pageAction(method, p) {
     fail('UNKNOWN_METHOD', method);
   }
 }
-export function installRecorder(recordingId) {
+// The page recorder of a recording ("Recording" in docs/design/browser-extension.md), in the isolated world of the tab's top document. It is
+// self-contained (executeScript serialises it) and runs once per document and recording: background.js injects it when a document commits
+// (as early as it can, so the first load is recorded) and again when the page has loaded, and the second call does nothing.
+export function installRecorder(recordingId, options = {}) {
+  if (globalThis.__tagentRecorder?.id === recordingId) return;
   globalThis.__tagentRecorder?.stop();
   const listeners = [];
   let seq = 0,
     lastURL = location.href,
     added = 0,
     removed = 0,
-    attrs = 0,
-    landmarks = [];
+    attrs = 0;
   const secret = /(token|secret|session|passw|pwd|api[-_]?key|auth|signature|csrf|xsrf|cookie|ticket|code_verifier)/i;
   const safe = e => e.type === 'password';
+  const sensitive = e => safe(e) || secret.test(`${e.name || ''} ${e.id || ''} ${e.autocomplete || ''}`);
+  const flat = (text, max) => {
+    const t = String(text || '').replace(/\s+/g, ' ').trim();
+    return t.length > max ? t.slice(0, max) : t;
+  };
+  // innerText is undefined on SVG elements; textContent then.
+  const textOf = (e, max = 2000) => safe(e) ? '' : flat(e.innerText ?? e.textContent, max);
   const selector = e => {
     if (e.id) return `#${CSS.escape(e.id)}`;
-    for (const k of ['data-testid', 'data-test', 'aria-label', 'name']) if (e.getAttribute(k)) {
+    for (const k of ['data-testid', 'data-test', 'data-qa', 'data-cy', 'aria-label', 'name', 'title']) if (e.getAttribute(k)) {
       const s = `${e.localName}[${k}=${JSON.stringify(e.getAttribute(k))}]`;
-      if (document.querySelectorAll(s).length === 1) return s;
+      try {
+        if (document.querySelectorAll(s).length === 1) return s;
+      } catch {/* Not a valid selector. */}
     }
     const parts = [];
     for (let n = e; n && n.nodeType === 1; n = n.parentElement) {
@@ -336,13 +358,86 @@ export function installRecorder(recordingId) {
     }
     return parts.join(' > ');
   };
+  const labelledBy = e => (e.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map(id => document.getElementById(id)?.textContent || '').join(' ');
+  const svgTitle = e => e.localName === 'svg' ? [...e.children].find(c => c.localName === 'title')?.textContent || '' : '';
+  const IMPLICIT = {
+    button: 'button',
+    select: 'combobox',
+    textarea: 'textbox',
+    summary: 'button',
+    dialog: 'dialog',
+    img: 'img',
+    nav: 'navigation',
+    main: 'main',
+    form: 'form',
+    option: 'option',
+    h1: 'heading',
+    h2: 'heading',
+    h3: 'heading',
+    h4: 'heading',
+    h5: 'heading',
+    h6: 'heading'
+  };
+  const roleOf = e => e.getAttribute('role') || (e.localName === 'a' && e.hasAttribute('href') ? 'link' : IMPLICIT[e.localName]) || (e.localName === 'input' ? {
+    checkbox: 'checkbox',
+    radio: 'radio',
+    range: 'slider',
+    button: 'button',
+    submit: 'button',
+    reset: 'button',
+    image: 'button'
+  }[e.type] || 'textbox' : '');
+  // The accessible name, roughly: aria-label, aria-labelledby, a <label>, alt, title, an SVG <title>, a placeholder, a button's value, the text.
+  const nameOf = e => flat(e.getAttribute('aria-label') || labelledBy(e) || (e.labels?.[0] ? e.labels[0].innerText ?? e.labels[0].textContent : '') || e.getAttribute('alt') || e.getAttribute('title') || svgTitle(e) || e.getAttribute('placeholder') || (['submit', 'button', 'reset'].includes(e.type) && e.localName === 'input' ? e.value : '') || textOf(e, 80), 80);
+  const INTERACTIVE = 'a[href],button,input,select,textarea,summary,label,option,[role=button],[role=link],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=tab],[role=checkbox],[role=radio],[role=switch],[role=option],[role=treeitem],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[contenteditable=""],[contenteditable="true"],[tabindex]:not([tabindex="-1"]),[onclick]';
+  const labelled = e => !!(e.getAttribute('aria-label') || e.getAttribute('aria-labelledby') || e.getAttribute('title') || e.getAttribute('alt') || svgTitle(e));
+  const pointer = e => {
+    try {
+      return getComputedStyle(e).cursor === 'pointer';
+    } catch {
+      return false;
+    }
+  };
+  const near = (n, depth) => {
+    const d = {
+      tag: n.localName,
+      depth
+    };
+    const role = roleOf(n);
+    if (role) d.role = role;
+    for (const [key, attr] of [['aria_label', 'aria-label'], ['title', 'title'], ['alt', 'alt']]) if (n.getAttribute(attr)) d[key] = flat(n.getAttribute(attr), 80);
+    d.name = nameOf(n);
+    d.text = textOf(n, 80);
+    d.selector = selector(n);
+    return d;
+  };
+  // The nearest meaningful element going up from the target (itself included): the first that is interactive (a link, a button, a form
+  // field, an ARIA widget role, tabindex, onclick) or labelled (aria-label, aria-labelledby, title, alt, an SVG <title>). When the walk has
+  // left a run of cursor:pointer elements that started at the target, the top of that run is closer to what was clicked. Else the first
+  // element with a short visible text. At most 10 levels, never <body>.
+  function nearest(e) {
+    let run = null,
+      inRun = pointer(e),
+      short = null;
+    for (let n = e, depth = 0; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement && depth <= 10; n = n.parentElement, depth++) {
+      const isPointer = inRun && pointer(n);
+      if (!isPointer) inRun = false;
+      if (n.matches(INTERACTIVE) || labelled(n)) return run && !isPointer ? near(...run) : near(n, depth);
+      if (isPointer) run = [n, depth];
+      if (!short) {
+        const t = textOf(n, 81);
+        if (t && t.length <= 80) short = [n, depth];
+      }
+    }
+    return run ? near(...run) : short ? near(...short) : null;
+  }
   const info = e => {
     const r = e.getBoundingClientRect();
-    return {
+    const d = {
       tag: e.localName,
       role: e.getAttribute('role') || '',
       name: e.getAttribute('aria-label') || e.name || '',
-      text: safe(e) ? '' : (e.innerText || '').slice(0, 300),
+      text: textOf(e, 300),
       selector: selector(e),
       rect: {
         x: r.x,
@@ -351,6 +446,11 @@ export function installRecorder(recordingId) {
         h: r.height
       }
     };
+    if (e.localName === 'input' && e.type) d.type = e.type;
+    if (sensitive(e)) d.sensitive = true;
+    const n = nearest(e);
+    if (n) d.nearest = n;
+    return d;
   };
   const send = (kind, data) => chrome.runtime.sendMessage({
     type: 'record.item',
@@ -363,21 +463,31 @@ export function installRecorder(recordingId) {
       ...data
     }
   }).catch(() => {});
+  // A tcli command is acting on the page (pageAction, or the debugger's input between background.js's agentWindow marks): its events are
+  // recorded by background.js with source 'agent', so they are left out here.
+  const agentActing = () => (globalThis.__tagentAgentBusy || 0) > 0 || Date.now() < (globalThis.__tagentAgentUntil || 0);
   for (const type of ['click', 'input', 'change', 'submit', 'keydown']) {
     const fn = event => {
       const e = event.target;
-      if (!(e instanceof Element) || safe(e)) return;
-      const target = info(e);
+      if (!(e instanceof Element) || safe(e) || agentActing()) return;
+      const source = {
+        source: 'user',
+        ...(event.isTrusted ? {} : {
+          synthetic: true
+        })
+      };
       if (type === 'keydown') {
         if (!['Enter', 'Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) && !event.ctrlKey && !event.metaKey) return;
         send('key', {
+          ...source,
           key: event.key,
           modifiers: ['Control', 'Meta', 'Shift', 'Alt'].filter((_, i) => [event.ctrlKey, event.metaKey, event.shiftKey, event.altKey][i])
         });
         return;
       }
       const data = {
-        target
+        ...source,
+        target: info(e)
       };
       if (type === 'click') data.button = ['left', 'middle', 'right'][event.button];
       if (type === 'input') data.value = secret.test(`${e.name} ${e.id} ${e.autocomplete}`) ? `<redacted:${String(e.value ?? '').length}>` : e.value ?? e.textContent;
@@ -390,19 +500,115 @@ export function installRecorder(recordingId) {
     document.addEventListener(type, fn, true);
     listeners.push([type, fn]);
   }
-  const observer = new MutationObserver(records => {
+  // What appeared, for the DOM change items: dialogs, alerts and live regions, toast-like notices, headings, buttons and links among the
+  // added nodes, a dialog or notice that was shown (an attribute change), and text put into a live region or alert. At most PER_KIND
+  // candidates of each kind and SCAN_BUDGET checked nodes per item; MAX_ENTRIES entries of MAX_TEXT characters each (the rest is counted in
+  // `appeared_more`). The texts are redacted by background.js like every other item.
+  const DIALOG = 'dialog,[role=dialog],[role=alertdialog]';
+  const ALERT = '[role=alert],[role=status],[aria-live]:not([aria-live="off"]),output';
+  const NOTICE = '[class*=toast i],[class*=snackbar i],[class*=notification i],[class*=notice i],[class*=message i],[class*=alert i],[class*=error i],[class*=modal i]';
+  const KINDS = [['dialog', DIALOG], ['alert', ALERT], ['notice', NOTICE], ['heading', 'h1,h2,h3,h4,h5,h6,[role=heading]'], ['button', 'button,[role=button],input[type=button],input[type=submit]'], ['link', 'a[href],[role=link]']];
+  const ANY = KINDS.map(k => k[1]).join(',');
+  const SHOWN = `${DIALOG},${ALERT},${NOTICE}`;
+  const MAX_ENTRIES = 20,
+    MAX_TEXT = 120,
+    PER_KIND = 20,
+    SCAN_BUDGET = 3000;
+  let found = new Map(),
+    perKind = {},
+    budget = SCAN_BUDGET;
+  const shown = new WeakMap();
+  const consider = n => {
+    if (found.has(n) || budget <= 0) return;
+    budget--;
+    for (const [kind, sel] of KINDS) if (n.matches(sel)) {
+      if ((perKind[kind] || 0) < PER_KIND) {
+        found.set(n, kind);
+        perKind[kind] = (perKind[kind] || 0) + 1;
+      }
+      return;
+    }
+  };
+  const scan = n => {
+    if (n.nodeType !== 1 || budget <= 0) return;
+    consider(n);
+    if (n.firstElementChild) for (const c of n.querySelectorAll(ANY)) {
+      if (budget <= 0) break;
+      consider(c);
+    }
+  };
+  const visibleNow = n => {
+    try {
+      return n.checkVisibility ? n.checkVisibility() : !!n.getClientRects().length;
+    } catch {
+      return false;
+    }
+  };
+  function appeared() {
+    const out = [],
+      keys = new Set();
+    let more = 0;
+    for (const [kind] of KINDS) for (const [n, k] of found) {
+      if (k !== kind) continue;
+      if (!n.isConnected || !visibleNow(n)) {
+        shown.delete(n);
+        continue;
+      }
+      const text = flat(n.getAttribute('aria-label') || labelledBy(n) || textOf(n, MAX_TEXT + 1) || n.getAttribute('title') || (n.localName === 'input' ? n.value : ''), MAX_TEXT);
+      if (!text || shown.get(n) === text || keys.has(`${kind} ${text}`)) continue;
+      shown.set(n, text);
+      keys.add(`${kind} ${text}`);
+      if (out.length >= MAX_ENTRIES) {
+        more++;
+        continue;
+      }
+      const role = n.getAttribute('role');
+      out.push({
+        type: kind,
+        tag: n.localName,
+        ...(role ? {
+          role
+        } : {}),
+        text
+      });
+    }
+    found = new Map();
+    perKind = {};
+    budget = SCAN_BUDGET;
+    return {
+      out,
+      more
+    };
+  }
+  const observer = options.dom === false ? null : new MutationObserver(records => {
     for (const r of records) {
-      added += r.addedNodes.length;
-      removed += r.removedNodes.length;
-      if (r.type === 'attributes') attrs++;
-      for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches('dialog,form,ul,ol,[role="dialog"]')) landmarks.push(`${n.localName} ${(n.getAttribute('aria-label') || '').slice(0, 100)}`);
+      if (r.type === 'childList') {
+        added += r.addedNodes.length;
+        removed += r.removedNodes.length;
+        for (const n of r.addedNodes) scan(n);
+        const host = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+        const live = host?.closest?.(`${ALERT},${DIALOG}`);
+        if (live) consider(live);
+      } else if (r.type === 'characterData') {
+        const live = r.target.parentElement?.closest?.(ALERT);
+        if (live) consider(live);
+      } else if (r.type === 'attributes') {
+        attrs++;
+        if (r.target.matches?.(SHOWN)) consider(r.target);
+      }
     }
   });
-  observer.observe(document.documentElement, {
+  // The document itself, not documentElement: at document start there may be no <html> element yet.
+  observer?.observe(document, {
     subtree: true,
     childList: true,
-    attributes: true
+    attributes: true,
+    characterData: true
   });
+  // What the document already shows when the recorder starts (on a fast page the HTML is parsed before it gets in): the first DOM item
+  // lists it too, with `initial: true`.
+  let initial = !!observer;
+  if (observer && document.documentElement) scan(document.documentElement);
   const timer = setInterval(() => {
     if (location.href !== lastURL) {
       send('nav', {
@@ -413,22 +619,32 @@ export function installRecorder(recordingId) {
       lastURL = location.href;
       globalThis.__tagentPage?.refs.clear();
     }
-    if (added || removed || attrs) {
+    if (!observer) return;
+    const { out, more } = appeared();
+    if (added || removed || attrs || out.length) {
       send('dom', {
         summary: {
           added,
           removed,
           attrs
         },
-        landmarks: landmarks.slice(0, 20)
+        appeared: out,
+        ...(more ? {
+          appeared_more: more
+        } : {}),
+        ...(initial ? {
+          initial: true
+        } : {})
       });
       added = removed = attrs = 0;
-      landmarks = [];
+      initial = false;
     }
   }, 500);
   globalThis.__tagentRecorder = {
+    id: recordingId,
+    info,
     stop() {
-      observer.disconnect();
+      observer?.disconnect();
       clearInterval(timer);
       for (const [t, f] of listeners) document.removeEventListener(t, f, true);
       delete globalThis.__tagentRecorder;

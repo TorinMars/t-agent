@@ -31,6 +31,10 @@ test('headers, URLs, bodies and JSON give the vector results, and a second pass 
     assert.deepEqual(redact.redactJson(input), out);
     assert.deepEqual(redact.redactJson(out), out);
   }
+  for (const { in: input, out } of vectors.items) {
+    assert.deepEqual(redact.redactDeep(input), out);
+    assert.deepEqual(redact.redactDeep(out), out);
+  }
 });
 
 test('false positives that must stay: author, authority, the :authority pseudo header, counts of tokens', () => {

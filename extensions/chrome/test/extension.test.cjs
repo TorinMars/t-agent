@@ -17,7 +17,24 @@ test('unpacked extension contract in local headless Chromium', {
   timeout: 120000
 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tagent-extension-'));
+  const hits = {};
   const server = http.createServer(async (req, res) => {
+    hits[req.url] = (hits[req.url] || 0) + 1;
+    if (req.url === '/rec') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end(await fs.readFile(path.join(__dirname, 'pages/record.html')));
+      return;
+    }
+    if (req.url === '/rec.js') {
+      res.setHeader('Content-Type', 'text/javascript');
+      res.end(await fs.readFile(path.join(__dirname, 'pages/record.js')));
+      return;
+    }
+    if (req.url === '/rec.css') {
+      res.setHeader('Content-Type', 'text/css');
+      res.end(`.icon { cursor: pointer; display: inline-block } /* ${'padding '.repeat(40)} */`);
+      return;
+    }
     if (req.url.startsWith('/xhr')) {
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Set-Cookie', 'session=server-secret');
@@ -109,6 +126,7 @@ test('unpacked extension contract in local headless Chromium', {
   assert.equal(hello?.protocol, 1);
   assert.equal(hello?.version, require('../manifest.json').version, 'hello carries the manifest version');
   assert.equal(hello.methods.length, 26);
+  assert(hello.features.includes('open.record') && hello.features.includes('record.types'), 'hello lists the 1.0.4 features');
   const cmd = async (method, params = {}) => {
     const id = `c_${++seq}`;
     const response = await new Promise((resolve, reject) => {
@@ -302,6 +320,91 @@ test('unpacked extension contract in local headless Chromium', {
     assert(!JSON.stringify(items).includes('private-typed'));
     assert(!JSON.stringify(items).includes('body-secret'));
     assert.equal((await ok('tabs.list')).tabs.find(t => t.tab_id === tabId).capturing, false);
+  });
+  await t.test('open with record: the first load once, filters, sources, target context and what appeared', async () => {
+    const opened = await ok('tabs.open', {
+      url: `${base}/rec`,
+      active: true,
+      record: {
+        types: ['Document', 'XHR', 'Fetch'],
+        max_body_bytes: 64
+      }
+    });
+    assert.match(opened.recording_id, /^rec_/);
+    assert.equal(opened.tab.url, `${base}/rec`);
+    assert.equal(opened.tab.how, 'group');
+    const id = opened.tab.tab_id;
+    await ok('page.wait', {
+      tab_id: id,
+      selector: '#save'
+    });
+    await delay(700);
+    // The person clicks the icon (a trusted click from outside the extension).
+    const page = context.pages().find(p => p.url() === `${base}/rec`);
+    await page.click('#icon');
+    await delay(300);
+    await ok('input.click', {
+      tab_id: id,
+      target: {
+        selector: '#many'
+      }
+    });
+    await delay(700);
+    await ok('input.click', {
+      tab_id: id,
+      target: {
+        selector: '#save'
+      }
+    });
+    await delay(800);
+    await ok('record.stop', {
+      recording_id: opened.recording_id
+    });
+    const items = events.filter(e => e.event === 'record.items' && e.data.recording_id === opened.recording_id).flatMap(e => e.data.items);
+    const text = JSON.stringify(items);
+    assert.equal(hits['/rec'], 1, 'the page was loaded once: no reload');
+    assert.deepEqual([items[0].kind, items[0].source, items[0].action], ['nav', 'agent', 'open']);
+    const doc = items.find(i => i.kind === 'response' && i.url === `${base}/rec`);
+    assert(doc, 'the first document request is recorded');
+    assert.equal(doc.type, 'Document');
+    assert(new TextEncoder().encode(doc.response.body).length <= 64, 'the body is cut at max_body_bytes');
+    assert.equal(doc.response.body_truncated, true);
+    assert(doc.response.body_bytes > 64, 'the size before the cut is kept');
+    const script = items.find(i => i.kind === 'response' && i.url === `${base}/rec.js`);
+    assert(script, 'a request of another type keeps its item');
+    assert.equal(script.body_omitted, 'type');
+    assert.equal(script.response.body, undefined);
+    const xhr = items.find(i => i.kind === 'response' && i.url.includes('/xhr?first=1'));
+    assert(xhr?.response.body.includes('"ok":true'), 'an XHR body is kept');
+    assert(!text.includes('body-secret'));
+    const user = items.find(i => i.kind === 'click' && i.source === 'user');
+    assert(user, 'the person\'s click is recorded');
+    assert.equal(user.nearest, undefined);
+    assert.equal(user.target.nearest.aria_label, 'Refresh list');
+    assert.equal(user.target.nearest.name, 'Refresh list');
+    assert.equal(user.target.nearest.selector, '#refresh');
+    assert(user.target.selector, 'the original fields stay');
+    const saves = items.filter(i => i.kind === 'click' && i.target?.selector === '#save');
+    assert.equal(saves.length, 1, 'an agent click is recorded once');
+    assert.equal(saves[0].source, 'agent');
+    assert.equal(saves[0].command, 'input.click');
+    assert.equal(saves[0].target.nearest.name, 'Save order');
+    const appeared = items.filter(i => i.kind === 'dom').flatMap(i => i.appeared || []);
+    assert(appeared.some(a => a.type === 'heading' && a.text === 'Orders'), 'the first load\'s DOM is recorded (recorder installed at commit)');
+    assert(appeared.some(a => a.type === 'alert' && a.text.startsWith('Saved with key')), JSON.stringify(appeared));
+    assert(appeared.some(a => a.type === 'dialog' && a.text.startsWith('Confirm order')));
+    assert(appeared.some(a => a.type === 'alert' && a.text === 'List refreshed'), 'text put into a live region');
+    assert(!text.includes('eyJhbGciOiJIUzI1NiJ9'), 'a JWT in page text is redacted');
+    assert(!text.includes('abcdefgh12345678'), 'a bearer token in page text is redacted');
+    const many = items.filter(i => i.kind === 'dom' && (i.appeared || []).some(a => a.text?.startsWith('Item ')));
+    assert.equal(many.length, 1);
+    assert.equal(many[0].appeared.length, 20, 'at most 20 entries per item');
+    assert(many[0].appeared_more >= 5);
+    assert(many[0].appeared.every(a => a.text.length <= 120));
+    assert(items.every(i => i.kind !== 'dom' || !('landmarks' in i)));
+    await ok('tabs.close', {
+      tab_id: id
+    });
   });
   await t.test('unpair close halts automatic reconnect', async () => {
     socket.close(4401, 'revoked');

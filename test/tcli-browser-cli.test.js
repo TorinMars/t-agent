@@ -198,28 +198,6 @@ test('net list / get (raw warns), fetch with -X -H -d, errors with exit codes', 
   assert.equal((await run(['query', 'button'])).code, 3);
 });
 
-test('record start / stop / list / show / items / rm', async () => {
-  assert.match((await run(['record', 'start', '--no-dom'])).out, /^Recording rec_kz9_abcd/);
-  assert.deepEqual(last().params, { dom: false });
-  ext.event('record.items', { recording_id: 'rec_kz9_abcd', items: [{ seq: 1, at: 1, kind: 'click', tab_id: 11, url: 'https://shop.test/', target: { tag: 'button', name: 'Buy' } }] });
-  await new Promise(resolve => setTimeout(resolve, 50));
-  assert.match((await run(['record', 'stop'])).out, /^Stopped rec_kz9_abcd: 1 items in 4 s/);
-  const listed = await run(['record', 'list']);
-  assert.match(listed.out, /^rec_kz9_abcd .* stopped\s+1 items/);
-  const shown = await run(['record', 'show', 'rec_kz9_abcd']);
-  assert.match(shown.out, /items {5}1/);
-  assert.match(shown.out, /task {6}21 \(terminal term-b\)/, 'tagged with the terminal that started it');
-  assert.match(shown.out, /kinds {5}click 1/);
-  const items = await run(['record', 'items', 'rec_kz9_abcd']);
-  assert.equal(JSON.parse(items.out.trim()).target.name, 'Buy');
-  const saved = await run(['record', 'items', 'rec_kz9_abcd', '-o', 'rec.jsonl']);
-  assert.match(saved.out, /^Saved .*rec\.jsonl/);
-  assert.equal(fs.readFileSync(path.join(work, 'rec.jsonl'), 'utf8'), items.out);
-  assert.equal((await run(['record', 'show', 'rec_none_0000'])).code, 3);
-  assert.match((await run(['record', 'rm', 'rec_kz9_abcd', '--yes'])).out, /^Removed rec_kz9_abcd/);
-  assert.equal((await run(['record', 'items', 'rec_kz9_abcd'])).code, 3);
-});
-
 test('open --record and the record filters: params, checks, output, the filters in record show', async () => {
   const help = await run(['help']);
   assert.match(help.out, /--record/);
@@ -249,6 +227,28 @@ test('open --record and the record filters: params, checks, output, the filters 
   assert.equal((await run(['record', 'start', '--max-body', '-5'])).code, 1);
   assert.equal(ext.commands.length, count + 2, 'refused options never reach the browser');
   assert.match((await run(['record', 'show', 'rec_kzf_abcd'])).out, /filters {3}only document,xhr · bodies cut at /);
+});
+
+test('record start / stop / list / show / items / rm', async () => {
+  assert.match((await run(['record', 'start', '--no-dom'])).out, /^Recording rec_kz9_abcd/);
+  assert.deepEqual(last().params, { dom: false });
+  ext.event('record.items', { recording_id: 'rec_kz9_abcd', items: [{ seq: 1, at: 1, kind: 'click', tab_id: 11, url: 'https://shop.test/', target: { tag: 'button', name: 'Buy' } }] });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.match((await run(['record', 'stop'])).out, /^Stopped rec_kz9_abcd: 1 items in 4 s/);
+  const listed = await run(['record', 'list']);
+  assert.match(listed.out, /^rec_kz9_abcd .* stopped\s+1 items/);
+  const shown = await run(['record', 'show', 'rec_kz9_abcd']);
+  assert.match(shown.out, /items {5}1/);
+  assert.match(shown.out, /task {6}21 \(terminal term-b\)/, 'tagged with the terminal that started it');
+  assert.match(shown.out, /kinds {5}click 1/);
+  const items = await run(['record', 'items', 'rec_kz9_abcd']);
+  assert.equal(JSON.parse(items.out.trim()).target.name, 'Buy');
+  const saved = await run(['record', 'items', 'rec_kz9_abcd', '-o', 'rec.jsonl']);
+  assert.match(saved.out, /^Saved .*rec\.jsonl/);
+  assert.equal(fs.readFileSync(path.join(work, 'rec.jsonl'), 'utf8'), items.out);
+  assert.equal((await run(['record', 'show', 'rec_none_0000'])).code, 3);
+  assert.match((await run(['record', 'rm', 'rec_kz9_abcd', '--yes'])).out, /^Removed rec_kz9_abcd/);
+  assert.equal((await run(['record', 'items', 'rec_kz9_abcd'])).code, 3);
 });
 
 test('status when nothing is connected: exit 4 and how to pair', async () => {

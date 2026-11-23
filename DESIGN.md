@@ -24,8 +24,9 @@
 
 | File | What is in it | Size |
 | --- | --- | --- |
-| [terminals.md](docs/design/terminals.md) | PTY lifecycle, protocol v2, ending processes, idle cost, terminal order, restore and history, agent (Claude / Codex) terminals, a rename typed into the agent (`/rename`), peer file access (MCP), activity push, file links, clipboard (OSC 52), links opened by programs. | 59 KB |
+| [terminals.md](docs/design/terminals.md) | PTY lifecycle, protocol v2, ending processes, idle cost, terminal order, restore and history, agent (Claude / Codex) terminals, a rename typed into the agent (`/rename`), peer file access (MCP), activity push, file links, clipboard (OSC 52), links opened by programs. | 60 KB |
 | [opencode-terminals.md](docs/design/opencode-terminals.md) | OpenCode as the third agent of terminals: start and resume with the injected config, the session plugin and its reports, binding and names from `opencode.db`, the capability `terminal:opencode`, what is not moved or carried, limits. | 10 KB |
+| [shell-notebook.md](docs/design/shell-notebook.md) | The Shell notebook, server side: a notebook as a terminal row (`agent: 'notebook'`), the .ipynb file (nbformat 4.5), the output normaliser, the kernel (one shell per notebook, OSC 6973 markers, queue, Stop, restart, full-screen programs, input), the API under `…/notebooks/:tid`, its events, remote engines and `terminal:notebook`, limits. | 17 KB |
 | [open-links.md](docs/design/open-links.md) | Web links that programs in a terminal open, opened on the person's device: the cause (Claude Code, Codex), the link shims and relay, the link bar, the Mac app handler, Home Screen apps on iOS and Android. | 11 KB |
 | [agent-chat.md](docs/design/agent-chat.md) | The conversation view of Claude Code / Codex: backends, service, approvals, the chat page. | 43 KB |
 | [tcli.md](docs/design/tcli.md) | The `tcli` command of agent sessions: environment, relay, `tcli oss`, `tcli notify`, exit codes. | 12 KB |

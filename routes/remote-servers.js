@@ -418,6 +418,24 @@ router.get('/:id/tasks/:taskId/agent/conversations/:cid/events', (req, res) => {
   streamRemote(req, res, target.row.base_url, target.token, `${conversationPath(req)}/events?${query}`, { sse: true });
 });
 
+// Shell notebooks run on the Engine of their task (routes/notebooks.js there); the page reaches them through these lines. A notebook can be large (its
+// outputs), so its GET may answer up to 32 MB.
+const notebookPath = req => `${taskPath(req)}/notebooks/${encodeURIComponent(req.params.tid)}`;
+router.get('/:id/tasks/:taskId/notebooks/:tid', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  try { res.set('Cache-Control', 'no-store').json(await request(target.row.base_url, notebookPath(req), target.token, { maxBytes: 32 * 1024 * 1024, timeoutMs: 30_000 })); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+for (const action of ['ops', 'run', 'interrupt', 'restart', 'stop', 'input', 'clear']) {
+  router.post(`/:id/tasks/:taskId/notebooks/:tid/${action}`, forwardJson('POST', req => `${notebookPath(req)}/${action}`));
+}
+router.get('/:id/tasks/:taskId/notebooks/:tid/events', (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  streamRemote(req, res, target.row.base_url, target.token, `${notebookPath(req)}/events`, { sse: true });
+});
+
 // Workspace tools (import unmanaged directories, clean up code directories): return 501 when an old Engine lacks these endpoints.
 async function proxyWorkspace(req, res, pathname, method = 'GET', success = 200) {
   const target = remoteTarget(req, res);
@@ -689,6 +707,12 @@ for (const method of ['get', 'post']) {
       const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:opencode');
       if (supported === null) return;
       if (!supported) return res.status(501).json({ error: 'OPENCODE_UNSUPPORTED' });
+    }
+    // A Shell notebook likewise only on an Engine that advertises 'terminal:notebook' (an older one would make a plain shell).
+    if (method === 'post' && req.body && req.body.agent === 'notebook') {
+      const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:notebook');
+      if (supported === null) return;
+      if (!supported) return res.status(501).json({ error: 'NOTEBOOK_UNSUPPORTED' });
     }
     try {
       const result = await request(row.base_url,

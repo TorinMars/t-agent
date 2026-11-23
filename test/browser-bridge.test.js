@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { bridgeServer, openSocket, fakeExtension, waitFor, SILENT } = require('./helpers/fake-browser-ext');
+const { bridgeServer, openSocket, fakeExtension, waitFor, SILENT, FEATURES } = require('./helpers/fake-browser-ext');
 const { createBrowserRecordings } = require('../services/browser-recordings');
 const { PAIR_ALPHABET, CLOSE } = require('../services/browser-bridge');
 
@@ -228,6 +228,40 @@ test('recordings: record.start tags the task and terminal, record.items are appe
     await waitFor(() => { try { return recordings.get('rec_kz1abd_aaaa').stopped_at; } catch { return null; } });
     assert.equal(recordings.get('rec_kz1abd_aaaa').stop_reason, 'tab closed');
     assert.equal(recordings.get('rec_kz1abd_aaaa').task_id, null, 'started before this server knew it: no task');
+    ext.close();
+  } finally { await close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('options newer than their method: refused for an older extension, passed on to one that lists the feature; open --record is registered', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-bridge-feat-'));
+  const recordings = createBrowserRecordings({ dir });
+  const { bridge, wsUrl, close } = await bridgeServer({ bridgeOptions: { recordings } });
+  try {
+    const { token } = pairOnce(bridge);
+    const handler = (method, params) => {
+      if (method === 'record.start') return { recording_id: 'rec_kz2abc_aaaa', tab_id: 7, url: 'https://shop.test/', options: { network: true, dom: true, bodies: true, types: ['xhr'], drop_other_types: false, max_body_bytes: 100, evil: 'x' } };
+      if (method === 'tabs.open') return params.record ? { tab: { tab_id: 8, url: params.url }, recording_id: 'rec_kz2abd_bbbb', options: { types: null, max_body_bytes: null } } : { tab: { tab_id: 8, url: params.url } };
+      return {};
+    };
+    let ext = await fakeExtension(wsUrl, token, { handler, version: '1.0.3' });
+    for (const [method, params, flag] of [['record.start', { types: ['XHR'] }, '--types'], ['record.start', { max_body_bytes: 10 }, '--max-body'], ['record.start', { types: ['XHR'], drop_other_types: true }, '--types'], ['tabs.open', { url: 'https://a.test/', record: {} }, 'open --record']]) {
+      await assert.rejects(bridge.command(method, params), error => error.code === 'UNKNOWN_METHOD' && error.message.includes(flag) && /older than this command \(version 1\.0\.3.*reload it in chrome:\/\/extensions/.test(error.message), `${method} ${JSON.stringify(params)}`);
+    }
+    assert.equal(ext.commands.length, 0, 'an option an older extension would ignore never reaches it');
+    await bridge.command('record.start', { tab_id: 7 });
+    await bridge.command('tabs.open', { url: 'https://a.test/' });
+    assert.equal(ext.commands.length, 2, 'the old options still work');
+    ext.close();
+    await waitFor(() => !bridge.connected());
+
+    ext = await fakeExtension(wsUrl, token, { handler, features: FEATURES, version: '1.0.4' });
+    await bridge.command('record.start', { tab_id: 7, types: ['XHR'], max_body_bytes: 100 }, { context: { task_id: 3, terminal_id: 't' } });
+    assert.deepEqual(ext.commands.at(-1).params, { tab_id: 7, types: ['XHR'], max_body_bytes: 100 });
+    assert.deepEqual(recordings.get('rec_kz2abc_aaaa').options, { network: true, dom: true, bodies: true, drop_other_types: false, types: ['xhr'], max_body_bytes: 100 }, 'the filters are kept in the summary (known keys only)');
+    const opened = await bridge.command('tabs.open', { url: 'https://shop.test/a', record: { types: ['XHR'] } }, { context: { task_id: 3, terminal_id: 't' } });
+    assert.equal(opened.recording_id, 'rec_kz2abd_bbbb');
+    const summary = recordings.get('rec_kz2abd_bbbb');
+    assert.deepEqual([summary.tab_id, summary.task_id, summary.terminal_id, summary.origins], [8, 3, 't', ['https://shop.test']]);
     ext.close();
   } finally { await close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

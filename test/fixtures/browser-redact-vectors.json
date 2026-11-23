@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "about": "Redaction vectors of the T-Agent browser extension (contract section 5). lib/browser-redact.js (server) and extensions/chrome/redact.js (extension) must both give these results. keys: keyIsSecret(name, value) for query, JSON and form names. headers: redactHeaders(headers). urls: redactUrl(url). bodies: redactBody(body, mime). json: redactJson(value).",
+  "about": "Redaction vectors of the T-Agent browser extension (contract section 5). lib/browser-redact.js (server) and extensions/chrome/redact.js (extension) must both give these results. keys: keyIsSecret(name, value) for query, JSON and form names. headers: redactHeaders(headers). urls: redactUrl(url). bodies: redactBody(body, mime). json: redactJson(value). items: redactDeep(value), the rule for recorded items (texts of what appeared in DOM change items, the context of a click target, the value of an agent action).",
   "rules": [
     "A secret value becomes \"<redacted:N>\", N = the length of the original value (string characters; the digits of a number; the JSON text of an object or array).",
     "Names are split into words at separators and camelCase; the words author, authors, authored, authoring, authorship, coauthor, coauthors, authority, authorities are dropped; the rest, joined with \"_\", is matched with the contract pattern (case-insensitive).",
@@ -578,6 +578,126 @@
           "Authorization": "<redacted:1>"
         },
         "value": "<redacted:61>"
+      }
+    }
+  ],
+  "items": [
+    {
+      "in": {
+        "kind": "dom",
+        "summary": {
+          "added": 3,
+          "removed": 0,
+          "attrs": 1
+        },
+        "appeared": [
+          {
+            "type": "alert",
+            "tag": "div",
+            "role": "alert",
+            "text": "Saved with key eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl"
+          },
+          {
+            "type": "notice",
+            "tag": "div",
+            "text": "Use Bearer abcdefgh12345678 in the header"
+          },
+          {
+            "type": "heading",
+            "tag": "h2",
+            "text": "Author settings"
+          }
+        ]
+      },
+      "out": {
+        "kind": "dom",
+        "summary": {
+          "added": 3,
+          "removed": 0,
+          "attrs": 1
+        },
+        "appeared": [
+          {
+            "type": "alert",
+            "tag": "div",
+            "role": "alert",
+            "text": "Saved with key <redacted:57>"
+          },
+          {
+            "type": "notice",
+            "tag": "div",
+            "text": "Use Bearer <redacted:16> in the header"
+          },
+          {
+            "type": "heading",
+            "tag": "h2",
+            "text": "Author settings"
+          }
+        ]
+      }
+    },
+    {
+      "in": {
+        "kind": "click",
+        "source": "user",
+        "target": {
+          "tag": "svg",
+          "role": "",
+          "name": "",
+          "text": "",
+          "selector": "#icon",
+          "nearest": {
+            "tag": "span",
+            "depth": 1,
+            "aria_label": "Copy eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJlLXZhbHVl",
+            "name": "Refresh list",
+            "text": "",
+            "selector": "#refresh"
+          }
+        }
+      },
+      "out": {
+        "kind": "click",
+        "source": "user",
+        "target": {
+          "tag": "svg",
+          "role": "",
+          "name": "",
+          "text": "",
+          "selector": "#icon",
+          "nearest": {
+            "tag": "span",
+            "depth": 1,
+            "aria_label": "Copy <redacted:57>",
+            "name": "Refresh list",
+            "text": "",
+            "selector": "#refresh"
+          }
+        }
+      }
+    },
+    {
+      "in": {
+        "kind": "input",
+        "source": "agent",
+        "command": "input.type",
+        "target": {
+          "tag": "input",
+          "name": "api_token",
+          "selector": "#key"
+        },
+        "value": "looks-plain"
+      },
+      "out": {
+        "kind": "input",
+        "source": "agent",
+        "command": "input.type",
+        "target": {
+          "tag": "input",
+          "name": "api_token",
+          "selector": "#key"
+        },
+        "value": "<redacted:11>"
       }
     }
   ]

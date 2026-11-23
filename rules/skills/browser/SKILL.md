@@ -50,7 +50,7 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser click e12         # click an element
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser type css:#search "invoices" --submit
 ```
 
-To discover the **requests and APIs** a page uses, capture the network or record the whole interaction:
+To discover the **requests and APIs** a page uses, capture the network or record the whole interaction. To see the first load too, open the page with `--record` instead of reloading it after `record start`. `--types` and `--max-body` keep a recording small (scripts and styles are most of its size); in the items, your own actions have `source: "agent"` and the user's `source: "user"`, click targets have a `nearest` element with its name and text, and `dom` items list what `appeared` (dialogs, alerts, toasts, headings, buttons).
 
 ```bash
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net start
@@ -58,6 +58,8 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net start
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net list --type XHR,Fetch
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net get <req_id>          # one request's method, URL, headers (redacted), shape
 
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser open https://github.com --record --types XHR,Fetch,Document   # record from the first load; bodies only for API calls
+#  or, on a tab that is already open:
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record start             # a full recording (navigations, clicks, inputs, requests)
 #  ... do the action ...
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record stop

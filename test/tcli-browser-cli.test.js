@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const express = require('express');
-const { bridgeServer, fakeExtension, memoryDb } = require('./helpers/fake-browser-ext');
+const { bridgeServer, fakeExtension, memoryDb, FEATURES } = require('./helpers/fake-browser-ext');
 const { createBrowserRecordings } = require('../services/browser-recordings');
 const { createBrowserRelayRouter } = require('../routes/browser-ext');
 
@@ -65,7 +65,7 @@ test.before(async () => {
   env = await bridgeServer({ app, db, bridgeOptions: { recordings } });
   holder.bridge = env.bridge;
   const { token } = env.bridge.pair({ code: env.bridge.createPairCode().code, name: 'Work Chrome' });
-  ext = await fakeExtension(env.wsUrl, token, { handler });
+  ext = await fakeExtension(env.wsUrl, token, { handler, features: FEATURES });
 });
 test.after(async () => {
   ext.close();
@@ -220,6 +220,37 @@ test('net list / get (raw warns), fetch with -X -H -d, errors with exit codes', 
   assert.equal(JSON.parse(refusedJson.err).error, 'TAB_NOT_ALLOWED');
   behaviour['page.query'] = () => { throw Object.assign(new Error('Stale ref'), { code: 'REF_NOT_FOUND' }); };
   assert.equal((await run(['query', 'button'])).code, 3);
+});
+
+test('open --record and the record filters: params, checks, output, the filters in record show', async () => {
+  const help = await run(['help']);
+  assert.match(help.out, /--record/);
+  assert.match(help.out, /--types T/);
+  assert.match(help.out, /--max-body N/);
+  behaviour['tabs.open'] = params => ({ tab: { tab_id: 14, url: params.url, title: '' }, ...(params.record ? { recording_id: 'rec_kzo_abcd' } : {}) });
+  const opened = await run(['open', 'https://shop.test/new', '--record', '--types', 'xhr,FETCH', '--max-body', '1000']);
+  assert.equal(opened.code, 0, opened.err);
+  assert.match(opened.out, /^Opened tab 14: https:\/\/shop\.test\/new\nRecording rec_kzo_abcd from the first load/);
+  assert.deepEqual(last().params, { url: 'https://shop.test/new', record: { types: ['XHR', 'Fetch'], max_body_bytes: 1000 } });
+  await run(['open', 'https://shop.test/plain', '--record']);
+  assert.deepEqual(last().params, { url: 'https://shop.test/plain', record: {} });
+  const count = ext.commands.length;
+  const without = await run(['open', 'https://shop.test/new', '--types', 'XHR']);
+  assert.equal(without.code, 1);
+  assert.match(without.err, /need --record/);
+
+  behaviour['record.start'] = () => ({ recording_id: 'rec_kzf_abcd', tab_id: 11, url: 'https://shop.test/', options: { network: true, dom: true, bodies: true, types: ['document', 'xhr'], drop_other_types: true, max_body_bytes: 0 } });
+  assert.equal((await run(['record', 'start', '--types', 'Document,xhr', '--drop-other-types', '--max-body', '0'])).code, 0);
+  assert.deepEqual(last().params, { types: ['Document', 'XHR'], drop_other_types: true, max_body_bytes: 0 });
+  await run(['record', 'start', '--type', 'XHR']);
+  assert.deepEqual(last().params, { types: ['XHR'] }, '--type is the same as --types');
+  const bogus = await run(['record', 'start', '--types', 'XHR,bogus']);
+  assert.equal(bogus.code, 1);
+  assert.match(bogus.err, /"bogus" is not a resource type/);
+  assert.equal((await run(['record', 'start', '--drop-other-types'])).code, 1);
+  assert.equal((await run(['record', 'start', '--max-body', '-5'])).code, 1);
+  assert.equal(ext.commands.length, count + 2, 'refused options never reach the browser');
+  assert.match((await run(['record', 'show', 'rec_kzf_abcd'])).out, /filters {3}only document,xhr · bodies cut at /);
 });
 
 test('record start / stop / list / show / items / rm', async () => {

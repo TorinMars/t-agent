@@ -26,4 +26,5 @@ test('the extension redaction matches the canonical vectors the server uses', as
   for (const e of v.headers || []) assert.deepEqual(headers(e.in), e.out, `headers ${JSON.stringify(e.in)}`);
   for (const e of v.urls || []) assert.deepEqual(url(e.in), e.out, `url ${e.in}`);
   for (const e of v.json || []) assert.deepEqual(redact(e.in), e.out, `json ${JSON.stringify(e.in)}`);
+  for (const e of v.items || []) assert.deepEqual(redact(e.in), e.out, `item ${JSON.stringify(e.in)}`);
 });

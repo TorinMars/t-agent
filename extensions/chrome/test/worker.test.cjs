@@ -216,7 +216,8 @@ test('worker protocol, tab policy and capture lifecycle without network', {
   });
   const {
     dispatch,
-    methods
+    methods,
+    features
   } = await import('../background.js');
   await tick();
   const socket = Socket.latest;
@@ -237,6 +238,7 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     assert.equal(socket.messages[0].token, 'tab_fixture');
     assert.equal(socket.messages[0].version, require('../manifest.json').version, 'hello carries the manifest version');
     assert.deepEqual(socket.messages[0].methods, methods);
+    assert.deepEqual(socket.messages[0].features, features, 'hello lists the features of options newer than their method');
     assert.equal(methods.length, 26);
     intervals.find(i => i.ms === 20000).fn();
     assert.equal(socket.messages.at(-1).type, 'ping');
@@ -437,6 +439,176 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     await tick();
     assert(socket.messages.some(m => m.event === 'record.stopped' && m.data.recording_id === again.recording_id));
     assert.equal((await dispatch('tabs.list')).tabs.find(t => t.tab_id === 11).capturing, false);
+  });
+  const itemsOf = id => socket.messages.filter(m => m.event === 'record.items' && m.data.recording_id === id).flatMap(m => m.data.items);
+  await t.test('open with record attaches before the first navigation', async () => {
+    const log = [];
+    const real = {
+      create: chrome.tabs.create,
+      update: chrome.tabs.update,
+      attach: chrome.debugger.attach,
+      send: chrome.debugger.sendCommand
+    };
+    chrome.tabs.create = async p => {
+      log.push(`create ${p.url}`);
+      return real.create(p);
+    };
+    chrome.tabs.update = async (id, p) => {
+      if (p.url) log.push(`navigate ${p.url}`);
+      return real.update(id, p);
+    };
+    chrome.debugger.attach = async (...args) => {
+      log.push('attach');
+      return real.attach(...args);
+    };
+    chrome.debugger.sendCommand = async (source, method, p) => {
+      if (method === 'Network.enable') log.push('Network.enable');
+      return real.send(source, method, p);
+    };
+    try {
+      await assert.rejects(dispatch('tabs.open', { url: 'http://localhost/a', record: 'yes' }), /BAD_PARAMS/);
+      await assert.rejects(dispatch('tabs.open', { url: 'http://localhost/a', record: { types: 'XHR' } }), /BAD_PARAMS/);
+      log.length = 0;
+      const r = await dispatch('tabs.open', {
+        url: 'http://localhost/first',
+        record: {
+          types: ['xhr'],
+          max_body_bytes: 100
+        }
+      });
+      assert.deepEqual(log, ['create about:blank', 'attach', 'Network.enable', 'navigate http://localhost/first'], 'the debugger is attached on about:blank, before the page loads');
+      assert.match(r.recording_id, /^rec_/);
+      assert.equal(r.tab.url, 'http://localhost/first');
+      assert.equal(r.tab.how, 'group');
+      assert.deepEqual(r.options.types, ['xhr']);
+      assert.equal(r.options.max_body_bytes, 100);
+      // A late about:blank report does not end the recording.
+      chrome.tabs.onUpdated.fire(r.tab.tab_id, { url: 'about:blank' }, tabs.get(r.tab.tab_id));
+      await tick();
+      assert.equal((await dispatch('tabs.list')).tabs.find(x => x.tab_id === r.tab.tab_id).recording_id, r.recording_id);
+      // The page committed: the recorder goes in at once.
+      const before = injections.length;
+      onEvent.fire({ tabId: r.tab.tab_id }, 'Page.frameNavigated', { frame: { id: 'main', url: 'http://localhost/first' } });
+      await tick();
+      const recorder = injections.slice(before).find(i => i.func.name === 'installRecorder');
+      assert(recorder, 'installRecorder at commit');
+      assert.equal(recorder.injectImmediately, true);
+      assert.equal(recorder.args[0], r.recording_id);
+      await dispatch('record.stop', { recording_id: r.recording_id });
+      const first = itemsOf(r.recording_id)[0];
+      assert.deepEqual([first.kind, first.source, first.action, first.to], ['nav', 'agent', 'open', 'http://localhost/first']);
+      await dispatch('tabs.close', { tab_id: r.tab.tab_id });
+    } finally {
+      Object.assign(chrome.tabs, { create: real.create, update: real.update });
+      Object.assign(chrome.debugger, { attach: real.attach, sendCommand: real.send });
+    }
+  });
+  await t.test('record types and max body: other types keep the item without bodies, or are dropped', async () => {
+    await assert.rejects(dispatch('record.start', { tab_id: 11, drop_other_types: true }), /drop_other_types needs types/);
+    await assert.rejects(dispatch('record.start', { tab_id: 11, types: ['X-HR'] }), /BAD_PARAMS/);
+    await assert.rejects(dispatch('record.start', { tab_id: 11, max_body_bytes: -1 }), /BAD_PARAMS/);
+    const run = async (params, prefix) => {
+      const r = await dispatch('record.start', { tab_id: 11, ...params });
+      commands.length = 0;
+      for (const [n, type] of [['s', 'Script'], ['x', 'XHR']]) {
+        const requestId = `${prefix}${n}`;
+        await event('Network.requestWillBeSent', { requestId, type, request: { url: `http://localhost/${requestId}`, method: 'POST', headers: {}, postData: 'name=a-long-form-value' } });
+        await event('Network.responseReceived', { requestId, response: { status: 200, mimeType: 'application/json', headers: {} } });
+        await event('Network.loadingFinished', { requestId, encodedDataLength: 32 });
+      }
+      const bodyFetches = commands.filter(c => c.method === 'Network.getResponseBody').map(c => c.p.requestId);
+      await dispatch('record.stop', { recording_id: r.recording_id });
+      return { items: itemsOf(r.recording_id), bodyFetches, r };
+    };
+    const kept = await run({ types: ['XHR'], max_body_bytes: 8 }, 'k');
+    assert.deepEqual(kept.bodyFetches, ['kx'], 'only the bodies of the chosen types are fetched');
+    const script = kept.items.find(i => i.kind === 'response' && i.req_id === 'ks');
+    assert.equal(script.body_omitted, 'type');
+    assert.equal(script.response.body, undefined);
+    assert.equal(script.request.post_data, undefined);
+    assert(kept.items.some(i => i.kind === 'request' && i.req_id === 'ks'), 'the request item of another type stays');
+    const xhr = kept.items.find(i => i.kind === 'response' && i.req_id === 'kx');
+    assert(new TextEncoder().encode(xhr.response.body).length <= 8);
+    assert.equal(xhr.response.body_truncated, true);
+    assert.equal(xhr.response.body_bytes, 32, 'the size before the cut');
+    assert(xhr.request.post_data.length <= 8);
+    assert.equal(xhr.request.post_data_truncated, true);
+    assert.equal(xhr.request.post_data_bytes, 22);
+    assert(!JSON.stringify(kept.items).includes('private'), 'bodies are still redacted');
+    const dropped = await run({ types: ['xhr'], drop_other_types: true }, 'd');
+    assert(!dropped.items.some(i => i.req_id === 'ds'), 'no items for other types');
+    assert(dropped.items.some(i => i.kind === 'response' && i.req_id === 'dx' && i.response.body !== undefined));
+    const all = await run({}, 'a');
+    assert.deepEqual(all.bodyFetches, ['as', 'ax'], 'defaults unchanged: every body');
+    assert(all.items.every(i => i.body_omitted === undefined));
+    assert.equal(all.r.options.max_body_bytes, null);
+  });
+  await t.test('agent actions are recorded once with source agent, before their input', async () => {
+    const r = await dispatch('record.start', { tab_id: 11 });
+    const marks = () => injections.filter(i => i.func.name === 'agentWindow');
+    const before = marks().length;
+    // The click item is queued before the debugger sends the mouse event.
+    const realSend = chrome.debugger.sendCommand;
+    let queuedAtMouse = null;
+    chrome.debugger.sendCommand = async (source, method, p) => {
+      if (method === 'Input.dispatchMouseEvent' && queuedAtMouse === null) {
+        await dispatch('record.stop', { recording_id: r.recording_id }).catch(() => {});
+        queuedAtMouse = itemsOf(r.recording_id).filter(i => i.source === 'agent').length;
+      }
+      return realSend(source, method, p);
+    };
+    try {
+      await dispatch('input.click', { tab_id: 11, target: { selector: '#save' } });
+    } finally {
+      chrome.debugger.sendCommand = realSend;
+    }
+    assert.equal(queuedAtMouse, 1, 'the agent item comes before the input it causes');
+    const windows = marks().slice(before).map(i => i.args[0]);
+    assert.equal(windows.length, 2, 'the recorder is told before and after the input');
+    assert(windows[0] >= 1000 && windows[1] <= 500);
+    const click = itemsOf(r.recording_id).find(i => i.source === 'agent');
+    assert.deepEqual([click.kind, click.command, click.target.tag, click.target.name, click.button, click.count], ['click', 'input.click', 'button', 'Save', 'left', 1]);
+
+    const r2 = await dispatch('record.start', { tab_id: 11 });
+    chrome.tabs.reload = async () => {};
+    try {
+      await dispatch('input.type', { tab_id: 11, target: { selector: '#name' }, text: 'hunter2', submit: true });
+      await dispatch('input.press', { tab_id: 11, key: 'a' });
+      await dispatch('input.press', { tab_id: 11, key: 'Enter', modifiers: ['Shift'] });
+      await dispatch('input.select', { tab_id: 11, target: { selector: '#choice' }, values: ['two'] });
+      await dispatch('input.scroll', { tab_id: 11, dy: 300 });
+      tabs.get(11).status = 'complete';
+      await dispatch('tabs.navigate', { tab_id: 11, url: 'http://localhost/handed' });
+      await dispatch('tabs.navigate', { tab_id: 11, action: 'reload' });
+    } finally {
+      delete chrome.tabs.reload;
+    }
+    await dispatch('record.stop', { recording_id: r2.recording_id });
+    const agent = itemsOf(r2.recording_id).filter(i => i.source === 'agent');
+    assert.deepEqual(agent.map(i => `${i.kind} ${i.command || i.action}`), ['input input.type', 'key input.press', 'key input.press', 'change input.select', 'scroll input.scroll', 'nav go', 'nav reload'], 'one item per command (the Enter of --submit is part of the type item)');
+    assert.deepEqual([agent[0].value, agent[0].submit], ['hunter2', true]);
+    assert.equal(agent[1].key, '<redacted:1>', 'a printable key is kept as its length only');
+    assert.deepEqual([agent[2].key, agent[2].modifiers], ['Enter', ['Shift']]);
+    assert.deepEqual(agent[3].values, ['two']);
+    assert.equal(agent[4].dy, 300);
+    assert.deepEqual([agent[5].from, agent[5].to], ['http://localhost/handed', 'http://localhost/handed']);
+    assert.equal(agent[6].transition, 'reload');    commands.length = 0;
+  });
+  await t.test('a typed secret in an agent item is kept as its length only', async () => {
+    const exec = chrome.scripting.executeScript;
+    chrome.scripting.executeScript = async p => p.func.name === 'pageAction' && p.args[0] === 'resolve' ? [{
+      result: { ok: true, result: { ref: 'e2', tag: 'input', type: 'password', name: 'Password', sensitive: true, rect: { x: 0, y: 0, w: 10, h: 10 } } }
+    }] : exec(p);
+    try {
+      const r = await dispatch('record.start', { tab_id: 11 });
+      await dispatch('input.type', { tab_id: 11, target: { selector: '#password' }, text: 'never-in-a-recording' });
+      await dispatch('record.stop', { recording_id: r.recording_id });
+      const text = JSON.stringify(itemsOf(r.recording_id));
+      assert(!text.includes('never-in-a-recording'));
+      assert(text.includes('<redacted:20>'));
+    } finally {
+      chrome.scripting.executeScript = exec;
+    }
   });
   await t.test('debugger busy, CDP input and takeback detach', async () => {
     busy = true;

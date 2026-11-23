@@ -1,6 +1,10 @@
 import { redact, cut } from './redact.js';
 import { pageAction, installRecorder } from './page.js';
-import { captures, cdp, attach, detach, setCaptureEmitter, summary, detail, matches } from './capture.js';
+import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summary, detail, matches } from './capture.js';
+// Features beyond the method names, sent in the hello: the bridge refuses a new option that an older extension would silently ignore
+// (PARAM_FEATURES in services/browser-bridge.js). 1.0.4: `tabs.open` with `record`, record type filters and a body size limit, agent
+// actions in recordings (source 'agent' / 'user'), click target context and the texts of what appeared in DOM change items.
+export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text'];
 export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal'];
 const recordings = new Map(),
   owned = new Set(),
@@ -179,9 +183,67 @@ function flush(r) {
     });
   }
 }
+// The network items of a recording, after its filters ("Recording" in docs/design/browser-extension.md): a request of a type outside
+// `types` keeps its item but loses its bodies (`body_omitted: 'type'`), or is dropped with `drop_other_types`; bodies over `max_body_bytes`
+// are cut (`body_truncated: true`; `body_bytes` / `post_data_bytes` keep the size before the cut).
+const cutBase64 = (b64, bytes) => b64.slice(0, Math.floor(bytes / 3) * 4);
+export function shapeNetwork(r, kind, data) {
+  if (kind === 'request') return !r.types || r.types.has(String(data.type || '').toLowerCase()) || !r.dropOthers ? data : null;
+  const wanted = !r.types || r.types.has(kind === 'ws' ? 'websocket' : String(data.type || '').toLowerCase());
+  if (!wanted && r.dropOthers) return null;
+  if (wanted && r.maxBody === null) return data;
+  const out = { ...data };
+  const fit = (holder, key, flag) => {
+    if (typeof holder[key] !== 'string') return;
+    const c = cut(holder[key], r.maxBody);
+    if (c.truncated) {
+      holder[key] = c.text;
+      holder[flag] = true;
+    }
+  };
+  if (kind === 'ws') {
+    if (wanted) fit(out, 'data', 'truncated');else {
+      delete out.data;
+      out.body_omitted = 'type';
+    }
+    return out;
+  }
+  out.request = { ...data.request };
+  out.response = { ...data.response };
+  if (Array.isArray(data.frames)) out.frames = data.frames.map(f => ({ ...f }));
+  if (!wanted) {
+    delete out.request.post_data;
+    delete out.response.body;
+    delete out.response.body_base64;
+    if (out.frames) for (const f of out.frames) delete f.data;
+    out.body_omitted = 'type';
+    return out;
+  }
+  fit(out.request, 'post_data', 'post_data_truncated');
+  fit(out.response, 'body', 'body_truncated');
+  if (typeof out.response.body_base64 === 'string' && out.response.body_base64.length > Math.ceil(r.maxBody / 3) * 4) {
+    out.response.body_base64 = cutBase64(out.response.body_base64, r.maxBody);
+    out.response.body_truncated = true;
+  }
+  if (out.frames) for (const f of out.frames) fit(f, 'data', 'truncated');
+  return out;
+}
 setCaptureEmitter((id, kind, data) => {
   const r = recordings.get(id);
-  if (r && (!['request', 'response', 'ws'].includes(kind) || r.network)) item(id, kind, data);
+  if (!r) return;
+  if (['request', 'response', 'ws'].includes(kind)) {
+    if (!r.network) return;
+    data = shapeNetwork(r, kind, data);
+    if (!data) return;
+  }
+  item(id, kind, data);
+});
+// A recorded tab committed a new document (or reached DOMContentLoaded): the page recorder goes in at once, so the DOM changes and the
+// person's actions of the first load are recorded too. installRecorder is a no-op when it already runs for this recording.
+setPageListener((id, event, url) => {
+  if (!recordings.has(id) || !owned.has(id) && !handed.has(id)) return;
+  if (event === 'commit' && !scriptable(url)) return;
+  void install(id, true).catch(() => {});
 });
 async function stopRecord(id, reason) {
   const r = recordings.get(id);
@@ -220,15 +282,165 @@ async function release(id) {
     tab_id: id
   });
 }
-async function install(id) {
+async function install(id, immediate = false) {
   const r = recordings.get(id);
   if (r) await chrome.scripting.executeScript({
     target: {
       tabId: id
     },
     func: installRecorder,
-    args: [r.id]
+    args: [r.id, {
+      dom: r.dom
+    }],
+    ...(immediate ? {
+      injectImmediately: true
+    } : {})
   });
+}
+// The options of record.start and of tabs.open's `record`, checked. `types` are CDP resource types (Document, XHR, Fetch, Script, ...), any case.
+function recordOptions(p) {
+  for (const key of ['network', 'dom', 'bodies', 'drop_other_types']) if (p[key] !== undefined && typeof p[key] !== 'boolean') fail('BAD_PARAMS', `${key} must be true or false`);
+  const o = {
+    network: p.network ?? true,
+    dom: p.dom ?? true,
+    bodies: p.bodies ?? true,
+    types: null,
+    dropOthers: false,
+    maxBody: null
+  };
+  if (p.types !== undefined) {
+    if (!Array.isArray(p.types) || !p.types.length || p.types.length > 32 || p.types.some(type => typeof type !== 'string' || !/^[A-Za-z]{1,32}$/.test(type))) fail('BAD_PARAMS', 'types must be a list of resource types such as XHR, Fetch, Document');
+    o.types = new Set(p.types.map(type => type.toLowerCase()));
+  }
+  if (p.drop_other_types) {
+    if (!o.types) fail('BAD_PARAMS', 'drop_other_types needs types');
+    o.dropOthers = true;
+  }
+  if (p.max_body_bytes !== undefined) {
+    if (!Number.isInteger(p.max_body_bytes) || p.max_body_bytes < 0) fail('BAD_PARAMS', 'max_body_bytes must be a non-negative integer');
+    o.maxBody = Math.min(p.max_body_bytes, 2097152);
+  }
+  return o;
+}
+// Starts a recording of tab `id` (attaching the debugger). `inject: false` when the tab has no page yet (tabs.open with `record`): the
+// recorder then goes in when the first document commits (setPageListener).
+async function startRecording(id, p, url, {
+  inject = true
+} = {}) {
+  if (recordings.has(id)) fail('BAD_PARAMS', 'Recording already running');
+  const o = recordOptions(p);
+  const fresh = !captures.has(id);
+  // A capture that `net start` runs keeps its own body rules; the recording's filters then apply to its items only (shapeNetwork).
+  await attach(id, {
+    bodies: o.bodies,
+    ...(fresh ? {
+      body_types: o.types ? [...o.types] : null,
+      ...(o.maxBody !== null ? {
+        max_body_bytes: o.maxBody
+      } : {})
+    } : {})
+  });
+  const r = {
+    id: `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6).padEnd(4, '0')}`,
+    started: Date.now(),
+    count: 0,
+    queue: [],
+    url,
+    dom: o.dom,
+    network: o.network,
+    types: o.types,
+    dropOthers: o.dropOthers,
+    maxBody: o.maxBody,
+    options: {
+      network: o.network,
+      dom: o.dom,
+      bodies: o.bodies,
+      types: o.types ? [...o.types] : null,
+      drop_other_types: o.dropOthers,
+      max_body_bytes: o.maxBody
+    }
+  };
+  recordings.set(id, r);
+  r.timer = setInterval(() => flush(r), 1000);
+  if (inject) try {
+    await install(id);
+  } catch (e) {
+    await stopRecord(id);
+    throw e;
+  }
+  await badge(id);
+  return r;
+}
+// Actions of tcli commands in a recording ("Recording" in docs/design/browser-extension.md): one item per command, source 'agent',
+// emitted before the action so the requests it causes come after it. The page recorder leaves out the events the command causes:
+// agentWindow marks the tab's isolated world for `ms` milliseconds (page.js installRecorder reads __tagentAgentUntil).
+const AGENT_KINDS = {
+  'input.click': 'click',
+  'input.type': 'input',
+  'input.press': 'key',
+  'input.select': 'change',
+  'input.hover': 'hover',
+  'input.scroll': 'scroll'
+};
+function agentWindow(ms) {
+  globalThis.__tagentAgentUntil = Date.now() + ms;
+}
+async function markAgent(id, ms) {
+  try {
+    await chrome.scripting.executeScript({
+      target: {
+        tabId: id
+      },
+      func: agentWindow,
+      args: [ms]
+    });
+  } catch {/* A new document is loading. */}
+}
+const brief = d => d ? d.recorded || {
+  tag: d.tag,
+  role: d.role,
+  name: d.name,
+  selector: d.selector,
+  rect: d.rect,
+  ...(d.type ? {
+    type: d.type
+  } : {}),
+  ...(d.sensitive ? {
+    sensitive: true
+  } : {})
+} : undefined;
+const hidden = target => !!(target && (target.sensitive || String(target.type || '').toLowerCase() === 'password'));
+function agentItem(id, method, p, target) {
+  if (!recordings.has(id) || !AGENT_KINDS[method]) return;
+  const data = {
+    source: 'agent',
+    command: method,
+    ...(target ? {
+      target
+    } : {})
+  };
+  if (method === 'input.click') Object.assign(data, {
+    button: p.button || 'left',
+    count: p.count ?? 1
+  });
+  if (method === 'input.type') Object.assign(data, {
+    value: hidden(target) ? `<redacted:${p.text.length}>` : p.text,
+    ...(p.clear ? {
+      clear: true
+    } : {}),
+    ...(p.submit ? {
+      submit: true
+    } : {})
+  });
+  // A printable key without Control or Meta may be a character of a password: kept as its length only, like typed text in a secret field.
+  if (method === 'input.press') data.key = p.key.length === 1 && !(p.modifiers || []).some(m => m === 'Control' || m === 'Meta') ? '<redacted:1>' : p.key;
+  if (method === 'input.select') data.values = hidden(target) ? p.values.map(v => `<redacted:${String(v).length}>`) : p.values;
+  if (method === 'input.scroll') Object.assign(data, {
+    dx: p.dx ?? 0,
+    dy: p.dy ?? 600
+  });
+  if (p.modifiers?.length) data.modifiers = p.modifiers;
+  item(id, AGENT_KINDS[method], data);
 }
 async function waitLoaded(id, timeout = 15000) {
   const start = Date.now();
@@ -275,6 +487,16 @@ const modifiers = p => (p.modifiers || []).reduce((n, m) => n | ({
   Meta: 4,
   Shift: 8
 }[m] || 0), 0);
+// The tab of a command that opened a page with a recording, while it still shows about:blank: tabInfo needs a scriptable page.
+async function waitCommitted(id, timeout = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const t = await chrome.tabs.get(id);
+    if (scriptable(t.url)) return t;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return chrome.tabs.get(id);
+}
 export async function dispatch(method, p = {}) {
   await ready;
   if (!methods.includes(method)) fail('UNKNOWN_METHOD', method);
@@ -300,8 +522,12 @@ export async function dispatch(method, p = {}) {
   }
   if (method === 'tabs.open') {
     if (!scriptable(p.url)) fail('TAB_NOT_SCRIPTABLE', 'Use an HTTP or HTTPS page');
+    if (p.record !== undefined && (!p.record || typeof p.record !== 'object' || Array.isArray(p.record))) fail('BAD_PARAMS', 'record must be an object');
+    if (p.record) recordOptions(p.record);
+    // With `record`, the tab starts on about:blank, the debugger and the recording attach there, and only then does the tab load the
+    // address: the first load's requests are recorded once, with no reload ("Recording from the first load" in docs/design/browser-extension.md).
     const t = await chrome.tabs.create({
-      url: p.url,
+      url: p.record ? 'about:blank' : p.url,
       active: p.active ?? false
     });
     owned.add(t.id);
@@ -323,15 +549,56 @@ export async function dispatch(method, p = {}) {
       });
       await persist();
       lastTab = t.id;
-      return {
+      if (!p.record) return {
         tab: await tabInfo(await chrome.tabs.get(t.id))
       };
+      const r = await startRecording(t.id, p.record, p.url, {
+        inject: false
+      });
+      // Changes of the tab's address to about:blank that Chrome reports late must not end the recording.
+      r.openingUntil = Date.now() + 15000;
+      item(t.id, 'nav', {
+        source: 'agent',
+        action: 'open',
+        from: 'about:blank',
+        to: p.url,
+        transition: 'navigation'
+      });
+      await chrome.tabs.update(t.id, {
+        url: p.url
+      });
+      const now = await waitCommitted(t.id);
+      r.url = now.url || p.url;
+      r.openingUntil = Date.now() + 3000;
+      let tab;
+      try {
+        tab = await tabInfo(now);
+      } catch {
+        tab = {
+          tab_id: now.id,
+          window_id: now.windowId,
+          url: now.pendingUrl || now.url || p.url,
+          title: now.title,
+          active: now.active,
+          how: 'group',
+          capturing: captures.has(now.id),
+          recording_id: r.id
+        };
+      }
+      return {
+        tab,
+        recording_id: r.id,
+        options: r.options
+      };
     } catch (e) {
+      if (recordings.has(t.id)) await stopRecord(t.id);
       owned.delete(t.id);
       await chrome.tabs.remove(t.id);
       throw e;
     } finally {
       grouping.delete(t.id);
+      // The tab may have finished loading while onUpdated ignored it (grouping): the recorder goes in now (a no-op when it already runs).
+      if (recordings.has(t.id)) void chrome.tabs.get(t.id).then(x => x.status === 'complete' && install(t.id)).catch(() => {});
     }
   }
   // Brings the tab of a T-Agent page to the front (the desktop window's Open session): the tab whose address has this origin and is a top-level page
@@ -405,12 +672,48 @@ export async function dispatch(method, p = {}) {
   }
   if (method === 'tabs.navigate') {
     if (p.url && !scriptable(p.url)) fail('TAB_NOT_SCRIPTABLE', 'Use an HTTP or HTTPS page');
-    if (p.action === 'back' || p.action === 'forward') await historyStep(id, p.action);else if (p.action === 'reload') await chrome.tabs.reload(id);else if (p.url) await chrome.tabs.update(id, {
-      url: p.url
-    });else fail('BAD_PARAMS', 'Supply url or action');
-    return {
-      tab: await tabInfo(p.wait === 'none' ? await chrome.tabs.get(id) : await waitLoaded(id))
-    };
+    const action = ['back', 'forward', 'reload'].includes(p.action) ? p.action : 'go';
+    if (action === 'go' && !p.url) fail('BAD_PARAMS', 'Supply url or action');
+    // In a recording, the address changes this command causes are nav items with source 'agent' (onUpdated reads r.agentNav); a reload
+    // (the address stays) is one item here, and its own address change, if Chrome reports one, is left out.
+    const r = recordings.get(id);
+    if (r) {
+      r.agentNav = {
+        action,
+        until: Infinity,
+        seen: false,
+        quiet: action === 'reload'
+      };
+      if (action === 'reload') item(id, 'nav', {
+        source: 'agent',
+        action,
+        from: t.url,
+        to: t.url,
+        transition: 'reload'
+      });
+    }
+    try {
+      if (action === 'back' || action === 'forward') await historyStep(id, action);else if (action === 'reload') await chrome.tabs.reload(id);else await chrome.tabs.update(id, {
+        url: p.url
+      });
+      const now = p.wait === 'none' ? await chrome.tabs.get(id) : await waitLoaded(id);
+      if (r && recordings.get(id) === r && !r.agentNav.quiet && !r.agentNav.seen && p.wait !== 'none') {
+        if (now.url !== t.url) await new Promise(done => setTimeout(done, 150));
+        // The address did not change (go to the same page): still one item for the command.
+        if (!r.agentNav.seen) item(id, 'nav', {
+          source: 'agent',
+          action,
+          from: t.url,
+          to: now.url,
+          transition: 'navigation'
+        });
+      }
+      return {
+        tab: await tabInfo(now)
+      };
+    } finally {
+      if (r) r.agentNav.until = Date.now() + (p.wait === 'none' ? 5000 : 300);
+    }
   }
   if (method === 'page.eval') {
     if (typeof p.expression !== 'string') fail('BAD_PARAMS', 'expression is required');
@@ -515,7 +818,10 @@ export async function dispatch(method, p = {}) {
     return value;
   }
   if (method === 'net.start') {
-    const s = await attach(id, p);
+    const s = await attach(id, {
+      ...p,
+      body_types: null
+    });
     s.manual = true;
     return {
       capturing: true
@@ -545,30 +851,12 @@ export async function dispatch(method, p = {}) {
     return p.raw ? detail(r, p.body !== false, true) : redact(detail(r, p.body !== false));
   }
   if (method === 'record.start') {
-    if (recordings.has(id)) fail('BAD_PARAMS', 'Recording already running');
-    await attach(id, {
-      bodies: p.bodies ?? true
-    });
-    const r = {
-      id: `rec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6).padEnd(4, '0')}`,
-      started: Date.now(),
-      count: 0,
-      queue: [],
-      url: t.url,
-      dom: p.dom ?? true,
-      network: p.network ?? true
-    };
-    recordings.set(id, r);
-    r.timer = setInterval(() => flush(r), 1000);
-    try {
-      await install(id);
-    } catch (e) {
-      await stopRecord(id);
-      throw e;
-    }
-    await badge(id);
+    const r = await startRecording(id, p, t.url);
     return {
-      recording_id: r.id
+      recording_id: r.id,
+      tab_id: id,
+      url: t.url,
+      options: r.options
     };
   }
   if (method === 'record.stop') {
@@ -668,96 +956,120 @@ export async function dispatch(method, p = {}) {
     }
   }
   if (captures.has(id) && ['input.click', 'input.hover', 'input.type', 'input.press', 'input.scroll'].includes(method)) {
-    if (method === 'input.press') {
-      await cdp(id, 'Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        key: p.key,
-        modifiers: modifiers(p),
-        windowsVirtualKeyCode: {
-          Enter: 13,
-          Tab: 9,
-          Escape: 27,
-          ArrowLeft: 37,
-          ArrowUp: 38,
-          ArrowRight: 39,
-          ArrowDown: 40
-        }[p.key] || p.key.toUpperCase().charCodeAt(0),
-        ...(p.key === 'Enter' ? {
-          text: '\r'
-        } : {})
-      });
-      await cdp(id, 'Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        key: p.key,
-        modifiers: modifiers(p)
-      });
-      return {};
+    const rec = recordings.has(id);
+    if (!rec) return cdpInput(id, method, p);
+    await markAgent(id, 10000);
+    try {
+      return await cdpInput(id, method, p, true);
+    } finally {
+      await markAgent(id, 150);
     }
-    const d = await page(id, 'resolve', {
-      ...p,
-      focus: method === 'input.type',
-      editable: method === 'input.type',
-      target: p.target || {
-        x: 10,
-        y: 10
-      }
-    });
-    const x = p.target?.x ?? d.rect.x + d.rect.w / 2,
-      y = p.target?.y ?? d.rect.y + d.rect.h / 2;
-    if (method === 'input.type') {
-      if (p.clear) await page(id, 'input.type', {
-        ...p,
-        text: '',
-        clear: true,
-        submit: false
-      });
-      await cdp(id, 'Input.insertText', {
-        text: p.text
-      });
-      if (p.submit) await dispatch('input.press', {
-        tab_id: id,
-        key: 'Enter'
-      });
-      return {};
-    }
-    if (method === 'input.scroll') await cdp(id, 'Input.dispatchMouseEvent', {
-      type: 'mouseWheel',
-      x,
-      y,
-      deltaX: p.dx ?? 0,
-      deltaY: p.dy ?? 600
-    });else if (method === 'input.hover') await cdp(id, 'Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x,
-      y,
-      modifiers: modifiers(p)
-    });else for (let n = 1; n <= (p.count ?? 1); n++) {
-      await cdp(id, 'Input.dispatchMouseEvent', {
-        type: 'mousePressed',
-        x,
-        y,
-        button: p.button || 'left',
-        clickCount: n,
-        modifiers: modifiers(p)
-      });
-      await cdp(id, 'Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        x,
-        y,
-        button: p.button || 'left',
-        clickCount: n,
-        modifiers: modifiers(p)
-      });
-    }
-    return method === 'input.click' ? {
-      clicked: {
-        ref: d.ref,
-        tag: d.tag,
-        name: d.name
-      }
-    } : {};
+  }
+  // The page path (input.select, and input without a debugger). In a recording the target is resolved first, so the agent item comes
+  // before the events of the action; pageAction itself keeps the recorder from recording those events (__tagentAgentBusy).
+  if (recordings.has(id) && AGENT_KINDS[method]) {
+    const d = p.target ? await page(id, 'resolve', {
+      target: p.target,
+      focus: false,
+      record_target: true
+    }) : null;
+    agentItem(id, method, p, brief(d));
   }
   return page(id, method, p);
+}
+// Mouse and keyboard through the debugger (trusted events). `rec`: the tab is recording, so the agent item is written before the input.
+async function cdpInput(id, method, p, rec = false) {
+  if (method === 'input.press') {
+    if (rec) agentItem(id, method, p);
+    await cdp(id, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: p.key,
+      modifiers: modifiers(p),
+      windowsVirtualKeyCode: {
+        Enter: 13,
+        Tab: 9,
+        Escape: 27,
+        ArrowLeft: 37,
+        ArrowUp: 38,
+        ArrowRight: 39,
+        ArrowDown: 40
+      }[p.key] || p.key.toUpperCase().charCodeAt(0),
+      ...(p.key === 'Enter' ? {
+        text: '\r'
+      } : {})
+    });
+    await cdp(id, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: p.key,
+      modifiers: modifiers(p)
+    });
+    return {};
+  }
+  const d = await page(id, 'resolve', {
+    ...p,
+    focus: method === 'input.type',
+    editable: method === 'input.type',
+    record_target: rec || undefined,
+    target: p.target || {
+      x: 10,
+      y: 10
+    }
+  });
+  if (rec) agentItem(id, method, p, p.target ? brief(d) : undefined);
+  const x = p.target?.x ?? d.rect.x + d.rect.w / 2,
+    y = p.target?.y ?? d.rect.y + d.rect.h / 2;
+  if (method === 'input.type') {
+    if (p.clear) await page(id, 'input.type', {
+      ...p,
+      text: '',
+      clear: true,
+      submit: false
+    });
+    await cdp(id, 'Input.insertText', {
+      text: p.text
+    });
+    if (p.submit) await cdpInput(id, 'input.press', {
+      tab_id: id,
+      key: 'Enter'
+    });
+    return {};
+  }
+  if (method === 'input.scroll') await cdp(id, 'Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x,
+    y,
+    deltaX: p.dx ?? 0,
+    deltaY: p.dy ?? 600
+  });else if (method === 'input.hover') await cdp(id, 'Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x,
+    y,
+    modifiers: modifiers(p)
+  });else for (let n = 1; n <= (p.count ?? 1); n++) {
+    await cdp(id, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: p.button || 'left',
+      clickCount: n,
+      modifiers: modifiers(p)
+    });
+    await cdp(id, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: p.button || 'left',
+      clickCount: n,
+      modifiers: modifiers(p)
+    });
+  }
+  return method === 'input.click' ? {
+    clicked: {
+      ref: d.ref,
+      tag: d.tag,
+      name: d.name
+    }
+  } : {};
 }
 async function connect() {
   await ready;
@@ -788,7 +1100,8 @@ async function connect() {
         name: config.name || `Chrome on ${navigator.platform}`,
         user_agent: navigator.userAgent
       },
-      methods
+      methods,
+      features
     }, true);
     clearInterval(pingTimer);
     pingTimer = setInterval(() => send({
@@ -962,13 +1275,23 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
       await persist();
     }
     if (change.url) {
-      if (recordings.has(id)) {
-        const r = recordings.get(id);
-        item(id, 'nav', {
+      const r = recordings.get(id);
+      // tabs.open with `record`: Chrome may still report the about:blank the tab started on.
+      if (r && change.url === 'about:blank' && Date.now() < (r.openingUntil || 0)) return;
+      if (r) {
+        // Inside a tcli go / back / forward: the item has source 'agent'. Other address changes (a followed link, a redirect, the
+        // person typing an address) have no source: they are what happened, not an action.
+        const agent = r.agentNav && Date.now() < r.agentNav.until ? r.agentNav : null;
+        if (!agent?.quiet) item(id, 'nav', {
           from: r.url,
           to: change.url,
-          transition: change.status === 'loading' ? 'navigation' : 'history'
+          transition: change.status === 'loading' ? 'navigation' : 'history',
+          ...(agent ? {
+            source: 'agent',
+            action: agent.action
+          } : {})
         });
+        if (agent) agent.seen = true;
         r.url = change.url;
       }
       if (!scriptable(change.url)) {

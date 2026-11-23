@@ -28,6 +28,9 @@ test('extension redaction matches the canonical server vectors', async t => {
   for (const [i, e] of (v.json || []).entries()) {
     await t.test(`json ${i + 1}`, () => assert.deepEqual(redact(e.in), e.out));
   }
+  for (const [i, e] of (v.items || []).entries()) {
+    await t.test(`recorded item ${i + 1}`, () => assert.deepEqual(redact(e.in), e.out));
+  }
 });
 
 test('redaction keeps duplicate keys, writes raw marks and is idempotent', async () => {

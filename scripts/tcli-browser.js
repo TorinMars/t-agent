@@ -22,6 +22,9 @@ over with the extension button)
     --verbose            + methods, recent events
   tabs                   tabs T-Agent may use
   open <url> [--active]  new tab in the group
+    --record             record from the first
+                         load (takes the record
+                         start options)
   close [tab]            close (a handed tab is
                          released, never closed)
   go [tab] <url>         navigate (--no-wait)
@@ -78,9 +81,15 @@ shows while it runs)
     --no-credentials  --body-out file
 
 Recordings (clicks, input, navigation, network,
-DOM changes; kept 14 days in T-Agent)
+DOM changes; kept 14 days in T-Agent; actions of
+your commands have source "agent", the person's
+"user")
   record start           --no-network --no-dom
                          --no-bodies
+    --types T            bodies only for these
+                         types: XHR,Fetch,Document
+    --drop-other-types   and no items for others
+    --max-body N         cut bodies at N bytes
   record stop [id]
   record list
   record show <id>
@@ -177,6 +186,28 @@ function createBrowserGroup(h) {
 
   // The params every command shares: --tab and --browser.
   const common = flags => prune({ tab_id: tabNumber(flags.tab), browser_id: flags.browser });
+
+  // The options of `record start` and `open --record`. --types takes CDP resource types in any case (--type is the same).
+  const RESOURCE_TYPES = ['Document', 'Stylesheet', 'Image', 'Media', 'Font', 'Script', 'TextTrack', 'XHR', 'Fetch', 'Prefetch', 'EventSource', 'WebSocket', 'Manifest', 'SignedExchange', 'Ping', 'CSPViolationReport', 'Preflight', 'Other'];
+  const RECORD_VALUES = ['types', 'type', 'max-body'];
+  const RECORD_BOOLS = ['no-network', 'no-dom', 'no-bodies', 'drop-other-types'];
+  function recordParams(flags) {
+    let types;
+    if (flags.types !== undefined || flags.type !== undefined) {
+      const given = [...(list(flags.types) || []), ...(list(flags.type) || [])];
+      if (!given.length) throw usage('--types needs a list such as XHR,Fetch,Document');
+      types = [...new Set(given.map(name => {
+        const known = RESOURCE_TYPES.find(type => type.toLowerCase() === name.toLowerCase());
+        if (!known) throw usage(`--types: "${name}" is not a resource type; use ${RESOURCE_TYPES.join(', ')}`);
+        return known;
+      }))];
+    }
+    if (flags['drop-other-types'] && !types) throw usage('--drop-other-types needs --types');
+    return prune({
+      network: flags['no-network'] ? false : undefined, dom: flags['no-dom'] ? false : undefined, bodies: flags['no-bodies'] ? false : undefined,
+      types, drop_other_types: flags['drop-other-types'] ? true : undefined, max_body_bytes: wholeNumber(flags['max-body'], '--max-body', { min: 0 }),
+    });
+  }
 
   // ── HTTP ──
   function request(relay, method, route, { body, timeoutMs = DEFAULT_TIMEOUT_MS + HTTP_EXTRA_MS, stream = null } = {}) {
@@ -359,6 +390,12 @@ function createBrowserGroup(h) {
     ];
     const kinds = Object.entries(summary.kinds || {}).map(([kind, count]) => `${kind} ${count}`).join(', ');
     if (kinds) lines.push(`  kinds     ${kinds}`);
+    const options = summary.options || {};
+    const filters = [];
+    if (Array.isArray(options.types)) filters.push(`${options.drop_other_types ? 'only' : 'bodies of'} ${options.types.join(',')}`);
+    if (Number.isInteger(options.max_body_bytes)) filters.push(`bodies cut at ${humanSize(options.max_body_bytes)}`);
+    for (const [key, text] of [['network', 'no network'], ['dom', 'no DOM'], ['bodies', 'no bodies']]) if (options[key] === false) filters.push(text);
+    if (filters.length) lines.push(`  filters   ${filters.join(' · ')}`);
     if (summary.task_id !== null && summary.task_id !== undefined) lines.push(`  task      ${summary.task_id}${summary.terminal_id ? ` (terminal ${summary.terminal_id})` : ''}`);
     return lines.join('\n');
   }
@@ -394,11 +431,16 @@ function createBrowserGroup(h) {
       return [' tab  [how] title  url  (* = active)', ...tabs.map(tabLine)].join('\n');
     }),
     open: {
-      bools: ['active'],
+      values: RECORD_VALUES, bools: ['active', 'record', ...RECORD_BOOLS],
       async run(ctx, flags, positional) {
-        if (positional.length !== 1) throw usage('Usage: tcli browser open <url> [--active]');
-        const answer = await cmd(ctx, 'tabs.open', prune({ browser_id: flags.browser, url: positional[0], active: flags.active ? true : undefined }), { timeoutMs: timeoutOf(flags) });
-        return print(ctx, flags, answer, result => (result && result.tab ? `Opened tab ${result.tab.tab_id}: ${result.tab.url || positional[0]}` : 'Opened'));
+        if (positional.length !== 1) throw usage('Usage: tcli browser open <url> [--active] [--record [--types T] [--max-body N] ...]');
+        const record = recordParams(flags);
+        if (!flags.record && Object.keys(record).length) throw usage('The record options of open need --record');
+        const answer = await cmd(ctx, 'tabs.open', prune({ browser_id: flags.browser, url: positional[0], active: flags.active ? true : undefined, record: flags.record ? record : undefined }), { timeoutMs: timeoutOf(flags) });
+        return print(ctx, flags, answer, result => {
+          const opened = result && result.tab ? `Opened tab ${result.tab.tab_id}: ${result.tab.url || positional[0]}` : 'Opened';
+          return result && result.recording_id ? `${opened}\nRecording ${result.recording_id} from the first load. Use the page, then: tcli browser record stop` : opened;
+        });
       },
     },
     close: simple('tabs.close', (flags, positional) => {
@@ -624,10 +666,10 @@ function createBrowserGroup(h) {
 
   const RECORD = {
     start: {
-      bools: ['no-network', 'no-dom', 'no-bodies'],
+      values: RECORD_VALUES, bools: RECORD_BOOLS,
       async run(ctx, flags, positional) {
-        none(positional, 'tcli browser record start [--no-network] [--no-dom] [--no-bodies]');
-        const params = prune({ ...common(flags), network: flags['no-network'] ? false : undefined, dom: flags['no-dom'] ? false : undefined, bodies: flags['no-bodies'] ? false : undefined });
+        none(positional, 'tcli browser record start [--no-network] [--no-dom] [--no-bodies] [--types T [--drop-other-types]] [--max-body N]');
+        const params = { ...common(flags), ...recordParams(flags) };
         return print(ctx, flags, await cmd(ctx, 'record.start', params, { timeoutMs: timeoutOf(flags) }), answer => `Recording ${answer.recording_id}. Use the page (or let the person use it), then: tcli browser record stop`);
       },
     },

@@ -2,7 +2,7 @@
 
 > Part of the T-Agent design document. The index of all parts is [DESIGN.md](../../DESIGN.md).
 
-The Claude and Codex plan windows (5 hours and 7 days) as eight thin bars in the session header, with the details on a click (the confirmed design "Plan usage bars", Place A). The server half (`GET {base}/agent-usage`, `POST {base}/agent-usage/refresh`, the capability `agent-usage:read`) answers `{ engine, agents: [{ agent, state, account, read_at, windows }] }`; `state` is `ok`, `not_read`, `signed_out` or `error`, `account` a 12-hex hash of the account id (never shown), and a window `{ id: '5h' | '7d', label, usedPercent, resetsAt }`.
+The Claude and Codex plan windows (5 hours and 7 days) as eight thin bars in the session header, with the details on a click (the confirmed design "Plan usage bars", Place A). The server half (`GET {base}/agent-usage`, `POST {base}/agent-usage/refresh`, the capability `agent-usage:read`) answers `{ engine, agents: [{ agent, state, account, read_at, windows }] }`; `state` is `ok`, `not_read`, `signed_out`, `no_plan` (a reading without plan windows: left out of the bars, "Claude on T01 reports no plan limits (an API key, or not signed in)" in the details) or `error`, `account` a 12-hex hash of the account id (never shown), and a window `{ id: '5h' | '7d', label, usedPercent, resetsAt }`.
 
 ## The button
 

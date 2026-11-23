@@ -148,6 +148,9 @@ test('states: signed_out from the agent or from no login, error otherwise; windo
   const noLogin = setup({ claude: fakeAgent(() => { throw new Error('exit code 1'); }), accounts: {}, installed: { claude: true, codex: false } });
   assert.equal((await noLogin.usage.refresh()).agents[0].state, 'signed_out', 'a failed reading without a login in the files is signed out');
   assert.equal((await setup({ installed: { claude: false, codex: false } }).usage.get()).agents.length, 0);
+  // A reading that works but has no plan window (an API key, or Claude signed out, whose usage call answers without limits) is no_plan.
+  const noPlan = setup({ claude: fakeAgent(() => []), installed: { claude: true, codex: false } });
+  assert.deepEqual((await noPlan.usage.refresh()).agents.map(entry => [entry.agent, entry.state, entry.windows.length]), [['claude', 'no_plan', 0]]);
   for (const message of ['Not logged in · Please run /login', 'Invalid API key · Please run /login', 'HTTP 401 Unauthorized']) assert.ok(signedOutError(new Error(message)), message);
   for (const message of ['ETIMEDOUT', 'socket hang up']) assert.equal(signedOutError(new Error(message)), false, message);
 });

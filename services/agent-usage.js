@@ -98,16 +98,21 @@ function cleanWindow(entry) {
   const resetsAt = Number(entry.resetsAt);
   return { id: entry.id, label: entry.id, usedPercent: Math.max(0, Math.min(100, usedPercent)), resetsAt: entry.resetsAt !== null && Number.isFinite(resetsAt) ? resetsAt : null };
 }
-const STATES = new Set(['ok', 'not_read', 'signed_out', 'error']);
+const STATES = new Set(['ok', 'not_read', 'signed_out', 'no_plan', 'error']);
 function cleanUsage(usage) {
   if (!usage || !AGENTS.includes(usage.agent)) return null;
-  const state = STATES.has(usage.state) ? usage.state : 'error';
+  const known = STATES.has(usage.state) ? usage.state : 'error';
   const readAt = Number(usage.read_at);
+  const windows = known === 'ok' && Array.isArray(usage.windows) ? usage.windows.map(cleanWindow).filter(Boolean) : [];
+  // A reading that worked but has no 5-hour or 7-day window: the agent has no plan limits there (an API key, or Claude signed out, whose usage
+  // call answers without limits). It is `no_plan`, so the page leaves it out of the bars instead of waiting for a reading ("States" in
+  // docs/design/plan-usage.md).
+  const state = known === 'ok' && !windows.length ? 'no_plan' : known;
   return {
     agent: usage.agent, state,
     account: typeof usage.account === 'string' && /^[0-9a-f]{12}$/.test(usage.account) ? usage.account : null,
     read_at: usage.read_at !== null && Number.isFinite(readAt) ? readAt : null,
-    windows: state === 'ok' && Array.isArray(usage.windows) ? usage.windows.map(cleanWindow).filter(Boolean) : [],
+    windows,
   };
 }
 function cleanAnswer(answer) {

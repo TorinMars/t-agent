@@ -258,6 +258,7 @@ I18n.add({
   '{1} is offline · read {2} days ago': '{1} 已离线 · {2} 天前读取',
   '{1} is offline · not read yet': '{1} 已离线 · 尚未读取',
   '{1} is not signed in on {2}': '{1} 在 {2} 上未登录',
+  '{1} on {2} reports no plan limits (an API key, or not signed in)': '{1} 在 {2} 上没有套餐额度（使用 API key，或未登录）',
   'Could not read {1} on {2}': '无法读取 {2} 上的 {1}',
   '{1} uses the same {2} account.': '{1} 使用同一个 {2} 账号。',
   '{1} use the same {2} account.': '{1} 使用同一个 {2} 账号。',

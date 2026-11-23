@@ -102,7 +102,7 @@ export function windowView(entry, now, readAt = now) {
 //   outlined (not_read: bars without fill), lowText ("7d 8%": the low windows, shown beside the bars on a computer) }.
 export function agentView(usage, now) {
   const agent = usage && usage.agent;
-  const state = ['ok', 'not_read', 'signed_out', 'error'].includes(usage && usage.state) ? usage.state : 'error';
+  const state = ['ok', 'not_read', 'signed_out', 'no_plan', 'error'].includes(usage && usage.state) ? usage.state : 'error';
   const readAt = Number(usage && usage.read_at) || null;
   const entries = state === 'ok' && Array.isArray(usage.windows) ? usage.windows.filter(entry => entry && WINDOW_IDS.includes(entry.id || entry.label)) : [];
   entries.sort((a, b) => WINDOW_IDS.indexOf(a.id || a.label) - WINDOW_IDS.indexOf(b.id || b.label));
@@ -175,6 +175,7 @@ export function usageModel({ readings = {}, sources = [], shownKey = 'local', no
 export function agentMessage(view, engine) {
   if (view.state === 'not_read' || (view.state === 'ok' && !view.windows.length)) return 'Not read yet';
   if (view.state === 'signed_out') return `${view.name} is not signed in on ${engine}`;
+  if (view.state === 'no_plan') return `${view.name} on ${engine} reports no plan limits (an API key, or not signed in)`;
   if (view.state === 'error') return `Could not read ${view.name} on ${engine}`;
   return '';
 }

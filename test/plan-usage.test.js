@@ -85,6 +85,9 @@ test('not read yet: outlined bars with no fill; signed out and errors are left o
   const error = agentView({ agent: 'claude', state: 'error', account: null, read_at: NOW, windows: [] }, NOW);
   assert.equal(error.inBars, false);
   assert.equal(agentMessage(error, 'T01'), 'Could not read Claude on T01');
+  const noPlan = agentView({ agent: 'claude', state: 'no_plan', account: null, read_at: NOW, windows: [] }, NOW);
+  assert.equal(noPlan.inBars, false, 'no plan limits: not in the bars');
+  assert.equal(agentMessage(noPlan, 'T01'), 'Claude on T01 reports no plan limits (an API key, or not signed in)');
 });
 
 test('reset texts: within a day "resets in 3 h 10 min · 18:30", later "resets Fri 09:00"', async () => {

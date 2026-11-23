@@ -35,12 +35,62 @@ Commands
   rm <site> --yes        delete the entry
   search <text>          find text in summaries,
                          actions and APIs
+  schema                 the entry format: every
+                         field, its type, limits
+                         and an example (--json)
 
 <site> is a host like github.com (lowercased,
 without www.). Options: --json prints the raw
 JSON answer. Entries never hold raw secrets: the
 server redacts a saved entry and refuses one that
 still looks like a token (SITE_HAS_SECRET).
+A save that is not valid lists every problem
+as "field: problem" in one error.
+`;
+
+// ── The entry format ──
+// From ENTRY_SCHEMA of services/browser-sites.js, the object the server validates with, so help, `site schema` and the validator cannot disagree.
+const entrySchema = () => require('../services/browser-sites');
+const plainType = spec => {
+  switch (spec.type) {
+    case 'text': return spec.max_chars ? `text, at most ${spec.max_chars} characters` : `text${spec.max_bytes ? `, at most ${spec.max_bytes} bytes` : ''}`;
+    case 'list': return `list of ${spec.items.type === 'object' ? 'objects' : spec.items.type === 'one_of' ? spec.items.options.map(plainItem).join(' or ') : plainItem(spec.items)}${spec.max_items ? ` (at most ${spec.max_items})` : ''}`;
+    case 'object': return 'object';
+    case 'map': return `object of name: ${plainItem(spec.values)}`;
+    case 'flag': return 'true or false';
+    case 'time': return 'time (ms since 1970)';
+    case 'one_of': return spec.options.map(plainItem).join(' or ');
+    default: return spec.type;
+  }
+};
+const plainItem = spec => (spec.type === 'object' ? 'objects' : spec.type === 'text' ? 'text' : plainType(spec));
+// One line per field ("name *" when required), the fields of an object (or of a list of objects) indented below it.
+function schemaLines(fields, { indent = '  ', describe = true } = {}) {
+  const lines = [];
+  for (const [name, spec] of Object.entries(fields)) {
+    const label = `${indent}${name}${spec.required ? ' *' : ''}`;
+    const type = describe ? plainType(spec) : spec.type === 'text' ? 'text' : plainType(spec).replace(/ \(at most \d+\)/, ''); // help: limits in `site schema`
+    lines.push(`${label.padEnd(describe ? 22 : 20)} ${type}${describe && spec.description ? `: ${spec.description}` : ''}`);
+    const inner = spec.type === 'object' ? spec : spec.type === 'list' && spec.items.type === 'object' ? spec.items
+      : spec.type === 'list' && spec.items.type === 'one_of' ? spec.items.options.find(option => option.type === 'object') : null;
+    if (inner) lines.push(...schemaLines(inner.fields, { indent: `${indent}  `, describe }));
+  }
+  return lines;
+}
+function formatSchema({ ENTRY_SCHEMA, ENTRY_EXAMPLE }) {
+  return [
+    'A site entry (tcli site save <site> --file entry.json). * = required.',
+    ENTRY_SCHEMA.description,
+    '',
+    ...schemaLines(ENTRY_SCHEMA.fields),
+    '',
+    'Example:',
+    JSON.stringify(ENTRY_EXAMPLE, null, 2),
+  ].join('\n');
+}
+const formatHelp = () => `\nEntry format (* = required; tcli site schema for
+the details and an example)
+${schemaLines(entrySchema().ENTRY_SCHEMA.fields, { describe: false }).join('\n')}
 `;
 
 // ── Output ──
@@ -165,6 +215,14 @@ async function siteRm({ relay, flags, positional, out }) {
   return tcli().EXIT.ok;
 }
 
+// The entry format, read from this install's code: it needs no T-Agent terminal.
+async function siteSchema({ flags, positional, out }) {
+  if (positional.length) throw usage('Usage: tcli site schema [--json]');
+  const { ENTRY_SCHEMA, ENTRY_EXAMPLE } = entrySchema();
+  out(flags.json ? JSON.stringify({ schema: ENTRY_SCHEMA, example: ENTRY_EXAMPLE }, null, 2) : formatSchema({ ENTRY_SCHEMA, ENTRY_EXAMPLE }));
+  return tcli().EXIT.ok;
+}
+
 async function siteSearch({ relay, flags, positional, out }) {
   if (!positional.length) throw usage('Usage: tcli site search <text>');
   const text = positional.join(' ');
@@ -174,7 +232,7 @@ async function siteSearch({ relay, flags, positional, out }) {
 }
 
 const GROUP = {
-  help: HELP,
+  get help() { return HELP + formatHelp(); },
   commands: {
     list: { run: siteList, values: ['query'] },
     show: { run: siteShow },
@@ -182,7 +240,8 @@ const GROUP = {
     edit: { run: siteEdit, values: ['file', 'set'] },
     rm: { run: siteRm, bools: ['yes'] },
     search: { run: siteSearch },
+    schema: { run: siteSchema, local: true },
   },
 };
 
-module.exports = { GROUP, HELP, formatList, formatEntry, formatSearch };
+module.exports = { GROUP, HELP, formatList, formatEntry, formatSearch, formatSchema };

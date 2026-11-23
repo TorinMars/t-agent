@@ -110,6 +110,35 @@ test('save from a .md file stores it as the summary', async () => {
   assert.equal(JSON.parse(show.out).summary, '# Example\nA demo site.');
 });
 
+test('a save with several problems lists them all in one error (exit 1); --json carries the list', async () => {
+  const jsonFile = path.join(work, 'broken.json');
+  fs.writeFileSync(jsonFile, JSON.stringify({ apis: [{ name: 'a', params: 'id' }], sources: ['rec_1'] }));
+  const save = await run(['site', 'save', 'broken.com', '--file', jsonFile]);
+  assert.equal(save.code, 1);
+  assert.match(save.err, /The entry has 2 problems/);
+  assert.match(save.err, /apis\[0\]\.params: must be a list/);
+  assert.match(save.err, /sources\[0\]: must be an object/);
+  assert.match(save.err, /\(INVALID_SITE\)/);
+  const json = JSON.parse((await run(['site', 'save', 'broken.com', '--file', jsonFile, '--json'])).err);
+  assert.equal(json.error, 'INVALID_SITE');
+  assert.equal(json.problems.length, 2);
+});
+
+test('site schema prints the format the server checks, outside a T-Agent terminal too; site help has the fields', async () => {
+  const { ENTRY_SCHEMA, ENTRY_EXAMPLE } = require('../services/browser-sites');
+  const text = await run(['site', 'schema'], { env: { PATH: process.env.PATH, HOME: work } });
+  assert.equal(text.code, 0);
+  assert.match(text.out, /pattern \*\s+text, at most 4096 bytes: /);
+  assert.match(text.out, /params\s+list of text or objects \(at most 100\)/);
+  assert.match(text.out, /Example:\n\{/);
+  const json = JSON.parse((await run(['site', 'schema', '--json'])).out);
+  assert.deepEqual(json, JSON.parse(JSON.stringify({ schema: ENTRY_SCHEMA, example: ENTRY_EXAMPLE })));
+  const help = await run(['site', 'help']);
+  assert.match(help.out, /Entry format/);
+  assert.match(help.out, /\n {4}pattern \*\s+text\n/);
+  assert.match(help.out, /schema\s+the entry format/);
+});
+
 test('a save that leaks a secret exits 1 with SITE_HAS_SECRET', async () => {
   const jsonFile = path.join(work, 'bad.json');
   fs.writeFileSync(jsonFile, JSON.stringify({ notes: 'token is NOTAREALKEY0000testfixture1234567890abcd' }));

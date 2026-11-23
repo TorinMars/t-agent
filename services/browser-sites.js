@@ -63,109 +63,175 @@ function normalizeHost(input) {
   return host;
 }
 
-// ---- Validation of the authored shape ----
+// ---- The entry format and its validation ----
+// ENTRY_SCHEMA is the one description of an entry: buildEntry() validates against it, and `tcli site schema` / `tcli site help` print it, so the
+// format the model reads is the format the server checks. Node kinds: text (max_bytes, max_chars, uppercase), list (max_items, items), object
+// (fields; unknown keys are dropped), map (text keys to values), flag (any value, stored as true or false), time (milliseconds since 1970) and
+// one_of (options). A list that is left out is stored as an empty list; a text that is left out or empty is not stored.
 const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-function str(value, field, { max = LIMITS.stringField, required = false } = {}) {
-  if (value === undefined || value === null || value === '') {
-    if (required) throw new BrowserSiteError('INVALID_SITE', `${field} is required`);
-    return undefined;
+const text = (description, extra = {}) => ({ type: 'text', max_bytes: LIMITS.stringField, description, ...extra });
+const ENTRY_SCHEMA = Object.freeze({
+  type: 'object',
+  description: 'One site entry: what has been learnt about one host. Unknown fields are dropped; site and the sync fields (updated_at, updated_by, version) are set by the server.',
+  fields: {
+    title: text('A short name of the site', { max_chars: LIMITS.titleChars, max_bytes: LIMITS.titleChars * 4 }),
+    summary: text('Markdown: what the site is and how to use it', { max_bytes: LIMITS.summaryBytes }),
+    pages: {
+      type: 'list', max_items: LIMITS.pages, description: 'The useful URLs',
+      items: { type: 'object', description: 'A page', fields: {
+        pattern: text('The URL, a template with {param} allowed', { required: true }),
+        purpose: text('What the page is for'),
+      } },
+    },
+    actions: {
+      type: 'list', max_items: LIMITS.actions, description: 'How to do a thing on the site',
+      items: { type: 'object', description: 'An action', fields: {
+        name: text('A short name, like "search repositories"', { required: true }),
+        description: text('What it does'),
+        steps: { type: 'list', max_items: LIMITS.stepsPerAction, description: 'Plain steps or tcli browser commands', items: text('One step', { required: true }) },
+        selectors: { type: 'map', description: 'Named CSS selectors the steps use', values: text('A CSS selector', { required: true }) },
+      } },
+    },
+    apis: {
+      type: 'list', max_items: LIMITS.apis, description: 'The requests the site makes that are worth calling',
+      items: { type: 'object', description: 'An API', fields: {
+        name: text('A short name', { required: true }),
+        method: text('GET, POST, ... (stored in upper case)', { uppercase: true }),
+        url: text('A template with {param}'),
+        description: text('What it returns or does'),
+        auth: text('How it is authorised, never the secret itself: "page cookies"'),
+        params: {
+          type: 'list', max_items: LIMITS.paramsPerApi, description: 'Its parameters',
+          items: { type: 'one_of', description: 'A parameter name, or an object', options: [
+            text('The parameter name'),
+            { type: 'object', description: 'A parameter', fields: {
+              name: text('The parameter name', { required: true }),
+              description: text('What it means'),
+              required: { type: 'flag', description: 'Whether it is needed' },
+            } },
+          ] },
+        },
+        request_example: text('An example request, secrets replaced by placeholders', { max_bytes: LIMITS.notesBytes }),
+        response_shape: text('The shape of the answer', { max_bytes: LIMITS.notesBytes }),
+      } },
+    },
+    notes: text('Anything else worth knowing', { max_bytes: LIMITS.notesBytes }),
+    sources: {
+      type: 'list', max_items: LIMITS.sources, description: 'Where this was learnt',
+      items: { type: 'object', description: 'A source', fields: {
+        recording_id: text('A recording of tcli browser record'),
+        at: { type: 'time', description: 'When, in milliseconds since 1970' },
+      } },
+    },
+  },
+});
+
+const ENTRY_EXAMPLE = Object.freeze({
+  title: 'GitHub',
+  summary: '# GitHub\nCode hosting. Sign in is needed for private repositories.',
+  pages: [{ pattern: 'https://github.com/{owner}/{repo}', purpose: 'A repository' }],
+  actions: [{
+    name: 'search repositories',
+    description: 'Search the whole site',
+    steps: ['tcli browser open https://github.com', 'tcli browser type css:#query-builder-test "QUERY" --submit'],
+    selectors: { search: '#query-builder-test' },
+  }],
+  apis: [{
+    name: 'list repos', method: 'GET', url: 'https://api.github.com/users/{user}/repos', auth: 'page cookies',
+    description: 'The public repositories of a user', params: ['user', { name: 'per_page', description: 'Page size', required: false }],
+    request_example: 'GET https://api.github.com/users/octocat/repos?per_page=5', response_shape: '[{ id, name, full_name, private }]',
+  }],
+  notes: 'Two-factor sign-in is required.',
+  sources: [{ recording_id: 'rec_abc_1234', at: 1763700000000 }],
+});
+
+const MAX_PROBLEMS = 50;
+
+// Checks one value against its schema node and returns the clean value (undefined: not stored). Every problem is pushed to `problems` as
+// { field, problem, code }, so one save reports all of them.
+function checkValue(spec, value, field, problems) {
+  const add = (problem, code = 'INVALID_SITE') => { problems.push({ field: field || '(entry)', problem, code }); };
+  const missing = value === undefined || value === null;
+  switch (spec.type) {
+    case 'text': {
+      if (missing || value === '') { if (spec.required) add('is required'); return undefined; }
+      if (typeof value !== 'string') { add('must be text'); return undefined; }
+      if (spec.max_chars && [...value].length > spec.max_chars) { add(`is too long (over ${spec.max_chars} characters)`, 'SITE_TOO_LARGE'); return undefined; }
+      if (spec.max_bytes && byteLength(value) > spec.max_bytes) { add(`is too large (over ${spec.max_bytes} bytes)`, 'SITE_TOO_LARGE'); return undefined; }
+      return spec.uppercase ? value.toUpperCase() : value;
+    }
+    case 'list': {
+      if (missing) { if (spec.required) add('is required'); return []; }
+      if (!Array.isArray(value)) { add('must be a list'); return []; }
+      if (spec.max_items && value.length > spec.max_items) { add(`has too many items (over ${spec.max_items})`, 'SITE_TOO_LARGE'); return []; }
+      return value.map((item, i) => checkValue(spec.items, item, `${field}[${i}]`, problems)).filter(item => item !== undefined);
+    }
+    case 'object': {
+      if (missing) { if (spec.required) add('is required'); return undefined; }
+      if (!isObject(value)) { add('must be an object'); return undefined; }
+      const out = {};
+      for (const [name, child] of Object.entries(spec.fields)) {
+        const clean = checkValue(child, value[name], field ? `${field}.${name}` : name, problems);
+        if (clean !== undefined) out[name] = clean;
+      }
+      return out;
+    }
+    case 'map': {
+      if (missing) return undefined;
+      if (!isObject(value)) { add('must be an object'); return undefined; }
+      const out = {};
+      for (const [name, item] of Object.entries(value)) {
+        if (!name) { add('has an empty name'); continue; }
+        const clean = checkValue(spec.values, item, `${field}.${name}`, problems);
+        if (clean !== undefined) out[name] = clean;
+      }
+      return out;
+    }
+    case 'flag': return value === undefined ? undefined : Boolean(value);
+    case 'time': {
+      if (missing) return undefined;
+      const at = Number(value);
+      if (typeof value === 'boolean' || !Number.isFinite(at)) { add('must be a time (milliseconds since 1970)'); return undefined; }
+      return at;
+    }
+    case 'one_of': {
+      if (missing) return undefined;
+      const option = spec.options.find(choice => (choice.type === 'text' ? typeof value === 'string' : choice.type === 'object' ? isObject(value) : false));
+      if (!option) { add(`must be ${spec.options.map(choice => (choice.type === 'text' ? 'text' : 'an object')).join(' or ')}`); return undefined; }
+      return checkValue(option, value, field, problems);
+    }
+    default: throw new Error(`Unknown schema type ${spec.type}`);
   }
-  if (typeof value !== 'string') throw new BrowserSiteError('INVALID_SITE', `${field} must be text`);
-  if (byteLength(value) > max) throw new BrowserSiteError('SITE_TOO_LARGE', `${field} is too large (over ${max} bytes)`);
-  return value;
 }
 
-function arr(value, field, max) {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new BrowserSiteError('INVALID_SITE', `${field} must be a list`);
-  if (value.length > max) throw new BrowserSiteError('SITE_TOO_LARGE', `${field} has too many items (over ${max})`);
-  return value;
+// The error for a list of problems: INVALID_SITE, or SITE_TOO_LARGE when every problem is a size. The message lists each as "field: problem".
+function problemsError(problems) {
+  const code = problems.every(item => item.code === 'SITE_TOO_LARGE') ? 'SITE_TOO_LARGE' : 'INVALID_SITE';
+  const lines = problems.slice(0, MAX_PROBLEMS).map(item => `${item.field}: ${item.problem}`);
+  if (problems.length > MAX_PROBLEMS) lines.push(`... and ${problems.length - MAX_PROBLEMS} more`);
+  const message = problems.length === 1
+    ? `${lines[0]} (the entry format: tcli site schema)`
+    : `The entry has ${problems.length} problems (the entry format: tcli site schema):\n  ${lines.join('\n  ')}`;
+  const error = new BrowserSiteError(code, message);
+  error.problems = problems.slice(0, MAX_PROBLEMS).map(({ field, problem }) => ({ field, problem }));
+  return error;
 }
 
-// Builds the canonical, validated entry from an author's object. Unknown top-level keys are dropped. The sync clock fields are set by the caller.
+// Every problem of an author's object, without saving: [] when it is a valid entry.
+function validateEntry(input) {
+  const problems = [];
+  checkValue(ENTRY_SCHEMA, input, '', problems);
+  return problems;
+}
+
+// Builds the canonical, validated entry from an author's object. Unknown keys are dropped. The sync clock fields are set by the caller. Throws one
+// BrowserSiteError with every problem (its `problems` list) when anything is wrong.
 function buildEntry(host, input) {
-  if (!isObject(input)) throw new BrowserSiteError('INVALID_SITE', 'The entry must be an object');
-  const entry = { site: host };
-  const title = str(input.title, 'title', { max: LIMITS.titleChars * 4 });
-  if (title !== undefined) {
-    if ([...title].length > LIMITS.titleChars) throw new BrowserSiteError('SITE_TOO_LARGE', `title is too long (over ${LIMITS.titleChars} characters)`);
-    entry.title = title;
-  }
-  const summary = str(input.summary, 'summary', { max: LIMITS.summaryBytes });
-  if (summary !== undefined) entry.summary = summary;
-
-  entry.pages = arr(input.pages, 'pages', LIMITS.pages).map((page, i) => {
-    if (!isObject(page)) throw new BrowserSiteError('INVALID_SITE', `pages[${i}] must be an object`);
-    const out = {};
-    const pattern = str(page.pattern, `pages[${i}].pattern`, { required: true });
-    out.pattern = pattern;
-    const purpose = str(page.purpose, `pages[${i}].purpose`);
-    if (purpose !== undefined) out.purpose = purpose;
-    return out;
-  });
-
-  entry.actions = arr(input.actions, 'actions', LIMITS.actions).map((action, i) => {
-    if (!isObject(action)) throw new BrowserSiteError('INVALID_SITE', `actions[${i}] must be an object`);
-    const out = { name: str(action.name, `actions[${i}].name`, { required: true }) };
-    const description = str(action.description, `actions[${i}].description`);
-    if (description !== undefined) out.description = description;
-    out.steps = arr(action.steps, `actions[${i}].steps`, LIMITS.stepsPerAction).map((step, j) => {
-      const value = str(step, `actions[${i}].steps[${j}]`, { required: true });
-      return value;
-    });
-    if (action.selectors !== undefined && action.selectors !== null) {
-      if (!isObject(action.selectors)) throw new BrowserSiteError('INVALID_SITE', `actions[${i}].selectors must be an object`);
-      const selectors = {};
-      for (const [name, value] of Object.entries(action.selectors)) selectors[str(name, `actions[${i}].selectors key`, { required: true })] = str(value, `actions[${i}].selectors.${name}`, { required: true });
-      out.selectors = selectors;
-    }
-    return out;
-  });
-
-  entry.apis = arr(input.apis, 'apis', LIMITS.apis).map((api, i) => {
-    if (!isObject(api)) throw new BrowserSiteError('INVALID_SITE', `apis[${i}] must be an object`);
-    const out = { name: str(api.name, `apis[${i}].name`, { required: true }) };
-    const method = str(api.method, `apis[${i}].method`);
-    if (method !== undefined) out.method = method.toUpperCase();
-    const url = str(api.url, `apis[${i}].url`);
-    if (url !== undefined) out.url = url;
-    const description = str(api.description, `apis[${i}].description`);
-    if (description !== undefined) out.description = description;
-    const auth = str(api.auth, `apis[${i}].auth`);
-    if (auth !== undefined) out.auth = auth;
-    out.params = arr(api.params, `apis[${i}].params`, LIMITS.paramsPerApi).map((param, j) => {
-      if (typeof param === 'string') return str(param, `apis[${i}].params[${j}]`);
-      if (!isObject(param)) throw new BrowserSiteError('INVALID_SITE', `apis[${i}].params[${j}] must be text or an object`);
-      const p = { name: str(param.name, `apis[${i}].params[${j}].name`, { required: true }) };
-      const pDesc = str(param.description, `apis[${i}].params[${j}].description`);
-      if (pDesc !== undefined) p.description = pDesc;
-      if (param.required !== undefined) p.required = Boolean(param.required);
-      return p;
-    });
-    const requestExample = str(api.request_example, `apis[${i}].request_example`, { max: LIMITS.notesBytes });
-    if (requestExample !== undefined) out.request_example = requestExample;
-    const responseShape = str(api.response_shape, `apis[${i}].response_shape`, { max: LIMITS.notesBytes });
-    if (responseShape !== undefined) out.response_shape = responseShape;
-    return out;
-  });
-
-  const notes = str(input.notes, 'notes', { max: LIMITS.notesBytes });
-  if (notes !== undefined) entry.notes = notes;
-
-  entry.sources = arr(input.sources, 'sources', LIMITS.sources).map((source, i) => {
-    if (!isObject(source)) throw new BrowserSiteError('INVALID_SITE', `sources[${i}] must be an object`);
-    const out = {};
-    const recordingId = str(source.recording_id, `sources[${i}].recording_id`);
-    if (recordingId !== undefined) out.recording_id = recordingId;
-    if (source.at !== undefined && source.at !== null) {
-      const at = Number(source.at);
-      if (!Number.isFinite(at)) throw new BrowserSiteError('INVALID_SITE', `sources[${i}].at must be a time`);
-      out.at = at;
-    }
-    return out;
-  });
-
+  const problems = [];
+  const clean = checkValue(ENTRY_SCHEMA, input, '', problems);
+  if (problems.length) throw problemsError(problems);
+  const entry = { site: host, ...clean };
   if (byteLength(entry) > LIMITS.entryBytes) throw new BrowserSiteError('SITE_TOO_LARGE', `The whole entry is too large (over ${LIMITS.entryBytes} bytes)`);
   return entry;
 }
@@ -421,7 +487,7 @@ function createBrowserSites({
   return {
     list, get, save, edit, remove, search,
     exportForSync, importFromSync,
-    normalizeHost, buildEntry,
+    normalizeHost, buildEntry, validateEntry,
     LIMITS,
   };
 }
@@ -447,4 +513,7 @@ function sitesFor(db) {
 const exportForSync = (deps, owner) => sitesFor(deps && deps.db).exportForSync(owner);
 const importFromSync = (deps, owner, value) => sitesFor(deps && deps.db).importFromSync(value);
 
-module.exports = { createBrowserSites, getBrowserSites, sitesFor, exportForSync, importFromSync, BrowserSiteError, normalizeHost, LIMITS, ROW_PREFIX, TOMBSTONES_KEY };
+module.exports = {
+  createBrowserSites, getBrowserSites, sitesFor, exportForSync, importFromSync, BrowserSiteError, normalizeHost, LIMITS, ROW_PREFIX, TOMBSTONES_KEY,
+  ENTRY_SCHEMA, ENTRY_EXAMPLE, validateEntry, buildEntry,
+};

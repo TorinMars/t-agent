@@ -235,6 +235,22 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... -o rec.jsonl   
 - `DEBUGGER_BUSY` means DevTools is open on that tab; ask the user to close it.
 - Recordings are kept in T-Agent for 14 days. `record rm <id> --yes` deletes one (ask first, as for any delete).
 
+### Reading a recording
+
+Do not read a whole recording: it is large (script and image bodies). Ask for the part you need; T-Agent filters it.
+
+```bash
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record requests rec_...                    # one line per API call: r7 POST 201 Fetch 1.2 KB 31ms  https://...
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record requests rec_... --url /api/ --json # the same, with request and response headers and bodies (JSON lines)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record requests rec_... --status 4xx,5xx   # only the failures
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... --kind click,input,submit,nav   # the steps
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... --kind dom,console --limit 50  # what the page showed or complained about
+```
+
+- `record requests` puts each request and its response together (method, URL, type, status, timing, headers, bodies; secrets redacted). It leaves out static files (Script, Stylesheet, Image, Font, Media); `--all` keeps them, `--type XHR,Fetch,Document` keeps only those. `(no response)` means the recording ended first; `(request not recorded)` means it started before the recording.
+- `record items` filters: `--kind` (`net` = request, response and ws), `--type` (resource type), `--source agent|user` (what your commands did, or what the user did), `--url` (text, or `/regex/i`), `--status` (`200`, `4xx`, `400-499`), `--limit N`, `--offset N`. Add `-o file.jsonl` to save instead of print.
+- `browser status` prints only the connection; `--verbose` adds the extension's method names and recent tab events.
+
 ### Secrets in the browser
 
 - Cookies, `Authorization` headers, tokens, passwords, API keys and similar values are shown as `<redacted:N>` (N is the length) everywhere: in `net`, `fetch` and recordings. That is on purpose.

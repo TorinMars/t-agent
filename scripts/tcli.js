@@ -473,7 +473,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdin = p
     if (!command) throw usage(`Unknown command "${groupName} ${commandName}"; see tcli ${groupName} help`);
     const { flags, positional } = parseArgs(rest, command);
     if (flags.help) { stdout.write(group.help); return EXIT.ok; }
-    const relay = relayFromEnv(env);
+    const relay = command.local ? null : relayFromEnv(env); // a `local` command (tcli site schema) needs no T-Agent terminal
     return await command.run({ relay, flags, positional, out, stdout, stderr, cwd });
   } catch (error) {
     const failure = error instanceof CliError ? error : new CliError(error && error.message ? error.message : String(error), EXIT.server);

@@ -29,7 +29,7 @@
 | [shell-notebook.md](docs/design/shell-notebook.md) | The Shell notebook, server side: a notebook as a terminal row (`agent: 'notebook'`), the .ipynb file (nbformat 4.5), the output normaliser, the kernel (one shell per notebook, OSC 6973 markers, queue, Stop, restart, full-screen programs, input), the API under `…/notebooks/:tid`, its events, remote engines and `terminal:notebook`, limits. | 17 KB |
 | [open-links.md](docs/design/open-links.md) | Web links that programs in a terminal open, opened on the person's device: the cause (Claude Code, Codex), the link shims and relay, the link bar, the Mac app handler, Home Screen apps on iOS and Android. | 11 KB |
 | [agent-chat.md](docs/design/agent-chat.md) | The conversation view of Claude Code / Codex: backends, service, approvals, the chat page. | 43 KB |
-| [tcli.md](docs/design/tcli.md) | The `tcli` command of agent sessions: environment, relay, `tcli oss`, `tcli notify`, exit codes. | 12 KB |
+| [tcli.md](docs/design/tcli.md) | The `tcli` command of agent sessions: environment, relay, `tcli oss`, `tcli notify`, exit codes, reading browser recordings (`record items` filters, `record requests`), `browser status`, the site entry schema. | 18 KB |
 | [agent-rule-files.md](docs/design/agent-rule-files.md) | `AGENTS.md` and `CLAUDE.md` of new and existing tasks. | 1 KB |
 | [rules-and-skills-sync.md](docs/design/rules-and-skills-sync.md) | Sharing Claude rules, skills and Codex rules across linked services: roles, layers, bundle, shared Claude settings. | 26 KB |
 

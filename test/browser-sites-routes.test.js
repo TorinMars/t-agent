@@ -132,6 +132,10 @@ test('relay: a save that leaks a secret is refused with SITE_HAS_SECRET; an unkn
   assert.equal(secret.status, 400);
   assert.equal(secret.body.error, 'SITE_HAS_SECRET');
 
+  const invalid = await call(base, 'POST', '/api/tcli/site/save', { headers: hookHeaders(), body: { site: 'x.com', entry: { apis: [{ name: 'a', params: 'id' }], sources: ['rec_1'] } } });
+  assert.deepEqual([invalid.status, invalid.body.error], [400, 'INVALID_SITE']);
+  assert.deepEqual(invalid.body.problems, [{ field: 'apis[0].params', problem: 'must be a list' }, { field: 'sources[0]', problem: 'must be an object' }], 'every problem in one answer');
+
   const show = await call(base, 'GET', '/api/tcli/site/show?site=absent.com', { headers: hookHeaders() });
   assert.equal(show.status, 404);
 

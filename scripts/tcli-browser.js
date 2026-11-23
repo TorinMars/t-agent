@@ -19,6 +19,7 @@ Tabs (only tabs T-Agent opened, in the
 "T-Agent" tab group, or tabs the person handed
 over with the extension button)
   status                 the connected browser
+    --verbose            + methods, recent events
   tabs                   tabs T-Agent may use
   open <url> [--active]  new tab in the group
   close [tab]            close (a handed tab is
@@ -84,6 +85,23 @@ DOM changes; kept 14 days in T-Agent)
   record list
   record show <id>
   record items <id>      JSON lines (-o file)
+    --kind net,click,..  request response ws
+                         click input change
+                         submit key nav dom
+                         console (net = the 3
+                         network kinds)
+    --type XHR,Fetch     resource type
+    --source agent|user  who did it
+    --url U | /regex/    --status 4xx,500
+    --limit N --offset N
+  record requests <id>   request + response as
+                         one line per request;
+                         no Script, Stylesheet,
+                         Image, Font, Media
+    --all | --type T     keep them / only T
+    --url U --status S --limit N --offset N
+    --json | -o file     JSON lines with headers
+                         and bodies
   record rm <id> --yes
 
 Options (every command)
@@ -100,6 +118,8 @@ as <redacted:N> unless --raw is given.
 
 function createBrowserGroup(h) {
   const { send, readJson, failureOf, networkFailure, CliError, usage, EXIT, humanSize } = h;
+  // record items / record requests (scripts/tcli-browser-records.js): reading a recording with filters.
+  const records = require('./tcli-browser-records').createRecordCommands(h);
 
   // ── Arguments ──
   // spec: { values, bools, multi } (names without --), plus the options every command takes. `-X`, `-H`, `-d`, `-o` are short names.
@@ -231,19 +251,47 @@ function createBrowserGroup(h) {
     return parts.join(' ');
   }
 
-  function statusText(answer) {
+  // `status` without --verbose: the connection, each paired browser (name, extension version, browser, paired, connected since) and counts; the
+  // method names and the recent events only with --verbose.
+  function slimStatus(answer) {
+    const browsers = (answer && answer.browsers) || [];
+    return {
+      protocol: answer && answer.protocol, connected: Boolean(answer && answer.connected), active_browser_id: (answer && answer.active_browser_id) || null,
+      method_count: Array.isArray(answer && answer.methods) ? answer.methods.length : null,
+      browsers: browsers.map(browser => ({
+        browser_id: browser.browser_id, name: browser.name, version: browser.version || null,
+        browser: browser.browser && browser.browser.name ? browser.browser.name : null,
+        online: Boolean(browser.online), active: Boolean(browser.active),
+        paired_at: browser.created_at || null, connected_at: browser.connected_at || null, last_seen_at: browser.last_seen_at || null,
+        methods: Number.isFinite(browser.methods) ? browser.methods : null,
+        recent_event_count: Array.isArray(browser.recent_events) ? browser.recent_events.length : 0,
+      })),
+    };
+  }
+
+  function statusText(answer, { verbose = false } = {}) {
     const browsers = (answer && answer.browsers) || [];
     const lines = [];
     const active = browsers.find(browser => browser.active);
     if (active) {
       const kind = active.browser && active.browser.name ? ` · ${active.browser.name}` : '';
       lines.push(`Connected: ${active.name} (${active.browser_id}) · extension ${active.version || '?'}${kind}`);
+      lines.push(`  connected since ${when(active.connected_at)} · paired ${when(active.created_at)}${Number.isFinite(active.methods) ? ` · ${active.methods} methods` : ''}`);
     } else lines.push('No browser is connected.');
     for (const browser of browsers.filter(item => !item.active)) {
       lines.push(`  ${browser.name} (${browser.browser_id}): ${browser.online ? 'online' : `offline, last seen ${when(browser.last_seen_at)}`}`);
     }
     if (!browsers.length) lines.push('Pair one in T-Agent: Settings > Tasks and files > Browser extension.');
     else if (!active) lines.push('Open Chrome with the T-Agent extension on this computer; it connects by itself.');
+    if (verbose) {
+      if (Array.isArray(answer && answer.methods)) lines.push(`Methods: ${answer.methods.join(', ')}`);
+      for (const browser of browsers) {
+        const events = browser.recent_events || [];
+        if (!events.length) continue;
+        lines.push(`Recent events of ${browser.name}:`);
+        for (const event of events) lines.push(`  ${when(event.at)} ${event.event}${event.tab_id === null || event.tab_id === undefined ? '' : ` tab ${event.tab_id}`}${event.url ? `  ${event.url}` : ''}`);
+      }
+    }
     return lines.join('\n');
   }
 
@@ -332,9 +380,11 @@ function createBrowserGroup(h) {
 
   const COMMANDS = {
     status: {
+      bools: ['verbose'],
       async run(ctx, flags) {
         const answer = await request(ctx.relay(), 'GET', '/browser/status');
-        ctx.out(flags.json ? JSON.stringify(answer, null, 2) : statusText(answer));
+        const shown = flags.verbose ? answer : slimStatus(answer);
+        ctx.out(flags.json ? JSON.stringify(shown, null, 2) : statusText(answer, { verbose: flags.verbose }));
         return answer && answer.connected ? EXIT.ok : EXIT.server;
       },
     },
@@ -605,26 +655,8 @@ function createBrowserGroup(h) {
         return print(ctx, flags, await request(ctx.relay(), 'GET', `/browser/recordings/${encodeURIComponent(positional[0])}`), summaryText);
       },
     },
-    items: {
-      values: ['output'], bools: ['force'],
-      async run(ctx, flags, positional) {
-        if (positional.length !== 1) throw usage('Usage: tcli browser record items <id> [-o file.jsonl]');
-        const route = `/browser/recordings/${encodeURIComponent(positional[0])}/items`;
-        if (flags.output && flags.output !== '-') {
-          const file = path.resolve(ctx.cwd, flags.output);
-          if (fs.existsSync(file) && !flags.force) throw usage(`${file} exists; add --force to overwrite it`);
-          const part = `${file}.tcli-part-${process.pid}`;
-          const target = fs.createWriteStream(part, { mode: 0o600 });
-          try { await request(ctx.relay(), 'GET', route, { stream: { target, isStdout: false } }); }
-          catch (error) { target.destroy(); fs.rmSync(part, { force: true }); throw error; }
-          fs.renameSync(part, file);
-          ctx.out(flags.json ? JSON.stringify({ file, size: fs.statSync(file).size }) : `Saved ${file} (${humanSize(fs.statSync(file).size)})`);
-          return EXIT.ok;
-        }
-        await request(ctx.relay(), 'GET', route, { stream: { target: ctx.stdout, isStdout: true } });
-        return EXIT.ok;
-      },
-    },
+    items: records.items,
+    requests: records.requests,
     rm: {
       bools: ['yes'],
       async run(ctx, flags, positional) {

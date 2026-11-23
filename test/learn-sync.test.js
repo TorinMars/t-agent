@@ -801,3 +801,78 @@ test('mistakes and reports: the detail of a wrong answer and the reports reach e
   assert.equal(refused.status, 503);
   assert.match(refused.body.error, /kept on a normal computer/);
 });
+
+// ---- Learn at a calmer pace ("New words a day" and "Keeps slipping" in docs/design/learn-review-fsrs.md) ----
+test('new words a day and the parts of a word between engines: the setting, the words added today (merged, never lost), the parts and the tip', async t => {
+  const { A, B } = await makeNetwork(t, ['A', 'B'], { links: [['A', 'B']] });
+  await noStarter(A);
+  await A.page('PUT', '/learn/settings', { new_per_day: 20 });
+  assert.deepEqual((await A.page('POST', '/learn/new-words', { count: 5 })).body.new_left, 25);
+  await A.sync.syncAll();
+  const onB = (await B.page('GET', '/learn/settings')).body;
+  assert.equal(onB.new_per_day, 20, 'the setting travels');
+  assert.equal(onB.extra_new.count, 5, 'the words added today travel');
+  assert.equal((await B.page('GET', '/learn/summary')).body.new_left, 25);
+
+  // Both change before either syncs: A adds 5 more words, B (later) changes the goal. B's settings win, and A's words are kept on both.
+  await A.page('POST', '/learn/new-words', { count: 5 });
+  await settle(5);
+  await B.page('PUT', '/learn/settings', { daily_goal: 33 });
+  await A.sync.syncAll();
+  await B.sync.syncAll();
+  for (const side of [A, B]) {
+    const settings = (await side.page('GET', '/learn/settings')).body;
+    assert.deepEqual([settings.daily_goal, settings.extra_new.count, settings.new_per_day], [33, 10, 20], side.name);
+  }
+
+  // An older peer sends settings without new_per_day and extra_new: the ones here stay.
+  const before = (await B.page('GET', '/learn/settings')).body;
+  B.sync.applyPage({ settings: { value: { collect: true, daily_goal: 7, starter: null }, at: Date.now() + 60_000, by: 'older-peer' } }, 'older-peer');
+  const kept = (await B.page('GET', '/learn/settings')).body;
+  assert.deepEqual([kept.daily_goal, kept.new_per_day, kept.extra_new], [7, 20, before.extra_new]);
+  assert.deepEqual(merge.settingsFromPeer({ new_per_day: 7, extra_new: { day: 'x', count: 1 } }, { dev: {} }), {}, 'values this version does not take are left out');
+
+  // The parts and the tip of a word filled in on A reach B; an empty one never wins over them.
+  const card = (await A.page('POST', '/learn/cards', word('temporarily'))).body.card;
+  await A.sync.syncAll();
+  A.db.prepare("UPDATE learn_cards SET parts = 'tem·po·rar·i·ly', tip = 'temporary + -ly.', sync_seq = ? WHERE id = ?").run(syncStore.nextSeq(A.db), card.id);
+  await A.sync.syncAll();
+  const there = cardsOf(B).find(row => row.norm === 'temporarily');
+  assert.deepEqual([there.parts, there.tip], ['tem·po·rar·i·ly', 'temporary + -ly.']);
+  await B.page('PATCH', `/learn/cards/${there.id}`, { zh: ZH }); // a newer content version on B, which has the parts too
+  B.db.prepare("UPDATE learn_cards SET parts = '', tip = '', sync_seq = ? WHERE id = ?").run(syncStore.nextSeq(B.db), there.id); // as if B never had them
+  await B.sync.syncAll();
+  await A.sync.syncAll();
+  for (const side of [A, B]) assert.equal(cardsOf(side).find(row => row.norm === 'temporarily').parts, 'tem·po·rar·i·ly', side.name);
+  // Parts from a peer that do not give the word are not kept.
+  const wire = merge.cardToPeer(cardsOf(A).find(row => row.norm === 'temporarily'), 'a-id');
+  assert.equal(merge.cardFromPeer({ ...wire, parts: 'tem·po·ra·ry' }, 'a-id').parts, '');
+  assert.equal(merge.cardFromPeer({ ...wire }, 'a-id').parts, 'tem·po·rar·i·ly');
+  const older = { ...wire };
+  delete older.parts;
+  delete older.tip;
+  assert.deepEqual([merge.cardFromPeer(older, 'a-id').parts, merge.cardFromPeer(older, 'a-id').tip], ['', ''], 'an older peer sends none');
+});
+
+test('new words a day on a company computer: "5 more new words" is made on its home, and the home\'s count of new words is used', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  await noStarter(T);
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+  const added = await K.page('POST', '/learn/new-words', { count: 5 });
+  assert.equal(added.status, 200, JSON.stringify(added.body));
+  assert.equal(added.body.new_left, 15, "the home's answer");
+  assert.equal((await T.page('GET', '/learn/settings')).body.extra_new.count, 5, 'kept on the home');
+  assert.equal((await K.page('GET', '/learn/settings')).body.extra_new.count, 5, 'and read back here');
+  assert.equal((await K.page('POST', '/learn/new-words', { count: 99 })).status, 400, "the home's check answers");
+  // A new word answered on the home: K's queue counts it from the home's last summary (K has no answers of its own).
+  const onT = (await T.page('POST', '/learn/cards', word('latency', { zh: ZH }))).body.card;
+  await T.page('POST', `/learn/cards/${onT.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
+  const summary = (await K.page('GET', '/learn/summary')).body;
+  assert.deepEqual([summary.new_today, summary.new_left], [1, 14]);
+  assert.deepEqual(K.learn.pace('me'), { new_per_day: 10, new_today: 1, new_left: 14 });
+  setOnline(K, 'T', false);
+  assert.equal((await K.page('POST', '/learn/new-words', { count: 5 })).status, 503, 'the home away: said so');
+});

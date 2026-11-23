@@ -47,6 +47,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 // Schema 20: the table learn_chats (the questions about a card and their answers), the same way.
 // Schema 21: the tables learn_convos and learn_convo_messages (the English chats), the same way.
 // Schema 22: learn_cards.fsrs_stability and fsrs_difficulty (FSRS-6), the same way, and every card's review state replayed from its answers once.
+// Schema 23: learn_cards.parts and tip (the parts and the spelling tip of a word that keeps slipping), the same way.
 const fsrsReplay = require('../services/learn-sync-store').ensureSyncSchema(db);
 if (fsrsReplay && fsrsReplay.replayed) {
   console.log(`Database: the review state of ${fsrsReplay.replayed} learning cards was replayed with FSRS-6 (${fsrsReplay.earlier} due earlier, ${fsrsReplay.later} later, ${fsrsReplay.skipped} kept)`);

@@ -70,13 +70,86 @@ const PICK_SETTINGS = {
 const SCHEDULE_SETTINGS = {
   desired_retention: { default: review.DEFAULT_RETENTION, check: value => review.RETENTIONS.includes(value) },
 };
-// The fields checked by a rule (REPORT_SETTINGS, PICK_SETTINGS and SCHEDULE_SETTINGS), read, saved and merged the same way.
-const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS, ...SCHEDULE_SETTINGS };
-const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', ...Object.keys(AUDIO_SETTINGS), ...Object.keys(CHECKED_SETTINGS)]);
+// New words a day ("New words a day" in docs/design/learn-review-fsrs.md): how many never answered cards the queues give a day.
+const NEW_PER_DAY = Object.freeze([5, 10, 15, 20, 30]);
+const PACE_SETTINGS = {
+  new_per_day: { default: 10, check: value => NEW_PER_DAY.includes(value) },
+};
+// The fields checked by a rule (REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS and PACE_SETTINGS), read, saved and merged the same way.
+const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS, ...SCHEDULE_SETTINGS, ...PACE_SETTINGS };
+// The settings an older peer does not send: when its settings win, the value here stays (services/learn-sync.js applySettings).
+const KEPT_SETTINGS = ['desired_retention', 'new_per_day'];
+// The new words added for one day with "5 more new words" (POST /new-words): { day: 'YYYY-MM-DD' in the server's time zone, count }. Kept with the
+// settings, so the settings sync carries it; it merges by mergeExtraNew (the later day, on the same day the larger count). PUT /settings does not
+// change it (a page that sends the settings back as they are is not refused).
+const MAX_NEW_WORDS = 50; // at most this many at once
+const MAX_EXTRA_NEW = 500; // at most this many more in one day
+const NO_EXTRA_NEW = Object.freeze({ day: '', count: 0 });
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+function cleanExtraNew(value) {
+  if (!isPlainObject(value) || typeof value.day !== 'string' || !DAY_KEY.test(value.day) || !Number.isInteger(value.count) || value.count < 1) return { ...NO_EXTRA_NEW };
+  return { day: value.day, count: Math.min(value.count, MAX_EXTRA_NEW) };
+}
+// Two values of `extra_new` (from two engines) as one: the later day wins; on the same day the larger count, so a tap on either engine is never lost
+// (two taps at the same moment on two engines that had not synced yet count once).
+function mergeExtraNew(a, b) {
+  const one = cleanExtraNew(a);
+  const two = cleanExtraNew(b);
+  if (!one.day) return two;
+  if (!two.day || one.day > two.day) return one;
+  if (two.day > one.day) return two;
+  return one.count >= two.count ? one : two;
+}
+const SETTINGS_FIELDS = new Set(['collect', 'daily_goal', 'starter', 'extra_new', ...Object.keys(AUDIO_SETTINGS), ...Object.keys(CHECKED_SETTINGS)]);
 const DEFAULT_SETTINGS = {
   collect: true, daily_goal: 20, starter: 'dev', ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.default])),
-  ...Object.fromEntries(Object.entries(CHECKED_SETTINGS).map(([key, field]) => [key, field.default])),
+  ...Object.fromEntries(Object.entries(CHECKED_SETTINGS).map(([key, field]) => [key, field.default])), extra_new: { ...NO_EXTRA_NEW },
 };
+// Keeps slipping ("Keeps slipping" in docs/design/learn-review-fsrs.md): a card missed LEECH_MISSED times or more is a leech until its last two
+// answers are right on different days. A leech word gets its parts (syllables, stored joined with PARTS_JOIN) and a short tip from the model once.
+const LEECH_MISSED = 4;
+const PARTS_JOIN = '\u00b7';
+const MAX_PARTS = 12;
+const MAX_TIP = 200;
+const SPELLING_WAIT_MS = 2500; // the queue waits this long at most for the parts of its first cards; the rest come in the background
+const SPELLING_TIMEOUT_MS = 30000;
+const SPELLING_PAUSE_MS = 10 * 60 * 1000; // after a failure of the model, no more asks for this long
+const SPELLING_SYSTEM = [
+  'You help a Chinese-speaking learner remember how to spell English words. Answer with one JSON object only: {"parts": [...], "tip": "..."}.',
+  'parts: the word split into its syllables as it is written, in order, so that the parts joined together give the word exactly (for example',
+  'temporarily -> ["tem","po","rar","i","ly"]).',
+  'tip: one short sentence in plain English, at most 15 words, that helps remember the spelling: the word it is built from, the tricky letters,',
+  'or a common mix-up (for example "temporary + -ly. Keep the ar of temporary." or "-sion, not -tion: extend -> extension").',
+  'Say only what is true of this word; never invent a rule. When there is no useful tip, the tip is an empty string.',
+].join(' ');
+// The parts of `word` the model gave (an array of strings), joined with PARTS_JOIN, or '' unless they give the word exactly (case and hyphens aside).
+function checkParts(word, parts) {
+  if (!Array.isArray(parts) || !parts.length || parts.length > MAX_PARTS) return '';
+  const clean = parts.map(part => (typeof part === 'string' ? part.trim() : ''));
+  if (clean.some(part => !part || !/^[A-Za-z'-]+$/.test(part))) return '';
+  const plain = text => String(text).toLowerCase().replace(/-/g, '');
+  return plain(clean.join('')) === plain(word) ? clean.join(PARTS_JOIN) : '';
+}
+// Stored parts (or a peer's) checked again against the word: the same string, or ''.
+const storedParts = (word, value) => (typeof value === 'string' && value ? checkParts(word, value.split(PARTS_JOIN)) : '');
+// A tip: one line of English, at most MAX_TIP characters, else ''.
+function checkTip(value) {
+  if (typeof value !== 'string') return '';
+  const tip = value.replace(/\s+/g, ' ').trim();
+  return tip && tip.length <= MAX_TIP && !/[\u3400-\u9fff\uf900-\ufaff]/.test(tip) ? tip : '';
+}
+// The model's answer about a word: { parts, tip } ('' each when not usable).
+function parseSpelling(word, raw) {
+  let data = null;
+  try {
+    const text = String(raw || '');
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) data = JSON.parse(text.slice(start, end + 1));
+  } catch { data = null; }
+  if (!isPlainObject(data)) return { parts: '', tip: '' };
+  return { parts: checkParts(word, data.parts), tip: checkTip(data.tip) };
+}
 // The first tag of a wrong answer, from the page's checker (scripts/h5-shell/learn-grade.mjs MISTAKE_TAGS, the same list).
 const MISTAKE_TAGS = ['letter-order', 'double-letter', 'missing-letter', 'extra-letter', 'wrong-letter', 'spelling', 'article', 'plural', 'tense',
   'verb-form', 'word-order', 'missing-word', 'extra-word', 'wrong-word', 'listening', 'pronunciation', 'unknown', 'other'];
@@ -212,10 +285,11 @@ const settingsVersionKey = owner => `learn_v1_sync:${owner}`;
 // `cacheOnly()`: this machine is a company computer whose learning data lives on a normal machine (services/learn-sync.js); it then imports no
 // starter list of its own (the cards come from that machine). `lookupPhonetic(word)`: the dictionary's transcription or '' (tests hand in a fixture).
 // `onNewWords(owner)`: new word cards were stored (a starter list, an added word, a word with another text); by default the background translation
-// of services/learn-prefill.js is told, which does nothing unless the server started it.
+// of services/learn-prefill.js is told, which does nothing unless the server started it. `chat(owner, system, user, options)`: the chat model of
+// the translator (services/translator.js `chat`), asked for the parts and the tip of a word that keeps slipping; null: none are asked for.
 function createLearn({
   db = require('../db'), now = Date.now, timeZone, lookupWord = null, cacheOnly = () => false, lookupPhonetic = phonetics.lookupPhonetic,
-  onNewWords = owner => require('./learn-prefill').afterNewWords(owner),
+  onNewWords = owner => require('./learn-prefill').afterNewWords(owner), chat = null,
 } = {}) {
   const meanings = new Map(); // `${owner}|${word}` -> zh, least recently used first
   const askedPhonetic = new Set(); // `${owner}|${norm}` the translator was asked for a transcription (once per word while the server runs)
@@ -223,6 +297,9 @@ function createLearn({
   let translatorDown = false; // the last meaning lookup failed: until one works again, a queue leaves out words that have no meaning yet
   let background = Promise.resolve(); // the queue's last background fill (tests wait for it with settle())
   const unreadableWords = new Set(); // `${owner}|${norm}` whose translator answer could not be read: prefill() leaves them to the queue while the server runs
+  const askedSpelling = new Set(); // `${owner}|${norm}` the model was asked for parts and a tip (once per word while the server runs)
+  const askingSpelling = new Map(); // `${owner}|${norm}` -> the ask in progress, so the queue's first cards and the background ask once
+  let spellingPausedUntil = 0; // after a failure of the model: no asks until then
   const newWords = owner => { try { onNewWords(owner); } catch { /* the hourly run translates them */ } };
   const stamp = () => syncStore.stamp(db, now());
   const seq = () => syncStore.nextSeq(db);
@@ -242,6 +319,7 @@ function createLearn({
       starter: value.starter === null || Object.hasOwn(STARTER_LISTS, value.starter) ? value.starter : DEFAULT_SETTINGS.starter,
       ...Object.fromEntries(Object.entries(AUDIO_SETTINGS).map(([key, field]) => [key, field.values.includes(value[key]) ? value[key] : field.default])),
       ...Object.fromEntries(Object.entries(CHECKED_SETTINGS).map(([key, field]) => [key, field.check(value[key]) ? value[key] : field.default])),
+      extra_new: cleanExtraNew(value.extra_new),
     };
   }
   function saveSettings(owner, body) {
@@ -353,14 +431,17 @@ function createLearn({
   function updateCard(owner, id, body) {
     const row = mustCard(owner, id);
     if (!isPlainObject(body) || Object.keys(body).some(key => !['zh', 'en', 'suspended'].includes(key))) throw bad('Invalid card change');
-    const next = { zh: row.zh, en: row.en, norm: row.norm, suspended: row.suspended, phonetic: row.phonetic || '' };
+    const next = { zh: row.zh, en: row.en, norm: row.norm, suspended: row.suspended, phonetic: row.phonetic || '', parts: row.parts || '', tip: row.tip || '' };
     if (body.zh !== undefined) next.zh = checkMeaning(body.zh);
     if (body.en !== undefined) {
       next.en = checkEnglish(row.kind, body.en);
       next.norm = normalize(next.en);
       const other = db.prepare('SELECT id FROM learn_cards WHERE owner = ? AND kind = ? AND norm = ? AND id <> ?').get(owner, row.kind, next.norm, row.id);
       if (other) throw new LearnError('A card with this text already exists', 409);
-      if (next.norm !== row.norm) next.phonetic = row.kind === 'word' ? lookupPhonetic(next.en) : ''; // another word: its own transcription
+      if (next.norm !== row.norm) {
+        next.phonetic = row.kind === 'word' ? lookupPhonetic(next.en) : ''; // another word: its own transcription
+        Object.assign(next, { parts: '', tip: '' }); // and its own parts and tip, asked again when it keeps slipping
+      }
     }
     // A sentence with another text is picked again (its words were those of the old text).
     const repick = row.kind === 'sentence' && next.norm !== row.norm;
@@ -370,7 +451,7 @@ function createLearn({
     }
     const at = stamp();
     db.transaction(() => {
-      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, phonetic = @phonetic, content_at = @at, content_by = '', sync_seq = @seq
+      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, phonetic = @phonetic, parts = @parts, tip = @tip, content_at = @at, content_by = '', sync_seq = @seq
         WHERE id = @id`).run({ ...next, at, seq: seq(), id: row.id });
       if (repick) db.prepare("UPDATE learn_cards SET picked_level = '', picked_skipped = 0, picked_at = ? WHERE id = ?").run(at, row.id);
       if (next.norm !== row.norm) {
@@ -412,6 +493,109 @@ function createLearn({
     return { card: oneCard(owner, getCard(owner, row.id)) };
   }
 
+  // ---- New words a day ("New words a day" in docs/design/learn-review-fsrs.md) ----
+  // How many cards had their first answer today (the earliest answer of the card, on the day of done_today). A card whose answers here are fewer
+  // than its `reps` is left out: its first answer is not here (a company computer hands its answers over to its home), so the one here is not it.
+  // On a company computer the home's count of its last summary today is used when it is larger.
+  function newToday(owner, at) {
+    const firsts = db.prepare(`SELECT MIN(r.at) AS first, COUNT(*) AS answers, MAX(c.reps) AS reps FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id
+      WHERE r.owner = @owner AND r.card_id IN (SELECT card_id FROM learn_reviews WHERE owner = @owner AND at >= @from) GROUP BY r.card_id`)
+      .all({ owner, from: at - 2 * review.DAY }).filter(row => row.answers >= (Number(row.reps) || 0)).map(row => row.first);
+    let count = review.countToday(firsts, at, timeZone);
+    if (cacheOnly()) {
+      const last = readState(db, 'learn_home_v1'); // services/learn-sync.js HOME_KEY: the home's last summary
+      const copy = isPlainObject(last) && isPlainObject(last.summary) ? last.summary : null;
+      if (copy && Number.isSafeInteger(copy.new_today) && copy.new_per_day !== undefined && Number.isFinite(last.at) && review.dayKey(last.at, timeZone) === review.dayKey(at, timeZone)) {
+        count = Math.max(count, copy.new_today);
+      }
+    }
+    return count;
+  }
+  // { new_per_day, new_today, new_left }: today's allowance is new_per_day plus the words added today with POST /new-words.
+  function pace(owner, current = settings(owner), at = now()) {
+    const extra = current.extra_new.day === review.dayKey(at, timeZone) ? current.extra_new.count : 0;
+    const today = newToday(owner, at);
+    return { new_per_day: current.new_per_day, new_today: today, new_left: Math.max(0, current.new_per_day + extra - today) };
+  }
+  // "5 more new words": raises today's allowance by `count` (1 to MAX_NEW_WORDS). Kept in the settings (`extra_new`), so every linked engine has it.
+  function addNewWords(owner, body) {
+    const count = isPlainObject(body) ? body.count : undefined;
+    if (!Number.isInteger(count) || count < 1 || count > MAX_NEW_WORDS) throw bad('Invalid learning settings');
+    const at = now();
+    const day = review.dayKey(at, timeZone);
+    const current = settings(owner);
+    const before = current.extra_new.day === day ? current.extra_new.count : 0;
+    const next = { ...current, extra_new: { day, count: Math.min(MAX_EXTRA_NEW, before + count) } };
+    db.transaction(() => {
+      writeState(db, settingsKey(owner), next);
+      writeState(db, settingsVersionKey(owner), { at: stamp(), by: '', seq: seq() });
+    })();
+    changed();
+    return pace(owner, next, at);
+  }
+
+  // ---- Keeps slipping ("Keeps slipping" in docs/design/learn-review-fsrs.md) ----
+  // Map id -> { missed, leech } for these cards: missed = the wrong answers of the card; a leech is missed LEECH_MISSED times or more, unless its last
+  // two answers were right and on different days. On a company computer (its answers leave once its home has them) missed is at least `lapses`.
+  function slips(rows) {
+    const out = new Map();
+    if (!rows.length) return out;
+    const ids = JSON.stringify(rows.map(row => row.id));
+    const counts = new Map(db.prepare('SELECT card_id, SUM(correct = 0) AS missed FROM learn_reviews WHERE card_id IN (SELECT value FROM json_each(?)) GROUP BY card_id')
+      .all(ids).map(row => [row.card_id, Number(row.missed) || 0]));
+    const lastTwo = db.prepare('SELECT at, correct FROM learn_reviews WHERE card_id = ? ORDER BY at DESC, id DESC LIMIT 2');
+    const company = cacheOnly();
+    for (const row of rows) {
+      let missed = counts.get(row.id) || 0;
+      if (company) missed = Math.max(missed, Number(row.lapses) || 0);
+      let leech = missed >= LEECH_MISSED;
+      if (leech) {
+        const last = lastTwo.all(row.id);
+        if (last.length === 2 && last.every(answer => answer.correct) && review.dayKey(last[0].at, timeZone) !== review.dayKey(last[1].at, timeZone)) leech = false;
+      }
+      out.set(row.id, { missed, leech });
+    }
+    return out;
+  }
+  // Parts and a tip for a word card that has neither, stored with the content clock kept (an empty one never wins in the merge, so they reach every
+  // engine). Returns { parts, tip } of what was stored, or null.
+  function storeSpelling(owner, norm, found) {
+    const done = db.prepare("UPDATE learn_cards SET parts = ?, tip = ?, sync_seq = ? WHERE owner = ? AND kind = 'word' AND norm = ? AND parts = '' AND tip = ''")
+      .run(found.parts, found.tip, seq(), owner, norm).changes;
+    if (done) changed();
+    return done ? found : null;
+  }
+  // Asks the model for the parts and the tip of one word card (once per word while the server runs; one ask at a time per word). A failure of the
+  // model pauses the asks for SPELLING_PAUSE_MS and the word is asked again after that.
+  function askSpelling(owner, row) {
+    const key = `${owner}|${row.norm}`;
+    if (askingSpelling.has(key)) return askingSpelling.get(key);
+    const work = (async () => {
+      let raw;
+      try { raw = await chat(owner, SPELLING_SYSTEM, `Word: ${row.en}`, { json: true, timeoutMs: SPELLING_TIMEOUT_MS, temperature: 0 }); } catch {
+        spellingPausedUntil = now() + SPELLING_PAUSE_MS;
+        return;
+      }
+      askedSpelling.add(key);
+      if (askedSpelling.size > MEANING_CACHE_SIZE) askedSpelling.delete(askedSpelling.values().next().value);
+      const found = parseSpelling(row.en, raw);
+      if (found.parts || found.tip) storeSpelling(owner, row.norm, found);
+      const stored = db.prepare("SELECT parts, tip FROM learn_cards WHERE owner = ? AND kind = 'word' AND norm = ?").get(owner, row.norm);
+      if (stored) { row.parts = stored.parts; row.tip = stored.tip; }
+    })().finally(() => askingSpelling.delete(key));
+    askingSpelling.set(key, work);
+    return work;
+  }
+  // Fills the parts and tips of the leech word cards among these rows that have none, one at a time; stops while the model is paused.
+  async function fillSpelling(owner, rows, slipped) {
+    if (!chat) return;
+    for (const row of rows) {
+      if (row.kind !== 'word' || row.parts || row.tip || !(slipped.get(row.id) || {}).leech || askedSpelling.has(`${owner}|${row.norm}`)) continue;
+      if (now() < spellingPausedUntil) return;
+      await askSpelling(owner, row);
+    }
+  }
+
   // The mistake cards of an owner (see review.isMistake), most recently answered first.
   function mistakeRows(owner, starter) {
     const at = now();
@@ -426,15 +610,19 @@ function createLearn({
     const at = now();
     const params = { owner, starter: current.starter, now: at };
     const count = sql => db.prepare(sql).pluck().get(params);
-    const recentReviews = db.prepare('SELECT at FROM learn_reviews WHERE owner = ? AND at >= ?').pluck().all(owner, at - 2 * review.DAY);
-    const recentCards = db.prepare('SELECT created_at FROM learn_cards WHERE owner = ? AND created_at >= ?').pluck().all(owner, at - 2 * review.DAY);
+    const recentReviews = db.prepare('SELECT at FROM learn_reviews WHERE owner = ? AND at >= ? ORDER BY at').pluck().all(owner, at - 2 * review.DAY);
+    const today = review.dayKey(at, timeZone);
+    const newWords = pace(owner, current, at);
+    // Due: the due cards that are not new, and the new ones due now up to today's new words left (what Review gives).
+    const dueNew = count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND ${visible} AND reps = 0 AND due_at <= @now`);
     // The streak needs one moment per stretch of 15 minutes at most (every time zone offset is a multiple of 15 minutes), not every answer.
     const quarter = 15 * 60 * 1000;
     const stretches = db.prepare(`SELECT DISTINCT (at / ${quarter}) * ${quarter} FROM learn_reviews WHERE owner = ? AND at >= ?`).pluck().all(owner, at - 400 * review.DAY);
     return {
-      due: count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND ${visible} AND due_at <= @now`),
-      new_today: review.countToday(recentCards, at, timeZone),
+      due: count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND ${visible} AND reps > 0 AND due_at <= @now`) + Math.min(newWords.new_left, dueNew),
+      ...newWords,
       done_today: review.countToday(recentReviews, at, timeZone),
+      minutes_today: studyMinutes(recentReviews.filter(time => review.dayKey(time, timeZone) === today)),
       goal: current.daily_goal,
       streak: review.streak(stretches, at, timeZone),
       words: count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND ${visible} AND kind = 'word'`),
@@ -532,11 +720,13 @@ function createLearn({
 
   // ---- Translated ahead of time ("Meanings are translated ahead of time" in docs/design/learn-english.md; services/learn-prefill.js runs it) ----
   // The word cards of the owner that still miss something this service can fill: a meaning (unless its answer could not be read), or a transcription
-  // the dictionary has or the translator was not asked for yet. In practice order: the cards shown first, due first (oldest due first), then the one
-  // practised least recently (or never), like the spell queue; hidden ones (suspended, an untouched starter word with no list chosen) last.
+  // the dictionary has or the translator was not asked for yet. In practice order, like the spell queue: the due cards that are not new (oldest due
+  // first), then the new ones by due date (the starter list's next days after today's), then the others, the one practised least recently first;
+  // hidden ones (suspended, an untouched starter word with no list chosen) last.
   function prefillRows(owner) {
     const rows = db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND kind = 'word' AND (zh = '' OR phonetic = '')
-      ORDER BY (${visible}) DESC, (due_at <= @now) DESC, CASE WHEN due_at <= @now THEN due_at END ASC, last_at ASC NULLS FIRST, id ASC`)
+      ORDER BY (${visible}) DESC, (reps > 0 AND due_at <= @now) DESC, (reps = 0) DESC, CASE WHEN reps = 0 OR due_at <= @now THEN due_at END ASC,
+      last_at ASC NULLS FIRST, id ASC`)
       .all({ owner, starter: settings(owner).starter, now: now() });
     return rows.filter(row => {
       const key = `${owner}|${row.norm}`;
@@ -578,41 +768,79 @@ function createLearn({
     return { tried: rows.length, filled, left: prefillRows(owner).length, failed: Boolean(error), error };
   }
 
-  async function queue(owner, mode, limitValue) {
+  // `extra`: 'practice' adds, after the due and the new cards, the learnt cards that are not due (the least recently practised first): "Practice" and
+  // "Practise anyway" ask it. Any other value adds nothing.
+  async function queue(owner, mode, limitValue, { extra } = {}) {
     if (!MODES.includes(mode)) throw bad('Unknown practice mode');
     const limit = limitValue === undefined || limitValue === '' ? 20 : Number(limitValue);
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) throw bad(`The limit must be a whole number from 1 to ${MAX_LIMIT}`);
     const current = settings(owner);
     if (current.starter) importStarter(owner, current.starter);
-    const params = { owner, starter: current.starter, now: now(), limit };
-    let rows;
-    if (mode === 'mistakes') rows = mistakeRows(owner, current.starter).slice(0, limit);
-    else if (mode === 'review') {
-      rows = db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND ${visible} AND due_at <= @now ORDER BY due_at ASC, id ASC LIMIT @limit`).all(params);
-    } else {
-      const kind = mode === 'spell' ? 'word' : 'sentence';
-      // Due cards first (oldest due first), then the others, the one practised least recently (or never) first.
-      const pick = take => db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND ${visible} AND kind = '${kind}'
-        ORDER BY (due_at <= @now) DESC, CASE WHEN due_at <= @now THEN due_at END ASC, last_at ASC NULLS FIRST, id ASC LIMIT @take`).all({ ...params, take });
+    const params = { owner, starter: current.starter, now: now() };
+    let candidates;
+    let newLeft = Infinity;
+    if (mode === 'mistakes') candidates = mistakeRows(owner, current.starter).slice(0, limit);
+    else {
+      // "New words a day": the due cards that are not new (oldest due first), then new cards up to today's new words left (by due date: the starter
+      // list spreads its words over the days), then with extra=practice the learnt cards that are not due. Review takes both kinds and only the new
+      // cards due now; spell takes words; the sentence modes take sentences.
+      ({ new_left: newLeft } = pace(owner, current, params.now));
+      const kind = mode === 'review' ? '' : `AND kind = '${mode === 'spell' ? 'word' : 'sentence'}'`;
       // Spell needs the meaning: a word without one is asked for it first and left out when none can be found, so a few more are read.
-      rows = pick(mode === 'spell' ? limit * 2 : limit);
+      const factor = mode === 'spell' ? 2 : 1;
+      const rows = (where, order, take) => (take > 0
+        ? db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND ${visible} ${kind} AND ${where} ORDER BY ${order} LIMIT @take`).all({ ...params, take })
+        : []);
+      candidates = [
+        ...rows('reps > 0 AND due_at <= @now', 'due_at ASC, id ASC', limit * factor),
+        ...rows(`reps = 0${mode === 'review' ? ' AND due_at <= @now' : ''}`, 'due_at ASC, id ASC', Math.min(newLeft, limit) * factor),
+        ...(extra === 'practice' ? rows('reps > 0 AND due_at > @now', 'last_at ASC NULLS FIRST, id ASC', limit * factor) : []),
+      ];
     }
+    // The queue in order, at most `limit` cards and newLeft new ones; `ready`: a spell word without a meaning is left out while the translator fails.
+    const choose = ready => {
+      const out = [];
+      let fresh = 0;
+      for (const row of candidates) {
+        if (out.length >= limit) break;
+        if (ready && mode === 'spell' && !row.zh && translatorDown) continue;
+        if (mode !== 'mistakes' && !(row.reps > 0)) { if (fresh >= newLeft) continue; fresh += 1; }
+        out.push(row);
+      }
+      return out;
+    };
     // The first cards are made ready now; the rest in the background (the page asks /meaning for a card that is still without one when it is shown).
-    const head = rows.slice(0, QUEUE_HEAD);
-    await fillMeanings(owner, head);
+    await fillMeanings(owner, choose(false).slice(0, QUEUE_HEAD));
     // Spell needs the meaning: while the translator fails (or there is none), a word without one is left out, as the page could not show it.
-    if (mode === 'spell') rows = rows.filter(row => row.zh || !translatorDown).slice(0, limit);
+    const rows = choose(true);
     await fillPhonetics(owner, rows.slice(0, QUEUE_HEAD), { ask: true });
     await fillPhonetics(owner, rows); // the dictionary only: no waiting
     const rest = rows.slice(QUEUE_HEAD).filter(row => row.kind === 'word' && (!row.zh || !row.phonetic));
     if (rest.length && !translatorDown) {
       background = background.then(async () => { await fillMeanings(owner, rest); await fillPhonetics(owner, rest, { ask: true }); }).catch(() => {});
     }
-    // `next`: what each grade would do now, in milliseconds until the card is due again ({ again: 600000, hard, good }), for the grade buttons.
+    // Keeps slipping: the parts and the tip of a leech word come from the model once; the queue waits SPELLING_WAIT_MS at most for its first cards.
     const at = now();
+    const slipped = slips(rows);
+    if (chat && now() >= spellingPausedUntil && rows.some(row => row.kind === 'word' && !row.parts && !row.tip && slipped.get(row.id).leech)) {
+      const first = fillSpelling(owner, rows.slice(0, QUEUE_HEAD), slipped).catch(() => {});
+      let timer = null;
+      await Promise.race([first, new Promise(resolve => { timer = setTimeout(resolve, SPELLING_WAIT_MS); })]);
+      clearTimeout(timer);
+      background = background.then(() => first).then(() => fillSpelling(owner, rows.slice(QUEUE_HEAD), slipped)).catch(() => {});
+    }
+    // `next`: what each grade would do now, in milliseconds until the card is due again ({ again: 600000, hard, good }), for the grade buttons.
     const retention = current.desired_retention;
     const cards = cardsJson(owner, rows);
-    cards.forEach((card, index) => { card.next = review.preview(baseState(rows[index], retention), at, retention); });
+    cards.forEach((card, index) => {
+      const row = rows[index];
+      const slip = slipped.get(row.id);
+      const parts = row.kind === 'word' ? storedParts(row.en, row.parts) : '';
+      Object.assign(card, {
+        next: review.preview(baseState(row, retention), at, retention), is_new: !(row.reps > 0), missed: slip.missed, leech: slip.leech,
+        parts: parts ? parts.split(PARTS_JOIN) : null, tip: row.kind === 'word' ? checkTip(row.tip) : '',
+      });
+    });
     return { cards };
   }
 
@@ -767,7 +995,7 @@ function createLearn({
   }
 
   return {
-    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter, storedLevel, saveLevel,
+    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter, storedLevel, saveLevel, pace, addNewWords,
     // The identity of a card on every engine (its id is local): { id, kind, norm }, or 404 (services/learn-ask.js asks a company computer's home by it).
     cardRef: (owner, id) => { const row = mustCard(owner, id); return { id: row.id, kind: row.kind, norm: row.norm }; },
     level: owner => levelJson(storedLevel(owner)),
@@ -776,6 +1004,21 @@ function createLearn({
     prefill, missingMeanings,
     stats: owner => progress.stats(owner, { starter: settings(owner).starter }),
   };
+}
+
+// The study time of a day in whole minutes from the times of its answers (sorted): the gaps between consecutive answers, each counted up to
+// RUN_GAP_MS, plus FIRST_ANSWER_MS for the first answer of each run (a run starts after a gap longer than RUN_GAP_MS).
+const RUN_GAP_MS = 120 * 1000;
+const FIRST_ANSWER_MS = 15 * 1000;
+function studyMinutes(times) {
+  let total = 0;
+  let previous = null;
+  for (const at of times) {
+    if (previous === null || at - previous > RUN_GAP_MS) total += FIRST_ANSWER_MS;
+    if (previous !== null) total += Math.min(at - previous, RUN_GAP_MS);
+    previous = at;
+  }
+  return Math.floor(total / 60000);
 }
 
 // The meaning of one word through the translator the person set up, by the same path as POST /api/translate/word: this Client's own translator, or the
@@ -795,12 +1038,22 @@ function translatorLookup() {
 // (services/learn-prefill.js), so a word both want is asked of the translator once and the meanings they found are one cache.
 let shared = null;
 function sharedLearn() {
-  if (!shared) shared = createLearn({ lookupWord: translatorLookup(), cacheOnly: () => Boolean(require('./learn-sync').getLearnSync().cacheOnly()) });
+  if (!shared) {
+    // The parts and tips of words that keep slipping: this server's own chat model of the translator (as the level and the picking use it).
+    const translator = require('./translator').createTranslator({ db: require('../db'), sessionSecret: require('../config').sessionSecret });
+    const chat = (owner, ...args) => {
+      if (!translator.isConfigured(owner)) return Promise.reject(new LearnError('Translation service not configured yet', 503));
+      return translator.chat(owner, ...args);
+    };
+    shared = createLearn({ lookupWord: translatorLookup(), chat, cacheOnly: () => Boolean(require('./learn-sync').getLearnSync().cacheOnly()) });
+  }
   return shared;
 }
 
 module.exports = {
   createLearn, sharedLearn, translatorLookup, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS, CHECKED_SETTINGS, KEPT_SETTINGS,
+  MISTAKE_TAGS, MAX_EXPECTED, NEW_PER_DAY, MAX_NEW_WORDS, cleanExtraNew, mergeExtraNew, studyMinutes, checkParts, storedParts, checkTip, parseSpelling, SPELLING_SYSTEM,
+  LEECH_MISSED, PARTS_JOIN,
   LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse, PREFILL_BATCH,
 };

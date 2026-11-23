@@ -40,7 +40,7 @@ If an entry already describes the action, follow its steps with `tcli browser` i
 
 ## Explore with `tcli browser`
 
-Only tabs T-Agent opened, or tabs the user handed over with the extension button, can be driven. Typical flow:
+Only tabs T-Agent opened, or tabs the user handed over with the extension button, can be driven. Tabs you open go into T-Agent's own Chrome window behind the user's windows, so you never take their focus: do not `activate` a tab unless the user asked to see the page (`shot` and every other command work on a tab in the background). Your tabs close by themselves 2 minutes after your turn ends; open a page with `--keep` when the user should find it afterwards, and tell them. A tab the user clicks or types in becomes theirs and leaves your control. Typical flow:
 
 ```bash
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser status            # is a browser paired and online?

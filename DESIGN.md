@@ -30,7 +30,7 @@
 | [open-links.md](docs/design/open-links.md) | Web links that programs in a terminal open, opened on the person's device: the cause (Claude Code, Codex), the link shims and relay, the link bar, the Mac app handler, Home Screen apps on iOS and Android. | 11 KB |
 | [agent-chat.md](docs/design/agent-chat.md) | The conversation view of Claude Code / Codex: backends, service, approvals, the chat page. | 43 KB |
 | [plan-usage.md](docs/design/plan-usage.md) | Plan usage bars, server side: Claude and Codex plan windows (5 hours, 7 days) shared with the agent chat's readings, states, account hashes, the schedule and turn-end reads, `GET/POST …/agent-usage` on `/api`, `/v1` and the forward, `agent-usage:read`. | 7 KB |
-| [tcli.md](docs/design/tcli.md) | The `tcli` command of agent sessions: environment, relay, `tcli oss`, `tcli notify`, exit codes, reading browser recordings (`record items` filters, `record requests`), `browser status`, the site entry schema. | 18 KB |
+| [tcli.md](docs/design/tcli.md) | The `tcli` command of agent sessions: environment, relay, `tcli oss`, `tcli notify`, exit codes, reading browser recordings (`record items` filters, `record requests`), `browser status`, browser tabs (`open --keep`, dialogs, closing), the site entry schema. | 19 KB |
 | [agent-rule-files.md](docs/design/agent-rule-files.md) | `AGENTS.md` and `CLAUDE.md` of new and existing tasks. | 1 KB |
 | [rules-and-skills-sync.md](docs/design/rules-and-skills-sync.md) | Sharing Claude rules, skills and Codex rules across linked services: roles, layers, bundle, shared Claude settings. | 26 KB |
 
@@ -94,7 +94,7 @@
 
 | File | What is in it | Size |
 | --- | --- | --- |
-| [browser-extension.md](docs/design/browser-extension.md) | The Chrome extension driven by `tcli browser`: its parts, the shared contract, `tabs.reveal`, the bridge diagram, recordings (from the first load with `open --record`, type and body size filters, `source` agent / user, click target context, what appeared in DOM changes, `features` for older extensions). | 10 KB |
+| [browser-extension.md](docs/design/browser-extension.md) | The Chrome extension driven by `tcli browser`: its parts, the shared contract, `tabs.reveal`, the bridge diagram, recordings (from the first load with `open --record`, type and body size filters, `source` agent / user, click target context, what appeared in DOM changes, `features` for older extensions), focus and closing (T-Agent's own background window, no focus taken, screenshots of inactive tabs, page dialogs, the person's tabs, `--keep`, tabs closed after the agent's turn, the extension reloading itself). | 19 KB |
 | [site-library.md](docs/design/site-library.md) | What agents learn about each website (`tcli site`): entry shape, storage, sync. | 6 KB |
 | [upload-oss.md](docs/design/upload-oss.md) | Image and file upload to OSS: configuration, policies, limits. | 6 KB |
 | [machine-tools.md](docs/design/machine-tools.md) | Tools whose pages were removed in 2.88.0 but whose routes stay (frp, SSH tunnel, PM2, apps, file sync and more). | 1 KB |

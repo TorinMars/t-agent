@@ -1,5 +1,16 @@
 import { redact, cut } from './redact.js';
 export const captures = new Map();
+// Page JavaScript dialogs that T-Agent answered while its debugger was attached, per tab, until the next command's result reports them
+// ("Focus and dialogs" in docs/design/browser-extension.md). Kept apart from `captures`, so a short attach (shot, wait --idle) still reports them.
+export const dialogs = new Map();
+// An alert and a beforeunload are accepted (the page goes on, a navigation or a close proceeds); a confirm and a prompt are dismissed (the page
+// gets false or null), so nothing is agreed to on the person's behalf. Chrome never has to show the dialog, so it never brings the tab forward.
+export const dialogAnswer = type => type === 'alert' || type === 'beforeunload';
+export function takeDialogs(id) {
+  const list = dialogs.get(id);
+  dialogs.delete(id);
+  return list || [];
+}
 export const cdp = (id, method, params = {}) => chrome.debugger.sendCommand({
   tabId: id
 }, method, params);
@@ -127,6 +138,33 @@ async function handle(id, method, p) {
   const s = captures.get(id);
   if (!s) return;
   const at = Date.now();
+  if (method === 'Page.javascriptDialogOpening') {
+    const accept = dialogAnswer(p.type);
+    await cdp(id, 'Page.handleJavaScriptDialog', {
+      accept
+    }).catch(() => {});
+    const message = redact(cut(String(p.message || ''), 500).text);
+    const entry = {
+      at,
+      type: String(p.type || 'alert'),
+      message,
+      url: redact(String(p.url || '')),
+      handled: accept ? 'accepted' : 'dismissed'
+    };
+    const list = dialogs.get(id) || [];
+    list.push(entry);
+    if (list.length > 20) list.shift();
+    dialogs.set(id, list);
+    const line = {
+      at,
+      level: 'dialog',
+      text: `dialog: ${entry.type} ${message} (${entry.handled})`
+    };
+    s.console.push(line);
+    if (s.console.length > 2000) s.console.shift();
+    emit(id, 'console', line);
+    return;
+  }
   if (method === 'Page.frameNavigated' && !p.frame?.parentId) {
     onPage(id, 'commit', p.frame?.url);
     return;

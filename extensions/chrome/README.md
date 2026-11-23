@@ -1,6 +1,6 @@
 # T-Agent Browser
 
-A local Manifest V3 bridge from your own T-Agent sessions to tabs in your own Chrome browser. It implements all 25 v1 command methods, plus `tabs.reveal` (1.0.3: brings the tab of a T-Agent page with a given origin to the front, for the desktop window's Open session; it reads no page and needs no handed tab). 1.0.4 adds recording options (see "Recordings (1.0.4)" below) and lists them as `features` in its hello. Plain JavaScript ES modules, no build step, no remote code, no static content scripts. Requires Chrome 116 or newer (WebSocket activity keeps the service worker alive).
+A local Manifest V3 bridge from your own T-Agent sessions to tabs in your own Chrome browser. It implements all 25 v1 command methods, plus `tabs.reveal` (1.0.3: brings the tab of a T-Agent page with a given origin to the front, for the desktop window's Open session; it reads no page and needs no handed tab). 1.0.4 adds recording options (see "Recordings (1.0.4)" below) and lists them as `features` in its hello. 1.0.5 keeps the person's focus and closes T-Agent's tabs (see "Focus and closing (1.0.5)"). Plain JavaScript ES modules, no build step, no remote code, no static content scripts. Requires Chrome 116 or newer (WebSocket activity keeps the service worker alive).
 
 ## Load and pair
 
@@ -16,7 +16,7 @@ The agent can use only tabs opened by this extension in a group titled **T-Agent
 
 Chrome internal pages, extension pages, DevTools and the Chrome Web Store are never scriptable. Version 1 supports HTTP(S) pages only. File URLs and other schemes return `TAB_NOT_SCRIPTABLE`.
 
-Capture and recording use Chrome's debugger API and show Chrome's yellow debugging bar. Opening DevTools may displace capture. Choosing Cancel on the bar stops capture and emits `record.stopped` for a recording. A debugger already owned by DevTools or another extension returns `DEBUGGER_BUSY`. Full-page/element screenshots and network-idle waits are short captures: they attach only for the operation, then detach unless an explicit capture or recording still needs the connection. Visible screenshots use `captureVisibleTab` and require an active tab; an active-tab change discards the result.
+Capture and recording use Chrome's debugger API and show Chrome's yellow debugging bar. Opening DevTools may displace capture. Choosing Cancel on the bar stops capture and emits `record.stopped` for a recording. A debugger already owned by DevTools or another extension returns `DEBUGGER_BUSY`. Full-page/element screenshots and network-idle waits are short captures: they attach only for the operation, then detach unless an explicit capture or recording still needs the connection. Visible screenshots are short captures too (`Page.captureScreenshot` of the viewport), so the tab need not be active; only when the debugger is busy and the tab is the active one of its window is `captureVisibleTab` used.
 
 Tab IDs and handover state survive service-worker restarts through `chrome.storage.session`, not a full Chrome session restart. Removing a tab from the T-Agent group, renaming its group, closing it or taking it back removes capture access. Merely navigating to another HTTP(S) origin does not stop a recording.
 
@@ -30,7 +30,7 @@ The shared server vector file did not exist at implementation time. `redact-vect
 
 ## Command details left open by v1
 
-- Tab fallback uses the last tab used by a command, otherwise the active allowed tab in the last focused window. Explicit tab IDs are always checked. Open defaults to inactive. A person-created tab cannot become agent-owned merely by joining the group.
+- Tab fallback uses the last tab used by a command, otherwise the active allowed tab in the last focused window, otherwise the allowed tab used last. Explicit tab IDs are always checked. Open is always inactive, in T-Agent's own window (`active` then brings it forward). A person-created tab cannot become agent-owned merely by joining the group.
 - Outline elements also include a stable `selector`. Refs belong to one document and last snapshot; queries add refs without resetting existing ones. Snapshot text/HTML defaults to 200,000 bytes, capped at 1 MiB. Truncated eval values are a UTF-8 prefix of their JSON representation, returned as a string with `truncated:true`. Non-serializable evaluations return `EVAL_FAILED`. `await_promise:false` serializes an unresolved Promise as an object without waiting. A page CSP may reject `eval` in the MAIN world; that is reported as `EVAL_FAILED`, not bypassed. With capture active, evaluation uses CDP.
 - Back and forward try `chrome.tabs.goBack` / `goForward` first. Chrome's back skips history entries that were left without a user gesture, and every navigation the extension starts is one, so after a `click` on a link Chrome often answers "Cannot find a next page in history". The step is then taken in the page with `history.back()` / `history.forward()` and counts once the tab loads or its URL changes; nothing within 3 s answers `BAD_PARAMS` "There is no earlier page in this tab" (or later).
 - Input without capture uses native setters and synthetic DOM events, which update controlled inputs. Such events have `isTrusted:false`. Keyboard fallback covers text editing, basic caret movement, select-all, Tab and form Enter; browser-reserved shortcuts depend on Chrome. With capture active, mouse/keyboard use CDP and text uses `Input.insertText`. Select changes use native DOM options plus input/change events.
@@ -49,13 +49,23 @@ The whole rule is "Recording" in `docs/design/browser-extension.md`. In short:
 - `record.start` (and `record`) take `types` (CDP resource types, any case), `drop_other_types` and `max_body_bytes`. Other types keep their items without bodies (`body_omitted: 'type'`) or, with `drop_other_types`, have none; longer bodies are cut (`body_truncated`, with `body_bytes` / `post_data_bytes` the size before the cut).
 - Actions of commands are one item each with `source: 'agent'` (written before the input; the page recorder leaves out the events they cause), the person's with `source: 'user'`. Click and input targets add `nearest` (the nearest meaningful element: tag, role, aria_label, title, alt, name, text, selector). DOM items add `appeared` (dialogs, alerts, notices, headings, buttons, links that showed up; at most 20 entries of 120 characters, redacted); `landmarks` is gone.
 
+## Focus and closing (1.0.5)
+
+The whole rule is "Focus and closing" in `docs/design/browser-extension.md`. In short:
+
+- `tabs.open` puts the tab into one T-Agent window, created with `chrome.windows.create({ focused: false, state: 'normal' })` behind your windows (never minimized, so pages are drawn) and reused while it holds a T-Agent tab; Chrome closes it with its last tab. The group is made in that window (`createProperties.windowId`), so the tab is never moved into yours. Handed tabs stay where they are.
+- Only `tabs.activate`, `tabs.open` with `active` and `tabs.reveal` activate a tab or focus a window. Page dialogs (alert, confirm, prompt, beforeunload) are answered while the debugger is attached (alert and beforeunload accepted, confirm and prompt dismissed) and reported as `dialogs` in the tab's next result and as `dialog: <type> <message>` console lines.
+- When you activate a T-Agent tab in a window you are in, or click or type in it, it is yours: it leaves the group and T-Agent no longer uses or closes it (a recorded tab stays T-Agent's, but is kept open). `tabs.open` with `keep` marks a tab that T-Agent never closes by itself; `tabs.close` with `auto` (T-Agent's own closing when an agent's turn ended) closes only an owned tab that is not kept.
+- The bridge's `{ type: 'reload' }` makes the extension read its folder's `manifest.json` and, when it is newer than the running version (and not tried for that version in the last 10 minutes), reload itself once no command or recording runs. The tabs it owns come back after the reload.
+
 ## Tests
 
 From the repository root, using the repository's existing Playwright/Chromium and `ws` dependencies:
 
 ```sh
 node --test extensions/chrome/test/redact.test.cjs extensions/chrome/test/page.test.cjs extensions/chrome/test/worker.test.cjs
-node --test extensions/chrome/test/extension.test.cjs
+node --test extensions/chrome/test/focus.test.cjs
+node --test extensions/chrome/test/extension.test.cjs extensions/chrome/test/reload.test.cjs
 ```
 
 The first command is network-free. It tests redaction, native page input and password exclusion, worker protocol and tab scope, recording order, raw-answer boundaries and debugger cleanup using in-process API fixtures. The second launches an unpacked extension in a fresh temporary headless Chromium profile and uses only a local HTTP/WebSocket fixture. It covers tab scope, snapshots and refs, controlled inputs, MAIN eval, page fetch, network redaction, short recordings through navigation, and a recording from the first load (`tabs.open` with `record`: one page load, filters, sources, target context, appeared texts). If Playwright looks for its browsers in the wrong cache, set `PLAYWRIGHT_BROWSERS_PATH` (on macOS `~/Library/Caches/ms-playwright`). It does not access the real T-Agent server or real user configuration directories. Temporary profiles, servers and browsers are cleaned up. No background service or visible window is left running; no full-screen screenshot is taken.

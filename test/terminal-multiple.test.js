@@ -438,3 +438,25 @@ test('terminalCwd reports the live directory of the shell, relative to the task 
   ws.close(1000, 'done');
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
+
+test('onTerminalEnded hears restart, close, delete and a shell that exits by itself (the browser tab care closes that terminal\'s tabs)', async () => {
+  const heard = [];
+  const off = terminal.onTerminalEnded(where => heard.push(`${where.task_id}:${where.terminal_id}`));
+  const added = terminal.createTerminal(task.id);
+  const key = `${task.id}:${added.terminal_id}`;
+  connect(added.terminal_id);
+  terminal.controlSession(task.id, 'restart-workdir', added.terminal_id);
+  assert.deepEqual(heard, [key]);
+  connect(added.terminal_id);
+  terminal.controlSession(task.id, 'close', added.terminal_id);
+  terminal.controlSession(task.id, 'close', added.terminal_id); // no shell: nothing to hear
+  assert.deepEqual(heard, [key, key]);
+  connect(added.terminal_id);
+  shells.at(-1).exit(); // the shell exited (exit, or the agent's process ended it)
+  for (let i = 0; heard.length < 3 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(heard, [key, key, key]);
+  connect(added.terminal_id);
+  terminal.controlSession(task.id, 'delete', added.terminal_id);
+  assert.equal(heard.length, 4);
+  off();
+});

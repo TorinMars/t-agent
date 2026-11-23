@@ -774,6 +774,10 @@ server.listen(config.port, config.host, () => {
   }
   // Browser recordings older than 14 days, or over 2 GiB in all, are removed now and every 6 hours (services/browser-recordings.js).
   browserRecordings.startCleanup();
+  // The tabs an agent opened close when its turn ended and they sat idle for 2 minutes, or when its terminal closed ("Closing T-Agent's tabs" in
+  // docs/design/browser-extension.md).
+  terminal.onAgentTurnEnd((agent, where) => browserBridge.turnEnded(where));
+  terminal.onTerminalEnded(where => browserBridge.terminalEnded(where));
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.

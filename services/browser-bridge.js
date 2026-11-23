@@ -10,12 +10,35 @@
 //    (BROWSER_TIMEOUT) a little after the one we gave it; only the methods of METHODS are sent (METHOD_NOT_ALLOWED), to the browser
 //    named by params.browser_id or else to the one that connected last (BROWSER_NOT_CONNECTED when there is none); a method or a newer
 //    option (PARAM_FEATURES) the extension's hello does not list is refused with UNKNOWN_METHOD;
-//  - events: tab.handed / tab.released / tab.closed (kept as the last few per browser for the status), record.items and record.stopped
-//    (services/browser-recordings.js, which redacts again before it writes).
+//  - events: tab.handed / tab.released / tab.closed / tab.used (kept as the last few per browser for the status), record.items and
+//    record.stopped (services/browser-recordings.js, which redacts again before it writes);
+//  - the care of T-Agent's tabs (services/browser-tab-care.js): which terminal used which tab, closed when the agent's turn ended, the terminal
+//    closed or the tab sat idle ("Closing T-Agent's tabs" in docs/design/browser-extension.md); only for an extension that lists `close.auto`;
+//  - the extension's own update: a hello from an unpacked extension older than extensions/chrome/manifest.json gets `{ type: 'reload' }`
+//    ("The extension updates itself").
 // Tokens, cookies and bodies are never logged; results are never logged or kept, and `raw: true` answers go only to the caller.
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const WebSocket = require('ws');
 const { redactDeep, redactUrl } = require('../lib/browser-redact');
+const { createTabCare } = require('./browser-tab-care');
+
+const MANIFEST = path.resolve(__dirname, '..', 'extensions', 'chrome', 'manifest.json');
+// The version of the extension in this install's folder, read at each hello (a git update changes it without a restart).
+function folderVersion() {
+  try { return JSON.parse(fs.readFileSync(MANIFEST, 'utf8')).version || null; } catch { return null; }
+}
+const versionParts = value => (/^\d+(\.\d+){0,3}$/.test(String(value || '')) ? String(value).split('.').map(Number) : null);
+function newerVersion(a, b) {
+  const x = versionParts(a);
+  const y = versionParts(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+}
+const RELOAD_EVERY_MS = 10 * 60_000;
+const RELOAD_TRIES = 3;
 
 const KEY = 'browser_ext_v1';
 const PROTOCOL = 1;
@@ -98,8 +121,18 @@ function createBrowserBridge({
   maxTimeoutMs = 10 * 60_000,
   graceMs = 2_000,
   log = message => console.log(message),
+  extensionVersion = folderVersion,
+  tabCareOptions = {},
 } = {}) {
   if (!db) throw new Error('createBrowserBridge needs db');
+  // browser_id -> { version, at, tries }: the reload asked of an extension that reported `version`, at most once per RELOAD_EVERY_MS, and not
+  // again after RELOAD_TRIES for the same version (its folder is not this one, so reloading does not help).
+  const reloads = new Map();
+  const care = createTabCare({
+    close: (browserId, tabId) => command('tabs.close', { browser_id: browserId, tab_id: tabId, auto: true }),
+    log,
+    ...tabCareOptions,
+  });
   const wss = new WebSocket.Server({ noServer: true, maxPayload: MAX_FRAME_BYTES });
   const connections = new Map(); // browser_id -> connection
   const listeners = new Set();
@@ -196,7 +229,7 @@ function createBrowserBridge({
   function status() {
     const browsers = list();
     const active = browsers.find(browser => browser.active) || null;
-    return { protocol: PROTOCOL, connected: Boolean(active), active_browser_id: active ? active.browser_id : null, browsers, methods: METHODS.slice() };
+    return { protocol: PROTOCOL, connected: Boolean(active), active_browser_id: active ? active.browser_id : null, browsers, methods: METHODS.slice(), extension_version: extensionVersion() };
   }
   function rename(browserId, name) {
     const valid = validName(name);
@@ -297,7 +330,23 @@ function createBrowserBridge({
     armSilence(conn);
     send(ws, { type: 'welcome', protocol: PROTOCOL, server_name: serverName(), browser_id: entry.browser_id });
     log(`Browser extension connected: ${entry.name} (${entry.browser_id}, extension ${conn.version || '?'})`);
+    conn.installType = cleanText(message.install_type, 32) || null;
+    askReload(conn);
+    if (conn.features.has('close.auto')) care.connected(entry.browser_id, Array.isArray(message.owned_tabs) ? message.owned_tabs : null);
     return conn;
+  }
+
+  // An unpacked extension (installType 'development') older than this install's folder is asked to reload itself; the extension reloads only
+  // when the folder it runs from really holds a newer manifest. An older extension without `reload` in its features ignores the message.
+  function askReload(conn) {
+    const latest = extensionVersion();
+    if (conn.installType !== 'development' || !latest || !newerVersion(latest, conn.version)) return;
+    const last = reloads.get(conn.browserId);
+    const same = last && last.version === conn.version && last.latest === latest;
+    if (same && (now() - last.at < RELOAD_EVERY_MS || last.tries >= RELOAD_TRIES)) return;
+    reloads.set(conn.browserId, { version: conn.version, latest, at: now(), tries: same ? last.tries + 1 : 1 });
+    send(conn.ws, { type: 'reload', version: latest });
+    log(`Browser extension ${conn.browserId} runs ${conn.version || '?'}; asked it to reload to ${latest}`);
   }
 
   function onResult(conn, message) {
@@ -305,6 +354,7 @@ function createBrowserBridge({
     if (!pending) return; // late (timed out) or unknown
     clearTimeout(pending.timer);
     conn.pending.delete(message.id);
+    pending.tab = isPlainObject(message.tab) ? message.tab : null;
     if (message.ok === true) { pending.resolve(isPlainObject(message.result) ? message.result : {}); return; }
     const error = isPlainObject(message.error) ? message.error : {};
     const code = typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(error.code) ? error.code : 'EXTENSION_ERROR';
@@ -320,7 +370,11 @@ function createBrowserBridge({
         if (recordings) recordings.append(data.recording_id, Array.isArray(data.items) ? data.items : [], { browser_id: conn.browserId });
       } else if (name === 'record.stopped') {
         if (recordings) recordings.stop(data.recording_id, { reason: cleanText(data.reason, 200) || 'stopped' });
-      } else if (/^tab\.(handed|released|closed)$/.test(name)) {
+      } else if (/^tab\.(handed|released|closed|used)$/.test(name)) {
+        if (Number.isInteger(data.tab_id)) {
+          if (name === 'tab.used' && data.kept === true) care.keep(conn.browserId, data.tab_id);
+          else care.forget(conn.browserId, data.tab_id);
+        }
         const entry = { at: new Date(now()).toISOString(), event: name, tab_id: Number.isInteger(data.tab_id) ? data.tab_id : null };
         if (typeof data.url === 'string') entry.url = redactUrl(data.url.slice(0, 2000));
         if (typeof data.title === 'string') entry.title = cleanText(data.title, 200);
@@ -363,19 +417,39 @@ function createBrowserBridge({
     const timeout = timeoutFor(method, rest, timeoutMs);
     seq += 1;
     const id = `c_${seq}`;
+    let entry;
     const sent = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         conn.pending.delete(id);
         reject(ERRORS.BROWSER_TIMEOUT(method));
       }, timeout + graceMs);
-      conn.pending.set(id, { resolve, reject, timer, method });
+      entry = { resolve, reject, timer, method, tab: null };
+      conn.pending.set(id, entry);
       try { send(conn.ws, { type: 'cmd', id, method, params: rest, timeout_ms: timeout }); }
       catch (error) { clearTimeout(timer); conn.pending.delete(id); reject(ERRORS.BROWSER_NOT_CONNECTED()); }
     });
-    return sent.then(result => afterResult(method, rest, result, conn, context));
+    return sent.then(result => afterResult(method, rest, result, conn, context, entry.tab), error => {
+      try { noteCare(method, rest, null, conn, context, entry.tab, error); } catch (problem) { log(`Browser tab care: ${problem.message}`); }
+      throw error;
+    });
   }
 
-  function afterResult(method, params, result, conn, context) {
+  // The tab care: the tab a command used (the result's `tab` of an extension from 1.0.5, else the tab of tabs.open's answer) belongs to the
+  // terminal that sent it; tabs.close forgets it. Only an extension that closes with `auto` (feature close.auto) is cared for.
+  function noteCare(method, params, result, conn, context, used, error = null) {
+    if (!conn.features.has('close.auto')) return;
+    const tab = used || (result && isPlainObject(result.tab) ? result.tab : null);
+    if (!tab || !Number.isInteger(tab.tab_id)) return;
+    if (method === 'tabs.close') {
+      if (!error || ['TAB_NOT_ALLOWED', 'TAB_NOT_FOUND'].includes(error.code)) care.forget(conn.browserId, tab.tab_id);
+      return;
+    }
+    if (error && error.code === 'TAB_NOT_FOUND') { care.forget(conn.browserId, tab.tab_id); return; }
+    care.noteTab(conn.browserId, tab.tab_id, { context, how: tab.how === 'handed' ? 'handed' : 'group', keep: tab.keep === true || (method === 'tabs.open' && params.keep === true) });
+  }
+
+  function afterResult(method, params, result, conn, context, used = null) {
+    try { noteCare(method, params, result, conn, context, used); } catch (error) { log(`Browser tab care: ${error.message}`); }
     // record.start, and tabs.open with `record` (its tab is in result.tab).
     if (recordings && (method === 'record.start' || method === 'tabs.open') && typeof result.recording_id === 'string') {
       const tab = isPlainObject(result.tab) ? result.tab : result;
@@ -406,12 +480,16 @@ function createBrowserBridge({
 
   function onEventListener(listener) { listeners.add(listener); return () => listeners.delete(listener); }
   function closeAll() {
+    care.stop();
     for (const conn of [...connections.values()]) drop(conn, 1001, 'Server stopping');
   }
+  // routes/terminal.js through server.js: { task_id, terminal_id } of a terminal whose agent turn ended, or that was closed / restarted.
+  const turnEnded = context => { try { care.turnEnded(context); } catch (error) { log(`Browser tab care: ${error.message}`); } };
+  const terminalEnded = context => { try { care.terminalEnded(context); } catch (error) { log(`Browser tab care: ${error.message}`); } };
 
   return {
     createPairCode, pair, list, status, rename, remove, command, attach, handleUpgrade, onEvent: onEventListener, closeAll,
-    connected: () => connections.size > 0,
+    connected: () => connections.size > 0, turnEnded, terminalEnded, tabCare: () => care.snapshot(),
   };
 }
 
@@ -427,4 +505,4 @@ function getBrowserBridge() {
   return shared;
 }
 
-module.exports = { createBrowserBridge, getBrowserBridge, BridgeError, METHODS, PROTOCOL, CLOSE, PAIR_ALPHABET, TOKEN_PREFIX, MAX_FRAME_BYTES, EXTENSION_STATUS, hashToken };
+module.exports = { createBrowserBridge, getBrowserBridge, BridgeError, METHODS, PROTOCOL, CLOSE, PAIR_ALPHABET, TOKEN_PREFIX, MAX_FRAME_BYTES, EXTENSION_STATUS, hashToken, newerVersion, folderVersion };

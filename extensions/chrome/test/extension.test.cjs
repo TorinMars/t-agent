@@ -127,6 +127,9 @@ test('unpacked extension contract in local headless Chromium', {
   assert.equal(hello?.version, require('../manifest.json').version, 'hello carries the manifest version');
   assert.equal(hello.methods.length, 26);
   assert(hello.features.includes('open.record') && hello.features.includes('record.types'), 'hello lists the 1.0.4 features');
+  assert(hello.features.includes('close.auto') && hello.features.includes('reload'), 'hello lists the 1.0.5 features');
+  assert.equal(hello.install_type, 'development', 'loaded unpacked');
+  assert.deepEqual(hello.owned_tabs, []);
   const cmd = async (method, params = {}) => {
     const id = `c_${++seq}`;
     const response = await new Promise((resolve, reject) => {
@@ -404,6 +407,101 @@ test('unpacked extension contract in local headless Chromium', {
     assert(items.every(i => i.kind !== 'dom' || !('landmarks' in i)));
     await ok('tabs.close', {
       tab_id: id
+    });
+  });
+  await t.test('T-Agent\'s own window, a screenshot of a tab that is not active, dialogs that never bring a tab forward', async () => {
+    const personWindow = await setup.evaluate(async () => (await chrome.tabs.getCurrent()).windowId);
+    const a = (await ok('tabs.open', {
+      url: `${base}/next`
+    })).tab;
+    const b = await cmd('tabs.open', {
+      url: base
+    });
+    assert.equal(b.ok, true);
+    assert.deepEqual(b.tab, {
+      tab_id: b.result.tab.tab_id,
+      how: 'group'
+    }, 'the result carries the tab for the bridge');
+    const bt = b.result.tab;
+    assert.notEqual(a.window_id, personWindow, 'not in the person\'s window');
+    assert.equal(bt.window_id, a.window_id, 'one T-Agent window, reused');
+    const info = await setup.evaluate(async ([x, y]) => {
+      const w = await chrome.windows.get(x.window_id, {
+        populate: true
+      });
+      return {
+        type: w.type,
+        state: w.state,
+        group: (await chrome.tabGroups.get((await chrome.tabs.get(y)).groupId)).title,
+        activeB: (await chrome.tabs.get(y)).active
+      };
+    }, [a, bt.tab_id]);
+    assert.deepEqual(info, {
+      type: 'normal',
+      state: 'normal',
+      group: 'T-Agent',
+      activeB: false
+    }, 'a normal window, not minimized; the second tab is not active');
+    await ok('page.wait', {
+      tab_id: bt.tab_id,
+      selector: '#name'
+    });
+    const shot = await ok('page.screenshot', {
+      tab_id: bt.tab_id
+    });
+    const png = Buffer.from(shot.data_base64, 'base64');
+    assert.equal(png.subarray(1, 4).toString(), 'PNG', 'a picture of the tab that is not active');
+    assert(png.readUInt32BE(16) > 0 && shot.width > 0);
+    assert.equal(await setup.evaluate(id => chrome.tabs.get(id).then(x => x.active), bt.tab_id), false, 'still not active');
+    // Dialogs while the debugger is attached: answered at once, the tab stays in the background, the next result reports them. Playwright
+    // answers every dialog itself unless a page has a listener: an empty one leaves them to the extension, as in the person's Chrome.
+    for (const p of context.pages()) p.on('dialog', () => {});
+    await ok('net.start', {
+      tab_id: bt.tab_id
+    });
+    await ok('page.eval', {
+      tab_id: bt.tab_id,
+      expression: 'setTimeout(() => { alert("Saved it"); window.afterAlert = true; window.confirmed = confirm("Delete all?"); window.named = prompt("Name?", "x"); }, 0); 1'
+    });
+    let value;
+    for (let n = 0; n < 60; n++) {
+      const r = await ok('page.eval', {
+        tab_id: bt.tab_id,
+        expression: '[window.afterAlert === true, window.confirmed, window.named]'
+      });
+      if (r.dialogs) value = (value || []).concat(r.dialogs);
+      if (r.value[0] && r.value[2] !== undefined) {
+        assert.deepEqual(r.value, [true, false, null], 'alert accepted, confirm and prompt dismissed');
+        break;
+      }
+      await delay(50);
+    }
+    const console = await ok('page.console', {
+      tab_id: bt.tab_id
+    });
+    const reported = [...(value || []), ...(console.dialogs || [])];
+    assert.deepEqual(reported.map(d => `${d.type} ${d.handled}`), ['alert accepted', 'confirm dismissed', 'prompt dismissed']);
+    assert(console.entries.some(e => e.text === 'dialog: alert Saved it (accepted)'));
+    assert.equal(await setup.evaluate(id => chrome.tabs.get(id).then(x => x.active), bt.tab_id), false, 'a dialog did not bring the tab forward');
+    await ok('net.stop', {
+      tab_id: bt.tab_id
+    });
+    // T-Agent's own closing: never a kept tab.
+    const kept = (await ok('tabs.open', {
+      url: base,
+      keep: true
+    })).tab;
+    assert.equal(kept.keep, true);
+    assert.equal((await cmd('tabs.close', {
+      tab_id: kept.tab_id,
+      auto: true
+    })).error.code, 'TAB_NOT_ALLOWED');
+    for (const id of [a.tab_id, bt.tab_id]) await ok('tabs.close', {
+      tab_id: id,
+      auto: true
+    });
+    await ok('tabs.close', {
+      tab_id: kept.tab_id
     });
   });
   await t.test('unpair close halts automatic reconnect', async () => {

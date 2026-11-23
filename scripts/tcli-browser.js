@@ -21,7 +21,13 @@ over with the extension button)
   status                 the connected browser
     --verbose            + methods, recent events
   tabs                   tabs T-Agent may use
-  open <url> [--active]  new tab in the group
+  open <url>             new tab in the group, in
+                         T-Agent's own window
+                         behind the person's: it
+                         never takes their focus
+    --active             show it to the person
+    --keep               keep it open after your
+                         turn (tell the person)
     --record             record from the first
                          load (takes the record
                          start options)
@@ -30,6 +36,16 @@ over with the extension button)
   go [tab] <url>         navigate (--no-wait)
   back | forward | reload
   activate <tab>         bring a tab to the front
+                         (only when the person
+                         asked to see it)
+
+  Your tabs close by themselves 2 minutes after
+  your turn ends, when the terminal closes, or
+  after 30 minutes unused. A tab the person
+  clicks or types in becomes theirs. Page
+  dialogs are answered while the debugger runs
+  (alert accepted, confirm and prompt dismissed)
+  and reported as "dialog: <type> <message>".
 
 Page
   snapshot               one line per element:
@@ -56,7 +72,8 @@ Page
   shot [-o file.png]     screenshot (--full,
                          --target T, --jpeg,
                          --quality N; -o - for
-                         stdout)
+                         stdout); the tab need
+                         not be active
   console                console lines and errors
     --since MS --limit N
 
@@ -239,13 +256,19 @@ function createBrowserGroup(h) {
     });
   }
 
-  function cmd(ctx, method, params = {}, { timeoutMs } = {}) {
+  // Page dialogs (alert, confirm, prompt, beforeunload) the extension answered since the tab's last command come with the next result: one
+  // line each on stderr, so the text output stays as it was ("Focus and dialogs" in docs/design/browser-extension.md).
+  async function cmd(ctx, method, params = {}, { timeoutMs } = {}) {
     const wait = timeoutMs || DEFAULT_TIMEOUT_MS;
     const inner = Number.isFinite(params.timeout_ms) ? params.timeout_ms + 5000 : 0;
-    return request(ctx.relay(), 'POST', '/browser/cmd', {
+    const answer = await request(ctx.relay(), 'POST', '/browser/cmd', {
       body: prune({ method, params, timeout_ms: timeoutMs }),
       timeoutMs: Math.max(wait, inner) + HTTP_EXTRA_MS,
     });
+    for (const dialog of (answer && Array.isArray(answer.dialogs) ? answer.dialogs : [])) {
+      ctx.stderr.write(`dialog: ${dialog.type} ${quote(oneLine(dialog.message, 200))} (${dialog.handled || 'answered'})\n`);
+    }
+    return answer;
   }
 
   // ── Output ──
@@ -263,6 +286,7 @@ function createBrowserGroup(h) {
   function tabLine(tab) {
     if (!tab) return '';
     const marks = [tab.how === 'handed' ? 'handed' : 'group'];
+    if (tab.keep) marks.push('keep');
     if (tab.capturing) marks.push('net');
     if (tab.recording_id) marks.push(`rec ${tab.recording_id}`);
     return `${String(tab.tab_id).padStart(5)}${tab.active ? '*' : ' '} [${marks.join(', ')}] ${oneLine(tab.title, 60) || '(no title)'}  ${tab.url || ''}`;
@@ -289,6 +313,7 @@ function createBrowserGroup(h) {
     return {
       protocol: answer && answer.protocol, connected: Boolean(answer && answer.connected), active_browser_id: (answer && answer.active_browser_id) || null,
       method_count: Array.isArray(answer && answer.methods) ? answer.methods.length : null,
+      ...(answer && answer.extension_version ? { extension_version: answer.extension_version } : {}),
       browsers: browsers.map(browser => ({
         browser_id: browser.browser_id, name: browser.name, version: browser.version || null,
         browser: browser.browser && browser.browser.name ? browser.browser.name : null,
@@ -308,6 +333,9 @@ function createBrowserGroup(h) {
       const kind = active.browser && active.browser.name ? ` · ${active.browser.name}` : '';
       lines.push(`Connected: ${active.name} (${active.browser_id}) · extension ${active.version || '?'}${kind}`);
       lines.push(`  connected since ${when(active.connected_at)} · paired ${when(active.created_at)}${Number.isFinite(active.methods) ? ` · ${active.methods} methods` : ''}`);
+      if (answer.extension_version && active.version && olderVersion(active.version, answer.extension_version)) {
+        lines.push(`  T-Agent has extension ${answer.extension_version}: it reloads itself from 1.0.5 on; reload it once in chrome://extensions if it stays at ${active.version}`);
+      }
     } else lines.push('No browser is connected.');
     for (const browser of browsers.filter(item => !item.active)) {
       lines.push(`  ${browser.name} (${browser.browser_id}): ${browser.online ? 'online' : `offline, last seen ${when(browser.last_seen_at)}`}`);
@@ -325,6 +353,14 @@ function createBrowserGroup(h) {
     }
     return lines.join('\n');
   }
+
+  const olderVersion = (a, b) => {
+    const x = String(a).split('.').map(Number);
+    const y = String(b).split('.').map(Number);
+    if (x.some(Number.isNaN) || y.some(Number.isNaN)) return false;
+    for (let i = 0; i < Math.max(x.length, y.length); i += 1) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+    return false;
+  };
 
   function requestLine(entry) {
     const size = Number.isFinite(entry.size) ? humanSize(entry.size) : '-';
@@ -431,15 +467,18 @@ function createBrowserGroup(h) {
       return [' tab  [how] title  url  (* = active)', ...tabs.map(tabLine)].join('\n');
     }),
     open: {
-      values: RECORD_VALUES, bools: ['active', 'record', ...RECORD_BOOLS],
+      values: RECORD_VALUES, bools: ['active', 'keep', 'record', ...RECORD_BOOLS],
       async run(ctx, flags, positional) {
-        if (positional.length !== 1) throw usage('Usage: tcli browser open <url> [--active] [--record [--types T] [--max-body N] ...]');
+        if (positional.length !== 1) throw usage('Usage: tcli browser open <url> [--active] [--keep] [--record [--types T] [--max-body N] ...]');
         const record = recordParams(flags);
         if (!flags.record && Object.keys(record).length) throw usage('The record options of open need --record');
-        const answer = await cmd(ctx, 'tabs.open', prune({ browser_id: flags.browser, url: positional[0], active: flags.active ? true : undefined, record: flags.record ? record : undefined }), { timeoutMs: timeoutOf(flags) });
+        const answer = await cmd(ctx, 'tabs.open', prune({ browser_id: flags.browser, url: positional[0], active: flags.active ? true : undefined, keep: flags.keep ? true : undefined, record: flags.record ? record : undefined }), { timeoutMs: timeoutOf(flags) });
         return print(ctx, flags, answer, result => {
           const opened = result && result.tab ? `Opened tab ${result.tab.tab_id}: ${result.tab.url || positional[0]}` : 'Opened';
-          return result && result.recording_id ? `${opened}\nRecording ${result.recording_id} from the first load. Use the page, then: tcli browser record stop` : opened;
+          const lines = [opened];
+          if (flags.keep) lines.push('It stays open after your turn: tell the person it is there (the "T-Agent" group in T-Agent\'s window).');
+          if (result && result.recording_id) lines.push(`Recording ${result.recording_id} from the first load. Use the page, then: tcli browser record stop`);
+          return lines.join('\n');
         });
       },
     },

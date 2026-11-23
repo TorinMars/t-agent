@@ -2,15 +2,19 @@ const express = require('express');
 
 // English learning ("API" in docs/design/learn-english.md; services/learn.js). Behind the page login and the same-origin check like every /api route
 // (server.js), and again here, so the router is safe wherever it is mounted. Every card belongs to the login of the page.
-//   GET   /api/learn/summary                          -> { due, new_today, done_today, goal, streak, words, sentences, mistakes, collecting, starter, new_report, chats }
-//   GET   /api/learn/queue?mode=review|spell|build|dictation|say|fill|mistakes&limit=20 -> { cards }  (each with `next`: { again, hard, good } ms)
+//   GET   /api/learn/summary                          -> { due, new_per_day, new_today, new_left, done_today, minutes_today, goal, streak, words, sentences,
+//                                                          mistakes, collecting, starter, new_report, chats }
+//   GET   /api/learn/queue?mode=review|spell|build|dictation|say|fill|mistakes&limit=20&extra=practice -> { cards }  (each with `next`: { again, hard,
+//         good } ms, `is_new`, `missed`, `leech`, `parts` (string[] | null) and `tip`; due cards, then new ones up to new_left, then with extra=practice
+//         the learnt ones not due; "New words a day" and "Keeps slipping" in docs/design/learn-review-fsrs.md)
+//   POST  /api/learn/new-words { count: 1..50 }       -> { new_per_day, new_today, new_left }  (today's allowance raised; on a company computer made on its home)
 //   POST  /api/learn/cards { kind, en, zh?, source, context? } -> { card, created }
 //   POST  /api/learn/cards/:id/answer { mode, grade, correct, answer? } -> { card }
 //   PATCH /api/learn/cards/:id { zh?, en?, suspended? }  -> { card }
 //   GET   /api/learn/cards?kind=word|sentence&source=&q=&limit=50&offset=0 -> { cards, total }  (every card has `context_zh`)
 //   POST  /api/learn/meaning { word }                   -> { zh }   (the configured translator; 503 when there is none)
 //   POST  /api/learn/starter { list: 'dev' }            -> { added }
-//   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter?, audio_*?, desired_retention? } -> settings
+//   GET   /api/learn/settings, PUT /api/learn/settings { collect?, daily_goal?, starter?, audio_*?, desired_retention?, new_per_day? } -> settings
 //   GET   /api/learn/stats                            -> { streak, best_streak, week, daily, weekly, memory, total_cards, due }  (the Progress view;
 //         "Learn progress statistics" in docs/design/learn-english-stats.md; services/learn-stats.js)
 //   GET   /api/learn/status                           -> { company_computer, cache_only, home_name, home_online, waiting }
@@ -125,7 +129,8 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
       return { ...learn().stats(owner(req)), offline: error.statusCode === 503, home_older: error.statusCode === 404 };
     }
   }));
-  router.get('/queue', handle(async req => { await fresh(); return learn().queue(owner(req), req.query.mode, req.query.limit); }));
+  router.get('/queue', handle(async req => { await fresh(); return learn().queue(owner(req), req.query.mode, req.query.limit, { extra: req.query.extra }); }));
+  router.post('/new-words', handle(req => (cacheOnly() ? learnSync().viaHome('new-words', req.body) : learn().addNewWords(owner(req), req.body))));
   router.get('/cards', handle(async req => { await fresh(); return learn().list(owner(req), req.query); }));
   router.post('/cards', handle(req => {
     const result = learn().addCard(owner(req), req.body);

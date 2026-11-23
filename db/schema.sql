@@ -386,6 +386,11 @@ CREATE TABLE IF NOT EXISTS learn_cards (
   -- interval_days is the FSRS interval in whole days; ease is kept unchanged and no longer used. services/learn-sync-store.js adds them.
   fsrs_stability  REAL,
   fsrs_difficulty REAL,
+  -- Schema 23, a word that keeps slipping ("Keeps slipping" in docs/design/learn-review-fsrs.md): its parts (syllables joined with a middle dot,
+  -- checked to give the word exactly) and a one-line spelling tip, from the chat model once; '' until known. Part of the content like phonetic,
+  -- never replaced by '' in the sync. services/learn-sync-store.js adds them.
+  parts           TEXT NOT NULL DEFAULT '',
+  tip             TEXT NOT NULL DEFAULT '',
   UNIQUE (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);

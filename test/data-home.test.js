@@ -748,6 +748,36 @@ test('a schema 21 database gets the FSRS columns (schema 22) and its answered ca
   assert.doesNotMatch(again.stdout, /is migrated|replayed/);
 });
 
+test('a schema 22 database gets the parts and tip columns of a word card (schema 23), its cards kept, with a copy taken first; a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: learn_cards without parts and tip, user_version 22, a word card with an FSRS state.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE learn_cards DROP COLUMN parts; ALTER TABLE learn_cards DROP COLUMN tip');
+  old.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, created_at, due_at, interval_days, reps, last_result, last_at, last_correct,
+    content_at, state_at, sync_seq, fsrs_stability, fsrs_difficulty) VALUES ('owner', 'word', 'temporarily', 'temporarily', 'z', '/t/', 'manual', 1, 9, 2, 1, 'good', 5, 1, 5, 6, 7, 2.3, 5.1)`).run();
+  old.pragma('user_version = 22');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 22 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  assert.doesNotMatch(result.stdout, /replayed/, 'the FSRS replay ran at schema 22 already');
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  const card = after.prepare('SELECT * FROM learn_cards').get();
+  assert.deepEqual([card.en, card.zh, card.phonetic, card.parts, card.tip, card.due_at, card.content_at, card.state_at, card.sync_seq, card.fsrs_stability],
+    ['temporarily', 'z', '/t/', '', '', 9, 5, 6, 7, 2.3]);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-22-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
 test('a database of this schema is refused by a version that knows the one before at most', t => {
   // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);

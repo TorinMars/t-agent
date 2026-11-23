@@ -2,8 +2,8 @@
 //   GET  /v1/learn-sync                                     -> { instance_id, public_key, company, max_seq, have }
 //   POST /v1/learn-sync/pull { instance_id, public_key, after, limit, cards_only } -> { instance_id, sealed }
 //   PUT  /v1/learn-sync { instance_id, public_key, sealed }  -> { applied, have }
-//   GET  /v1/learn-sync/summary, PUT /v1/learn-sync/settings, POST /v1/learn-sync/starter: what a company computer asks its home (the summary, the
-//   settings and the starter list live on the normal machines); the same answers as /api/learn.
+//   GET  /v1/learn-sync/summary, PUT /v1/learn-sync/settings, POST /v1/learn-sync/starter, POST /v1/learn-sync/new-words { count }: what a company
+//   computer asks its home (the summary, the settings, the starter list and today's new words live on the normal machines); the same answers as /api/learn.
 //   GET  /v1/learn-sync/mistakes?limit=&before=, GET /v1/learn-sync/reports, GET /v1/learn-sync/report?uid=, POST /v1/learn-sync/analyze { lang }:
 //   the wrong answers and the mistake reports of the home for a company computer's page (an analysis runs on the home).
 //   GET  /v1/learn-sync/level, POST /v1/learn-sync/level-check: the estimated level and the picking of the home for a company computer's page (an
@@ -51,6 +51,7 @@ function createEngineLearnSyncRouter(options = {}) {
   router.get('/summary', handle(req => service().engineHome(req.serviceLink, 'summary')));
   router.put('/settings', handle(req => service().engineHome(req.serviceLink, 'settings', req.body)));
   router.post('/starter', handle(req => service().engineHome(req.serviceLink, 'starter', req.body)));
+  router.post('/new-words', handle(req => service().engineHome(req.serviceLink, 'new-words', req.body)));
   router.get('/mistakes', handle(req => service().engineHome(req.serviceLink, 'mistakes', { limit: req.query.limit, before: req.query.before })));
   router.get('/reports', handle(req => service().engineHome(req.serviceLink, 'reports')));
   router.get('/report', handle(req => service().engineHome(req.serviceLink, 'report', { uid: req.query.uid })));

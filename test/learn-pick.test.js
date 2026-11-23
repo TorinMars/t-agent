@@ -215,7 +215,8 @@ test('picking: a new word becomes a word card asked in its sentence; a word with
   // The page's numbers.
   assert.deepEqual(ctx.pick.view('me').picking, { enabled: true, picked: 4, skipped: 1, sentences: 2, pending: 0, running: false });
   // context_zh: the Chinese of the sentence a word is asked in; '' for the others.
-  const spell = (await ctx.learn.queue('me', 'spell', 20)).cards;
+  // With extra=practice: the learnt words that are not due are in the queue too.
+  const spell = (await ctx.learn.queue('me', 'spell', 20, { extra: 'practice' })).cards;
   assert.equal(spell.find(item => item.en === 'deploy').context_zh, ZH_SENTENCE2);
   assert.equal(spell.find(item => item.en === 'resilient').context_zh, ZH_SENTENCE);
   assert.equal(spell.find(item => item.en === 'branch').context_zh, '');

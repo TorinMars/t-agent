@@ -19,7 +19,8 @@ const listeners = new Set();
 // (`picked_level`, `picked_skipped`, `picked_at`; not picked yet), schema 20 the table `learn_chats` (the questions about a card), schema 21
 // the tables `learn_convos` and `learn_convo_messages` (the English chats), and schema 22 the FSRS state of a card (`fsrs_stability`,
 // `fsrs_difficulty`; NULL: not computed), filled in once by replaying every card's answers (services/learn-schedule.js migrate; "Replay, sync and
-// migration" in docs/design/learn-review-fsrs.md). Returns the counts of that replay when it ran now, else null.
+// migration" in docs/design/learn-review-fsrs.md), and schema 23 the parts and the tip of a word card (`parts`, `tip`; '' until known; "Keeps
+// slipping" there). Returns the counts of that replay when it ran now, else null.
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
@@ -30,7 +31,9 @@ function ensureSyncSchema(db) {
     // Schema 19: the pick of a sentence card (the level it was picked at, the known words it met, the clock of the pick).
     ['picked_level', "TEXT NOT NULL DEFAULT ''"], ['picked_skipped', 'INTEGER NOT NULL DEFAULT 0'], ['picked_at', 'INTEGER NOT NULL DEFAULT 0'],
     // Schema 22: the FSRS memory state of a card (derived from its answers; NULL until computed).
-    ['fsrs_stability', 'REAL'], ['fsrs_difficulty', 'REAL']]) {
+    ['fsrs_stability', 'REAL'], ['fsrs_difficulty', 'REAL'],
+    // Schema 23: the parts (syllables, joined with a middle dot) and the spelling tip of a word that keeps slipping ('' until the model gave them).
+    ['parts', "TEXT NOT NULL DEFAULT ''"], ['tip', "TEXT NOT NULL DEFAULT ''"]]) {
     if (!cards.includes(name)) addCard.push(`ALTER TABLE learn_cards ADD COLUMN ${name} ${type}`);
   }
   const reviews = columns('learn_reviews');

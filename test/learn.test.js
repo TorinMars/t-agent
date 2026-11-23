@@ -14,7 +14,9 @@ const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'a
   // The mistake analysis settings ("Mistake reports" in docs/design/learn-english.md), kept with them.
   analysis_auto: true, report_seen: '', report_lang: 'en', pick_words: true,
   // The desired retention of the review ("Desired retention" in docs/design/learn-review-fsrs.md).
-  desired_retention: 0.9 };
+  desired_retention: 0.9,
+  // New words a day and the words added for one day ("New words a day" in docs/design/learn-review-fsrs.md).
+  new_per_day: 10, extra_new: { day: '', count: 0 } };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');
@@ -196,14 +198,17 @@ test('the queue of each mode: review takes due cards of both kinds, spell words,
   clock.now = NOW + 10 * 60 * 1000;
   // w1 answered good: due tomorrow, no longer in the review.
   await call('POST', `/cards/${w1.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
-  const ids = async (mode, limit) => (await call('GET', `/queue?mode=${mode}${limit ? `&limit=${limit}` : ''}`)).body.cards.map(card => card.id);
+  const ids = async (mode, limit, extra = '') => (await call('GET', `/queue?mode=${mode}${limit ? `&limit=${limit}` : ''}${extra}`)).body.cards.map(card => card.id);
   assert.deepEqual(await ids('review'), [s1.id, s2.id, w2.id], 'due cards, oldest due first');
   assert.deepEqual(await ids('review', 2), [s1.id, s2.id], 'the limit');
-  assert.deepEqual(await ids('spell'), [w2.id, w1.id], 'words: the due one first, then the others');
+  assert.deepEqual(await ids('spell'), [w2.id], 'words: the due and the new ones; a learnt word that is not due is not given');
+  assert.deepEqual(await ids('spell', 0, '&extra=practice'), [w2.id, w1.id], 'with extra=practice the learnt words that are not due follow');
   for (const mode of ['build', 'dictation', 'say', 'fill']) assert.deepEqual(await ids(mode), [s1.id, s2.id], mode);
-  // s1 practised now (due again in 10 minutes, so not due yet): the other due sentence comes first, then s1.
+  // s1 practised now (due again in 10 minutes, so not due yet): only the other sentence is given; with extra=practice s1 after it.
   await call('POST', `/cards/${s1.id}/answer`, { mode: 'build', grade: 'again', correct: false });
-  assert.deepEqual(await ids('build'), [s2.id, s1.id]);
+  assert.deepEqual(await ids('build'), [s2.id]);
+  assert.deepEqual(await ids('build', 0, '&extra=practice'), [s2.id, s1.id]);
+  assert.deepEqual(await ids('build', 0, '&extra=other'), [s2.id], 'another extra adds nothing');
   assert.deepEqual(await ids('mistakes'), [s1.id]);
   for (const query of ['?mode=other', '', '?mode=review&limit=0', '?mode=review&limit=101', '?mode=review&limit=two']) assert.equal((await call('GET', `/queue${query}`)).status, 400, query);
 });
@@ -389,7 +394,9 @@ test('the summary: due, new and done today, the goal, the streak in the server\'
   await call('POST', `/cards/${w.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
   await call('POST', `/cards/${old.id}/answer`, { mode: 'review', grade: 'hard', correct: true });
   assert.deepEqual((await call('GET', '/summary')).body, {
-    due: 0, new_today: 2, done_today: 3, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1, collecting: true, starter: null, new_report: null, chats: 0,
+    // new_today: the cards first answered today (merge was first answered yesterday); three answers at one moment: 15 seconds, 0 minutes.
+    due: 0, new_per_day: 10, new_today: 2, new_left: 8, done_today: 3, minutes_today: 0, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1,
+    collecting: true, starter: null, new_report: null, chats: 0,
     // Where the data is kept (services/learn-sync.js): a normal machine, nothing waiting.
     device: { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0, offline_copy_at: null },
   });
@@ -424,7 +431,8 @@ test('settings: defaults, checks, and the starter list imported once with its wo
   const call = await serve(t, service);
   assert.deepEqual((await call('GET', '/settings')).body, { collect: true, daily_goal: 20, starter: 'dev', ...AUDIO });
   for (const body of [{ daily_goal: 0 }, { daily_goal: 201 }, { daily_goal: 2.5 }, { collect: 'yes' }, { starter: 'medicine' }, { theme: 'dark' }, [],
-    { audio_repeat: 4 }, { audio_pause: 0 }, { audio_speed: 'fast' }, { audio_words: 'on' }, { audio_sentences_at: 'never' }, { audio_stop_on_typing: 1 }]) {
+    { audio_repeat: 4 }, { audio_pause: 0 }, { audio_speed: 'fast' }, { audio_words: 'on' }, { audio_sentences_at: 'never' }, { audio_stop_on_typing: 1 },
+    { new_per_day: 7 }, { new_per_day: '10' }, { new_per_day: 0 }]) {
     assert.equal((await call('PUT', '/settings', body)).status, 400, JSON.stringify(body));
   }
   // The audio settings are saved one at a time and read back.
@@ -440,10 +448,16 @@ test('settings: defaults, checks, and the starter list imported once with its wo
   assert.equal(first.words, words.length);
   assert.equal(first.due, STARTER_PER_DAY, 'only a few starter words a day are due');
   assert.equal(first.starter, 'dev');
-  assert.equal(first.new_today, words.length);
+  assert.equal(first.new_today, 0, 'new today counts first answers, not imported cards');
+  assert.equal(first.new_left, 10);
   assert.deepEqual((await call('POST', '/starter', { list: 'dev' })).body, { added: 0 }, 'already imported');
   clock.now = NOW + DAY;
+  // Two days of starter words are due, but at most today's new words left (new_per_day 10) count.
+  assert.equal((await call('GET', '/summary')).body.due, Math.min(2 * STARTER_PER_DAY, 10));
+  assert.equal((await call('PUT', '/settings', { new_per_day: 30 })).body.new_per_day, 30);
   assert.equal((await call('GET', '/summary')).body.due, 2 * STARTER_PER_DAY);
+  // The words added for a day are changed by POST /new-words only: PUT /settings takes the field and keeps the stored value.
+  assert.deepEqual((await call('PUT', '/settings', { new_per_day: 10, extra_new: { day: '2026-11-20', count: 40 } })).body.extra_new, { day: '', count: 0 });
   // A word the person already had is kept as theirs.
   const fresh = setup(t);
   const other = await serve(t, fresh.service);

@@ -7,15 +7,19 @@
 // peer, schema 14, sends none), and created_at is the earliest. Schema 19: the pick of a sentence (picked_level, picked_skipped, picked_at) is a third
 // part with its own clock: the later pick wins, and a peer without it (older) sends none, so it never undoes one. Schema 22: the FSRS state
 // (fsrs_stability, fsrs_difficulty) is part of the review state; a peer without it (older) sends none, which is kept as NULL (not computed), and
-// services/learn-sync.js then recomputes the card from its answers ("Replay, sync and migration" in docs/design/learn-review-fsrs.md).
+// services/learn-sync.js then recomputes the card from its answers ("Replay, sync and migration" in docs/design/learn-review-fsrs.md). Schema 23: the
+// parts and the tip of a word (parts, tip) are content like phonetic: never replaced by empty ones, a moved card's never come over, and a peer without
+// them (older) sends none ("Keeps slipping" in docs/design/learn-review-fsrs.md).
 const {
   normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED, LEVELS, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON,
-  MAX_ZH: MAX_CARD_ZH,
+  MAX_ZH: MAX_CARD_ZH, KEPT_SETTINGS, storedParts, checkTip, cleanExtraNew,
 } = require('./learn');
 const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
 
-const CONTENT = ['en', 'zh', 'phonetic', 'source', 'context', 'suspended'];
+const CONTENT = ['en', 'zh', 'phonetic', 'parts', 'tip', 'source', 'context', 'suspended'];
+// The content fields that are '' (not NULL) when a row or a peer has none.
+const TEXT_DEFAULT = new Set(['phonetic', 'parts', 'tip']);
 const STATE = ['due_at', 'interval_days', 'ease', 'reps', 'lapses', 'last_result', 'last_at', 'last_correct', 'fsrs_stability', 'fsrs_difficulty'];
 const PICKED = ['picked_level', 'picked_skipped', 'picked_at'];
 const FIELDS = ['created_at', ...CONTENT, 'content_at', 'content_by', ...STATE, 'state_at', 'state_by', ...PICKED];
@@ -46,6 +50,9 @@ function mergeCard(local, incoming, { follow = false } = {}) {
     zh: content.zh || other.zh || '',
     // A moved card's transcription is that of its old text: it never comes over.
     phonetic: content.phonetic || (follow ? '' : other.phonetic) || '',
+    // The parts and the tip likewise (they are those of the card's text).
+    parts: content.parts || (follow ? '' : other.parts) || '',
+    tip: content.tip || (follow ? '' : other.tip) || '',
     ...pick(stateFromPeer ? incoming : local, [...STATE, 'state_at', 'state_by']),
     ...pickedOf(pickedFromPeer ? incoming : local),
   };
@@ -54,8 +61,9 @@ function mergeCard(local, incoming, { follow = false } = {}) {
   if (!follow && incoming.content_at === local.content_at && incoming.content_by === local.content_by && local.context
     && typeof incoming.context === 'string' && incoming.context.length > local.context.length && incoming.context.startsWith(local.context)) card.context = incoming.context;
   const before = { ...local, ...pickedOf(local) };
-  // A field a row does not have (undefined, an older row) and NULL are the same.
-  return { card, changed: FIELDS.some(field => (card[field] === undefined ? null : card[field]) !== (before[field] === undefined ? null : before[field])) };
+  // A field a row does not have (undefined, an older row) and NULL are the same ('' for the text fields of TEXT_DEFAULT).
+  const value = (row, field) => (row[field] === undefined || row[field] === null ? (TEXT_DEFAULT.has(field) ? '' : null) : row[field]);
+  return { card, changed: FIELDS.some(field => value(card, field) !== value(before, field)) };
 }
 
 const int = value => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
@@ -63,7 +71,7 @@ const pickedOf = row => ({ picked_level: LEVELS.includes(row.picked_level) ? row
 
 function pick(row, fields) {
   const out = {};
-  for (const field of fields) out[field] = row[field] === undefined ? (field === 'phonetic' ? '' : null) : row[field];
+  for (const field of fields) out[field] = row[field] === undefined ? (TEXT_DEFAULT.has(field) ? '' : null) : row[field];
   return out;
 }
 
@@ -90,6 +98,8 @@ function cardFromPeer(raw, sender) {
   const by = value => (typeof value === 'string' && INSTANCE_ID.test(value) ? value : sender);
   return {
     kind: raw.kind, norm: normalize(en), en, zh, phonetic: raw.kind === 'word' ? cleanPhonetic(raw.phonetic) : '', source: raw.source, context, suspended: raw.suspended ? 1 : 0,
+    // Schema 23: parts that do not give the word exactly, or a tip that is not one line of English, are not kept.
+    parts: raw.kind === 'word' ? storedParts(en, raw.parts) : '', tip: raw.kind === 'word' ? checkTip(raw.tip) : '',
     created_at: raw.created_at, content_at: raw.content_at, content_by: by(raw.content_by),
     due_at: raw.due_at, interval_days: raw.interval_days, ease: raw.ease, reps: raw.reps, lapses: raw.lapses,
     last_result: raw.last_result, last_at: raw.last_at, last_correct: raw.last_correct === null ? null : (raw.last_correct ? 1 : 0),
@@ -103,8 +113,8 @@ function cardFromPeer(raw, sender) {
 // A card row of this device in the form a peer gets (`me`: this device's instance id, for the versions it made itself, stored as '').
 function cardToPeer(row, me) {
   return {
-    kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context, suspended: Boolean(row.suspended),
-    created_at: row.created_at, content_at: row.content_at, content_by: row.content_by || me,
+    kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', parts: row.parts || '', tip: row.tip || '', source: row.source, context: row.context,
+    suspended: Boolean(row.suspended), created_at: row.created_at, content_at: row.content_at, content_by: row.content_by || me,
     due_at: row.due_at, interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: row.last_at === null || row.last_at === undefined ? null : row.last_at,
     last_correct: row.last_correct === null || row.last_correct === undefined ? null : Boolean(row.last_correct),
@@ -332,6 +342,8 @@ function settingsFromPeer(value, starterLists) {
   // The audio settings: a value this version does not know is left out (the default here), so a newer peer's choice never stops the sync.
   for (const [key, field] of Object.entries(AUDIO_SETTINGS)) if (field.values.includes(value[key])) out[key] = value[key];
   for (const [key, field] of Object.entries(CHECKED_SETTINGS)) if (value[key] !== undefined && field.check(value[key])) out[key] = value[key];
+  // The new words added for a day (schema of the value: services/learn.js cleanExtraNew); one that is not valid is left out.
+  if (value.extra_new !== undefined && cleanExtraNew(value.extra_new).day) out.extra_new = cleanExtraNew(value.extra_new);
   return out;
 }
 
@@ -351,5 +363,5 @@ module.exports = {
   reportBody, reportFromPeer, reportToPeer, reportWins, chatFromPeer, chatToPeer, MAX_QUESTION, MAX_CHAT_TEXT,
   cleanMeta, convoTitle, convoDeleted, convoFromPeer, convoToPeer, mergeConvo, convoMessageFromPeer, convoMessageToPeer, parseMeta,
   MAX_CONVO_QUESTION, MAX_CONVO_ANSWER, MAX_CONVO_TITLE, MAX_META_CARDS, MAX_META_MISTAKES, MAX_MISTAKE_TAG,
-  CONTENT, STATE, PICKED, FIELDS,
+  CONTENT, STATE, PICKED, FIELDS, KEPT_SETTINGS,
 };

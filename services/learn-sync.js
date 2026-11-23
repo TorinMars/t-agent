@@ -241,7 +241,7 @@ function createLearnSync(options) {
     let applied = 0;
     // The cards whose review state or answers changed here: recomputed from their answers at the end (replayTouched).
     const touched = new Set();
-    const writeCard = (id, card, currentSeq) => db.prepare(`UPDATE learn_cards SET created_at = @created_at, en = @en, zh = @zh, phonetic = @phonetic, source = @source,
+    const writeCard = (id, card, currentSeq) => db.prepare(`UPDATE learn_cards SET created_at = @created_at, en = @en, zh = @zh, phonetic = @phonetic, parts = @parts, tip = @tip, source = @source,
       context = @context, suspended = @suspended, content_at = @content_at, content_by = @content_by, due_at = @due_at, interval_days = @interval_days,
       ease = @ease, reps = @reps, lapses = @lapses, last_result = @last_result, last_at = @last_at, last_correct = @last_correct,
       fsrs_stability = @fsrs_stability, fsrs_difficulty = @fsrs_difficulty, state_at = @state_at, state_by = @state_by, picked_level = @picked_level, picked_skipped = @picked_skipped, picked_at = @picked_at, sync_seq = @sync_seq WHERE id = @id`)
@@ -270,9 +270,9 @@ function createLearnSync(options) {
       }
       if (!local) {
         if (follow) return; // the card it moved to is not here: nothing to merge into
-        db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, reps, lapses, last_result,
+        db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, parts, tip, source, context, created_at, due_at, interval_days, ease, reps, lapses, last_result,
           last_at, last_correct, fsrs_stability, fsrs_difficulty, suspended, content_at, content_by, state_at, state_by, picked_level, picked_skipped, picked_at,
-          sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @phonetic, @source, @context, @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result,
+          sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @phonetic, @parts, @tip, @source, @context, @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result,
           @last_at, @last_correct, @fsrs_stability, @fsrs_difficulty, @suspended, @content_at, @content_by, @state_at, @state_by, @picked_level, @picked_skipped,
           @picked_at, @sync_seq)`).run({ ...card, owner: name, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
         applied += 1;
@@ -417,9 +417,26 @@ function createLearnSync(options) {
       const local = settingsVersion(name);
       const stored = readState(db, learnModule.settingsKey(name));
       const hasValue = stored !== null;
-      if (hasValue && !merge.later(raw.at, by, local.at, local.by || self)) return;
-      // An older peer does not know the desired retention and sends none: the one here stays (it is not reset to the default).
-      if (value.desired_retention === undefined && isPlainObject(stored) && review.RETENTIONS.includes(stored.desired_retention)) value.desired_retention = stored.desired_retention;
+      // The new words added for today ("New words a day" in docs/design/learn-review-fsrs.md) merge instead of the last writer winning: the later
+      // day, on the same day the larger count (services/learn.js mergeExtraNew), so a tap on any engine is kept.
+      const storedExtra = learnModule.cleanExtraNew(isPlainObject(stored) ? stored.extra_new : null);
+      const extra = learnModule.mergeExtraNew(storedExtra, value.extra_new);
+      const sameExtra = (a, b) => a.day === b.day && a.count === b.count;
+      if (hasValue && !merge.later(raw.at, by, local.at, local.by || self)) {
+        // The settings here are newer, but the peer added more new words: they are taken, with a new version, so they reach every engine (a company
+        // computer passes nothing on: its home has them).
+        if (bump && isPlainObject(stored) && !sameExtra(extra, storedExtra)) {
+          writeState(db, learnModule.settingsKey(name), { ...stored, extra_new: extra });
+          writeState(db, learnModule.settingsVersionKey(name), { at: syncStore.stamp(db, now()), by: '', seq: syncStore.nextSeq(db) });
+          applied += 1;
+        }
+        return;
+      }
+      // An older peer does not know some settings (the desired retention, new words a day) and sends none: the ones here stay (not reset to the default).
+      for (const key of learnModule.KEPT_SETTINGS) {
+        if (value[key] === undefined && isPlainObject(stored) && learnModule.CHECKED_SETTINGS[key].check(stored[key])) value[key] = stored[key];
+      }
+      value.extra_new = extra;
       const before = replaySchedule.retentionOf(db, name);
       writeState(db, learnModule.settingsKey(name), value);
       const after = replaySchedule.retentionOf(db, name);
@@ -583,6 +600,7 @@ function createLearnSync(options) {
       return action === 'level' ? picker.view(name) : picker.check(name);
     }
     if (action === 'starter') return service().starter(name, body);
+    if (action === 'new-words') return service().addNewWords(name, body);
     if (action === 'stats') return service().stats(name);
     if (action === 'mistakes') return service().mistakes(name, isPlainObject(body) ? body : {});
     if (action === 'reports') return reportsView ? reportsView(name) : { reports: service().reports(name).reports };
@@ -837,7 +855,7 @@ function createLearnSync(options) {
     const home = homePeer();
     if (!home || !request) throw new learnModule.LearnError('Learning settings are kept on a normal computer, which cannot be reached right now', 503);
     let answer;
-    try { answer = await request(home.baseUrl, `${ROUTE}/${action}`, home.token, { method: action === 'starter' ? 'POST' : 'PUT', body, timeoutMs }); }
+    try { answer = await request(home.baseUrl, `${ROUTE}/${action}`, home.token, { method: action === 'settings' ? 'PUT' : 'POST', body, timeoutMs }); }
     catch (error) {
       const status = error && error.statusCode;
       if (Number.isInteger(status) && status >= 400 && status < 500 && error.peerBody && typeof error.peerBody.error === 'string') {

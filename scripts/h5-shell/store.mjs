@@ -127,6 +127,9 @@ export const initialState = () => ({
   // on #h5-attention), live (the stream is connected), focus (a task id whose edit view opens) }; with several engines also engines, failed, noMove
   // (see "Every engine in one list" in docs/design/page-attention.md)
   attention: { open: false, status: 'idle', items: null, needs: 0, live: false, focus: null },
+  // Plan usage (plan-usage-feed.mjs, PlanUsage.jsx): the last reading of each engine { status: 'ok' | 'offline' | 'missing', answer, fetchedAt }, by
+  // its key; `open`: the details are shown; `refreshing`: a Refresh is on its way.
+  planUsage: { readings: {}, open: false, refreshing: false },
   updateDot: false, // the header updater (Update.jsx `UpdateButton`) sees an update or a needed restart: the red dot of the multi-column bar's Update button
   columns: null, // the multi-column view of a wide screen (Columns.jsx `startColumns`): null on a page that never offers it (a pane, a framed page)
   activeCount: 0, // running or pending terminal sessions of the listed services (the count of a column's "Next running or pending session"; h5.js `showActiveCount`)

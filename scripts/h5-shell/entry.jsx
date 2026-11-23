@@ -6,6 +6,7 @@ import { App } from './App.jsx';
 import { createStore, initialState } from './store.mjs';
 import { createBackLayers } from './back.mjs';
 import { startAttentionFeed } from './attention-feed.mjs';
+import { startPlanUsage } from './plan-usage-feed.mjs';
 import { detectPane, paneKeyPrefix, startPane } from './pane.mjs';
 import { api, t } from './common.jsx';
 import { onShared, readShared, writeShared } from './shared-store.mjs';
@@ -135,6 +136,10 @@ if (back) ui.subscribe(back.sync);
 // T-Attention: the list, its live stream and the reminders run from the start (the badge on the Attention button); the panel is drawn when opened.
 // A pane has no Attention button and leaves the stream and the reminders to the top page (`passive`).
 startAttentionFeed(ui, { t, api, passive: Boolean(paneId) });
+
+// Plan usage in the session header (plan-usage-feed.mjs): the readings of the shown engine, polled while the page is visible. A pane has no session
+// header of its own (the top page draws the column headers), so it reads nothing.
+if (!paneId) startPlanUsage(ui, { api });
 
 // The chunk of an on-demand screen is asked for as soon as the pointer, a finger or the focus reaches the button that opens it.
 preloadOnIntent(document);

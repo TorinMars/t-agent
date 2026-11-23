@@ -51,9 +51,28 @@ function prepared(sql) {
   return statement;
 }
 
-// Who hears that a Claude or Codex turn ended in a terminal (server.js: the plan usage bars, services/agent-usage.js `turnEnded`).
-let agentTurnEndListener = null;
-function onAgentTurnEnd(listener) { agentTurnEndListener = typeof listener === 'function' ? listener : null; }
+// Who hears that a Claude or Codex turn ended in a terminal (server.js: the plan usage bars, services/agent-usage.js `turnEnded`, and the browser
+// tab care, services/browser-tab-care.js). Each listener gets (agent, { task_id, terminal_id }); the function returns one that removes it.
+const agentTurnEndListeners = new Set();
+function onAgentTurnEnd(listener) {
+  if (typeof listener !== 'function') return () => {};
+  agentTurnEndListeners.add(listener);
+  return () => agentTurnEndListeners.delete(listener);
+}
+function agentTurnEnded(agent, where) {
+  for (const listener of agentTurnEndListeners) { try { listener(agent, where); } catch { /* a listener's own problem */ } }
+}
+// Who hears that a terminal's shell ended: closed, deleted or restarted from the page, its task closed, or the shell exited by itself (the browser
+// tab care closes that terminal's tabs). Each listener gets { task_id, terminal_id }.
+const terminalEndListeners = new Set();
+function onTerminalEnded(listener) {
+  if (typeof listener !== 'function') return () => {};
+  terminalEndListeners.add(listener);
+  return () => terminalEndListeners.delete(listener);
+}
+function terminalEnded(taskId, terminalId) {
+  for (const listener of terminalEndListeners) { try { listener({ task_id: Number(taskId), terminal_id: terminalId }); } catch { /* a listener's own problem */ } }
+}
 // The agent a terminal runs: its row's agent, else claude or codex when one of them holds the foreground (started by hand in a plain shell).
 function terminalAgent(s) {
   const row = s.terminalId === 'default' ? null : prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
@@ -882,7 +901,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   });
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
-  const turnEnd = createTurnEndWatch({ agentOf: () => terminalAgent(s), onTurnEnd: agent => { if (agentTurnEndListener) agentTurnEndListener(agent); } });
+  const turnEnd = createTurnEndWatch({ agentOf: () => terminalAgent(s), onTurnEnd: agent => agentTurnEnded(agent, { task_id: Number(ownerTaskId), terminal_id: id }) });
   s.activity = createActivityTracker(pty, shell, () => {
     activityStream.notify();
     agentRenames.poke(taskId); // a rename that waits for a permission question to be answered
@@ -900,6 +919,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
       if (sessions.get(taskId) !== s) return;
       sessions.delete(taskId);
       endAttentionToken(ownerTaskId, id);
+      terminalEnded(ownerTaskId, id);
       activityStream.notify(); // a terminal that ends is idle from now on
       s.snapshot.dispose();
       const activeWs = s.ws;
@@ -920,6 +940,7 @@ function detachSession(taskId, id, reason) {
   sessions.delete(key);
   agentRenames.cancel(key);
   endAttentionToken(taskId, id);
+  terminalEnded(taskId, id);
   activityStream.notify();
   session.snapshot.dispose();
   session.stopShellWatch?.();
@@ -1652,4 +1673,4 @@ function shutdownTerminals() {
   try { if (notebookKernels) notebookKernels.shutdown(); } catch {}
 }
 
-module.exports = { terminalLaunch, terminalShell, onAgentTurnEnd, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };
+module.exports = { terminalLaunch, terminalShell, onAgentTurnEnd, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

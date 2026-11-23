@@ -332,6 +332,29 @@ test('record items filters and record requests, the same against an older T-Agen
   assert.match((await run(['help'])).out, /record requests <id>/);
 });
 
+test('open --keep, dialogs on stderr, the help on focus and closing, an older extension in status', async () => {
+  const help = await run(['help']);
+  assert.match(help.out, /--keep +keep it open after your/);
+  assert.match(help.out, /T-Agent's own window/);
+  assert.match(help.out, /close by themselves 2 minutes after/);
+  assert.match(help.out, /the tab need\s+not be active/);
+  const kept = await run(['open', 'https://shop.test/keep', '--keep']);
+  assert.equal(kept.code, 0);
+  assert.deepEqual(last().params, { url: 'https://shop.test/keep', keep: true });
+  assert.match(kept.out, /^Opened tab 13: https:\/\/shop\.test\/keep\nIt stays open after your turn: tell the person/);
+  assert.deepEqual(ext.commands.filter(cmd => cmd.method === 'tabs.open').length, 1);
+  behaviour['input.click'] = () => ({ clicked: { ref: 'e1', tag: 'button', name: 'Delete' }, dialogs: [{ at: 1, type: 'confirm', message: 'Delete\nall?', url: 'https://shop.test/', handled: 'dismissed' }] });
+  const click = await run(['click', 'e1']);
+  assert.equal(click.code, 0);
+  assert.equal(click.out, 'Clicked e1 button "Delete"\n');
+  assert.equal(click.err, 'dialog: confirm "Delete all?" (dismissed)\n');
+  assert.equal(JSON.parse((await run(['click', 'e1', '--json'])).out).dialogs[0].type, 'confirm');
+  behaviour['tabs.list'] = () => ({ tabs: [{ tab_id: 13, url: 'https://shop.test/keep', title: 'Keep', active: false, how: 'group', keep: true }] });
+  assert.match((await run(['tabs'])).out, /13  \[group, keep\] Keep/);
+  const status = await run(['status']);
+  assert.match(status.out, new RegExp(`T-Agent has extension ${require('../extensions/chrome/manifest.json').version.replace(/\./g, '\\.')}: .*reload it once in chrome://extensions if it stays at 1\\.0\\.0`));
+});
+
 test('status when nothing is connected: exit 4 and how to pair', async () => {
   ext.close();
   await new Promise(resolve => setTimeout(resolve, 100));

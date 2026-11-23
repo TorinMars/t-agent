@@ -1,33 +1,63 @@
 import { redact, cut } from './redact.js';
 import { pageAction, installRecorder } from './page.js';
-import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summary, detail, matches } from './capture.js';
+import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summary, detail, matches, takeDialogs } from './capture.js';
 // Features beyond the method names, sent in the hello: the bridge refuses a new option that an older extension would silently ignore
 // (PARAM_FEATURES in services/browser-bridge.js). 1.0.4: `tabs.open` with `record`, record type filters and a body size limit, agent
 // actions in recordings (source 'agent' / 'user'), click target context and the texts of what appeared in DOM change items.
-export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text'];
+// 1.0.5 ("Focus and closing" in docs/design/browser-extension.md): tabs open in T-Agent's own background window, `tabs.open` with `keep`,
+// `tabs.close` with `auto` (closes only an owned tab that is not kept), a visible screenshot of a tab that is not active, page dialogs answered
+// while the debugger is attached, `tab.used` when the person uses a T-Agent tab, and the `reload` request of the bridge.
+export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload'];
 export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal'];
 const recordings = new Map(),
   owned = new Set(),
   handed = new Set(),
-  grouping = new Set();
+  grouping = new Set(),
+  // Owned tabs opened with `keep` (tcli browser open --keep, or a recorded tab the person used): never closed automatically.
+  kept = new Set(),
+  // Tab id -> until when an activation of that tab is T-Agent's own (open, activate, a new window's first tab), not the person's.
+  quietUntil = new Map(),
+  // Tab id -> number of commands running on it, and until when its trusted input events are still the command's own (CDP input).
+  busy = new Map(),
+  calmUntil = new Map(),
+  // Window id -> when a tab of it was closed or moved out last: Chrome then activates a neighbour by itself.
+  removedAt = new Map();
 let lastTab,
   socket,
   retry = 0,
   retryTimer,
   pingTimer,
   blocked = false,
-  status = 'needs pairing';
+  status = 'needs pairing',
+  // The window T-Agent opens its tabs in, behind the person's windows ("Focus and closing" in docs/design/browser-extension.md).
+  agentWindowId = null,
+  windowLock = null,
+  inflight = 0,
+  reloadWanted = false;
+const RELOAD_STATE_MS = 2 * 60000;
 const ready = (async () => {
-  const s = await chrome.storage.session.get(['handed', 'owned', 'blocked']);
-  for (const id of s.handed || []) handed.add(id);
-  for (const id of s.owned || []) owned.add(id);
+  const s = await chrome.storage.session.get(['handed', 'owned', 'kept', 'agent_window', 'blocked']);
+  // chrome.storage.session is cleared when the extension reloads itself (the bridge's `reload`): the state written just before it comes back.
+  let saved = null;
+  try {
+    saved = (await chrome.storage.local.get(['reload_state'])).reload_state || null;
+    if (saved) await chrome.storage.local.remove?.('reload_state');
+  } catch {/* No saved state. */}
+  const fresh = saved && Date.now() - saved.at < RELOAD_STATE_MS ? saved : {};
+  for (const id of [...(s.handed || []), ...(fresh.handed || [])]) handed.add(id);
+  for (const id of [...(s.owned || []), ...(fresh.owned || [])]) owned.add(id);
+  for (const id of [...(s.kept || []), ...(fresh.kept || [])]) kept.add(id);
+  agentWindowId = Number.isInteger(s.agent_window) ? s.agent_window : Number.isInteger(fresh.agent_window) ? fresh.agent_window : null;
   blocked = !!s.blocked;
 })();
 const persist = () => chrome.storage.session.set({
   handed: [...handed],
   owned: [...owned],
+  kept: [...kept],
+  agent_window: agentWindowId,
   blocked
 });
+const quiet = (id, ms = 1500) => quietUntil.set(id, Date.now() + ms);
 const fail = (code, message) => {
   throw new Error(`${code}: ${message}`);
 };
@@ -90,11 +120,13 @@ async function getTab(id) {
   await ready;
   if (id === undefined) {
     if (lastTab !== undefined) id = lastTab;else {
+      // The active tab of the person's window when it may be used, else the T-Agent tab used last (they live in a window behind).
       const tabs = await chrome.tabs.query({
         active: true,
         lastFocusedWindow: true
       });
-      for (const t of tabs) try {
+      const others = (await chrome.tabs.query({})).filter(t => owned.has(t.id) || handed.has(t.id)).sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+      for (const t of [...tabs, ...others]) try {
         await allowed(t);
         id = t.id;
         break;
@@ -120,6 +152,9 @@ async function tabInfo(t) {
     title: t.title,
     active: t.active,
     how: await allowed(t),
+    ...(kept.has(t.id) ? {
+      keep: true
+    } : {}),
     capturing: captures.has(t.id),
     recording_id: recordings.get(t.id)?.id || null
   };
@@ -265,6 +300,7 @@ async function stopRecord(id, reason) {
     recording_id: r.id,
     reason
   });
+  maybeReload();
   return {
     recording_id: r.id,
     items: r.count,
@@ -276,6 +312,7 @@ async function release(id) {
   await detach(id);
   handed.delete(id);
   owned.delete(id);
+  kept.delete(id);
   await persist();
   await badge(id);
   event('tab.released', {
@@ -497,7 +534,212 @@ async function waitCommitted(id, timeout = 10000) {
   }
   return chrome.tabs.get(id);
 }
-export async function dispatch(method, p = {}) {
+// T-Agent's own window for the tabs it opens: one normal window, created behind the person's windows without the focus (never minimized, so its
+// pages are drawn), reused while it holds a tab T-Agent owns. Chrome closes it when its last tab closes; T-Agent never closes a window itself.
+async function reusableWindow() {
+  if (!Number.isInteger(agentWindowId)) return null;
+  try {
+    const w = await chrome.windows.get(agentWindowId, {
+      populate: true
+    });
+    if (w.type === 'normal' && (w.tabs || []).some(t => owned.has(t.id))) return w.id;
+  } catch {/* Closed. */}
+  return null;
+}
+// A new tab of T-Agent in that window (owned at once, so a second open waiting on the lock reuses the window). Never active, never focused.
+function agentTab(url) {
+  const run = async () => {
+    const windowId = await reusableWindow();
+    let t;
+    if (windowId !== null) t = await chrome.tabs.create({
+      windowId,
+      url,
+      active: false
+    });else {
+      const w = await chrome.windows.create({
+        url,
+        focused: false,
+        state: 'normal'
+      });
+      agentWindowId = w.id;
+      t = w.tabs?.[0] || (await chrome.tabs.query({
+        windowId: w.id
+      }))[0];
+      if (!t) fail('INTERNAL', 'The new window has no tab');
+    }
+    quiet(t.id);
+    owned.add(t.id);
+    await persist();
+    return t;
+  };
+  const next = (windowLock || Promise.resolve()).then(run, run);
+  windowLock = next.catch(() => {});
+  return next;
+}
+// Brings a tab to the front: only for a command that asks for it (tabs.activate, tabs.open with `active`).
+async function show(id, windowId) {
+  quiet(id);
+  await chrome.tabs.update(id, {
+    active: true
+  });
+  await chrome.windows.update(windowId, {
+    focused: true
+  });
+}
+// The person used a T-Agent tab (activated it in a window they are in, clicked or typed in it): it leaves T-Agent's care. It is ungrouped and
+// no longer owned, and stays where it is; the bridge forgets it, so it is never closed. A recorded tab stays owned (the person's actions are what
+// a recording is for) but is kept: never closed automatically. Inside a command's own input (CDP events are trusted too) nothing happens.
+export async function userUsed(id, how) {
+  await ready;
+  if (!owned.has(id) || handed.has(id) || grouping.has(id)) return false;
+  if (busy.get(id) || Date.now() < (calmUntil.get(id) || 0)) return false;
+  if (recordings.has(id)) {
+    if (kept.has(id)) return false;
+    kept.add(id);
+    await persist();
+    event('tab.used', {
+      tab_id: id,
+      how,
+      kept: true
+    });
+    return true;
+  }
+  owned.delete(id);
+  kept.delete(id);
+  await persist();
+  await detach(id);
+  if (lastTab === id) lastTab = undefined;
+  try {
+    await chrome.tabs.ungroup(id);
+  } catch {/* Closed or already outside the group. */}
+  event('tab.used', {
+    tab_id: id,
+    how
+  });
+  return true;
+}
+// Watches an owned tab's page for the person's own input (trusted pointer and key events), in the extension's isolated world, once per document.
+function userWatch() {
+  if (globalThis.__tagentUserWatch) return;
+  globalThis.__tagentUserWatch = true;
+  let sent = 0;
+  const on = e => {
+    if (!e.isTrusted || Date.now() - sent < 500) return;
+    sent = Date.now();
+    try {
+      chrome.runtime.sendMessage({
+        type: 'user.input',
+        kind: e.type
+      }).catch(() => {});
+    } catch {/* The extension reloaded. */}
+  };
+  for (const type of ['pointerdown', 'keydown']) addEventListener(type, on, true);
+}
+async function watchUser(id) {
+  if (!owned.has(id) || handed.has(id)) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: {
+        tabId: id
+      },
+      func: userWatch
+    });
+  } catch {/* Not scriptable yet. */}
+}
+const newer = (a, b) => {
+  const x = String(a || '').split('.').map(Number),
+    y = String(b || '').split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+};
+// The bridge's `reload` request ("The extension updates itself" in docs/design/browser-extension.md): T-Agent's folder holds a newer version.
+// Chrome does not reload an unpacked extension when its files change, but it serves them from disk: the folder's manifest.json is read here,
+// and only when it is newer than the running one, and not already tried for that version in the last 10 minutes, does the extension reload,
+// once no command and no recording runs. The tabs it owns and its window are kept across the reload (storage.session is cleared by it).
+export async function reloadRequest() {
+  const running = chrome.runtime.getManifest?.().version;
+  let disk;
+  try {
+    disk = (await (await fetch(chrome.runtime.getURL('manifest.json'), {
+      cache: 'no-store'
+    })).json()).version;
+  } catch {
+    return {
+      reload: false,
+      reason: 'manifest not readable'
+    };
+  }
+  if (!newer(disk, running)) return {
+    reload: false,
+    reason: 'not newer',
+    version: disk
+  };
+  const last = (await chrome.storage.local.get(['last_reload'])).last_reload;
+  if (last && last.version === disk && Date.now() - last.at < 10 * 60000) return {
+    reload: false,
+    reason: 'tried recently',
+    version: disk
+  };
+  await chrome.storage.local.set({
+    last_reload: {
+      version: disk,
+      at: Date.now()
+    }
+  });
+  reloadWanted = true;
+  await maybeReload();
+  return {
+    reload: true,
+    version: disk
+  };
+}
+async function maybeReload() {
+  if (!reloadWanted || recordings.size || inflight) return;
+  reloadWanted = false;
+  await chrome.storage.local.set({
+    reload_state: {
+      at: Date.now(),
+      handed: [...handed],
+      owned: [...owned],
+      kept: [...kept],
+      agent_window: agentWindowId
+    }
+  });
+  chrome.runtime.reload();
+}
+// One command. `meta.tab` gets { tab_id, how, keep } of the tab it used, which the result message carries to the bridge (its per-terminal tab
+// care, "Closing T-Agent's tabs" in docs/design/browser-extension.md); a result gets the page dialogs answered since the tab's last command.
+export async function dispatch(method, p = {}, meta = {}) {
+  try {
+    const result = await run(method, p, meta);
+    const id = meta.tab?.tab_id;
+    if (Number.isInteger(id) && result && typeof result === 'object') {
+      const answered = takeDialogs(id);
+      if (answered.length) result.dialogs = answered;
+    }
+    return result;
+  } finally {
+    const id = meta.tab?.tab_id;
+    if (Number.isInteger(id)) {
+      const n = (busy.get(id) || 1) - 1;
+      if (n > 0) busy.set(id, n);else busy.delete(id);
+      calmUntil.set(id, Date.now() + 1000);
+    }
+  }
+}
+function using(meta, t) {
+  meta.tab = {
+    tab_id: t.id,
+    how: handed.has(t.id) ? 'handed' : 'group',
+    ...(kept.has(t.id) ? {
+      keep: true
+    } : {})
+  };
+  busy.set(t.id, (busy.get(t.id) || 0) + 1);
+}
+async function run(method, p, meta) {
   await ready;
   if (!methods.includes(method)) fail('UNKNOWN_METHOD', method);
   if (!p || typeof p !== 'object' || Array.isArray(p)) fail('BAD_PARAMS', 'params must be an object');
@@ -524,24 +766,30 @@ export async function dispatch(method, p = {}) {
     if (!scriptable(p.url)) fail('TAB_NOT_SCRIPTABLE', 'Use an HTTP or HTTPS page');
     if (p.record !== undefined && (!p.record || typeof p.record !== 'object' || Array.isArray(p.record))) fail('BAD_PARAMS', 'record must be an object');
     if (p.record) recordOptions(p.record);
+    for (const key of ['active', 'keep']) if (p[key] !== undefined && typeof p[key] !== 'boolean') fail('BAD_PARAMS', `${key} must be true or false`);
     // With `record`, the tab starts on about:blank, the debugger and the recording attach there, and only then does the tab load the
     // address: the first load's requests are recorded once, with no reload ("Recording from the first load" in docs/design/browser-extension.md).
-    const t = await chrome.tabs.create({
-      url: p.record ? 'about:blank' : p.url,
-      active: p.active ?? false
-    });
-    owned.add(t.id);
+    // The tab goes into T-Agent's own window, in the background ("Focus and closing"); `active` brings it to the front afterwards.
+    const t = await agentTab(p.record ? 'about:blank' : p.url);
+    if (p.keep) kept.add(t.id);
     grouping.add(t.id);
+    using(meta, t);
     try {
       const groups = await chrome.tabGroups.query({
         title: 'T-Agent',
         windowId: t.windowId
       });
+      // A new group needs its window named: without createProperties.windowId Chrome makes it in the "current" window and moves the tab
+      // there, out of T-Agent's window into the person's.
       const gid = await chrome.tabs.group({
         tabIds: [t.id],
         ...(groups[0] ? {
           groupId: groups[0].id
-        } : {})
+        } : {
+          createProperties: {
+            windowId: t.windowId
+          }
+        })
       });
       await chrome.tabGroups.update(gid, {
         title: 'T-Agent',
@@ -549,6 +797,7 @@ export async function dispatch(method, p = {}) {
       });
       await persist();
       lastTab = t.id;
+      if (p.active) await show(t.id, t.windowId);
       if (!p.record) return {
         tab: await tabInfo(await chrome.tabs.get(t.id))
       };
@@ -593,10 +842,13 @@ export async function dispatch(method, p = {}) {
     } catch (e) {
       if (recordings.has(t.id)) await stopRecord(t.id);
       owned.delete(t.id);
-      await chrome.tabs.remove(t.id);
+      kept.delete(t.id);
+      await persist();
+      await chrome.tabs.remove(t.id).catch(() => {});
       throw e;
     } finally {
       grouping.delete(t.id);
+      void chrome.tabs.get(t.id).then(x => x.status === 'complete' && watchUser(t.id)).catch(() => {});
       // The tab may have finished loading while onUpdated ignored it (grouping): the recorder goes in now (a no-op when it already runs).
       if (recordings.has(t.id)) void chrome.tabs.get(t.id).then(x => x.status === 'complete' && install(t.id)).catch(() => {});
     }
@@ -647,9 +899,18 @@ export async function dispatch(method, p = {}) {
       tab_id: r[0]
     };
   }
+  const before = lastTab;
   const t = await getTab(p.tab_id),
     id = t.id;
+  using(meta, t);
   if (method === 'tabs.close') {
+    // T-Agent's own closing (the bridge, when the agent's turn ended or the terminal closed): only an owned tab that is not kept, never a
+    // handed one (which a person's `close` would release). It leaves the command's last tab as it was.
+    if (p.auto === true) {
+      lastTab = before === id ? undefined : before;
+      if (handed.has(id) || kept.has(id) || !owned.has(id)) fail('TAB_NOT_ALLOWED', 'This tab is not closed automatically');
+    }
+    removedAt.set(t.windowId, Date.now());
     if (handed.has(id)) {
       await release(id);
       return {
@@ -660,12 +921,7 @@ export async function dispatch(method, p = {}) {
     return {};
   }
   if (method === 'tabs.activate') {
-    await chrome.tabs.update(id, {
-      active: true
-    });
-    await chrome.windows.update(t.windowId, {
-      focused: true
-    });
+    await show(id, t.windowId);
     return {
       tab: await tabInfo(await chrome.tabs.get(id))
     };
@@ -898,21 +1154,50 @@ export async function dispatch(method, p = {}) {
     const format = p.format || 'png';
     if (!['png', 'jpeg'].includes(format)) fail('BAD_PARAMS', 'Unsupported screenshot format');
     if (!p.full_page && !p.target) {
-      if (!t.active) fail('BAD_PARAMS', 'Activate the tab before a visible screenshot');
-      const data = await chrome.tabs.captureVisibleTab(t.windowId, {
-        format,
-        ...(p.quality !== undefined ? {
-          quality: p.quality
-        } : {})
-      });
-      if (!(await chrome.tabs.get(id)).active) fail('BAD_PARAMS', 'Active tab changed during capture');
+      // The visible area through the debugger, so the tab need not be active or its window in front (nothing is brought forward). Only when the
+      // debugger cannot attach (DevTools is open on the tab) and the tab is the active one of its window does captureVisibleTab take it.
       const v = await page(id, 'viewport');
-      return {
-        data_base64: data.split(',')[1],
+      const size = {
         mime: `image/${format}`,
         width: Math.round(v.width * v.device_scale_factor),
         height: Math.round(v.height * v.device_scale_factor)
       };
+      let temporary = false;
+      try {
+        temporary = !captures.has(id);
+        if (temporary) await attach(id, {
+          bodies: false
+        });
+      } catch (e) {
+        if (!/DEBUGGER_BUSY/.test(e.message) || !(await chrome.tabs.get(id)).active) throw e;
+        const data = await chrome.tabs.captureVisibleTab(t.windowId, {
+          format,
+          ...(p.quality !== undefined ? {
+            quality: p.quality
+          } : {})
+        });
+        return {
+          data_base64: data.split(',')[1],
+          ...size
+        };
+      }
+      try {
+        let timer;
+        const r = await Promise.race([cdp(id, 'Page.captureScreenshot', {
+          format,
+          ...(p.quality !== undefined ? {
+            quality: p.quality
+          } : {})
+        }), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('TIMEOUT: The tab did not draw a picture in time; activate it (tcli browser activate) and try again')), 15000);
+        })]).finally(() => clearTimeout(timer));
+        return {
+          data_base64: r.data,
+          ...size
+        };
+      } finally {
+        if (temporary && !recordings.has(id) && !captures.get(id)?.manual) await detach(id);
+      }
     }
     const temporary = !captures.has(id);
     if (temporary) await attach(id, {
@@ -1071,10 +1356,19 @@ async function cdpInput(id, method, p, rec = false) {
     }
   } : {};
 }
+// How this extension was installed: 'development' when it is loaded unpacked (T-Agent's folder), for the bridge's reload rule.
+async function installType() {
+  try {
+    return (await chrome.management?.getSelf?.())?.installType || null;
+  } catch {
+    return null;
+  }
+}
 async function connect() {
   await ready;
   if (blocked || socket?.readyState === 0 || socket?.readyState === 1) return;
   const config = await chrome.storage.local.get(['server_url', 'token', 'name']);
+  const install = await installType();
   if (!config.token) {
     status = 'needs pairing';
     return;
@@ -1101,7 +1395,15 @@ async function connect() {
         user_agent: navigator.userAgent
       },
       methods,
-      features
+      features,
+      install_type: install,
+      // The tabs T-Agent owns now, so a T-Agent server that restarted still closes them in time (its tab care adopts them).
+      owned_tabs: [...owned].slice(0, 500).map(id => ({
+        tab_id: id,
+        ...(kept.has(id) ? {
+          keep: true
+        } : {})
+      }))
     }, true);
     clearInterval(pingTimer);
     pingTimer = setInterval(() => send({
@@ -1121,17 +1423,26 @@ async function connect() {
       retry = 0;
       return;
     }
+    if (m.type === 'reload') {
+      void reloadRequest().catch(() => {});
+      return;
+    }
     if (m.type !== 'cmd') return;
     let timer;
+    const meta = {};
+    inflight++;
     try {
-      const result = await Promise.race([dispatch(m.method, m.params || {}), new Promise((_, reject) => {
+      const result = await Promise.race([dispatch(m.method, m.params || {}, meta), new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('TIMEOUT: Command timed out')), Math.max(1, Math.min(m.timeout_ms ?? 30000, 120000)));
       })]);
       send({
         type: 'result',
         id: m.id,
         ok: true,
-        result
+        result,
+        ...(meta.tab ? {
+          tab: meta.tab
+        } : {})
       }, m.method === 'net.get' && m.params?.raw === true);
     } catch (e) {
       const match = e.message.match(/(TAB_NOT_ALLOWED|TAB_NOT_FOUND|TAB_NOT_SCRIPTABLE|REF_NOT_FOUND|ELEMENT_NOT_FOUND|ELEMENT_NOT_INTERACTABLE|TIMEOUT|EVAL_FAILED|DEBUGGER_BUSY|NOT_CAPTURING|REQUEST_NOT_FOUND|BAD_PARAMS|UNKNOWN_METHOD|INTERNAL):\s*(.*)/s);
@@ -1142,10 +1453,15 @@ async function connect() {
         error: {
           code: match?.[1] || 'INTERNAL',
           message: match?.[2] || e.message
-        }
+        },
+        ...(meta.tab ? {
+          tab: meta.tab
+        } : {})
       });
     } finally {
       clearTimeout(timer);
+      inflight--;
+      void maybeReload().catch(() => {});
     }
   };
   ws.onclose = async e => {
@@ -1201,6 +1517,10 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
       }
       return {};
     }
+    if (m.type === 'user.input') {
+      if (Number.isInteger(sender.tab?.id)) await userUsed(sender.tab.id, 'input');
+      return {};
+    }
     if (!sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`) && sender.tab) return {};
     if (m.type === 'status') return {
       status,
@@ -1247,7 +1567,8 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
   }));
   return true;
 });
-chrome.tabs.onRemoved.addListener(id => {
+chrome.tabs.onRemoved.addListener((id, info) => {
+  if (info?.windowId !== undefined) removedAt.set(info.windowId, Date.now());
   void (async () => {
     await ready;
     const was = owned.has(id) || handed.has(id);
@@ -1255,6 +1576,9 @@ chrome.tabs.onRemoved.addListener(id => {
     await detach(id);
     owned.delete(id);
     handed.delete(id);
+    kept.delete(id);
+    quietUntil.delete(id);
+    calmUntil.delete(id);
     await persist();
     if (lastTab === id) lastTab = undefined;
     if (was) event('tab.closed', {
@@ -1269,10 +1593,16 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
     if (change.groupId !== undefined) try {
       await allowed(tab);
     } catch {
+      // The person took the tab out of the group (or out of T-Agent's window): theirs from now on, like a tab they used.
       await stopRecord(id, 'tab released');
       await detach(id);
       owned.delete(id);
+      kept.delete(id);
       await persist();
+      event('tab.used', {
+        tab_id: id,
+        how: 'ungrouped'
+      });
     }
     if (change.url) {
       const r = recordings.get(id);
@@ -1304,8 +1634,31 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
     if (change.status === 'complete') try {
       await allowed(tab);
       await install(id);
+      await watchUser(id);
     } catch {/* Protected page or released. */}
   })();
+});
+chrome.tabs.onDetached?.addListener((id, info) => removedAt.set(info.oldWindowId, Date.now()));
+// The person activated a T-Agent tab: it counts only in a window that has the focus (the person is there), not for T-Agent's own activations
+// (quietUntil) and not when Chrome picked it because a tab of that window closed or moved out a moment ago.
+const ACTIVATION_SETTLE_MS = 300;
+chrome.tabs.onActivated?.addListener(({
+  tabId,
+  windowId
+}) => {
+  void (async () => {
+    await ready;
+    if (!owned.has(tabId) || handed.has(tabId)) return;
+    await new Promise(r => setTimeout(r, ACTIVATION_SETTLE_MS));
+    if (Date.now() < (quietUntil.get(tabId) || 0) || Date.now() - (removedAt.get(windowId) || 0) < 1500) return;
+    let w;
+    try {
+      w = await chrome.windows.get(windowId);
+    } catch {
+      return;
+    }
+    if (w.focused) await userUsed(tabId, 'activated');
+  })().catch(() => {});
 });
 chrome.debugger.onDetach.addListener(source => {
   const s = captures.get(source.tabId);
@@ -1321,6 +1674,11 @@ chrome.tabGroups.onUpdated.addListener(group => {
       await stopRecord(t.id, 'tab released');
       await detach(t.id);
       owned.delete(t.id);
+      kept.delete(t.id);
+      event('tab.used', {
+        tab_id: t.id,
+        how: 'ungrouped'
+      });
     }
     await persist();
   })();

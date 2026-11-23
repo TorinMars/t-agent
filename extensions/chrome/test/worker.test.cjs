@@ -76,11 +76,24 @@ test('worker protocol, tab policy and capture lifecycle without network', {
       setBadgeBackgroundColor: async () => {}
     },
     windows: {
-      update: async () => {}
+      update: async () => {},
+      // T-Agent's own window (extension 1.0.5): created with its first tab.
+      create: async p => {
+        const id = 100 + nextTab;
+        const t = await chrome.tabs.create({ url: p.url, windowId: id, active: true });
+        return { id, type: 'normal', focused: false, tabs: [t] };
+      },
+      get: async (id, p) => {
+        const inWindow = [...tabs.values()].filter(t => t.windowId === id);
+        if (!inWindow.length) throw Error('No window');
+        return { id, type: 'normal', focused: false, ...(p?.populate ? { tabs: inWindow } : {}) };
+      }
     },
     tabs: {
       onRemoved: signal(),
       onUpdated: signal(),
+      onActivated: signal(),
+      ungroup: async () => {},
       query: async p => [...tabs.values()].filter(t => (!p.active || t.active) && (p.groupId === undefined || t.groupId === p.groupId)),
       get: async id => {
         if (!tabs.has(id)) throw Error('missing');

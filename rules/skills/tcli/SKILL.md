@@ -182,11 +182,19 @@ Every other tab answers `TAB_NOT_ALLOWED` (exit `2`); `chrome://` pages, the Chr
 
 `--tab T` picks a tab by its number from `browser tabs`. Without it, a command uses the tab the last command used, else the active T-Agent tab.
 
+### Your tabs and the user's focus
+
+- `browser open` puts the tab into T-Agent's own Chrome window, behind the user's windows, in the "T-Agent" group. The user keeps working undisturbed; nothing you do takes their focus.
+- No need to activate a tab before `shot`, `snapshot` or any other command: they all work on a tab in the background. Use `activate` (or `open --active`) only when the user asked to see the page.
+- Your tabs close by themselves 2 minutes after your turn ends (if you did not use them since), when your terminal closes, or after 30 minutes unused. To leave a page open for the user, open it with `browser open <url> --keep` and tell them it is there (the "T-Agent" group in T-Agent's window).
+- A tab the user clicks, types in or brings to the front becomes theirs: it leaves the group, and you can no longer use it (`TAB_NOT_ALLOWED`). Open the page again, or ask them to hand that tab over.
+- Page dialogs (alert, confirm, prompt, "leave this page?") are answered for you while network capture, a recording, `shot` or `wait --idle` runs: an alert and "leave" are accepted, a confirm and a prompt are dismissed. Each one is printed as `dialog: confirm "Delete all?" (dismissed)` on stderr. If you needed to agree to a confirm, tell the user and let them do that step.
+
 ### Commands
 
 ```bash
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser tabs                         # tabs you may use (* = active)
-${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser open https://example.com     # a new tab in the T-Agent group
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser open https://example.com     # a new tab in the T-Agent group, in the background (--keep, --active)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser go https://example.com/next  # navigate (--tab T, --no-wait)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser back                         # also: forward, reload, activate <tab>, close [tab]
 
@@ -267,8 +275,8 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... --kind dom,cons
 
 1. **Ask before anything that changes something for the user**: sending a message or an email, posting, buying, paying, booking, deleting, changing settings or accepting terms. Show what you will do and wait for a yes. Reading and looking around need no confirmation.
 2. Stay on the sites the task is about.
-3. Close the tabs you opened when you are done (`browser close`), unless the user wants to keep them.
-4. When a page shows a login, a CAPTCHA or a two-factor prompt, ask the user to complete it in Chrome, then go on.
+3. Close the tabs you opened when you are done (`browser close`); the rest close by themselves after your turn. Open a page with `--keep` only when the user wants to keep it, and say so.
+4. When a page shows a login, a CAPTCHA or a two-factor prompt, ask the user to complete it in Chrome (`activate` the tab for them), then go on. Once they have used the tab it is theirs: open the page again in a new tab (the login is shared) or ask them to hand that tab over.
 
 ### Browser errors
 

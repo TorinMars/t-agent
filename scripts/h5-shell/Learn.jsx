@@ -29,7 +29,7 @@ import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
 import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss, normWord, partsOf, spellCheck, spellingNote, spellingPattern, suggestedGrade, typedInFull } from './learn-grade.mjs';
-import { availableModes, builtAnswer, exerciseKey, exerciseOf, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
+import { BUILD_HIDDEN, SENTENCE_EXERCISE, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
@@ -550,7 +550,7 @@ const EMPTY = {
 // new words up to today's count, and nothing more ("Done for today" in docs/design/learn-english-page.md). Practice (mixed) always asks for it.
 async function loadQueue(mode, extra = '') {
   if (mode === 'mixed') {
-    const [words, sentences] = await Promise.all([api('GET', '/api/learn/queue?mode=spell&limit=10&extra=practice'), api('GET', '/api/learn/queue?mode=build&limit=10&extra=practice')]);
+    const [words, sentences] = await Promise.all([api('GET', '/api/learn/queue?mode=spell&limit=10&extra=practice'), api('GET', `/api/learn/queue?mode=${SENTENCE_EXERCISE}&limit=10&extra=practice`)]);
     return mixCards([words && words.cards, sentences && sentences.cards], 20);
   }
   const limit = (modeOf(mode) || { limit: 20 }).limit;
@@ -619,7 +619,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
     return () => document.removeEventListener('keydown', onKey);
   }, []);
   const card = cards && cards[index];
-  const exercise = card ? pickExercise(exerciseOf(card, mode), speech) : null;
+  const exercise = card ? exerciseFor(card, mode, speech) : null;
   const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, near = false, detail = null }) => {
     if (busyRef.current || !card) return;
     busyRef.current = true;
@@ -779,8 +779,7 @@ function RoundDone({ round, minutes, onBack, onNext }) {
     </>
   );
 }
-// A mode the browser cannot run falls back to Build the sentence (a card due for Dictation in a browser without speech output).
-const pickExercise = (exercise, speech) => ((exercise === 'dictation' && !speech.tts) || (exercise === 'say' && !speech.voice) ? 'build' : exercise);
+// A mode the browser cannot run, or a hidden one, falls back to Fill the gap (Build while it is shown): `exerciseFor` in learn-model.mjs.
 
 // ── Shared parts of the exercises ──
 
@@ -1605,6 +1604,7 @@ export function TranslatorNotice({ onOpen, sx, id = 'h5-learn-no-translator', te
 }
 
 // ── Build the sentence ──
+// Hidden on purpose for now (BUILD_HIDDEN in learn-model.mjs): no session reaches it, but it stays complete; set BUILD_HIDDEN to false to bring it back.
 
 const TILE_SX = used => theme => ({
   ...theme.typography.body1, height: 40, px: 1.75, borderRadius: 2, boxSizing: 'border-box', flex: '0 0 auto', [TOUCH]: { height: 44 },
@@ -1801,7 +1801,8 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
 // ── Fill the gap ──
 
 function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
-  const gap = useMemo(() => gapFor(card), [card]);
+  // `loose`: a sentence without a content word still gets a gap (its longest word); only one without any word shows "no word to fill in".
+  const gap = useMemo(() => gapFor(card, { loose: true }), [card]);
   const [value, setValue] = useState('');
   const [helped, setHelped] = useState(false);
   const field = useRef(null);
@@ -2170,7 +2171,7 @@ function AudioSettings({ current, busy, save }) {
         <Divider sx={{ mx: -2 }} />
         <SwitchRow inputId="h5-learn-audio-sentences" label={t('Play sentences automatically')} disabled={busy} checked={options.sentences} onChange={on => save({ audio_sentences: on })}
           secondary={t('Dictation and Say it play at the start')} />
-        <ChoiceRow id="h5-learn-audio-when" label={t('Sentences play')} secondary={t('In Build the sentence, Fill the gap and Review')} value={options.sentencesAt} disabled={busy || !options.sentences}
+        <ChoiceRow id="h5-learn-audio-when" label={t('Sentences play')} secondary={t(BUILD_HIDDEN ? 'In Fill the gap and Review' : 'In Build the sentence, Fill the gap and Review')} value={options.sentencesAt} disabled={busy || !options.sentences}
           choices={[['after', t('After the answer')], ['start', t('When the card appears')]]} onChange={next => save({ audio_sentences_at: next })} />
         <Divider sx={{ mx: -2 }} />
         <ChoiceRow id="h5-learn-audio-repeat" label={t('Repeat')} secondary={t('How many times each one is played')} value={options.repeat} disabled={busy}
@@ -2231,7 +2232,9 @@ function ScheduleSettings({ current, busy, save }) {
 const HOW = [
   ['Your own sentences', 'Messages you send with "Chinese → English" become cards (the Chinese and the English), and words you tap to look up become word cards. A starter list can be added too.'],
   ['Spaced review', 'Each card comes back about when you would start to forget it. FSRS, a model of how memory fades, plans the gap from your own answers; Again / Hard / Good change it, and each button shows when the card returns. The due count is the plan for today.'],
-  ['Five ways to practise', 'Spell the word · Build the sentence (tiles or typing) · Dictation (hear, type) · Say it (read aloud, voice input checks) · Fill the gap.'],
+  // Build the sentence is hidden for now (BUILD_HIDDEN in learn-model.mjs): the four ways that are offered.
+  BUILD_HIDDEN ? ['Four ways to practise', 'Spell the word · Dictation (hear, type) · Say it (read aloud, voice input checks) · Fill the gap.']
+    : ['Five ways to practise', 'Spell the word · Build the sentence (tiles or typing) · Dictation (hear, type) · Say it (read aloud, voice input checks) · Fill the gap.'],
   ['Clear feedback', 'Word-by-word diff after Check, with the usual mistake named (articles, plurals, tense, word order) and a list of mistakes to review.'],
   ['Everywhere', 'Stored on the server, so the phone and the computer share progress.'],
 ];

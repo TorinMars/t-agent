@@ -6,8 +6,8 @@
 //   hint chips, the earlier messages with `lang` and **bold**, the hints note); typing in the sheet never reaches the letters; a chip streams its
 //   answer into a growing bubble, then the stored messages replace it; Close gives the focus back to the field. After Check: the caption with the
 //   answer, "Why was my answer wrong?" first, a typed follow-up answered as JSON (company computer), an error mid-stream with Try again, and the
-//   503 translator notice. Build: Ask in the card, the sentence chips.
-// - 1440x900 (mouse): Build with the 380px side panel next to the card (the card makes room and stays usable); Enter in the panel sends the
+//   503 translator notice. A sentence in Review (Fill the gap, since Build the sentence is hidden): Ask in the card, the sentence chips.
+// - 1440x900 (mouse): a sentence in Review (Fill the gap) with the 380px side panel next to the card (the card makes room and stays usable); Enter in the panel sends the
 //   question and never checks the exercise; Escape closes the panel, not the mode, and the focus goes back to the answer field.
 // H5_SHOT_DIR=<dir> saves learn-ask-sheet.png, learn-ask-checked.png and learn-ask-desktop.png.
 const { chromium } = require('playwright');
@@ -38,7 +38,7 @@ const card = (id, kind, en, zh, extra = {}) => ({
   id, kind, en, zh, source: 'translation', context: '', context_zh: '', phonetic: '', due_at: AT, interval_days: 0, ease: 2.5, reps: 0, lapses: 0, last_result: null, last_at: null, suspended: false, created_at: AT, ...extra,
 });
 const WORD = card(31, 'word', 'expires', ZH_EXPIRE, { context: SENTENCE, context_zh: ZH_SENTENCE });
-const BUILD = card(40, 'sentence', MERGE, ZH_MERGE);
+const SENTENCE_CARD = card(40, 'sentence', MERGE, ZH_MERGE);
 // `at` is an ISO time, as the server sends it; `n` seconds after the start.
 const msg = (uid, role, text, n) => ({ uid, role, text, at: new Date(Date.parse(AT) + n * 1000).toISOString() });
 const EARLIER = [msg('e1', 'user', ZH_WHY_S, 1), msg('e2', 'assistant', 'The subject is **the session cookie**: one thing,\npresent tense, so the verb takes **-s**.', 2)];
@@ -57,7 +57,7 @@ function learnMock() {
     mock.requests.push({ method, path: p, body });
     if (p === '/api/learn/summary') return SUMMARY;
     if (p === '/api/learn/settings') return { collect: true, daily_goal: 20, starter: null, report_lang: 'en' };
-    if (p === '/api/learn/queue') return { cards: url.searchParams.get('mode') === 'spell' ? [WORD] : [BUILD] };
+    if (p === '/api/learn/queue') return { cards: url.searchParams.get('mode') === 'spell' ? [WORD] : [SENTENCE_CARD] };
     if (/^\/api\/learn\/cards\/\d+\/answer$/.test(p)) return { card: WORD };
     const ask = p.match(/^\/api\/learn\/cards\/(\d+)\/ask$/);
     if (ask && method === 'GET') {
@@ -330,20 +330,21 @@ async function tapKeys(page, keys) {
       await context.close();
     }
 
-    // \u2500\u2500 390x844 (touch): a sentence mode (Build) \u2500\u2500
+    // \u2500\u2500 390x844 (touch): a sentence in Review (Fill the gap) \u2500\u2500
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       mock.translator = false;
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-mode-build').tap();
-      await page.locator('#h5-learn-chinese').waitFor();
+      await page.locator('#h5-learn-start').tap();
+      await page.locator('#h5-learn-gap-input').waitFor();
+      assert.equal(await page.locator('.h5-learn-pool').count(), 0, 'Fill the gap, not Build');
       const prompt = await page.locator('#h5-learn-mode .h5-learn-prompt').boundingBox();
       const askBox = await page.locator('#h5-learn-ask-open').boundingBox();
       assert.ok(askBox.y > prompt.y && askBox.y + askBox.height <= prompt.y + prompt.height + 1, 'Ask in the card');
       await page.locator('#h5-learn-ask-open').tap();
       await page.locator('#h5-learn-ask[data-layout="sheet"]').waitFor({ state: 'visible' });
-      assert.equal(await text(page, '#h5-learn-ask-caption'), 'Not checked yet: hints only');
+      assert.equal(await text(page, '#h5-learn-ask-caption'), 'The sentence with the gap \u00b7 your answer is not shown yet');
       assert.deepEqual(await texts(page, '.h5-learn-ask-chip'), ['Give me a hint', 'Explain the grammar', 'Other example sentences', 'How do I remember it?']);
       await page.locator('#h5-learn-ask-no-translator').waitFor();
       assert.equal(await page.locator('#h5-learn-ask-earlier').count(), 0, 'no earlier questions');
@@ -354,13 +355,15 @@ async function tapKeys(page, keys) {
       await context.close();
     }
 
-    // \u2500\u2500 1440x900 (mouse): Build with the side panel \u2500\u2500
+    // \u2500\u2500 1440x900 (mouse): a sentence in Review (Fill the gap) with the side panel \u2500\u2500
     {
+      const { gapFor } = await import(path.join(root, 'scripts/h5-shell/learn-model.mjs'));
+      const gapWord = gapFor(SENTENCE_CARD).word;
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-build').click();
-      await page.locator('#h5-learn-chinese').waitFor();
-      assert.equal(await active(page), 'h5-learn-build-input');
+      await page.locator('#h5-learn-start').click();
+      await page.locator('#h5-learn-gap-input').waitFor();
+      assert.equal(await active(page), 'h5-learn-gap-input');
       await page.locator('#h5-learn-ask-open').click();
       const panel = page.locator('#h5-learn-ask[data-layout="side"]');
       await panel.waitFor();
@@ -373,25 +376,25 @@ async function tapKeys(page, keys) {
       const cardBox = await page.locator('#h5-learn .h5-learn-prompt').boundingBox();
       assert.ok(cardBox.x + cardBox.width <= box.x, 'the card makes room for the panel');
       assert.equal(await active(page), 'h5-learn-ask-input', 'the panel input has the focus');
-      assert.equal(await text(page, '#h5-learn-ask-caption'), 'Not checked yet: hints only');
+      assert.equal(await text(page, '#h5-learn-ask-caption'), 'The sentence with the gap \u00b7 your answer is not shown yet');
       // Enter sends the question and never checks the exercise.
       await page.keyboard.type('Why "do not" and not "not do"?');
       await page.keyboard.press('Enter');
       await waitBubbles(page, 2);
-      assert.deepEqual(mock.asks().at(-1).body, { question: 'Why "do not" and not "not do"?', mode: 'build', state: { checked: false } });
+      assert.deepEqual(mock.asks().at(-1).body, { question: 'Why "do not" and not "not do"?', mode: 'fill', state: { checked: false, expected: gapWord } });
       assert.equal(await page.locator('#h5-learn-feedback').count(), 0, 'the card is not checked');
-      assert.equal(await page.locator('#h5-learn-build-input').inputValue(), '', 'nothing typed into the answer');
-      // The card stays usable: a tile is placed while the panel is open.
-      await page.locator('#h5-learn .h5-learn-pool .h5-learn-tile:not([disabled])').first().click();
-      assert.equal(await page.locator('#h5-learn .h5-learn-placed').count(), 1);
+      assert.equal(await page.locator('#h5-learn-gap-input').inputValue(), '', 'nothing typed into the answer');
+      // The card stays usable: a letter is typed into the gap while the panel is open.
+      await page.locator('#h5-learn-gap-input').fill(gapWord.slice(0, 1));
+      assert.equal(await page.locator('#h5-learn-gap-input').inputValue(), gapWord.slice(0, 1));
       assert.equal(await panel.count(), 1, 'the panel stays');
       await shot(page, 'learn-ask-desktop.png');
       // Escape closes the panel, not the mode; the focus goes back to the answer field.
       await page.locator('#h5-learn-ask-input').focus();
       await page.keyboard.press('Escape');
       await panel.waitFor({ state: 'detached' });
-      assert.equal(await text(page, '#h5-learn-view-title'), 'Build the sentence');
-      await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-learn-build-input');
+      assert.equal(await text(page, '#h5-learn-view-title'), 'Daily review');
+      await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-learn-gap-input');
       // Opened again: the conversation is still there (read again from the server).
       const gets = mock.requests.filter(item => item.method === 'GET' && /\/ask$/.test(item.path)).length;
       await page.locator('#h5-learn-ask-open').click();

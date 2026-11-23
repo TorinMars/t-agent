@@ -1,19 +1,21 @@
 // The Learn page (scripts/h5-shell/Learn.jsx, the "Learn" destination), in real Chromium with every route mocked, /api/learn following the contract
 // of docs/design/learn-english.md. See "The Learn page" in docs/design/learn-english-page.md.
-// - 1440x900 (mouse): the rail's Learn destination and the page right of it; the home numbers (due, estimate, streak, goal, mode counts); Build the
-//   sentence (tiles, typing, the diff and the third-person hint, the grades posted with the keys 2 and Enter, Hint, Skip, the end of a session);
+// - 1440x900 (mouse): the rail's Learn destination and the page right of it; the home numbers (due, estimate, streak, goal, mode counts) without
+//   Build the sentence (hidden on purpose, BUILD_HIDDEN in learn-model.mjs); Review with a word spelled and a sentence as Fill the gap (the diff,
+//   the grades posted with the keys 3 and 2, the end of a session), a sentence without a content word as Dictation and Skip;
 //   Spell the word (wrong letters, "I don't know"-free flow with the first letter, no translator configured and its link to Settings); Dictation (speech
 //   at the normal and the slow rate, an article hint); Fill the gap; Say it; Mistakes; Your material (search, kind, edit meaning, suspend); Learn
 //   settings (collect with window.LearnCollect, daily goal, starter list); Escape; Sessions closing the page; the empty states (no cards, nothing due);
-//   a browser without speech output or voice input (no Dictation, no Say it, no Hear it).
+//   a browser without speech output or voice input (no Dictation, no Say it, no Hear it; in Review a sentence is Fill the gap, one without a content
+//   word gets its longest word as the gap, one without any word "no word to fill in" with Skip).
 //   The buttons that play or help (Hear it, Show first letter, Hint, Slow) leave the focus in the answer field; no page keyboard on a computer.
 // - 390x844 (touch): the bottom navigation's Learn; the home and the modes as pages above the bar; the page's own keyboard instead of the system one
-//   (inputmode="none"; letters for Spell, the full layout for Dictation and Build; keys type at the caret, Shift, Backspace and its repeat, Hide and a tap
+//   (inputmode="none"; letters for Spell and Fill the gap, the full layout for Dictation; keys type at the caret, Shift, Backspace and its repeat, Hide and a tap
 //   that opens it again, the bottom navigation away while it is open, Check right above it, the focus kept by Hear it and Show first letter); the
 //   system keyboard not covering Say it's box or Check; the grades in the pinned actions; the back button closing the mode, then the page.
 // - A company computer (390, touch): the banner while its home cannot be reached (`device.cache_only` and not `home_online`), none while the home
 //   is online, and a 503 of the Learn settings shown in the panel with the switch put back.
-// H5_SHOT_DIR=<dir> saves the screenshots (computer: home, Build after Check, Spell; phone: Spell with the letters, Build, Dictation with the full keyboard).
+// H5_SHOT_DIR=<dir> saves the screenshots (computer: home, Review's Fill the gap after Check, Spell; phone: Spell with the letters, Fill the gap, Dictation with the full keyboard).
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -46,6 +48,9 @@ const SENTENCES = [
   card(12, 'sentence', 'Deploy the staging server tonight.', ZH_DEPLOY, 'manual'),
 ];
 const SUMMARY = { due: 18, new_today: 2, done_today: 7, goal: 20, streak: 5, words: 42, sentences: 26, mistakes: 3, chats: 2, collecting: true, starter: 'dev' };
+// A sentence without a content word (Fill the gap has nothing to take out) and one without any word at all.
+const PLAIN = card(13, 'sentence', 'I am here.', ZH_DEPLOY, 'manual');
+const NO_WORD = card(14, 'sentence', '2 + 2 = 4', ZH_DEPLOY, 'manual');
 const pageErrors = [];
 
 function learnMock() {
@@ -61,7 +66,7 @@ function learnMock() {
     if (p === '/api/learn/queue') {
       const mode = url.searchParams.get('mode');
       if (mode === 'spell') return { cards: mock.spellCards || WORDS };
-      if (mode === 'review') return { cards: [WORDS[0], SENTENCES[0]] };
+      if (mode === 'review') return { cards: mock.reviewCards || [WORDS[0], SENTENCES[0]] };
       if (mode === 'mistakes') return { cards: [WORDS[0], SENTENCES[1], SENTENCES[2]] };
       return { cards: SENTENCES };
     }
@@ -210,14 +215,6 @@ async function spellRows(page) {
   });
 }
 const lastAnswer = mock => { const list = mock.posts(/\/answer$/); return list.length ? { id: list.at(-1).path.match(/cards\/(\d+)/)[1], ...list.at(-1).body } : null; };
-// Places the tiles for these words, in order (a word can be on two tiles: the first free one).
-async function placeTiles(page, words) {
-  for (const word of words) {
-    const tile = page.locator('.h5-learn-pool .h5-learn-tile:not([disabled])', { hasText: new RegExp(`^${word}$`) }).first();
-    await tile.click();
-  }
-}
-
 // On a phone: picks the terminal in the task drawer (open at first), so the bottom navigation is there.
 async function toTerminal(page) {
   await page.locator('.h5-header').waitFor({ state: 'visible' });
@@ -252,68 +249,62 @@ async function toTerminal(page) {
       assert.equal(await text(page, '#h5-learn-estimate'), 'cards due today · about 6 min');
       assert.equal(await text(page, '#h5-learn-streak'), '5-day streak · 7 of 20 done');
       assert.equal(await page.locator('#h5-learn-goal').getAttribute('aria-valuenow'), '35', '7 of 20');
-      assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '26 sentences', '26 sentences', '26 sentences', '26 sentences', '3 cards', '2 chats']);
-      assert.deepEqual(await page.locator('.h5-learn-mode .MuiTypography-subtitle1').allTextContents(), ['Spell the word', 'Build the sentence', 'Dictation', 'Say it', 'Fill the gap', 'Mistakes', 'English chat']);
+      assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '26 sentences', '26 sentences', '26 sentences', '3 cards', '2 chats']);
+      assert.deepEqual(await page.locator('.h5-learn-mode .MuiTypography-subtitle1').allTextContents(), ['Spell the word', 'Dictation', 'Say it', 'Fill the gap', 'Mistakes', 'English chat']);
+      assert.equal(await page.locator('#h5-learn-mode-build').count(), 0, 'Build the sentence is hidden');
       assert.match(await text(page, '#h5-learn-material'), /From your translations · 26 sentences, 42 words/);
       assert.equal(await page.locator('#h5-learn-home-away').count(), 0, 'a normal machine has no banner');
       await page.locator('#h5-learn-how-card').waitFor({ state: 'visible' });
+      assert.match(await text(page, '#h5-learn-how-card'), /Four ways to practise/);
+      assert.doesNotMatch(await text(page, '#h5-learn-how-card'), /Build/, 'How learning works does not name Build');
       await shot(page, 'learn-desktop-home.png');
 
-      // ── Build the sentence: tiles and typing, the diff, the third-person hint, the grade with the key 2 ──
-      await page.locator('#h5-learn-mode-build').click();
-      await page.locator('#h5-learn-chinese').waitFor();
+      // ── Review: a word is spelled, a sentence is Fill the gap (not Build); the diff, the grades with the keys 3 and 2, the end of a session ──
+      const { gapFor } = await import(path.join(root, 'scripts/h5-shell/learn-model.mjs'));
+      await page.locator('#h5-learn-start').click();
+      await page.locator('#h5-learn-meaning').waitFor();
+      assert.equal(await text(page, '#h5-learn-view-title'), 'Daily review');
+      assert.equal(await text(page, '.h5-learn-subtitle'), '1 / 2');
+      await page.locator('#h5-learn-spell-input').fill('expire');
+      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
+      await page.keyboard.press('3');
+      await waitFor(() => mock.posts(/\/answer$/).length === 1, 'the word is answered');
+      assert.deepEqual(lastAnswer(mock), { id: '1', mode: 'spell', grade: 'good', correct: true, answer: 'expire' });
+      await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '2 / 2', 'the sentence card');
+      await page.locator('#h5-learn-gap-input').waitFor();
+      assert.equal(await page.locator('.h5-learn-pool').count(), 0, 'no word tiles: Build is hidden');
+      assert.equal(await page.locator('#h5-learn-build-input').count(), 0);
       assert.equal(await text(page, '#h5-learn-chinese'), ZH_LOOP);
-      assert.equal(await text(page, '#h5-learn-view-title'), 'Build the sentence');
-      assert.equal(await text(page, '.h5-learn-subtitle'), '1 / 3');
-      assert.equal(await text(page, '.h5-learn-origin'), 'From your message on 11-19 · SELF-TAGENT');
-      assert.equal(await page.locator('#h5-learn-mode-build').getAttribute('aria-current'), 'true');
-      const tiles = await page.locator('.h5-learn-pool .h5-learn-tile').allTextContents();
-      assert.equal(tiles.length, 14, '11 words and 3 distractors from the other sentences');
-      assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-build-input', 'the answer field has the focus on a computer');
-      await placeTiles(page, ['Please', 'fix', 'the', 'login', 'redirect', 'loop', 'after', 'the', 'session', 'cookie']);
-      assert.equal(await page.locator('.h5-learn-answer .h5-learn-placed').count(), 10);
-      assert.equal(await page.locator('.h5-learn-pool .h5-learn-tile[disabled]').count(), 10, 'placed tiles leave a dashed place');
-      await page.locator('.h5-learn-answer .h5-learn-placed').last().click();
-      assert.equal(await page.locator('.h5-learn-answer .h5-learn-placed').count(), 9, 'a tap takes a tile back');
-      await placeTiles(page, ['cookie']);
-      await page.locator('#h5-learn-build-input').fill('expire');
+      assert.equal(await active(page), 'h5-learn-gap-input', 'the gap has the focus on a computer');
+      const reviewGap = gapFor(SENTENCES[0]).word;
+      assert.equal(await text(page, '.h5-learn-gap'), SENTENCES[0].en.replace(reviewGap, '').replace(/\s+/g, ' '), 'the sentence around the gap');
+      await page.locator('#h5-learn-gap-input').fill('zz');
       await page.locator('#h5-learn-check').click();
       await page.locator('#h5-learn-feedback').waitFor();
       assert.equal(await page.locator('#h5-learn-feedback').getAttribute('data-correct'), 'false');
-      assert.equal(await text(page, '.h5-learn-del'), 'expire');
-      assert.equal(await text(page, '.h5-learn-ins'), 'expires');
-      assert.equal(await text(page, '.h5-learn-diff'), 'Please fix the login redirect loop after the session cookie expire expires.');
-      assert.equal(await text(page, '.h5-learn-summary'), 'Word by word: 10 of 11 right · "expires": third person -s');
+      assert.equal(await text(page, '.h5-learn-del'), 'zz');
+      assert.equal(await text(page, '.h5-learn-ins'), reviewGap);
       assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-again', 'the offered grade (wrong: Again) has the focus');
-      assert.equal(await page.locator('#h5-learn-grade-again').evaluate(el => el.classList.contains('MuiButton-contained')), true);
-      await shot(page, 'learn-desktop-build-check.png');
+      await shot(page, 'learn-desktop-review-fill.png');
       await page.keyboard.press('2');
-      await waitFor(() => Boolean(lastAnswer(mock)), 'the answer is posted');
-      assert.deepEqual(lastAnswer(mock), {
-        id: '10', mode: 'build', grade: 'hard', correct: false, answer: 'Please fix the login redirect loop after the session cookie expire',
-        expected: SENTENCES[0].en, tag: 'verb-form', hinted: false, // a wrong answer keeps what was asked for and the checker's tag
-      });
-      // Card 2: typed only; Enter checks, Enter again takes the offered grade (right: Good).
-      await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '2 / 3', 'the next card');
-      await page.locator('#h5-learn-build-input').focus();
-      await page.keyboard.type('run the tests  again before you merge');
-      await page.keyboard.press('Enter');
-      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
-      await page.keyboard.press('Enter');
-      await waitFor(() => mock.posts(/\/answer$/).length === 2, 'the second answer');
-      assert.deepEqual(lastAnswer(mock), { id: '11', mode: 'build', grade: 'good', correct: true, answer: 'run the tests  again before you merge' });
-      // Card 3: Hint places the first word; Skip posts nothing; the session ends.
-      await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '3 / 3', 'the third card');
-      assert.equal(await active(page), 'h5-learn-build-input');
-      await page.locator('#h5-learn-hint').click();
-      assert.deepEqual(await page.locator('.h5-learn-answer .h5-learn-placed').allTextContents(), ['Deploy']);
-      assert.equal(await active(page), 'h5-learn-build-input', 'Hint leaves the focus in the field');
-      assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'no page keyboard on a computer');
-      assert.equal(await page.locator('#h5-learn-build-input').getAttribute('inputmode'), null, 'the physical keyboard types');
+      await waitFor(() => mock.posts(/\/answer$/).length === 2, 'the sentence is answered');
+      const { tag: reviewTag, ...reviewAnswer } = lastAnswer(mock);
+      assert.deepEqual(reviewAnswer, { id: '10', mode: 'fill', grade: 'hard', correct: false, answer: 'zz', expected: reviewGap, hinted: false }, 'posted as Fill the gap, the gap word asked for');
+      assert.equal(typeof reviewTag, 'string');
+      await page.locator('#h5-learn-done').waitFor();
+      assert.match(await text(page, '#h5-learn-done'), /2 answered · 1 right/);
+      await page.locator('#h5-learn-finish').click();
+      await page.locator('#h5-learn-how-card').waitFor();
+      // A sentence without a content word in Review: Dictation, since this browser can speak (a weak gap like "I" would teach little); Skip posts nothing.
+      mock.reviewCards = [PLAIN];
+      await page.locator('#h5-learn-start').click();
+      await page.locator('#h5-learn-dictation-input').waitFor();
+      assert.equal(await text(page, '#h5-learn-view-title'), 'Daily review');
+      assert.equal(await page.locator('#h5-learn-gap-input').count(), 0);
       await page.locator('#h5-learn-skip').click();
       await page.locator('#h5-learn-done').waitFor();
       assert.equal(mock.posts(/\/answer$/).length, 2, 'Skip posts no answer');
-      assert.match(await text(page, '#h5-learn-done'), /2 answered · 1 right/);
+      mock.reviewCards = null;
       await page.locator('#h5-learn-finish').click();
       await page.locator('#h5-learn-how-card').waitFor();
 
@@ -511,7 +502,7 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-free').click();
       await page.locator('#h5-learn-meaning').waitFor();
       assert.equal(await text(page, '#h5-learn-view-title'), 'Practice');
-      assert.ok(mock.requests.some(item => item.search.includes('mode=spell')) && mock.requests.some(item => item.search.includes('mode=build')), 'words and sentences mixed');
+      assert.ok(mock.requests.some(item => item.search.includes('mode=spell')) && mock.requests.some(item => item.search.includes('mode=fill')), 'words and sentences mixed');
       await page.locator('#h5-nav-sessions').click();
       mock.summary = { ...SUMMARY, due: 0, words: 0, sentences: 0, mistakes: 0, starter: null };
       await learn.click();
@@ -525,16 +516,36 @@ async function toTerminal(page) {
       await context.close();
     }
 
-    // ── A browser without speech output or voice input: no Dictation, no Say it, no Hear it ──
+    // ── A browser without speech output or voice input: no Dictation, no Say it, no Hear it; Review's sentences are Fill the gap ──
     {
-      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, speech: false });
+      const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 }, speech: false });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-build').waitFor();
+      await page.locator('#h5-learn-mode-fill').waitFor();
       assert.equal(await page.locator('#h5-learn-mode-dictation').count(), 0);
       assert.equal(await page.locator('#h5-learn-mode-say').count(), 0);
-      await page.locator('#h5-learn-mode-build').click();
-      await page.locator('#h5-learn-chinese').waitFor();
+      assert.equal(await page.locator('#h5-learn-mode-build').count(), 0, 'no Build to fall back to either');
+      mock.reviewCards = [SENTENCES[2], PLAIN, NO_WORD];
+      await page.locator('#h5-learn-start').click();
+      // A sentence: Fill the gap (before, Build the sentence was the fallback).
+      await page.locator('#h5-learn-gap-input').waitFor();
+      assert.equal(await text(page, '#h5-learn-chinese'), ZH_DEPLOY);
       assert.equal(await page.locator('#h5-learn-hear').count(), 0, 'no Hear it');
+      await page.locator('#h5-learn-skip').click();
+      // No content word and no speech: Fill the gap with the longest word ("here").
+      await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '2 / 3', 'the second card');
+      await page.locator('#h5-learn-gap-input').waitFor();
+      assert.equal(await text(page, '.h5-learn-gap'), 'I am .');
+      await page.locator('#h5-learn-gap-input').fill('here');
+      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
+      await page.keyboard.press('3');
+      await waitFor(() => mock.posts(/\/answer$/).length === 1, 'the loose gap is answered');
+      assert.deepEqual(lastAnswer(mock), { id: '13', mode: 'fill', grade: 'good', correct: true, answer: 'here' });
+      // No word at all: the card says so and Skip goes on.
+      await waitFor(async () => (await text(page, '.h5-learn-subtitle')) === '3 / 3', 'the third card');
+      await page.getByText('This sentence has no word to fill in.').waitFor();
+      await page.locator('#h5-learn-skip').click();
+      await page.locator('#h5-learn-done').waitFor();
+      assert.equal(mock.posts(/\/answer$/).length, 1);
       await context.close();
     }
 
@@ -679,37 +690,22 @@ async function toTerminal(page) {
       await waitFor(async () => (await ui(page, 'learnKeys')) === false, 'the keyboard went with the mode');
       await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 
-      // Build the sentence: tap tiles, Check, the grades pinned at the bottom.
-      await page.locator('#h5-learn-mode-build').tap();
-      await page.locator('#h5-learn-chinese').waitFor();
-      await page.waitForTimeout(400);
-      assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'Build starts with the tiles, without the keyboard');
-      assert.equal(await page.locator('#h5-learn-build-input').getAttribute('inputmode'), 'none');
-      for (const word of ['Please', 'fix', 'the', 'login']) await page.locator('.h5-learn-pool .h5-learn-tile:not([disabled])', { hasText: new RegExp(`^${word}$`) }).first().tap();
-      // A tap on the answer opens the full keyboard (Hide where Enter is); Backspace in the empty field takes the last tile back.
-      await page.locator('#h5-learn-build-input').tap();
-      await page.locator('#h5-learn-keys[data-kind="full"]').waitFor({ state: 'visible' });
-      assert.equal(await page.locator('#h5-learn-keys button[data-key="Enter"]').count(), 0, 'no Enter: Check is right above');
-      assert.equal(await page.locator('#h5-learn-keys button[data-key="Space"]').count(), 1);
-      await tapKeys(page, '{Backspace}');
-      assert.equal(await page.locator('.h5-learn-answer .h5-learn-placed').count(), 3, 'Backspace took the last tile back');
-      await tapKeys(page, 'login{Space}{Backspace}');
-      assert.equal(await value(page, '#h5-learn-build-input'), 'login');
-      await page.locator('#h5-learn-hint').tap();
-      assert.equal(await active(page), 'h5-learn-build-input', 'Hint keeps the focus');
-      await shot(page, 'learn-phone-build.png');
-      await tapKeys(page, '{Backspace}{Backspace}{Backspace}{Backspace}{Backspace}');
-      assert.equal(await value(page, '#h5-learn-build-input'), '');
-      await tapKeys(page, '{Hide}');
-      await page.locator('#h5-learn-keys').waitFor({ state: 'detached' });
-      for (const word of ['redirect', 'loop', 'after', 'the', 'session', 'cookie', 'expires']) await page.locator('.h5-learn-pool .h5-learn-tile:not([disabled])', { hasText: new RegExp(`^${word}$`) }).first().tap();
-      await page.locator('#h5-learn-check').tap();
-      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
+      // Fill the gap: the letters open by themselves, the gap checks itself at its last letter, the grades pinned at the bottom.
+      const { gapFor: phoneGap } = await import(path.join(root, 'scripts/h5-shell/learn-model.mjs'));
+      await page.locator('#h5-learn-mode-fill').tap();
+      await page.locator('#h5-learn-gap-input').waitFor();
+      assert.equal(await page.locator('#h5-learn-gap-input').getAttribute('inputmode'), 'none');
+      await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
+      const phoneWord = phoneGap(SENTENCES[0]).word;
+      await tapKeys(page, phoneWord);
+      assert.equal(await active(page), 'h5-learn-gap-input', 'the keys never take the focus');
+      await shot(page, 'learn-phone-fill.png');
+      await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor({ timeout: 2000 });
       assert.equal(await page.locator('.h5-learn-footer #h5-learn-grade-good').count(), 1, 'the grades are in the pinned actions');
       for (const id of ['again', 'hard', 'good']) assert.ok((await rect(page, `#h5-learn-grade-${id}`)).h >= 44, `${id}: a 44px target`);
       await page.locator('#h5-learn-grade-good').tap();
       await waitFor(() => mock.posts(/\/answer$/).length === 1, 'the phone answer');
-      assert.deepEqual(lastAnswer(mock), { id: '10', mode: 'build', grade: 'good', correct: true, answer: 'Please fix the login redirect loop after the session cookie expires' });
+      assert.deepEqual(lastAnswer(mock), { id: '10', mode: 'fill', grade: 'good', correct: true, answer: phoneWord });
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
 
@@ -874,7 +870,7 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
 
-      // Build the sentence and Fill the gap: the sentence plays after the answer by default, never before (it would give the answer away).
+      // Fill the gap: the sentence plays after the answer by default, never before (it would give the answer away).
       const sentence = SENTENCES[0].en;
       const { gapFor } = await import(path.join(root, 'scripts/h5-shell/learn-model.mjs'));
       await page.locator('#h5-learn-mode-fill').tap();
@@ -888,12 +884,6 @@ async function toTerminal(page) {
       await tapKeys(page, gapWord.slice(-1));
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor({ timeout: 2000 });
       await waitFor(async () => (await spokenOf(sentence)).length === 1, 'the sentence plays after the answer');
-      await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
-      await page.locator('#h5-learn-mode-build').tap();
-      await page.locator('#h5-learn-chinese').waitFor();
-      await page.waitForTimeout(600);
-      assert.equal((await spokenOf(sentence)).length, 1, 'Build the sentence: nothing before the answer');
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
 
@@ -922,10 +912,10 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-audio-sentences').tap();
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
-      // "When the card appears" and Slow: Build now plays at the start, slowly.
-      await page.locator('#h5-learn-mode-build').tap();
-      await page.locator('#h5-learn-chinese').waitFor();
-      await waitFor(async () => (await spokenOf(sentence)).length === 2, 'Build plays at the start when chosen');
+      // "When the card appears" and Slow: Fill the gap now plays at the start, slowly.
+      await page.locator('#h5-learn-mode-fill').tap();
+      await page.locator('#h5-learn-gap-input').waitFor();
+      await waitFor(async () => (await spokenOf(sentence)).length === 2, 'Fill the gap plays at the start when chosen');
       assert.equal(await page.evaluate(() => window.spoken.at(-1).rate), 0.65, 'slow');
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });

@@ -26,8 +26,8 @@
   don't know, Hint, then the grades) are pinned at the bottom of its page, so the answer field and Check stay in sight above the keyboard.
 - **Home** (`GET /api/learn/summary`, `GET /api/learn/settings`): the due count (h4) with "cards due today · about N min" (20 seconds a card,
   `minutesFor`), under it the new words of today (`#h5-learn-new-words`, see "New words a day"), the goal bar (done today / goal), "N-day streak · D of G done" with the fire icon, and Start review (`#h5-learn-start`); with
-  nothing due "Nothing due today" and Practise anyway (`#h5-learn-free`, a mixed session from the spell and build queues). Then PRACTICE: one card
-  per mode (`#h5-learn-mode-<id>`) with its count ("42 words", "26 sentences"; the noun is an exact dictionary key, never a "{1} words"
+  nothing due "Nothing due today" and Practise anyway (`#h5-learn-free`, a mixed session from the spell and fill queues). Then PRACTICE: one card
+  per offered mode (`#h5-learn-mode-<id>`; not Build, see below) with its count ("42 words", "26 sentences"; the noun is an exact dictionary key, never a "{1} words"
   template), and Mistakes (`#h5-learn-mode-mistakes`, the summary's count); YOUR MATERIAL (`#h5-learn-material`), Learn settings and How
   learning works. Without cards: "No study cards yet", what will appear here, and Add the starter list (`POST /starter` then `PUT /settings
   { starter: 'dev' }`).
@@ -42,8 +42,14 @@
 - **Modes** (`MODES` in `learn-model.mjs`; a session fetches `GET /queue?mode=…&limit=` 20 for words, 10 for sentences; without `&extra=practice`
   a queue has the due cards and the new words up to today's count and nothing more, see "Done for today"; Practice, the mixed session, always asks
   for `extra=practice` on both its queues):
-  - Review: the due cards of both kinds, each in the mode that fits (`exerciseOf`): a word is spelled, a sentence is built. Mistakes and free
-    practice work the same way.
+  - **Build the sentence is hidden** on purpose (the person's decision, 2026-11-23): `BUILD_HIDDEN` in `learn-model.mjs` marks its `MODES`
+    entry `hidden`, so the home leaves it out and How learning works says "Four ways to practise". Its code stays (`BuildExercise`, `tilesFor`,
+    `hintTile`); a session opened as `build` gets Fill the gap; the server still answers `mode=build`; past mistakes keep its label. Set
+    `BUILD_HIDDEN` to false to bring it back (the home card, the help texts and `SENTENCE_EXERCISE` follow).
+  - **Which exercise a card gets** (`exerciseFor`): Review, Mistakes and free practice spell a word and give a sentence `SENTENCE_EXERCISE`
+    (Fill the gap), as do Dictation without speech output and Say it without voice input. A sentence without a content word (`gapFor` null,
+    "I am here.") outside the Fill the gap mode gets Dictation when the page can speak; else Fill the gap takes out its longest word
+    (`gapFor(card, { loose: true })`, as the mode always does); one without any word shows "This sentence has no word to fill in." with Skip.
   - Spell the word: the meaning and, when the page can read aloud, the phonetic transcription under it next to Hear it (`#h5-learn-phonetic`; the sound is offered there already, so it gives nothing more away) (or, without a meaning, `POST /meaning`; a 503 shows "Word meanings need a translator…" with Open Settings, which
     closes Learn and opens Settings on Voice and translation), the card's context with the word as a gap, Hear it, Show first letter, a box per
     letter over one transparent input, I don't know. **Automatic check**: once the typed letters reach the word's length the answer is checked by
@@ -88,7 +94,7 @@
     answer); the grades stay pinned at the bottom on a phone and come right under the result on a computer. Every other word card (a starter word,
     whose context is the list's title; a word whose form is not in its context; an older server without `context_zh`) keeps the meaning layout with
     its context as "Used in" (`maskedContext`).
-  - Build the sentence: the Chinese and where it came from, the English words as tiles shuffled with up to three distractors from the other
+  - Build the sentence (hidden, above): the Chinese and where it came from, the English words as tiles shuffled with up to three distractors from the other
     sentences of the session (`tilesFor`, seeded by the card id); tap to place, tap a placed tile to take it back, or type after the tiles
     (Backspace in the empty field takes the last tile back); Hint places the next word in order (taking back wrong tiles first); Skip (computer).
   - Dictation: the sentence is read on start; Play and Slow (0.65); type it; the Chinese shows after Check.
@@ -102,7 +108,7 @@
   right word), "Word by word: 10 of 11 right" and the named mistakes, then Again / Hard / Good. The offered one is contained and focused (wrong:
   Again; one letter off: Hard; right with help: Hard; right: Good, `suggestedGrade`); each button can show when that grade brings the card back (see "Grade intervals"
   below). `POST /api/learn/cards/:id/answer { mode, grade, correct, answer }` (mode is the
-  exercise shown: spell, build, dictation, say or fill; answer capped at 500 characters), then the next card; a failed post stays with a notice.
+  exercise shown: spell, dictation, say or fill (build while it is shown); answer capped at 500 characters), then the next card; a failed post stays with a notice.
   At the end: "Round done" (below).
 - **Almost** (one letter off; Spell, its sentence layout, the leech step 2 and Fill the gap, every exercise that types one word; sentences are not
   affected): a word of 4 letters or more typed with exactly one wrong, missing or extra letter, or two adjacent letters swapped (`nearMiss`, the
@@ -142,7 +148,7 @@
   left in text.primary; today's count is learned + left, so 5 more new words raise it) and "Today's 10 new words are learned" when none is left;
   without `new_left` in the summary (an older server) nothing. Learn settings have NEW WORDS (below).
 - **The page's own keyboard** (touch screen; `useLearnKeys` and `LearnKeys` in `Learn.jsx`, `#h5-learn-keys`): without a hardware keyboard (input
-  mode not `pointer` and no `hasKeyboard`) the answer fields of Spell, Fill the gap, Dictation and Build have `inputmode="none"` (like the xterm
+  mode not `pointer` and no `hasKeyboard`) the answer fields of Spell, Fill the gap, Dictation (and the hidden Build) have `inputmode="none"` (like the xterm
   textarea), so the system keyboard never opens; T-Agent's keyboard (the terminal's `Keyboard` of `Osk.jsx`: same look, Shift one-shot or caps
   lock on a double tap, Backspace repeating after 400 ms every 60 ms, keys that never take the focus) sits at the bottom of the mode, where the
   system keyboard would be. Single words (`data-kind="letters"`): `qwertyuiop` / `asdfghjkl` / Shift `zxcvbnm` Backspace / apostrophe, hyphen and
@@ -339,8 +345,8 @@ The chat page (the list, a conversation, journal frames, the meta line, company 
   Sentences play After the answer / When the card appears (`#h5-learn-audio-when`, off with the sentences), Repeat 1× 2× 3× 5×, Pause between
   repeats 1 s 2 s 3 s, Speed Slow / Normal, Stop when I start typing. Switches and MUI toggle button groups in list rows, each saved at once.
 - When a card plays by itself (`autoPlays` in `learn-audio.mjs`): a word (Spell, a word in Review or Mistakes) when it appears, with the repeat, and
-  once more after the answer (a word asked inside its sentence plays that whole sentence instead, Hear it too; see "Spell the word"); Dictation always at the start (listening is the task); Say it the model at the start; Build the sentence, Fill the
-  gap and a sentence in Review as chosen (after the answer by default, because hearing it first gives the answer away).
+  once more after the answer (a word asked inside its sentence plays that whole sentence instead, Hear it too; see "Spell the word"); Dictation always at the start (listening is the task); Say it the model at the start; Fill the
+  gap (Build while shown) and a sentence in Review as chosen (after the answer by default, because hearing it first gives the answer away).
 - The player (`createPlayer`, pure, with fake timers in `test/h5-learn-audio.test.js`; one per session, `useAudio` / `useCardAudio` in `Learn.jsx`)
   reads with `speakOnce` (learn-speech.mjs) and waits for each reading's end, then the pause. While it plays, Hear it / Play shows "Playing 1 of 2"
   with a Stop text button (`#h5-learn-stop`); pressing Hear it / Play plays again with the same repeat (Slow too, slowly). Typing (a key, the page's
@@ -404,7 +410,7 @@ The chat page (the list, a conversation, journal frames, the meta line, company 
   pane. `H5_SHOT_DIR` saves `learn-pick-spell.png`, `learn-pick-checked.png`, `learn-pick-settings.png` (frames 1, 2 and 4 of the design) and
   `learn-pick-desktop.png`. Unit: `test/h5-learn-model.test.js` (`findWholeWord`, `sentenceGap`, `levelNote`, `pickedNote`, `shortDateTime`).
 - `scripts/test-h5-learn-ask-browser.cjs` (mocked `/api/learn/cards/:id/ask`, a fetch stand-in feeding the stream piece by piece; 390x844 touch
-  and 1440x900): Ask in Spell's helper row and in Build's prompt card; the sheet (top, bottom, corners, scrim, title, caption, Close, the hint
+  and 1440x900): Ask in Spell's helper row and in the prompt card of a Review sentence (Fill the gap); the sheet (top, bottom, corners, scrim, title, caption, Close, the hint
   chips, the earlier messages with `lang` and bold, the hints note, Send's name); typing in the sheet not reaching the letters; a chip streamed
   into a growing bubble then replaced by the stored messages; Close returning the focus; after Check the caption, the chips and a follow-up
   answered as JSON with its `state`; a JSON 502 before the stream, a 429, a company computer's 503 and an error half way, each with Try again; the
@@ -424,20 +430,20 @@ The chat page (the list, a conversation, journal frames, the meta line, company 
   `test/h5-learn-chat.test.js` (chips and `chipFill`, `chatTopic`, `visibleAnswer`, `answerParts`, `cardContext`, `chatLine`, the merges,
   `enterSends`).
 - `scripts/test-h5-learn-browser.cjs` (mocked `/api/learn`; 1440x900 and 390x844 touch): the destination on the rail and the bottom navigation,
-  the home numbers, every mode answered right and wrong with the diff and the hints (Spell's two rows of a wrong answer: by position, a missing
+  the home numbers without Build, Review's sentence as Fill the gap (posted as `fill`), a sentence without a content word as Dictation, and
+  without speech Fill the gap with the loose gap and the "no word" card; every offered mode answered right and wrong with the diff and the hints (Spell's two rows of a wrong answer: by position, a missing
   letter at 390px, an extra and a missing letter wrapped as two pairs at 320px, their kinds, colours, lines and the line under them), the bodies posted for Again / Hard / Good, the keys, Hint,
   Skip, the end of a session, no translator and its link, Mistakes, the material list (search, kind, edit, suspend, restore), the settings
   (`PUT` bodies, `window.LearnCollect`), Escape, Sessions and another destination leaving the page, the back button, the empty states, a browser
   without speech, the focus kept by Hear it, Show first letter, Hint and Slow (computer and phone), no page keyboard on a computer; on a phone the
   page ending at the bar, the letter keyboard of Spell (layout, `inputmode`, keys at the caret, Shift, Backspace and its repeat, Hide and the tap
-  that opens it again, the bottom navigation away, Check above the keys), the full keyboard of Build (opened by a tap, Backspace taking a tile
-  back) and Dictation (layers, the caret), and Say it's Check above the system keyboard. A company computer at 390px: the banner and the
+  that opens it again, the bottom navigation away, Check above the keys), Fill the gap's letters and pinned grades, the full keyboard of Dictation (layers, the caret), and Say it's Check above the system keyboard. A company computer at 390px: the banner and the
   offline counts only while the home cannot be reached, and a 503 of the settings shown in the panel. Auto-check, phonetics and audio (390px touch,
   speech stubbed with start and end events): the word played twice with a 1 s pause, "Playing 1 of 2" and Stop, typing skips the repeat, Stop
   cancels it, the key bubble (character, place, clamped at both edges, above the top row, gone on pointerup / pointercancel, none for Backspace)
   with one `navigator.vibrate` per press and none for a held Backspace's repeats, the focus kept; a short answer waits, Backspace in the pause
   cancels, the last letter checks by itself, the transcription with the word, the word once more after the answer; Fill the gap checks at its last
-  letter and plays after the answer, Build plays nothing before it; every Audio setting saved by its `PUT`, then "When the card appears" and Slow
-  playing Build at the start slowly; a 16-letter word on one line at 390px and in 8 + 8 at 320px; "Tap to play" when speech is refused; a computer
+  letter and plays after the answer; every Audio setting saved by its `PUT`, then "When the card appears" and Slow
+  playing Fill the gap at the start slowly; a 16-letter word on one line at 390px and in 8 + 8 at 320px; "Tap to play" when speech is refused; a computer
   checking at the last letter with its keys. `scripts/test-h5-osk-browser.cjs` checks the bubble and the ticks on the terminal's keyboard.
   `H5_SHOT_DIR` saves screenshots.

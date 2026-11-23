@@ -19,6 +19,7 @@ const { createPresence } = require('../lib/terminal-presence');
 const { reap, reapSync } = require('../services/terminal-reaper');
 const { sharedClock } = require('../lib/terminal-poll');
 const { createAgentRenamer } = require('../lib/agent-rename');
+const { createTurnEndWatch } = require('../lib/agent-turn-end');
 const notebookFormat = require('../lib/notebook-format');
 
 // Shell notebooks (docs/design/shell-notebook.md): a task_terminals row with agent 'notebook' is a notebook, not a terminal. Its shell (the kernel) is
@@ -48,6 +49,27 @@ function prepared(sql) {
   let statement = statements.get(sql);
   if (!statement) statements.set(sql, statement = db.prepare(sql));
   return statement;
+}
+
+// Who hears that a Claude or Codex turn ended in a terminal (server.js: the plan usage bars, services/agent-usage.js `turnEnded`).
+let agentTurnEndListener = null;
+function onAgentTurnEnd(listener) { agentTurnEndListener = typeof listener === 'function' ? listener : null; }
+// The agent a terminal runs: its row's agent, else claude or codex when one of them holds the foreground (started by hand in a plain shell).
+function terminalAgent(s) {
+  const row = s.terminalId === 'default' ? null : prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(s.taskId, s.terminalId);
+  if (row && row.agent) return row.agent;
+  const names = foregroundCommand(s.pty);
+  return names.includes('claude') ? 'claude' : names.includes('codex') ? 'codex' : null;
+}
+
+// The agents (claude, codex, ...) of the terminals whose activity is 'running' now, for the plan usage bars (services/agent-usage.js).
+function runningAgents() {
+  const agents = new Set();
+  for (const s of sessions.values()) {
+    if (s.exiting || !s.activity || s.activity.state() !== 'running') continue;
+    try { const agent = terminalAgent(s); if (agent) agents.add(agent); } catch { /* the next tick asks again */ }
+  }
+  return [...agents];
 }
 
 // Sessions are keyed by task ID and terminal ID; omitted IDs name the implicit `default` terminal, which only older tasks have (lib/task-default-terminal.js).
@@ -860,9 +882,11 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   });
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
+  const turnEnd = createTurnEndWatch({ agentOf: () => terminalAgent(s), onTurnEnd: agent => { if (agentTurnEndListener) agentTurnEndListener(agent); } });
   s.activity = createActivityTracker(pty, shell, () => {
     activityStream.notify();
     agentRenames.poke(taskId); // a rename that waits for a permission question to be answered
+    if (s.activity) turnEnd(s.activity.state()); // the plan usage bars read the agent's plan after its turn (services/agent-usage.js)
   });
 
   pty.onExit(() => {
@@ -1628,4 +1652,4 @@ function shutdownTerminals() {
   try { if (notebookKernels) notebookKernels.shutdown(); } catch {}
 }
 
-module.exports = { terminalLaunch, terminalShell, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };
+module.exports = { terminalLaunch, terminalShell, onAgentTurnEnd, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

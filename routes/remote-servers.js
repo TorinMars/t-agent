@@ -518,6 +518,23 @@ router.post('/:id/tasks/:taskId/move', (req, res) => proxyMove(req, res, '', 'PO
 router.get('/:id/tasks/:taskId/move/progress', (req, res) => proxyMove(req, res, '/progress', 'GET'));
 router.post('/:id/tasks/:taskId/move/cancel', (req, res) => proxyMove(req, res, '/cancel', 'POST'));
 
+// The plan usage bars (docs/design/plan-usage.md) of an Engine that advertises 'agent-usage:read' (an older one: 501 AGENT_USAGE_UNSUPPORTED, nothing
+// sent). The answer is passed on with only its known fields (services/agent-usage.js `cleanAnswer`).
+async function proxyAgentUsage(req, res, suffix) {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const { CAPABILITY, cleanAnswer } = require('../services/agent-usage');
+  const supported = await remoteHas(target, res, CAPABILITY);
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'AGENT_USAGE_UNSUPPORTED' });
+  const method = suffix ? 'POST' : 'GET';
+  res.set('Cache-Control', 'no-store');
+  try { res.json(cleanAnswer(await request(target.row.base_url, `/v1/agent-usage${suffix}`, target.token, { method, ...(suffix ? { body: {}, timeoutMs: 30_000 } : {}) }))); }
+  catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+}
+router.get('/:id/agent-usage', (req, res) => proxyAgentUsage(req, res, ''));
+router.post('/:id/agent-usage/refresh', (req, res) => proxyAgentUsage(req, res, '/refresh'));
+
 // Rename a task's folder on an Engine that advertises 'tasks:rename-folder' (an older one answers 501 RENAME_FOLDER_UNSUPPORTED before anything is sent).
 // A refusal keeps its status and code, and the reason, the live terminal ids and the clashing path that the Engine gave, so the page can offer to close them.
 router.post('/:id/tasks/:taskId/rename-folder', async (req, res) => {

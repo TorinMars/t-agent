@@ -3,7 +3,7 @@
 // functions, used only by the tab's lazy chunk (RecentList.jsx), so the first screen does not carry them.
 import { recentKey, recentTaskRef, switcherCards } from './recent-sessions.mjs';
 
-const KINDS = { claude: 'Claude session', codex: 'Codex session', opencode: 'OpenCode session' };
+const KINDS = { claude: 'Claude session', codex: 'Codex session', opencode: 'OpenCode session', notebook: 'Shell notebook' };
 // The rows of the tab: the switcher's cards in their order (the shown session first, then the others, most recently used first), each with what the
 // task list knows of its task (`tasks`: the rows of `state.taskList.tasks`; `taskTitle`, `device` when the list tags its rows) and its live state
 // (`statusOf(entry)`: 'running' | 'waiting' | 'idle', the header's rule; `kindOf(entry)`: the kind of the question it waits at, 'select' | 'accept' or

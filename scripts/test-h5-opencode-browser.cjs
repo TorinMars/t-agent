@@ -25,7 +25,7 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const SHOTS = process.env.SCREENSHOTS || '';
 const SHORT = { timeout: 3000 };
-const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal'];
+const CHOICES = ['Claude session', 'Codex session', 'OpenCode session', 'New Terminal', 'Shell notebook'];
 const OC_COMMANDS = ['/new', '/sessions', '/compact', '/models', '/agents', '/undo', '/redo', '/diff', '/status', '/help'];
 const OC_KEYS = ['Esc', 'Tab', 'Ctrl+J', 'Ctrl+X B', 'Ctrl+X L'];
 // 11-22 18:40 and 11-21 09:12 in the browser's time zone (the page shows local time).
@@ -130,11 +130,11 @@ async function dialogChecks(t) {
   await t.openDialog('release-notes');
   assert.deepEqual(await labels(), CHOICES, `${size}: the choices, OpenCode session after Codex`);
   const first = await marks(page);
-  assert.deepEqual(first.map(item => item.mark), ['claude', 'codex', 'opencode', 'shell'], `${size}: each row starts with its mark`);
+  assert.deepEqual(first.map(item => item.mark), ['claude', 'codex', 'opencode', 'shell', 'notebook'], `${size}: each row starts with its mark`);
   assert.equal(first[2].rects, 2, `${size}: the OpenCode mark is the self-drawn block, not the Claude sparkle`);
-  assert.deepEqual(first.map(item => item.glyph), ['✳', '', '', '>_'], `${size}: the text marks are drawn by CSS`);
-  assert.ok(first.every(item => !item.disabled && !item.note), `${size}: this machine runs every kind`);
-  assert.deepEqual(await choices.allTextContents(), CHOICES, `${size}: a row's text is only its words`);
+  assert.deepEqual(first.map(item => item.glyph), ['✳', '', '', '>_', ''], `${size}: the text marks are drawn by CSS`);
+  assert.ok(first.every(item => !item.disabled && (!item.note || item.mark === 'notebook')), `${size}: this machine runs every kind`);
+  assert.deepEqual(await choices.allTextContents(), [...CHOICES.slice(0, 4), 'Shell notebookCells of shell commands that share one shell'], `${size}: a row's text is only its words (and Shell notebook's caption)`);
   await shot(page, `${size}-1-new-session.png`);
   // The OpenCode sub-list: New OpenCode session, the earlier sessions newest first with their time, Back.
   await t.press(choices.filter({ hasText: 'OpenCode session' }));
@@ -162,7 +162,7 @@ async function dialogChecks(t) {
   await page.waitForFunction(() => document.querySelector('#h5-new-session .h5-choice-note'), null, SHORT);
   assert.deepEqual(await labels(), CHOICES, `${size}: K01 lists the same kinds`);
   const old = await marks(page);
-  assert.deepEqual(old.map(item => item.disabled), [false, false, true, false], `${size}: OpenCode session is greyed on K01`);
+  assert.deepEqual(old.map(item => item.disabled), [false, false, true, false, true], `${size}: OpenCode session (and Shell notebook) is greyed on K01`);
   assert.equal(old[2].note, 'K01 needs an update first', `${size}: the row says why`);
   assert.equal(await choices.nth(2).getAttribute('role'), null, `${size}: the greyed row is not a keyboard choice`);
   if (wide) {
@@ -182,7 +182,7 @@ async function dialogChecks(t) {
   // An Engine that lists terminal:opencode (K02) offers it.
   await t.openDialog('Remote 8');
   const fresh = await marks(page);
-  assert.deepEqual(fresh.map(item => item.disabled), [false, false, false, false], `${size}: K02 offers OpenCode session`);
+  assert.deepEqual(fresh.map(item => item.disabled), [false, false, false, false, true], `${size}: K02 offers OpenCode session (not Shell notebook: no terminal:notebook)`);
   await t.press(choices.filter({ hasText: 'OpenCode session' }));
   await choices.filter({ hasText: 'New OpenCode session' }).waitFor();
   assert.equal(server.sessionQueries.at(-1), '/api/remote-servers/8/tasks/1/agent-sessions?agent=opencode', `${size}: K02's sessions are asked for`);

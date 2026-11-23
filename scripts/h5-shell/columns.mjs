@@ -29,7 +29,7 @@ export const columnWidth = (stripWidth, count) => {
 export const MESSAGE_TYPE = 't-agent-pane';
 export const PANE_EVENTS = new Set(['ready', 'focus', 'title', 'scroll-x', 'step', 'move', 'maximize', 'peek', 'mindmaps']);
 export const PEEK_LINES = 6;
-const AGENTS = new Set(['claude', 'codex', 'opencode']);
+const AGENTS = new Set(['claude', 'codex', 'opencode', 'notebook']);
 const SCROLL_MAX = 10000; // px of one forwarded sideways scroll
 const ID = /^[a-z0-9]{1,16}$/;
 const TEXT_MAX = 200;
@@ -344,7 +344,7 @@ export const stateWord = (words, state, kind) => {
   if (!named) return words[state];
   return words.waiting === 'needs you' ? named.toLowerCase() : named;
 };
-export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
+export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', notebook: 'Notebook' };
 // The short name of a column for its tile and peek: the task, else '' (the caller says "Column N").
 export const columnName = info => (info && info.title) || '';
 

@@ -128,6 +128,15 @@ export const PATHS = {
   // warning (Ant Design WarningOutlined, the same icon in collection 9402; iconfont.cn id not looked up): the banner of an engine on an older version
   warning: 'M464 720a48 48 0 1096 0 48 48 0 10-96 0zm16-304v184c0 4.4 3.6 8 8 8h48c4.4 0 8-3.6 8-8V416c0-4.4-3.6-8-8-8h-48c-4.4 0-8 3.6-8 8zm475.7 440l-416-720c-6.2-10.7-16.9-16-27.7-16s-21.6 5.3-27.7 16l-416 720C56 877.4 71.4 904 96 904h832c24.6 0 40-26.6 27.7-48zm-783.5-27.9L512 239.9l339.8 588.2H172.2z',
 };
+// The shell notebook's toolbar and cells (scripts/notebook/view.js; Ant Design icons of the same set, iconfont.cn ids not looked up):
+// caret-right (CaretRightOutlined): Run, the run button of a cell
+PATHS.play = 'M715.8 493.5L335 165.1c-14.2-12.2-35-1.2-35 18.5v656.8c0 19.7 20.8 30.7 35 18.5l380.8-328.4c10.9-9.4 10.9-27.6 0-37z';
+// forward (ForwardOutlined): Run all
+PATHS.runAll = 'M825.8 498L538.4 249.9c-10.7-9.2-26.4-.9-26.4 14v496.3c0 14.9 15.7 23.2 26.4 14L825.8 526c8.3-7.2 8.3-20.8 0-28zm-320 0L218.4 249.9c-10.7-9.2-26.4-.9-26.4 14v496.3c0 14.9 15.7 23.2 26.4 14L505.8 526c4.1-3.6 6.2-8.8 6.2-14 0-5.2-2.1-10.4-6.2-14z';
+// border (BorderOutlined): Stop, the stop button of a running cell
+PATHS.stopSquare = 'M880 112H144c-17.7 0-32 14.3-32 32v736c0 17.7 14.3 32 32 32h736c17.7 0 32-14.3 32-32V144c0-17.7-14.3-32-32-32zm-40 728H184V184h656v656z';
+// check (CheckOutlined): a cell that ended with exit 0
+PATHS.check = 'M912 190h-69.9c-9.8 0-19.1 4.5-25.1 12.2L404.7 724.5 207 474a32 32 0 00-25.1-12.2H112c-6.7 0-10.4 7.7-6.3 12.9l273.9 347c12.8 16.2 37.4 16.2 50.3 0l488.4-618.9c4.1-5.1.4-12.8-6.3-12.8z';
 // arrowleft (iconfont.cn icon 4767022), the same path as the Left key: the back arrow of the file viewer opened from the file tree
 PATHS.back = PATHS.keyArrowLeft;
 // read (iconfont.cn icon 4766888): the Learn destination of the navigation rail and the bottom navigation (the Learn page draws its other icons from
@@ -138,7 +147,7 @@ PATHS.archived = 'M832 64H192c-17.7 0-32 14.3-32 32v832c0 17.7 14.3 32 32 32h640
 
 // SELF-DRAWN ICONS. Used only where the library has no clearly recognisable icon (see "UI icons" in AGENTS.md). Drawn on a 24 grid as outlines
 // (stroke 1.5, round caps and joins, no fill), so they match the weight of the library icons at 22px. They use the standard keyboard symbols.
-const DRAWN = {
+export const DRAWN = {
   // Backspace: a keycap tag pointing left with a cross inside
   keyBackspace: 'M9 5.5h10.5a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H9L2.5 12z M12.5 9.5l5 5 M17.5 9.5l-5 5',
   // Tab: an arrow to a bar
@@ -151,6 +160,9 @@ const DRAWN = {
   // Shown at 14px inside the thin strip, not 22px: they mark the direction and are not buttons.
   chevronUp: 'M6 15l6-6 6 6',
   chevronDown: 'M6 9l6 6 6-6',
+  // Shell notebook (the session kind's mark, scripts/notebook/ and the session tiles): a lab flask, its neck and a liquid line. The library's
+  // experiment icon has bubbles that blur at 18px; this one stays clear on the tiles and the 20px header.
+  notebook: 'M9 3h6 M10 3v6.2L4.8 18.4A1.8 1.8 0 0 0 6.4 21h11.2a1.8 1.8 0 0 0 1.6-2.6L14 9.2V3 M7.2 15h9.6',
 };
 
 export function Icon({ name, size = 24 }) {

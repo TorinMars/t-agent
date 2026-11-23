@@ -32,7 +32,7 @@ const INSTANCE = /^[A-Za-z0-9-]{1,64}$/;
 const TASK = /^[1-9]\d{0,11}$/;
 const TERMINAL = /^[A-Za-z0-9_-]{1,64}$/;
 const KEY_NAME = /^[a-z][a-z0-9._:-]{0,95}$/;
-const AGENTS = new Set(['claude', 'codex', 'opencode']);
+const AGENTS = new Set(['claude', 'codex', 'opencode', 'notebook']);
 const CLIENTS = new Set(['phone', 'computer', 'mac', 'home']);
 const DEVICE = /^[a-z0-9]{8,32}$/;
 // Keys whose value is a map of times ({ <kind>: { <name>: ms } }, the recency of saved commands): two versions are merged by the later time of each

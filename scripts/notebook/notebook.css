@@ -1,0 +1,181 @@
+/* The shell notebook view (scripts/notebook/view.js). The colours are the shared theme's dark palette (scripts/h5-shell/theme.mjs: Material UI's
+   dark palette, as public/css/h5.css names them): background #121212, the 1dp surface #1e1e1e, primary #90caf9, error #f44336 / #e57373,
+   warning #ffb74d, success #81c784. MD2 grid: 8px, 4px for small details. Phone first; the wide layout from 900px, as the page. */
+.nb-root {
+  --nb-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --nb-primary: #90caf9; --nb-text: rgba(255, 255, 255, .87); --nb-muted: rgba(255, 255, 255, .6); --nb-faint: rgba(255, 255, 255, .45);
+  --nb-divider: rgba(255, 255, 255, .12); --nb-surface: #1e1e1e;
+  position: relative; width: 100%; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: #121212; color: var(--nb-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; -webkit-tap-highlight-color: transparent;
+}
+.nb-root [hidden] { display: none !important; }
+.nb-root button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+.nb-root button:disabled { cursor: default; }
+.nb-flex { flex: 1 1 auto; }
+.nb-icon { display: block; flex: none; }
+
+/* The view's own header (a column of the multi-column view: the column has no page header): the flask, the title over "task · path · Saved", the
+   shell's chip and the menu. */
+.nb-head { position: relative; flex: none; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 4px 0 16px; background: var(--nb-surface); border-bottom: 1px solid var(--nb-divider); }
+.nb-head-mark { color: var(--nb-muted); display: inline-flex; }
+.nb-head-names { min-width: 0; display: flex; flex-direction: column; }
+.nb-head-title { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nb-head-sub { font-size: 12px; color: var(--nb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nb-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 14px; font-size: 13px; background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .7); white-space: nowrap; }
+.nb-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .38); }
+.nb-chip[data-tone="running"] { background: rgba(129, 199, 132, .14); color: #a5d6a7; }
+.nb-chip[data-tone="running"]::before { background: #81c784; }
+.nb-chip[data-tone="starting"] { background: rgba(144, 202, 249, .12); color: var(--nb-primary); }
+.nb-chip[data-tone="starting"]::before { background: var(--nb-primary); }
+.nb-icon-btn { flex: none; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: rgba(255, 255, 255, .7) !important; }
+.nb-icon-btn:hover { background: rgba(255, 255, 255, .08); }
+.nb-menu { position: absolute; right: 8px; top: 44px; z-index: 5; min-width: 200px; padding: 8px 0; border-radius: 4px; background: #2e2e2e; box-shadow: 0 5px 5px -3px rgba(0, 0, 0, .2), 0 8px 10px 1px rgba(0, 0, 0, .14), 0 3px 14px 2px rgba(0, 0, 0, .12); }
+.nb-menu-item { display: flex; align-items: center; width: 100%; min-height: 36px; padding: 0 16px; border: 0; background: transparent; text-align: left; font-size: 14px !important; }
+.nb-menu-item:hover, .nb-menu-item:focus-visible { background: rgba(255, 255, 255, .08); outline: none; }
+
+/* The toolbar (wide) and the action bar above the bottom navigation (phone). */
+.nb-toolbar { flex: none; display: none; align-items: center; gap: 4px; height: 48px; padding: 0 12px; border-bottom: 1px solid rgba(255, 255, 255, .08); overflow-x: auto; scrollbar-width: none; }
+.nb-tool { flex: none; display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--nb-primary) !important; font-size: 14px !important; font-weight: 500 !important; white-space: nowrap; }
+.nb-tool-muted { color: rgba(255, 255, 255, .7) !important; }
+.nb-tool:hover:not(:disabled) { background: rgba(144, 202, 249, .08); }
+.nb-tool:disabled { color: rgba(255, 255, 255, .3) !important; }
+.nb-tool-sep { flex: none; width: 1px; height: 24px; margin: 0 8px; background: var(--nb-divider); }
+.nb-actionbar { flex: none; display: flex; align-items: center; justify-content: space-around; height: 56px; background: var(--nb-surface); border-top: 1px solid var(--nb-divider); }
+html:not([data-bnav]) .nb-actionbar { height: calc(56px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); }
+.nb-bar-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 64px; height: 44px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--nb-primary) !important; font-size: 14px !important; font-weight: 500 !important; }
+.nb-bar-btn:disabled { color: rgba(255, 255, 255, .3) !important; }
+.nb-root button:focus-visible { outline: 2px solid var(--nb-primary); outline-offset: -2px; }
+
+.nb-banner { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 8px; padding: 8px 8px 8px 16px; font-size: 14px; line-height: 1.43; background: var(--nb-surface); border-left: 3px solid #f44336; border-radius: 4px; }
+.nb-banner-text { flex: 1 1 200px; }
+.nb-text-btn { flex: none; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--nb-primary) !important; font-size: 13px !important; font-weight: 500 !important; }
+.nb-text-btn:hover { background: rgba(144, 202, 249, .08); }
+.nb-danger { color: #f44336 !important; }
+.nb-danger:hover { background: rgba(244, 67, 54, .08); }
+
+/* The cells. */
+.nb-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 12px 12px 24px; }
+.nb-loading, .nb-empty-text { margin: 24px 16px 8px; color: var(--nb-muted); text-align: center; }
+.nb-empty { text-align: center; }
+.nb-cells { display: flex; flex-direction: column; }
+.nb-cell {
+  position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 8px;
+  grid-template-areas: "count meta run" "code code code" "out out out" "stdin stdin stdin"; border-radius: 4px; outline: none;
+}
+.nb-cell[data-type="markdown"] { grid-template-areas: "md md md"; }
+.nb-cell:focus-visible { box-shadow: 0 0 0 2px rgba(144, 202, 249, .5); }
+.nb-run { grid-area: run; justify-self: end; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--nb-primary) !important; }
+.nb-run:hover:not(:disabled) { background: rgba(144, 202, 249, .08); }
+.nb-run:disabled { color: rgba(255, 255, 255, .3) !important; }
+.nb-cell[data-state="running"] .nb-run { background: rgba(144, 202, 249, .16); }
+.nb-count { grid-area: count; font: 12px var(--nb-mono); color: var(--nb-faint); white-space: nowrap; }
+.nb-cell[data-state="running"] .nb-count { color: var(--nb-primary); }
+.nb-code { grid-area: code; position: relative; display: grid; min-width: 0; background: #1a1a1a; border: 1px solid var(--nb-divider); border-radius: 4px; }
+.nb-cell[data-selected] .nb-code { border-color: rgba(144, 202, 249, .6); }
+.nb-cell[data-editing] .nb-code, .nb-cell[data-state="running"][data-selected] .nb-code { border-color: var(--nb-primary); box-shadow: 0 0 0 1px var(--nb-primary); }
+/* The editor and its highlighted copy share one grid cell, font, padding and wrapping, so every character is at the same place in both. */
+.nb-hl, .nb-input {
+  grid-area: 1 / 1; box-sizing: border-box; width: 100%; margin: 0; padding: 8px 12px; border: 0; font-family: var(--nb-mono); font-size: 13px; line-height: 1.6;
+  font-weight: 400; letter-spacing: normal; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; tab-size: 8; font-variant-ligatures: none;
+}
+.nb-hl { color: var(--nb-text); pointer-events: none; overflow: hidden; }
+.nb-input { color: transparent; -webkit-text-fill-color: transparent; caret-color: #fff; background: transparent; resize: none; overflow: hidden; outline: none; min-height: 0; height: 100%; }
+.nb-input::selection { background: rgba(144, 202, 249, .35); }
+.nb-input::placeholder { color: rgba(255, 255, 255, .38); -webkit-text-fill-color: rgba(255, 255, 255, .38); }
+.nb-tok-keyword { color: #90caf9; }
+.nb-tok-string { color: #a5d6a7; }
+.nb-tok-var { color: #ce93d8; }
+.nb-tok-comment { color: rgba(255, 255, 255, .45); font-style: italic; }
+.nb-output { grid-area: out; min-width: 0; padding: 6px 12px 0; font: 12.5px/1.6 var(--nb-mono); color: rgba(255, 255, 255, .78); }
+.nb-output:not([data-has]) .nb-lines { display: none; }
+.nb-output[data-tone="failed"][data-has] .nb-lines { margin-top: 4px; padding: 4px 10px; margin-left: -10px; margin-right: -10px; border-radius: 4px; background: rgba(244, 67, 54, .12); color: #ef9a9a; }
+.nb-line { min-height: 1.6em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nb-out-note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0; font: 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--nb-muted); }
+.nb-full { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 4px 0; font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: rgba(255, 255, 255, .78); }
+.nb-meta { grid-area: meta; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 1.4; color: rgba(255, 255, 255, .5); }
+.nb-meta .nb-icon { color: #81c784; }
+.nb-meta[data-tone="running"] { color: var(--nb-primary); }
+.nb-meta[data-tone="failed"] { color: #e57373; }
+.nb-meta[data-tone="stopped"] { color: #ffb74d; }
+.nb-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nb-spinner { flex: none; width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; border: 2px solid rgba(144, 202, 249, .3); border-top-color: var(--nb-primary); animation: nb-spin .9s linear infinite; }
+@keyframes nb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .nb-spinner { animation-duration: 3s; } }
+
+/* The input field under a running cell. */
+.nb-stdin { grid-area: stdin; margin: 8px 0 0; padding: 0; }
+.nb-stdin-row { display: flex; gap: 8px; align-items: flex-end; }
+.nb-stdin-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nb-stdin-caption { font-size: 12px; color: var(--nb-muted); }
+.nb-stdin[data-waiting] .nb-stdin-caption { color: var(--nb-primary); }
+.nb-stdin-input { box-sizing: border-box; height: 40px; padding: 0 12px; border: 1px solid rgba(255, 255, 255, .3); border-radius: 4px; background: transparent; color: var(--nb-text); font: 14px var(--nb-mono); outline: none; }
+.nb-stdin[data-waiting] .nb-stdin-input, .nb-stdin-input:focus { border: 2px solid var(--nb-primary); padding: 0 11px; }
+.nb-send { flex: none; height: 40px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--nb-primary); color: rgba(0, 0, 0, .87) !important; font-size: 14px !important; font-weight: 500 !important; }
+.nb-stdin-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; padding-top: 4px; font-size: 12px; color: rgba(255, 255, 255, .5); }
+.nb-stdin-hide { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer; color: var(--nb-muted); }
+.nb-stdin-hide input { width: 18px; height: 18px; margin: 0; accent-color: var(--nb-primary); }
+
+/* Text cells: the shared markdown.css is light; one more class wins over its rules (as the design sheet does in h5.css). */
+.nb-md { grid-area: md; min-width: 0; padding: 4px 12px; cursor: text; }
+.nb-md-input { grid-area: md; height: auto; min-height: 64px; color: var(--nb-text); -webkit-text-fill-color: currentColor; background: #1a1a1a; border: 1px solid var(--nb-primary); border-radius: 4px; overflow: hidden; }
+.nb-md-plain { white-space: pre-wrap; overflow-wrap: anywhere; }
+.nb-md-empty { margin: 0; color: var(--nb-faint); font-style: italic; }
+.nb-cell[data-selected] .nb-md { box-shadow: inset 3px 0 0 rgba(144, 202, 249, .6); }
+.nb-md.markdown-body.markdown-body { max-width: none; margin: 0; color: rgba(255, 255, 255, .78); font-size: 14px; line-height: 1.6; }
+.nb-md.markdown-body.markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--nb-text); margin: .6em 0 .3em; padding-bottom: 0; border-bottom: 0; font-weight: 500; }
+.nb-md.markdown-body.markdown-body h1 { font-size: 22px; }
+.nb-md.markdown-body.markdown-body h2 { font-size: 19px; }
+.nb-md.markdown-body.markdown-body h3 { font-size: 16px; }
+.nb-md.markdown-body.markdown-body p { margin: .4em 0; }
+.nb-md.markdown-body.markdown-body a { color: var(--nb-primary); }
+.nb-md.markdown-body.markdown-body blockquote { background: #1a1a1a; color: var(--nb-muted); border-left-color: #3d5a80; }
+.nb-md.markdown-body.markdown-body code { background: rgba(255, 255, 255, .08); color: inherit; border-color: transparent; font-family: var(--nb-mono); }
+.nb-md.markdown-body.markdown-body pre { padding: 8px 12px; background: #1a1a1a; border-radius: 4px; }
+.nb-md.markdown-body.markdown-body pre code { background: none; }
+.nb-md.markdown-body.markdown-body :is(th, td, hr) { border-color: var(--nb-divider); }
+
+/* "+ Code / + Text" between cells: shown under the pointer (and under the selected cell), never in the way of a touch. */
+.nb-insert { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; height: 16px; padding-left: 72px; opacity: 0; pointer-events: none; transition: opacity .12s; }
+.nb-insert-line { flex: 1 1 auto; height: 1px; background: rgba(255, 255, 255, .08); }
+.nb-insert-btn { flex: none; height: 28px; padding: 0 10px; border: 1px solid rgba(255, 255, 255, .2); border-radius: 14px; background: var(--nb-surface); color: rgba(255, 255, 255, .8) !important; font-size: 13px !important; }
+.nb-insert-btn:hover { background: #2c2c2c; }
+@media (hover: hover) { .nb-item:hover > .nb-insert, .nb-insert:hover { opacity: 1; pointer-events: auto; } }
+html[data-input="touch"] .nb-insert { display: none; }
+html[data-input="touch"] .nb-item { margin-bottom: 12px; }
+.nb-hint { margin: 16px 0 0 72px; font-size: 12px; color: rgba(255, 255, 255, .5); }
+html[data-input="touch"] .nb-hint { display: none; }
+
+/* The restart confirmation: MD2 dialog (h6 title, body, text buttons at the bottom right), 8px corners, 16px margin on a phone. */
+.nb-dialog-layer { position: fixed; inset: 0; z-index: 1400; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, .5); }
+.nb-dialog { box-sizing: border-box; width: 100%; max-width: 444px; border-radius: 8px; background: #383838; color: var(--nb-text, rgba(255, 255, 255, .87)); box-shadow: 0 11px 15px -7px rgba(0, 0, 0, .2), 0 24px 38px 3px rgba(0, 0, 0, .14), 0 9px 46px 8px rgba(0, 0, 0, .12); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.nb-dialog-title { margin: 0; padding: 16px 24px; font-size: 20px; font-weight: 500; line-height: 1.6; }
+.nb-dialog-text { margin: 0; padding: 0 24px 20px; font-size: 16px; line-height: 1.5; color: rgba(255, 255, 255, .7); }
+.nb-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 8px; }
+.nb-dialog .nb-text-btn { min-height: 36px; padding: 6px 8px; font-size: 14px !important; font: inherit; font-weight: 500; color: #90caf9; border: 0; background: transparent; border-radius: 8px; cursor: pointer; }
+.nb-dialog .nb-danger { color: #f44336; }
+.nb-dialog .nb-text-btn:focus-visible { outline: 2px solid #90caf9; outline-offset: -2px; }
+
+/* Touch: every target at least 44 x 44 px; the fields at 16px so iOS does not zoom in. */
+html[data-input="touch"] .nb-text-btn, html[data-input="touch"] .nb-menu-item { min-height: 44px; }
+html[data-input="touch"] .nb-icon-btn { width: 44px; height: 44px; }
+html[data-input="touch"] .nb-stdin-input, html[data-input="touch"] .nb-send { height: 44px; }
+html[data-input="touch"] .nb-hl, html[data-input="touch"] .nb-input, html[data-input="touch"] .nb-stdin-input { font-size: 16px; }
+html[data-input="touch"] .nb-stdin-hide { min-height: 44px; }
+
+/* Wide (a computer, a landscape tablet): the toolbar instead of the action bar, a 64px gutter with the count and the run button. */
+@media (min-width: 900px) {
+  .nb-toolbar { display: flex; }
+  .nb-actionbar { display: none; }
+  .nb-scroll { padding: 16px 32px 32px 8px; }
+  .nb-cell {
+    grid-template-columns: 64px minmax(0, 1fr); grid-template-rows: auto 1fr; align-items: start; row-gap: 0;
+    grid-template-areas: "run code" "count code" ". out" ". meta" ". stdin";
+  }
+  .nb-cell[data-type="markdown"] { grid-template-areas: ". md"; }
+  .nb-run { width: 36px; height: 36px; display: none; margin-top: 2px; }
+  html[data-input="touch"] .nb-run { width: 44px; height: 44px; }
+  .nb-cell:hover .nb-run, .nb-cell[data-selected] .nb-run, .nb-cell[data-state="running"] .nb-run, .nb-cell:focus-within .nb-run { display: inline-flex; }
+  .nb-count { justify-self: end; padding-top: 9px; }
+  .nb-meta { padding: 2px 12px 0; }
+  .nb-stdin { padding: 0 12px; }
+}

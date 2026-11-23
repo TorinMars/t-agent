@@ -20,7 +20,8 @@
     "build:h5-shell": "node scripts/build-page-bundles.js",
     "build:agent-chat": "node scripts/build-page-bundles.js",
     "build:mac-app": "node scripts/build-mac-app.js",
-    "build:mindmap": "esbuild scripts/mindmap/entry.js --bundle --minify --format=iife --global-name=MindMapUI --jsx=automatic --loader:.css=text --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/mindmap-ui.js"
+    "build:mindmap": "esbuild scripts/mindmap/entry.js --bundle --minify --format=iife --global-name=MindMapUI --jsx=automatic --loader:.css=text --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/mindmap-ui.js",
+    "build:notebook": "esbuild scripts/notebook/entry.js --bundle --minify --format=iife --global-name=NotebookUI --jsx=automatic --loader:.css=text --define:process.env.NODE_ENV=\\\"production\\\" --outfile=public/js/notebook-ui.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.310",

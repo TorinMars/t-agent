@@ -3,6 +3,7 @@ import AppBar from '@mui/material/AppBar';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
@@ -11,6 +12,7 @@ import MenuItem from '@mui/material/MenuItem';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
+import { alpha } from '@mui/material/styles';
 import { Pill, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { Dot, overlay, useShownKind, useShownState } from './Columns.jsx';
@@ -28,7 +30,7 @@ const HEADER = state => {
   return {
     wide: state.wide, sidebarCollapsed: state.sidebarCollapsed, tasksOpen: state.tasksOpen, taskName: state.taskName, sourceLabel: state.sourceLabel,
     sessionName: state.sessionName, terminalWidth: state.terminalWidth, pane: state.pane, tag: shown ? shown.device : null,
-    hasTarget: Boolean(state.shownTarget), agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot),
+    hasTarget: Boolean(state.shownTarget), agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot), notebook: state.notebook,
   };
 };
 
@@ -38,6 +40,9 @@ const HEADER = state => {
 // the right "Wide terminal" and "More" (Refresh the page). Update is in the navigation rail there.
 // Phone: a 56px MD2 top app bar: the menu button (opens the task drawer), the task name over a status line (dot, device tag, session, state), "Wide
 // terminal" and "More" (Refresh the page, Update with its red dot).
+// A shell notebook (`state.notebook`, "Session header" in docs/design/shell-notebook-page.md): the flask and the notebook's name over "task · path ·
+// Saved" (computer) or over its shell's state (phone), the shell's chip (computer), no "Wide terminal", and "Notebook menu" with the notebook's actions
+// before Refresh the page.
 export function Header({ ui }) {
   const state = useStore(ui, HEADER, shallowEqual);
   countRender('Header');
@@ -57,6 +62,8 @@ export function Header({ ui }) {
       sx={{ flex: '0 1 auto', maxWidth: '40%', fontWeight: 500 }}>{state.sourceLabel}</Typography>
   ) : null;
   const taskName = state.taskName || t('Choose a task');
+  const nb = state.notebook;
+  if (nb) return <NotebookHeader ui={ui} state={state} wide={wide} docked={docked} fold={fold} device={device} />;
   return (
     <AppBar position="static" color="default" elevation={0} className="h5-header" data-layout={wide ? 'wide' : 'phone'}
       sx={{ flex: '0 0 auto', bgcolor: 'background.paper', backgroundImage: overlay(1), borderBottom: 1, borderColor: 'divider' }}>
@@ -116,6 +123,74 @@ export function Header({ ui }) {
   );
 }
 
+// The session header of a shell notebook (see `Header`). The kernel's words come from the view (scripts/notebook/model.mjs `kernelStatus`).
+const KERNEL_TEXT = { running: 'success.light', starting: 'primary.light', idle: 'text.secondary', stopped: 'text.secondary' };
+function NotebookHeader({ ui, state, wide, docked, fold, device }) {
+  const nb = state.notebook;
+  const kernel = nb.kernel;
+  const name = state.sessionName || t('Shell notebook');
+  const sub = [state.taskName, nb.path, nb.saved ? t(nb.live ? nb.saved : 'Reconnecting…') : ''].filter(Boolean).join(' · ');
+  const mark = <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.secondary', flex: '0 0 auto' }}><Icon name="notebook" size={20} /></Box>;
+  return (
+    <AppBar position="static" color="default" elevation={0} className="h5-header h5-header-notebook" data-layout={wide ? 'wide' : 'phone'}
+      sx={{ flex: '0 0 auto', bgcolor: 'background.paper', backgroundImage: overlay(1), borderBottom: 1, borderColor: 'divider' }}>
+      <Toolbar variant="dense" disableGutters sx={{ minHeight: wide ? 47 : 55, px: wide ? 1 : 0.5, gap: wide ? 1 : 0.5 }}>
+        {wide ? (
+          <IconButton id="h5-sidebar-toggle" {...named(t(fold))} aria-expanded={!state.sidebarCollapsed} aria-controls="h5-tasks" onClick={() => ui.actions.toggleSidebar()} sx={{ color: 'text.secondary' }}>
+            <Icon name={state.sidebarCollapsed ? 'sidebarUnfold' : 'sidebarFold'} size={22} />
+          </IconButton>
+        ) : (
+          <IconButton id="h5-open-tasks" className="h5-task-button" {...named(t('Tasks'))} aria-expanded={state.tasksOpen} aria-haspopup="dialog" aria-controls="h5-tasks" onClick={() => ui.actions.openTasks()}>
+            <Icon name="menu" size={22} />
+          </IconButton>
+        )}
+        {wide ? (
+          <ButtonBase
+            id="h5-open-tasks" className="h5-task-button" aria-expanded={state.tasksOpen && !state.sidebarCollapsed} aria-haspopup="dialog" aria-controls="h5-tasks"
+            onClick={() => ui.actions.openTasks()} tabIndex={docked ? -1 : 0}
+            sx={theme => ({ flex: '0 1 auto', minWidth: 0, height: 40, justifyContent: 'flex-start', gap: 1.25, px: 1, borderRadius: 1, textAlign: 'left', pointerEvents: docked ? 'none' : 'auto',
+              '@media (hover: hover)': { '&:hover': { bgcolor: 'action.hover' } }, '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 } })}
+          >
+            {mark}
+            <Box component="span" sx={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <Typography id="h5-session-name" className="h5-session-name h5-notebook-title" variant="subtitle2" component="span" noWrap translate="no" sx={{ fontSize: 15, lineHeight: '20px' }}>{name}</Typography>
+              <Typography id="h5-notebook-sub" className="h5-notebook-sub" variant="caption" component="span" color="text.secondary" noWrap translate="no" sx={{ lineHeight: '16px' }}>{sub}</Typography>
+            </Box>
+          </ButtonBase>
+        ) : (
+          <Box sx={{ flex: '1 1 auto', minWidth: 0, pl: 0.5 }}>
+            <Typography id="h5-session-name" className="h5-session-name h5-notebook-title" variant="subtitle1" component="div" noWrap translate="no" sx={{ fontWeight: 500, lineHeight: '22px' }}>{name}</Typography>
+            <Box className="h5-task-subline" sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, height: 20 }}>
+              {device}
+              <Typography id="h5-notebook-kernel" className="h5-notebook-kernel" variant="caption" component="span" noWrap translate="no" color={kernel ? KERNEL_TEXT[kernel.tone] || 'text.secondary' : 'text.secondary'} sx={{ flex: '0 1 auto', minWidth: 0 }}>
+                {kernel ? t(kernel.text) : t('Loading…')}
+              </Typography>
+            </Box>
+          </Box>
+        )}
+        {wide ? <Box sx={{ flex: '1 1 auto' }} /> : null}
+        {wide && kernel ? <KernelChip kernel={kernel} /> : null}
+        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} notebook />
+      </Toolbar>
+    </AppBar>
+  );
+}
+// The shell's state as an MD2 chip with its dot: green while a cell runs, grey idle or stopped.
+function KernelChip({ kernel }) {
+  const tone = kernel.tone === 'running' ? 'success' : kernel.tone === 'starting' ? 'primary' : null;
+  return (
+    <Box component="span" id="h5-notebook-chip" className="h5-notebook-chip" role="status" data-tone={kernel.tone} translate="no"
+      sx={theme => ({
+        flex: '0 0 auto', display: 'inline-flex', alignItems: 'center', gap: 0.75, height: 28, px: 1.25, borderRadius: 14, typography: 'body2', whiteSpace: 'nowrap',
+        bgcolor: tone ? alpha(theme.palette[tone].main, 0.14) : 'action.selected', color: tone ? `${tone}.light` : 'text.secondary',
+        '&::before': { content: '""', width: 8, height: 8, borderRadius: '50%', bgcolor: tone ? `${tone}.main` : 'text.disabled' },
+      })}>
+      {t(kernel.text)}
+    </Box>
+  );
+}
+const NOTEBOOK_ITEMS = [['rename', 'Rename', 'edit'], ['download', 'Download .ipynb', 'download'], ['clear', 'Clear outputs', 'close'], ['stop-shell', 'Stop shell', 'stopSquare'], ['restart', 'Restart shell', 'reload']];
+
 // The parts that show the live state of the session (running / needs you / idle, Columns.jsx `useShownState`) subscribe to it themselves, so an
 // activity push draws them only when that state changes and never the header.
 function StateDot({ ui }) {
@@ -150,19 +225,29 @@ function StateWord({ ui }) {
 // "More" at the right end of the header: Refresh the page (`#h5-refresh`: the cache cleared and the page loaded again), and on a phone Update (the
 // rail's updater opens its dialog: `ui.actions.openUpdate`, registered by Update.jsx `UpdateButton`; the focus comes back to this button). The red dot of
 // a waiting update shows on the button too, so it is seen without opening the menu.
-function MoreMenu({ ui, phone, updateDot }) {
+function MoreMenu({ ui, phone, updateDot, notebook = false }) {
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
-  const label = t('More');
+  const label = t(notebook ? 'Notebook menu' : 'More');
   const dot = phone && updateDot;
+  // A notebook action runs once the menu has gone, so the focus the menu gives back cannot leave the restart dialog's button.
+  const chosen = useRef(null);
+  const afterClose = () => { const name = chosen.current; chosen.current = null; if (name) ui.actions.notebookAction(name); };
   return (
     <>
       <IconButton id="h5-header-more" ref={anchor} {...named(label)} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? 'h5-header-more-menu' : undefined}
         data-attention={dot ? 'true' : undefined} onClick={() => setOpen(true)} sx={{ color: 'text.secondary' }}>
         <Badge variant="dot" color="error" invisible={!dot} overlap="circular"><Icon name="taskMore" size={22} /></Badge>
       </IconButton>
-      <Menu id="h5-header-more-menu" anchorEl={anchor.current} open={open} onClose={() => setOpen(false)} slotProps={{ list: { 'aria-label': label, dense: !phone } }}
+      <Menu id="h5-header-more-menu" anchorEl={anchor.current} open={open} onClose={() => setOpen(false)} slotProps={{ list: { 'aria-label': label, dense: !phone }, transition: { onExited: afterClose } }}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        {notebook ? NOTEBOOK_ITEMS.map(([name, text, iconName]) => (
+          <MenuItem key={name} className="h5-notebook-action" data-action={name} onClick={() => { chosen.current = name; setOpen(false); }} sx={{ minHeight: 44 }}>
+            <ListItemIcon><Icon name={iconName} size={20} /></ListItemIcon>
+            <ListItemText>{t(text)}</ListItemText>
+          </MenuItem>
+        )) : null}
+        {notebook ? <Divider /> : null}
         <MenuItem id="h5-refresh" onClick={() => { setOpen(false); ui.actions.refresh(); }} sx={{ minHeight: 44 }}>
           <ListItemIcon><Icon name="reload" size={20} /></ListItemIcon>
           <ListItemText>{t('Refresh the page')}</ListItemText>

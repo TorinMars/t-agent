@@ -276,13 +276,13 @@ test('the real page: its two combined scripts hold the marked files as they are,
   // but its file has to be under /js, /css or /vendor).
   const map = later(english).map;
   const named = new Set();
-  for (const file of ['public/js/agent-chat.js', 'public/js/mindmap.js', 'public/js/i18n.js', 'scripts/h5-shell/Design.jsx']) {
+  for (const file of ['public/js/agent-chat.js', 'public/js/mindmap.js', 'public/js/notebook.js', 'public/js/i18n.js', 'scripts/h5-shell/Design.jsx', 'scripts/notebook/markdown.mjs']) {
     const text = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     assert.match(text, /window\.TAAsset\(/, `${file} asks for its files through the page's hashes`);
     assert.doesNotMatch(text, /currentScript/, `${file} does not build an address from its own tag`);
     for (const [, urlPath] of text.matchAll(/'(\/(?:js|css|vendor)\/[\w./-]+\.(?:js|css))'/g)) named.add(urlPath);
   }
-  assert.deepEqual([...named].sort(), ['/css/agent-chat.css', '/css/markdown.css', '/js/agent-chat-ui.js', '/js/i18n-zh-extra.js', '/js/i18n-zh-server.js', '/js/i18n-zh-ui.js', '/js/mindmap-ui.js', '/vendor/marked/marked-15.0.12.min.js', '/vendor/mermaid/mermaid-12.1.0.min.js']);
+  assert.deepEqual([...named].sort(), ['/css/agent-chat.css', '/css/markdown.css', '/js/agent-chat-ui.js', '/js/i18n-zh-extra.js', '/js/i18n-zh-server.js', '/js/i18n-zh-ui.js', '/js/mindmap-ui.js', '/js/notebook-ui.js', '/vendor/marked/marked-15.0.12.min.js', '/vendor/mermaid/mermaid-12.1.0.min.js']);
   for (const urlPath of named) assert.equal(map[urlPath], hashOf(urlPath), `the page knows the hash of ${urlPath}`);
   for (const urlPath of marked) assert.equal(map[urlPath], undefined, `${urlPath} is loaded by the page`);
   assert.equal(later(chinese).map['/js/i18n-zh-ui.js'], undefined, 'the Chinese page loads its dictionaries itself');
@@ -305,9 +305,10 @@ function loaderPage({ withAssets, chatLinked = false }) {
   return { added, context: { document, window } };
 }
 
-test('the chat and mind map loaders ask for their bundles by the hash the page carries, and by the plain address without it', async () => {
+test('the chat, mind map and notebook loaders ask for their bundles by the hash the page carries, and by the plain address without it', async () => {
   const chat = fs.readFileSync(path.join(PUBLIC, 'js/agent-chat.js'), 'utf8');
   const mindmap = fs.readFileSync(path.join(PUBLIC, 'js/mindmap.js'), 'utf8');
+  const notebook = fs.readFileSync(path.join(PUBLIC, 'js/notebook.js'), 'utf8');
   const container = () => ({ style: {}, textContent: '', setAttribute() {} });
   for (const withAssets of [true, false]) {
     const url = urlPath => (withAssets ? `${urlPath}?v=hash-of-${urlPath.split('/').pop()}` : urlPath);
@@ -315,6 +316,10 @@ test('the chat and mind map loaders ask for their bundles by the hash the page c
     const map = loaderPage({ withAssets });
     vm.runInNewContext(`${mindmap}\nMindMap.mount(container, { onClose() {} });`, { ...map.context, container: container() });
     assert.deepEqual(map.added.map(node => [node.name, node.src]), [['script', url('/js/mindmap-ui.js')]]);
+    // The shell notebook: one script.
+    const notebookPage = loaderPage({ withAssets });
+    vm.runInNewContext(`${notebook}\nNotebook.mount(container, {});`, { ...notebookPage.context, container: container() });
+    assert.deepEqual(notebookPage.added.map(node => [node.name, node.src]), [['script', url('/js/notebook-ui.js')]]);
     // The chat: its bundle and its style sheet together, the style sheet right after the page's own.
     const page = loaderPage({ withAssets });
     const notices = [];

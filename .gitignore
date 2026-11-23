@@ -7,3 +7,5 @@ data.backup-*/
 logs/
 node_modules/
 tasks/
+# Shell notebooks made in a task whose folder is this checkout (docs/design/shell-notebook.md): the person's own files, never part of the repo.
+/notebooks/

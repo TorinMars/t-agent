@@ -29,6 +29,11 @@ const DEFAULT_TITLE = 'New chat';
 const IDLE_MS = 10 * 60 * 1000;
 const SWEEP_MS = 60 * 1000;
 
+// A failed plan limits reading that says the agent is not logged in (Codex: "codex account authentication required to read rate limits"; Claude Code:
+// "Not logged in", "Invalid API key · Please run /login").
+const SIGNED_OUT = /not (logged|signed) in|log ?in required|run \/?login|authenticat|unauthori[sz]ed|invalid api key|\b401\b/i;
+const signedOutError = error => SIGNED_OUT.test(String((error && error.message) || error || ''));
+
 const fail = (code, statusCode = 400) => Object.assign(new Error(code), { statusCode });
 const clip = (text, length) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
 
@@ -58,7 +63,9 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   });
 
   // The plan limits of an account are shared by its chats: the last values seen per agent, and the refresh that is under way.
-  const agentLimits = new Map(); // agent -> { limits, at }
+  // `state`: 'ok' after a reading that worked, 'signed_out' / 'error' after one that failed (the old limits are kept); the plan usage bars
+  // (services/agent-usage.js, "Readings" in docs/design/plan-usage.md) read the same entries through `limitsReading`.
+  const agentLimits = new Map(); // agent -> { limits, at, state }
   const refreshing = new Map(); // agent -> promise
   const LIMITS_TTL_MS = 60 * 1000;
   const cleanLimits = list => (Array.isArray(list) ? list : []).slice(0, 8).map(entry => ({
@@ -154,22 +161,43 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
   function refreshLimits(agent, { force = false, maxAgeMs = LIMITS_TTL_MS } = {}) {
     const adapter = adapters[agent];
     const known = agentLimits.get(agent);
-    if (!adapter.loadLimits || refreshing.has(agent) || (!force && known && Date.now() - known.at < maxAgeMs)) return refreshing.get(agent) || Promise.resolve(true);
+    if (!adapter || !adapter.loadLimits || refreshing.has(agent) || (!force && known && Date.now() - known.at < maxAgeMs)) return refreshing.get(agent) || Promise.resolve(true);
     const job = (async () => {
       try {
         const limits = await adapter.loadLimits();
-        agentLimits.set(agent, { limits: cleanLimits(limits), at: Date.now() });
+        agentLimits.set(agent, { limits: cleanLimits(limits), at: Date.now(), state: 'ok' });
         for (const rt of runtimes.values()) {
           if (rt.agent !== agent) continue;
           const changed = mergeMeta(rt, { limits });
           if (changed.limits) emit(rt, { op: 'meta', limits: changed.limits });
         }
         return true;
-      } catch { agentLimits.set(agent, { limits: (known && known.limits) || [], at: Date.now() }); return false; } // try again after the interval
+      } catch (error) { // try again after the interval
+        agentLimits.set(agent, { limits: (known && known.limits) || [], at: Date.now(), state: signedOutError(error) ? 'signed_out' : 'error' });
+        return false;
+      }
       finally { refreshing.delete(agent); }
     })();
     refreshing.set(agent, job);
     return job;
+  }
+
+  // The agents with a chat in a turn now (the plan usage bars read them every minute, services/agent-usage.js).
+  function runningAgents() {
+    const agents = new Set();
+    for (const rt of runtimes.values()) if (rt.status === 'running') agents.add(rt.agent);
+    return [...agents];
+  }
+
+  // The last plan limits reading of an agent, for the plan usage bars: { limits, at, state, reading } (`reading`: one is under way), or null when
+  // none was made yet. `supported`: the adapter can read its limits at all.
+  function limitsReading(agent) {
+    const adapter = adapters[agent];
+    const known = agentLimits.get(agent);
+    return {
+      supported: Boolean(adapter && adapter.loadLimits), reading: refreshing.has(agent),
+      last: known ? { limits: known.limits.map(entry => ({ ...entry })), at: known.at, state: known.state || 'ok' } : null,
+    };
   }
 
   // The slash commands of a chat. Starting the agent to ask takes a few seconds, so the list is kept per agent and working directory for a while, and an
@@ -646,7 +674,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
       // What the agent reports about itself ({ model, effort, context }); shown under the composer.
       setMeta(meta) {
         const changed = mergeMeta(rt, meta);
-        if (changed.limits) agentLimits.set(rt.agent, { limits: rt.limits, at: Date.now() });
+        if (changed.limits) agentLimits.set(rt.agent, { limits: rt.limits, at: Date.now(), state: 'ok' });
         if (Object.keys(changed).length) emit(rt, { op: 'meta', ...changed });
       },
       setSession(sessionId) {
@@ -913,7 +941,7 @@ function createAgentChat({ db, adapters = ADAPTERS, stopGraceMs = STOP_GRACE_MS,
     }
   }
 
-  return { list, create, snapshot, subscribe, reportPresence, isSessionForeground, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits, evictIdle, loadedCount, shutdown };
+  return { list, create, snapshot, subscribe, reportPresence, isSessionForeground, sendMessage, interrupt, answerPermission, setMode, setPreferences, listModels, setOpened, setTranslate, setCollapseKeyboard, refreshUsage, fork, setQueue, queueAdd, queueRemove, queueEdit, queueSendNow, summary, activity, listCommands, rename, remove, stopTask, taskBusy, refreshLimits, limitsReading, runningAgents, evictIdle, loadedCount, shutdown };
 }
 
 let shared = null;
@@ -940,4 +968,4 @@ function shutdown(options) {
   try { return shared ? shared.shutdown(options) : endSync(adapterProcesses(ADAPTERS), options); } catch { return { signalled: [], killed: [] }; }
 }
 
-module.exports = { createAgentChat, getAgentChat, shutdown, IMAGE_TYPES };
+module.exports = { createAgentChat, getAgentChat, shutdown, signedOutError, IMAGE_TYPES };

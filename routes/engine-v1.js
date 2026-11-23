@@ -262,6 +262,9 @@ function infoHandler(req, res) {
       // update:nudge: POST /v1/update/nudge, a linked engine on a newer version asks this one to check for updates now (link tokens only).
       // update:when-idle: POST /v1/update/when-idle, "Update all" of the Update dialog: update under this engine's own idle rule (services/version-skew.js).
       versionSkew.NUDGE_CAPABILITY, versionSkew.WHEN_IDLE_CAPABILITY,
+      // agent-usage:read: GET /v1/agent-usage and POST /v1/agent-usage/refresh, this engine's Claude and Codex plan windows (services/agent-usage.js).
+      // A page asks only engines that list it for the plan usage bars.
+      require('../services/agent-usage').CAPABILITY,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -376,6 +379,9 @@ router.use('/tasks/:id/notebooks', require('./notebooks').createNotebookRouter({
   authenticate: requireEngineAuth('terminal:execute'),
   ownerOf: principal,
 }));
+
+// The plan usage bars (docs/design/plan-usage.md): this engine's Claude and Codex plan windows, for any token that can read tasks.
+router.use('/agent-usage', require('./agent-usage').createAgentUsageRouter({ authenticate: requireEngineAuth('tasks:read') }));
 
 router.get('/tasks', requireEngineAuth('tasks:read'), (req, res) => {
   try { res.json(visibleTo(req, tasks.listTasks(principal(req), req.query.status, { archived: req.query.archived === '1' }), task => task.id)); }

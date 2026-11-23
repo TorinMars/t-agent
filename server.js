@@ -211,6 +211,8 @@ app.use('/api/tasks/:id/agent', require('./routes/agent-chat').createAgentChatRo
 // Shell notebooks of a task (routes/notebooks.js, docs/design/shell-notebook.md); before /api/tasks, like the chats.
 app.use('/api/tasks/:id/notebooks', require('./routes/notebooks').createNotebookRouter());
 app.use('/api/agent-chat', require('./routes/agent-chat').createAgentChatSummaryRouter());
+// The plan usage bars of the page header (GET /api/agent-usage, POST /api/agent-usage/refresh; docs/design/plan-usage.md).
+app.use('/api/agent-usage', require('./routes/agent-usage').createAgentUsageRouter());
 app.use('/api/tasks', require('./routes/tasks'));
 // Read-only preview of a file at any path, as the terminal user (services/fs-read.js); the session check is the /api gate above.
 app.use('/api/fs', require('./routes/fs-read').createFsReadRouter());
@@ -763,10 +765,17 @@ server.listen(config.port, config.host, () => {
   // "Updated to v…": a version that went up since the last start leaves a notice for the person's next visit (services/updated-notice.js).
   try { require('./services/updated-notice').getUpdatedNotice().record(); } catch (error) { console.error('[updated-notice]', error.message); }
   updates.start();
+  // Plan usage (services/agent-usage.js): each installed agent's plan windows are read at start, kept under 10 minutes old, and read after each Claude or
+  // Codex turn in a terminal. Off with AGENT_USAGE_SCHEDULE=off, NODE_ENV=test and in CI.
+  if (require('./services/agent-usage').scheduleEnabled()) {
+    const agentUsage = require('./services/agent-usage').getAgentUsage();
+    terminal.onAgentTurnEnd(agent => agentUsage.turnEnded(agent));
+    agentUsage.start();
+  }
   // Browser recordings older than 14 days, or over 2 GiB in all, are removed now and every 6 hours (services/browser-recordings.js).
   browserRecordings.startCleanup();
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
+process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); require('./services/agent-usage').stopShared(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

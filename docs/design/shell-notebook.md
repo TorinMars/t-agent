@@ -167,6 +167,9 @@ Engine without it with 501 `NOTEBOOK_UNSUPPORTED` (an older Engine would make a 
 
 ## Tests
 
+- `scripts/test-h5-notebook-e2e-browser.cjs`: the real server (own port, data folder and HOME with noisy start files) and the real page, headless: a
+  notebook from the New session dialog, state between cells, colour, exit codes, input to a running cell, a second page that sees the live
+  output, Stop keeping the shell's state, the `.ipynb` on disk with its outputs, and a reload.
 - `test/notebook-format.test.js`: the normaliser (`\r`, `\b`, SGR kept, other CSI / OSC / DCS / charset dropped, split chunks, wrap, caps,
   changes), reading a Jupyter file (array sources, missing and repeated ids, rich outputs, raw cells, unknown fields) and writing it back, round
   trip of our metadata, unreadable and too large files, atomic writes, slugs, paths (escape by `..`, absolute paths, symbolic links), new files and

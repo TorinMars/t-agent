@@ -2770,7 +2770,6 @@ I18n.add({
   "Not finished: the shell was stopped": "未完成：shell 已停止",
   "Show all": "全部显示",
   "Show less": "收起",
-  "Download": "下载",
   "This program draws a full screen, which a cell cannot show. It was stopped.": "这个程序要占满整个屏幕，单元格无法显示，已停止。",
   "Open in a terminal": "在终端中打开",
   "The command asks for input": "命令在等待输入",

@@ -14,6 +14,10 @@
 //   GET  /v1/learn-sync/chats, GET /v1/learn-sync/chat?uid=, POST /v1/learn-sync/chat-send { chat, question, topic }, POST /v1/learn-sync/chat-update
 //   { uid, title?, journal? }, POST /v1/learn-sync/chat-delete { uid }: the English chats for a company computer's page (kept and answered on the home;
 //   the same answers as /api/learn/chats, the send as one JSON { chat, messages }).
+//   GET  /v1/learn-sync/coach?before=&limit=, POST /v1/learn-sync/coach-send { text }, coach-practice { ...result }, coach-run / coach-cancel
+//   { id, message_uid }, coach-undo { token }, coach-plan-start { message_uid, proposal_id }, coach-notes, coach-note-update { uid, text?, until? },
+//   coach-note-delete { uid }, coach-summary-reset: the English coach for a company computer's page (kept and answered on the home; the answers
+//   of /api/learn/coach, a send and a practice result as one JSON { message, messages, tools, usage }).
 // Only a token issued for a live service link gets in (403 LINKED_ONLY for any other Engine token), like /v1/settings-sync. Rows only ever travel
 // inside the sealed envelopes. 404 with the sync turned off; 409 LEARN_COMPANY_COMPUTER on a company computer, which takes part only through its home.
 const express = require('express');
@@ -66,6 +70,11 @@ function createEngineLearnSyncRouter(options = {}) {
   router.post('/chat-send', handle(req => service().engineHome(req.serviceLink, 'chat-send', req.body)));
   router.post('/chat-update', handle(req => service().engineHome(req.serviceLink, 'chat-update', req.body)));
   router.post('/chat-delete', handle(req => service().engineHome(req.serviceLink, 'chat-delete', req.body)));
+  // The English coach (docs/design/learn-english-coach.md): GET /coach?before=&limit= and POST /coach-<action> with the page's body.
+  router.get('/coach', handle(req => service().engineHome(req.serviceLink, 'coach', { before: req.query.before, limit: req.query.limit })));
+  for (const action of ['send', 'practice', 'run', 'cancel', 'undo', 'plan-start', 'notes', 'note-update', 'note-delete', 'summary-reset']) {
+    router.post(`/coach-${action}`, handle(req => service().engineHome(req.serviceLink, `coach-${action}`, req.body)));
+  }
   return router;
 }
 

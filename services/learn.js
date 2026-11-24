@@ -75,10 +75,20 @@ const NEW_PER_DAY = Object.freeze([5, 10, 15, 20, 30]);
 const PACE_SETTINGS = {
   new_per_day: { default: 10, check: value => NEW_PER_DAY.includes(value) },
 };
-// The fields checked by a rule (REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS and PACE_SETTINGS), read, saved and merged the same way.
-const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS, ...SCHEDULE_SETTINGS, ...PACE_SETTINGS };
-// The settings an older peer does not send: when its settings win, the value here stays (services/learn-sync.js applySettings).
-const KEPT_SETTINGS = ['desired_retention', 'new_per_day'];
+// The English coach ("Views" and "Memory" in docs/design/learn-english-coach.md): whether it may read the learning answers (every data view but the
+// settings), the journal entries and chat messages, and whether it keeps notes about the person. All on by default (the person's choice).
+const COACH_SETTINGS = {
+  coach_read_answers: { default: true, check: value => typeof value === 'boolean' },
+  coach_read_text: { default: true, check: value => typeof value === 'boolean' },
+  coach_memory: { default: true, check: value => typeof value === 'boolean' },
+  // Fewer tokens: a shorter window of the newest messages, fewer tool rounds and less read data per answer (off by default).
+  coach_economy: { default: false, check: value => typeof value === 'boolean' },
+};
+// The fields checked by a rule (REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS and COACH_SETTINGS), read, saved and merged the same way.
+const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS, ...SCHEDULE_SETTINGS, ...PACE_SETTINGS, ...COACH_SETTINGS };
+// The settings an older peer does not send: when its settings win, the value here stays (services/learn-sync.js applySettings). The coach switches
+// are kept too, so a privacy choice is never reset by an older engine.
+const KEPT_SETTINGS = ['desired_retention', 'new_per_day', ...Object.keys(COACH_SETTINGS)];
 // The new words added for one day with "5 more new words" (POST /new-words): { day: 'YYYY-MM-DD' in the server's time zone, count }. Kept with the
 // settings, so the settings sync carries it; it merges by mergeExtraNew (the later day, on the same day the larger count). PUT /settings does not
 // change it (a page that sends the settings back as they are is not refused).
@@ -632,7 +642,8 @@ function createLearn({
       starter: current.starter,
       new_report: newReport(owner, current),
       // The English chats that are not deleted ("English chat" in docs/design/learn-english-chat.md).
-      chats: count('SELECT COUNT(*) FROM learn_convos WHERE owner = @owner AND deleted = 0'),
+      // The coach conversation (uid 'coach', docs/design/learn-english-coach.md) is not one of them.
+      chats: count("SELECT COUNT(*) FROM learn_convos WHERE owner = @owner AND deleted = 0 AND uid <> 'coach'"),
     };
   }
 
@@ -829,7 +840,11 @@ function createLearn({
       clearTimeout(timer);
       background = background.then(() => first).then(() => fillSpelling(owner, rows.slice(QUEUE_HEAD), slipped)).catch(() => {});
     }
-    // `next`: what each grade would do now, in milliseconds until the card is due again ({ again: 600000, hard, good }), for the grade buttons.
+    return { cards: practiceJson(owner, rows, current, at, slipped) };
+  }
+  // The cards as a queue gives them. `next`: what each grade would do now, in milliseconds until the card is due again ({ again: 600000, hard,
+  // good }), for the grade buttons.
+  function practiceJson(owner, rows, current = settings(owner), at = now(), slipped = slips(rows)) {
     const retention = current.desired_retention;
     const cards = cardsJson(owner, rows);
     cards.forEach((card, index) => {
@@ -841,7 +856,19 @@ function createLearn({
         parts: parts ? parts.split(PARTS_JOIN) : null, tip: row.kind === 'word' ? checkTip(row.tip) : '',
       });
     });
-    return { cards };
+    return cards;
+  }
+  // These cards (ids, in this order; missing or suspended ones left out) as a queue gives them, the meanings and transcriptions of the first ones
+  // filled in like a queue's: the steps of a practice series of the English coach (services/learn-plan.js).
+  async function practiceCards(owner, ids) {
+    const list = (Array.isArray(ids) ? ids : []).filter(id => Number.isSafeInteger(id) && id > 0).slice(0, 200);
+    if (!list.length) return [];
+    const found = new Map(db.prepare('SELECT * FROM learn_cards WHERE owner = ? AND suspended = 0 AND id IN (SELECT value FROM json_each(?))')
+      .all(owner, JSON.stringify(list)).map(row => [row.id, row]));
+    const rows = list.map(id => found.get(id)).filter(Boolean);
+    await fillMeanings(owner, rows.slice(0, QUEUE_HEAD));
+    await fillPhonetics(owner, rows); // the dictionary only
+    return practiceJson(owner, rows);
   }
 
   // `source`: the cards of one source; `translation` also gives the words asked inside one of the person's translated sentences (their context is
@@ -995,7 +1022,7 @@ function createLearn({
   }
 
   return {
-    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, list, starter, storedLevel, saveLevel, pace, addNewWords,
+    settings, saveSettings, addCard, updateCard, answer, summary, meaning, queue, practiceCards, mistakeRows, slips, list, starter, storedLevel, saveLevel, pace, addNewWords,
     // The identity of a card on every engine (its id is local): { id, kind, norm }, or 404 (services/learn-ask.js asks a company computer's home by it).
     cardRef: (owner, id) => { const row = mustCard(owner, id); return { id: row.id, kind: row.kind, norm: row.norm }; },
     level: owner => levelJson(storedLevel(owner)),
@@ -1052,7 +1079,7 @@ function sharedLearn() {
 
 module.exports = {
   createLearn, sharedLearn, translatorLookup, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS, CHECKED_SETTINGS, KEPT_SETTINGS,
+  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS, COACH_SETTINGS, CHECKED_SETTINGS, KEPT_SETTINGS,
   MISTAKE_TAGS, MAX_EXPECTED, NEW_PER_DAY, MAX_NEW_WORDS, cleanExtraNew, mergeExtraNew, studyMinutes, checkParts, storedParts, checkTip, parseSpelling, SPELLING_SYSTEM,
   LEECH_MISSED, PARTS_JOIN,
   LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse, PREFILL_BATCH,

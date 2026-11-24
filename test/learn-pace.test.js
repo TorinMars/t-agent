@@ -340,5 +340,5 @@ test('schema 23: an older database gets the parts and tip columns, its cards kep
   assert.deepEqual([card.en, card.zh, card.phonetic, card.parts, card.tip, card.content_at, card.state_at, card.sync_seq], ['merge', 'z', '/m/', '', '', 3, 4, 5]);
   syncStore.ensureSyncSchema(db);
   assert.equal(db.prepare('PRAGMA table_info(learn_cards)').all().filter(column => column.name === 'parts').length, 1);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'VERSION.json'), 'utf8')).schema_version, 23);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'VERSION.json'), 'utf8')).schema_version >= 23);
 });

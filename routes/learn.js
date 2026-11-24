@@ -42,6 +42,15 @@ const express = require('express');
 //            answers it in one piece: plain JSON { chat, messages }.
 //   PATCH /api/learn/chats/:uid { title?, journal? }  -> { chat };  DELETE /api/learn/chats/:uid -> { ok: true }
 // ("English chat" in docs/design/learn-english-chat.md; services/learn-chat.js.)
+//   GET   /api/learn/coach?before=&limit=50          -> { messages: [{ uid, role: 'user'|'assistant'|'practice', text, at, meta }], has_more, tools_ok,
+//                                                          translator, settings: { memory, read_answers, read_text, economy } }
+//   POST  /api/learn/coach/send { text }, POST /api/learn/coach/practice-result { plan_id, message_uid, proposal_id?, steps, done, total, right,
+//         missed, seconds, stopped? } -> application/x-ndjson: {"type":"status","text"}, {"delta"} lines, {"type":"remembered","note"},
+//         {"type":"proposals","proposals"}, then {"done":true,"message","messages","tools","usage"} or {"error","status"}; refusals as JSON.
+//   POST  /api/learn/coach/proposals/:id/run { message_uid } -> { ok, result, undo: { token, expires_at }, proposal }; .../cancel -> { ok, proposal }
+//   POST  /api/learn/coach/undo { token }; POST /api/learn/coach/plans/start { message_uid, proposal_id } -> { plan, stale } | { empty: true }
+//   GET   /api/learn/coach/notes; PATCH|DELETE /api/learn/coach/notes/:uid; POST /api/learn/coach/summary/reset
+// ("The coach" in docs/design/learn-english-coach.md; services/learn-coach.js. On a company computer its home answers, in one piece.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
@@ -51,12 +60,13 @@ const ASK_OFFLINE = 'Questions about a card are answered on a normal computer, w
 const HOME_OLDER = 'The normal computer that keeps your learning data needs an update first';
 const STATS_OFFLINE = 'Your progress is kept on a normal computer, which cannot be reached right now';
 const CHAT_OFFLINE = 'Your English chats are kept on a normal computer, which cannot be reached right now';
+const COACH_OFFLINE = 'Your English coach is on a normal computer, which cannot be reached right now';
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
 // `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`). `ask`: the questions about a card
 // (services/learn-ask.js), or null for none (like `analysis`). `chat`: the English chats (services/learn-chat.js), or null for none (like `analysis`).
-function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, chat, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, chat, coach, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
   let syncService = sync === undefined ? (service ? null : undefined) : sync;
@@ -92,6 +102,12 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     if (chatService === undefined) chatService = require('../services/learn-chat').getLearnChat();
     if (!chatService) throw Object.assign(new Error('The English chat is not available'), { statusCode: 503 });
     return chatService;
+  };
+  let coachService = coach === undefined ? (service ? null : undefined) : coach;
+  const coacher = () => {
+    if (coachService === undefined) coachService = require('../services/learn-coach').getLearnCoach();
+    if (!coachService) throw Object.assign(new Error('The English coach is not available'), { statusCode: 503 });
+    return coachService;
   };
   const mustPicker = () => {
     const current = picker();
@@ -247,7 +263,7 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
       for (const value of head()) line(value);
     };
     try {
-      const result = await run({ onDelta: text => { start(); line({ delta: text }); }, signal: controller.signal });
+      const result = await run({ onDelta: text => { start(); line({ delta: text }); }, onEvent: value => { start(); line(value); }, signal: controller.signal });
       start();
       line(doneLine(result));
       res.end();
@@ -301,6 +317,70 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     await streamed(req, res, ({ onDelta, signal }) => service.send(owner(req), req.body, { onChat: value => { chatLine = value; }, onDelta, signal }),
       result => ({ done: true, chat: result.chat, messages: result.messages }), () => (chatLine ? [{ chat: chatLine }] : []));
   });
+  // ---- The English coach: on a company computer kept and answered on its home (personal data, like the chats) ----
+  const homeCoach = async (route, options = {}) => {
+    try { return await learnSync().askHome(route, { offline: COACH_OFFLINE, ...options }); } catch (error) {
+      if (error.statusCode === 404 && !/not found/i.test(error.message)) throw Object.assign(new Error(HOME_OLDER), { statusCode: 409 });
+      throw error;
+    }
+  };
+  const coachPost = (action, body, timeout) => homeCoach(`coach-${action}`, { method: 'POST', body, ...(timeout ? { timeout } : {}) });
+  router.get('/coach', handle(async req => {
+    if (!cacheOnly()) return coacher().view(owner(req), req.query);
+    const query = new URLSearchParams();
+    for (const key of ['before', 'limit']) if (typeof req.query[key] === 'string') query.set(key, req.query[key]);
+    try { return await learnSync().askHome(`coach?${query}`, { offline: COACH_OFFLINE }); } catch (error) {
+      if (error.statusCode !== 503 && error.statusCode !== 404) throw error;
+      const current = learn().settings(owner(req));
+      return {
+        messages: [], has_more: false, tools_ok: false, translator: false,
+        settings: { memory: current.coach_memory, read_answers: current.coach_read_answers, read_text: current.coach_read_text, economy: current.coach_economy },
+        offline: error.statusCode === 503, home_older: error.statusCode === 404,
+      };
+    }
+  }));
+  const coachStream = (name, action) => async (req, res) => {
+    if (cacheOnly()) {
+      try { res.set('Cache-Control', 'no-store').json(await coachPost(action, chatBody(req), 160_000)); } catch (error) { fail(res, error); }
+      return;
+    }
+    let service;
+    try { service = coacher(); } catch (error) { fail(res, error); return; }
+    await streamed(req, res, ({ onDelta, onEvent, signal }) => service[name](owner(req), req.body, { onDelta, onEvent, signal }),
+      result => ({ done: true, message: result.message, messages: result.messages, tools: result.tools, usage: result.usage }));
+  };
+  router.post('/coach/send', coachStream('send', 'send'));
+  router.post('/coach/practice-result', coachStream('practiceResult', 'practice'));
+  router.post('/coach/proposals/:id/run', handle(req => (cacheOnly()
+    ? coachPost('run', { id: req.params.id, message_uid: chatBody(req).message_uid })
+    : coacher().runProposal(owner(req), req.params.id, chatBody(req)))));
+  router.post('/coach/proposals/:id/cancel', handle(req => (cacheOnly()
+    ? coachPost('cancel', { id: req.params.id, message_uid: chatBody(req).message_uid })
+    : coacher().cancelProposal(owner(req), req.params.id, chatBody(req)))));
+  router.post('/coach/undo', handle(req => (cacheOnly() ? coachPost('undo', { token: chatBody(req).token }) : coacher().undo(owner(req), chatBody(req)))));
+  router.post('/coach/plans/start', handle(async req => {
+    const body = { message_uid: chatBody(req).message_uid, proposal_id: chatBody(req).proposal_id };
+    if (!cacheOnly()) return coacher().startPlan(owner(req), body);
+    // The home's cards carry the home's ids: each is the card here of the same kind and text (the answers are posted here).
+    await fresh();
+    const answer = await coachPost('plan-start', body);
+    if (!answer || !answer.plan) return answer;
+    const steps = [];
+    for (const step of answer.plan.steps || []) {
+      const refs = (step.cards || []).map(card => ({ kind: card.kind, en: card.en }));
+      const { cards } = learn().findCards(owner(req), { refs });
+      const local = await learn().practiceCards(owner(req), cards.map(card => card.id));
+      if (local.length) steps.push({ mode: step.mode, cards: local });
+    }
+    if (!steps.length) return { empty: true };
+    return { ...answer, plan: { ...answer.plan, steps } };
+  }));
+  router.get('/coach/notes', handle(req => (cacheOnly() ? coachPost('notes', {}) : coacher().notes(owner(req)))));
+  router.patch('/coach/notes/:uid', handle(req => (cacheOnly()
+    ? coachPost('note-update', { ...chatBody(req), uid: req.params.uid })
+    : coacher().updateNote(owner(req), req.params.uid, req.body))));
+  router.delete('/coach/notes/:uid', handle(req => (cacheOnly() ? coachPost('note-delete', { uid: req.params.uid }) : coacher().deleteNote(owner(req), req.params.uid))));
+  router.post('/coach/summary/reset', handle(req => (cacheOnly() ? coachPost('summary-reset', {}) : coacher().resetSummary(owner(req)))));
   return router;
 }
 

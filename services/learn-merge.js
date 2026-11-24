@@ -270,7 +270,7 @@ const convoDeleted = convo => convo.deleted_at > 0 && convo.deleted_at > convo.u
 // A chat as a peer sent it, checked, or null: { uid, title, title_at, journal (0 / 1), journal_by, journal_at, created_at, updated_at, deleted_at,
 // deleted_by, by } (`deleted` is computed by mergeConvo).
 function convoFromPeer(raw, sender) {
-  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid)) return null;
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !convoUid(raw.uid)) return null;
   if (![raw.title_at, raw.journal_at, raw.created_at, raw.updated_at, raw.deleted_at].every(time) || typeof raw.journal !== 'boolean') return null;
   if (!JOURNAL_BY.includes(raw.journal_by) || !DELETED_BY.includes(raw.deleted_by) || typeof raw.title !== 'string') return null;
   return {
@@ -308,20 +308,241 @@ function mergeConvo(local, incoming) {
 }
 
 // A message of a chat as a peer sent it, checked, or null: { uid, convo_uid, role, text, at, meta (JSON text, '' for a question), by }.
+// The coach conversation (docs/design/learn-english-coach.md) also has `practice` messages (a practice result the page sent; never typed by the
+// person), and its meta is the coach's (cleanCoachMeta).
 function convoMessageFromPeer(raw, sender) {
-  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid) || typeof raw.convo_uid !== 'string' || !CHAT_UID.test(raw.convo_uid)) return null;
-  if ((raw.role !== 'user' && raw.role !== 'assistant') || typeof raw.text !== 'string' || !raw.text.trim() || !time(raw.at)) return null;
-  const text = raw.text.trim().slice(0, raw.role === 'user' ? MAX_CONVO_QUESTION : MAX_CONVO_ANSWER);
-  return {
-    uid: raw.uid, convo_uid: raw.convo_uid, role: raw.role, text, at: raw.at,
-    meta: raw.role === 'assistant' ? JSON.stringify(cleanMeta(raw.meta, text)) : '',
-    by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
-  };
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid) || typeof raw.convo_uid !== 'string' || !convoUid(raw.convo_uid)) return null;
+  const coach = raw.convo_uid === COACH_UID;
+  if (!(raw.role === 'user' || raw.role === 'assistant' || (coach && raw.role === 'practice')) || typeof raw.text !== 'string' || !raw.text.trim() || !time(raw.at)) return null;
+  const text = raw.text.trim().slice(0, raw.role === 'assistant' ? MAX_CONVO_ANSWER : MAX_CONVO_QUESTION);
+  let meta = '';
+  if (coach && raw.role !== 'user') meta = JSON.stringify(cleanCoachMeta(raw.meta, text, raw.role));
+  else if (raw.role === 'assistant') meta = JSON.stringify(cleanMeta(raw.meta, text));
+  return { uid: raw.uid, convo_uid: raw.convo_uid, role: raw.role, text, at: raw.at, meta, by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender };
 }
 const parseMeta = value => { try { return value ? JSON.parse(value) : null; } catch { return null; } };
 const convoMessageToPeer = (row, me) => ({
-  uid: row.uid, convo_uid: row.convo_uid, role: row.role, text: row.text, at: row.at, meta: row.role === 'assistant' ? parseMeta(row.meta) : null, by: row.by || me,
+  uid: row.uid, convo_uid: row.convo_uid, role: row.role, text: row.text, at: row.at, meta: row.role === 'user' ? null : parseMeta(row.meta), by: row.by || me,
 });
+
+// ---- The English coach (schema 24; "Storage" and "Sync" in docs/design/learn-english-coach.md) ----
+const COACH_UID = 'coach';
+const convoUid = value => value === COACH_UID || CHAT_UID.test(value);
+const PROPOSAL_ID = /^[A-Za-z0-9-]{8,64}$/;
+const PROPOSAL_KINDS = ['practice', 'settings', 'cards', 'reminder'];
+const PROPOSAL_STATES = ['open', 'done', 'cancelled', 'undone'];
+const PLAN_KINDS = ['today_spelling', 'review', 'mistakes_series', 'more_new_words', 'dictation', 'fill_gap'];
+const STEP_MODES = ['spell', 'fill', 'dictation', 'retest', 'review'];
+const MAX_SUGGESTIONS = 4;
+const MAX_SUGGESTION = 60;
+const MAX_BATCH = 50;
+const MAX_NOTE = 200;
+const MAX_SUMMARY = 3000;
+// The learning settings a coach may propose to change (what the person could change in Learn settings; never the coach's own switches).
+const COACH_CHANGES = ['new_per_day', 'daily_goal', 'desired_retention', 'audio_words', 'audio_sentences', 'audio_sentences_at', 'audio_repeat', 'audio_pause', 'audio_speed',
+  'audio_stop_on_typing', 'collect', 'pick_words', 'analysis_auto'];
+const settingOk = (key, value) => {
+  if (key === 'daily_goal') return Number.isInteger(value) && value >= 1 && value <= 200;
+  if (key === 'collect') return typeof value === 'boolean';
+  if (AUDIO_SETTINGS[key]) return AUDIO_SETTINGS[key].values.includes(value);
+  return Boolean(CHECKED_SETTINGS[key]) && CHECKED_SETTINGS[key].check(value);
+};
+// A batch of setting changes, checked: { key: value } with only COACH_CHANGES keys and allowed values, or null.
+function cleanChanges(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) if (COACH_CHANGES.includes(key) && settingOk(key, value)) out[key] = value;
+  return Object.keys(out).length ? out : null;
+}
+const oneLine = (value, max) => (typeof value === 'string' ? collapseText(value).slice(0, max) : '');
+const cardRefOf = raw => {
+  if (!raw || typeof raw !== 'object' || !KINDS.includes(raw.kind)) return null;
+  try { return { kind: raw.kind, en: checkEnglish(raw.kind, raw.en) }; } catch { return null; }
+};
+const ids = (value, max) => (Array.isArray(value) ? value.filter(id => Number.isSafeInteger(id) && id > 0).slice(0, max) : []);
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// A plan of a practice series (services/learn-plan.js buildPlan), checked, or null.
+function cleanPlan(raw) {
+  if (!raw || typeof raw !== 'object' || !PLAN_KINDS.includes(raw.kind)) return null;
+  const steps = (Array.isArray(raw.steps) ? raw.steps : []).slice(0, 6).filter(step => step && STEP_MODES.includes(step.mode))
+    .map(step => ({ mode: step.mode, card_ids: ids(step.card_ids, 200) }));
+  return {
+    kind: raw.kind, title: oneLine(raw.title, 80), steps, words: count(raw.words) ? Math.min(raw.words, 500) : 0, minutes: count(raw.minutes) ? Math.min(raw.minutes, 600) : 0,
+    notes: oneLine(raw.notes, 300), ...(count(raw.count) && raw.count > 0 ? { count: Math.min(raw.count, 50) } : {}),
+    ...(Array.isArray(raw.words_list) ? { words_list: raw.words_list.filter(word => typeof word === 'string' && word.trim()).slice(0, MAX_BATCH).map(word => oneLine(word, 40)) } : {}),
+  };
+}
+
+// A proposal of a coach answer, checked: { id, kind, state, state_at, ...payload }, or null.
+function cleanProposal(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !PROPOSAL_ID.test(raw.id) || !PROPOSAL_KINDS.includes(raw.kind)) return null;
+  const base = { id: raw.id, kind: raw.kind, state: PROPOSAL_STATES.includes(raw.state) ? raw.state : 'open', state_at: time(raw.state_at) ? raw.state_at : 0 };
+  if (raw.kind === 'practice') {
+    const plan = cleanPlan(raw.plan);
+    return plan ? { ...base, plan } : null;
+  }
+  if (raw.kind === 'settings') {
+    const changes = cleanChanges(raw.changes);
+    if (!changes) return null;
+    const before = cleanChanges(raw.before) || {};
+    return { ...base, changes, before };
+  }
+  if (raw.kind === 'cards') {
+    const add = [];
+    for (const card of Array.isArray(raw.add) ? raw.add.slice(0, MAX_BATCH) : []) {
+      const ref = cardRefOf(card);
+      const zh = card && typeof card.zh === 'string' ? card.zh.trim().slice(0, MAX_CARD_ZH) : '';
+      if (ref) add.push({ ...ref, zh });
+    }
+    const update = [];
+    for (const card of Array.isArray(raw.update) ? raw.update.slice(0, MAX_BATCH) : []) {
+      const ref = cardRefOf(card);
+      const zh = card && typeof card.zh === 'string' ? card.zh.trim().slice(0, MAX_CARD_ZH) : '';
+      if (ref && zh) update.push({ ...ref, zh, before: card && typeof card.before === 'string' ? card.before.slice(0, MAX_CARD_ZH) : '' });
+    }
+    const remove = (Array.isArray(raw.remove) ? raw.remove.slice(0, MAX_BATCH) : []).map(cardRefOf).filter(Boolean);
+    if (!add.length && !update.length && !remove.length) return null;
+    return { ...base, add, update, remove };
+  }
+  // reminder
+  if (typeof raw.time !== 'string' || !HHMM.test(raw.time)) return null;
+  const days = Array.isArray(raw.days) ? [...new Set(raw.days.filter(day => Number.isInteger(day) && day >= 1 && day <= 7))].sort((a, b) => a - b) : [];
+  const text = oneLine(raw.text, 120);
+  if (!text) return null;
+  return { ...base, time: raw.time, days, text, ...(typeof raw.tz === 'string' && raw.tz.length <= 64 ? { tz: raw.tz } : {}) };
+}
+
+// A practice result (the page's summary of a series), checked.
+function cleanPractice(raw) {
+  const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const num = (field, max) => (count(value[field]) ? Math.min(value[field], max) : 0);
+  return {
+    plan_id: typeof value.plan_id === 'string' && PROPOSAL_ID.test(value.plan_id) ? value.plan_id : '',
+    kind: PLAN_KINDS.includes(value.kind) ? value.kind : '',
+    done: num('done', 1000), total: num('total', 1000), right: num('right', 1000), seconds: num('seconds', 86400),
+    stopped: value.stopped === true,
+    steps: (Array.isArray(value.steps) ? value.steps : []).slice(0, 6).filter(step => step && STEP_MODES.includes(step.mode))
+      .map(step => ({ mode: step.mode, done: count(step.done) ? Math.min(step.done, 1000) : 0, right: count(step.right) ? Math.min(step.right, 1000) : 0 })),
+    missed: (Array.isArray(value.missed) ? value.missed : []).slice(0, 50).filter(item => item && typeof item.en === 'string' && item.en.trim())
+      .map(item => ({ en: oneLine(item.en, 300), typed: typeof item.typed === 'string' ? oneLine(item.typed, 300) : '' })),
+  };
+}
+
+// The meta of a message of the coach conversation: an assistant answer { cards, mistakes, suggestions, proposals, remembered, tools, usage, notice? }
+// (cards and mistakes as cleanMeta), a practice result { practice }. What does not check is dropped.
+function cleanCoachMeta(raw, text, role = 'assistant') {
+  const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  if (role === 'practice') return { practice: cleanPractice(value.practice) };
+  const out = cleanMeta(value, text);
+  out.suggestions = [];
+  for (const item of Array.isArray(value.suggestions) ? value.suggestions : []) {
+    const line = oneLine(item, MAX_SUGGESTION);
+    if (line && !out.suggestions.includes(line) && out.suggestions.length < MAX_SUGGESTIONS) out.suggestions.push(line);
+  }
+  const seen = new Set();
+  out.proposals = (Array.isArray(value.proposals) ? value.proposals : []).slice(0, 8).map(cleanProposal).filter(item => item && !seen.has(item.id) && seen.add(item.id));
+  out.remembered = (Array.isArray(value.remembered) ? value.remembered : []).slice(0, 5).filter(note => note && typeof note.uid === 'string' && CHAT_UID.test(note.uid))
+    .map(note => ({ uid: note.uid, text: oneLine(note.text, MAX_NOTE), until: noteUntil(note.until) }));
+  out.tools = value.tools !== false;
+  if (value.usage && typeof value.usage === 'object') {
+    const usage = {};
+    for (const key of ['calls', 'tool_rounds', 'prompt_tokens', 'completion_tokens']) if (count(value.usage[key])) usage[key] = value.usage[key];
+    if (Object.keys(usage).length) out.usage = usage;
+  }
+  const notice = oneLine(value.notice, 200);
+  if (notice) out.notice = notice;
+  return out;
+}
+
+// Two metas of one coach answer (here and from a peer): everything as it was made, except the state of each proposal, where the newer state wins
+// (a tie to the later state in PROPOSAL_STATES). Returns { meta, changed }.
+function mergeCoachMeta(local, incoming) {
+  const base = local && typeof local === 'object' ? local : {};
+  const theirs = new Map((incoming && Array.isArray(incoming.proposals) ? incoming.proposals : []).map(item => [item.id, item]));
+  let changed = false;
+  const proposals = (Array.isArray(base.proposals) ? base.proposals : []).map(item => {
+    const other = theirs.get(item.id);
+    if (!other) return item;
+    const newer = other.state_at !== item.state_at ? other.state_at > item.state_at : PROPOSAL_STATES.indexOf(other.state) > PROPOSAL_STATES.indexOf(item.state);
+    if (!newer || other.state === item.state) return item;
+    changed = true;
+    return { ...item, state: other.state, state_at: other.state_at };
+  });
+  return { meta: { ...base, proposals }, changed };
+}
+
+// ---- The coach's notes ----
+// The secrets a note never keeps: passwords, tokens, API keys, private keys, card numbers and long random strings.
+const SECRET = [
+  /pass(?:word|wd|code)|\bpwd\b|\u5bc6\u7801|\u53e3\u4ee4/i, /\btoken\b|\bsecret\b|api[ _-]?key|private[ _-]?key|access[ _-]?key|\u5bc6\u94a5/i,
+  /\b(?:sk|pk|rk|ghp|gho|ghs|xox[abps])[-_][A-Za-z0-9_-]{8,}/, /\bAKIA[0-9A-Z]{12,}/, /-----BEGIN/,
+  /\b(?:\d[ -]?){13,19}\b/, /[A-Za-z0-9+/_-]{32,}/,
+];
+const looksSecret = value => SECRET.some(pattern => pattern.test(value));
+// A note's `until`: a real date YYYY-MM-DD, else null.
+function noteUntil(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : null;
+}
+// The text of a note: one line of 1..200 characters without a secret, else '' (with `reason`: 'empty' | 'long' | 'secret').
+function noteText(value) {
+  if (typeof value !== 'string') return { text: '', reason: 'empty' };
+  const text = collapseText(value);
+  if (!text) return { text: '', reason: 'empty' };
+  if (text.length > MAX_NOTE) return { text: '', reason: 'long' };
+  if (looksSecret(text)) return { text: '', reason: 'secret' };
+  return { text, reason: '' };
+}
+// A note as a peer sent it, checked, or null: { uid, text, until, created_at, updated_at, deleted (0 / 1), by }. A note with a secret (an older
+// rule let it through) is not kept.
+function noteFromPeer(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.uid !== 'string' || !CHAT_UID.test(raw.uid) || !time(raw.created_at) || !time(raw.updated_at)) return null;
+  const deleted = raw.deleted === true;
+  const checked = noteText(raw.text);
+  if (!deleted && !checked.text) return null;
+  return {
+    uid: raw.uid, text: deleted ? '' : checked.text, until: deleted ? null : noteUntil(raw.until), created_at: raw.created_at, updated_at: raw.updated_at,
+    deleted: deleted ? 1 : 0, by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
+  };
+}
+const noteToPeer = (row, me) => ({
+  uid: row.uid, text: row.text, until: row.until || null, created_at: row.created_at, updated_at: row.updated_at, deleted: Boolean(row.deleted), by: row.by || me,
+});
+// Whether the note from a peer replaces the one here (both with `by` filled in): the newer change; at a tie a tombstone, then the greater engine id.
+function noteWins(incoming, local) {
+  if (!local) return true;
+  if (incoming.updated_at !== local.updated_at) return incoming.updated_at > local.updated_at;
+  if (incoming.deleted !== local.deleted) return incoming.deleted > local.deleted;
+  return String(incoming.by) > String(local.by) && (incoming.text !== local.text || incoming.until !== local.until);
+}
+
+// ---- The rolling summary ----
+// A summary as a peer sent it, checked, or null: { text, covers_at, updated_at, reset_at, by }.
+function summaryFromPeer(raw, sender) {
+  if (!raw || typeof raw !== 'object' || typeof raw.text !== 'string' || ![raw.covers_at, raw.updated_at, raw.reset_at].every(time)) return null;
+  return {
+    text: raw.text.trim().slice(0, MAX_SUMMARY), covers_at: raw.covers_at, updated_at: raw.updated_at, reset_at: raw.reset_at,
+    by: typeof raw.by === 'string' && INSTANCE_ID.test(raw.by) ? raw.by : sender,
+  };
+}
+const summaryToPeer = (row, me) => ({ text: row.text, covers_at: row.covers_at, updated_at: row.updated_at, reset_at: row.reset_at, by: row.by || me });
+// The merge of the summary here (or null) and a peer's: the newest reset of both holds; a summary folded before it is void (empty, covering
+// nothing); of the others the one that covers the newer message wins, then the newer fold, then the greater engine id. Returns the merged row.
+function mergeSummary(local, incoming) {
+  const resetAt = Math.max(local ? local.reset_at : 0, incoming.reset_at);
+  const valid = row => (row && row.updated_at >= resetAt && row.text ? row : null);
+  const a = valid(local);
+  const b = valid(incoming);
+  let best = a || b;
+  if (a && b) {
+    const newer = b.covers_at !== a.covers_at ? b.covers_at > a.covers_at : b.updated_at !== a.updated_at ? b.updated_at > a.updated_at : String(b.by) > String(a.by);
+    best = newer ? b : a;
+  }
+  if (!best) return { text: '', covers_at: 0, updated_at: Math.max(local ? local.updated_at : 0, incoming.updated_at), reset_at: resetAt, by: incoming.reset_at >= (local ? local.reset_at : 0) ? incoming.by : local.by };
+  return { text: best.text, covers_at: best.covers_at, updated_at: best.updated_at, reset_at: resetAt, by: best.by };
+}
 
 // A move as a peer sent it: { kind, norm, moved_to, at, by }, or null.
 function moveFromPeer(raw, sender) {
@@ -363,5 +584,7 @@ module.exports = {
   reportBody, reportFromPeer, reportToPeer, reportWins, chatFromPeer, chatToPeer, MAX_QUESTION, MAX_CHAT_TEXT,
   cleanMeta, convoTitle, convoDeleted, convoFromPeer, convoToPeer, mergeConvo, convoMessageFromPeer, convoMessageToPeer, parseMeta,
   MAX_CONVO_QUESTION, MAX_CONVO_ANSWER, MAX_CONVO_TITLE, MAX_META_CARDS, MAX_META_MISTAKES, MAX_MISTAKE_TAG,
+  COACH_UID, PROPOSAL_KINDS, PROPOSAL_STATES, PLAN_KINDS, STEP_MODES, COACH_CHANGES, MAX_NOTE, MAX_SUMMARY, MAX_BATCH, cleanChanges, cleanPlan, cleanProposal, cleanPractice,
+  cleanCoachMeta, mergeCoachMeta, looksSecret, noteUntil, noteText, noteFromPeer, noteToPeer, noteWins, summaryFromPeer, summaryToPeer, mergeSummary,
   CONTENT, STATE, PICKED, FIELDS, KEPT_SETTINGS,
 };

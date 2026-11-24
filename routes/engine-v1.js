@@ -238,6 +238,9 @@ function infoHandler(req, res) {
       // learn:pick: the estimated level and the picks of the translated sentences travel with the learning data, the home routes of the level
       // (/v1/learn-sync/level, /level-check) answer, and the backlog of sentences is picked by one of the engines that list it.
       ...(require('../services/learn-sync').syncEnabled() ? [require('../services/learn-sync').PICK_CAPABILITY] : []),
+      // learn:coach: the English coach (/api/learn/coach, and /v1/learn-sync/coach* for a company computer's page; docs/design/learn-english-coach.md).
+      // A page whose engine lacks it shows the old English chat.
+      require('../services/learn-coach').CAPABILITY,
       // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
       // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
       ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),

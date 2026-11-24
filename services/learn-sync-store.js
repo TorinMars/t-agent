@@ -19,8 +19,8 @@ const listeners = new Set();
 // (`picked_level`, `picked_skipped`, `picked_at`; not picked yet), schema 20 the table `learn_chats` (the questions about a card), schema 21
 // the tables `learn_convos` and `learn_convo_messages` (the English chats), and schema 22 the FSRS state of a card (`fsrs_stability`,
 // `fsrs_difficulty`; NULL: not computed), filled in once by replaying every card's answers (services/learn-schedule.js migrate; "Replay, sync and
-// migration" in docs/design/learn-review-fsrs.md), and schema 23 the parts and the tip of a word card (`parts`, `tip`; '' until known; "Keeps
-// slipping" there). Returns the counts of that replay when it ran now, else null.
+// migration" in docs/design/learn-review-fsrs.md), schema 23 the parts and the tip of a word card (`parts`, `tip`; '' until known; "Keeps
+// slipping" there), and schema 24 the tables `learn_coach_notes` and `learn_coach_summary` (the English coach). Returns the counts of that replay when it ran now, else null.
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
@@ -82,6 +82,15 @@ function ensureSyncSchema(db) {
       meta TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_convo ON learn_convo_messages (owner, convo_uid, at)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_seq ON learn_convo_messages (owner, sync_seq)');
+    // Schema 24: the English coach's notes and rolling summary (db/schema.sql has the comments).
+    db.exec(`CREATE TABLE IF NOT EXISTS learn_coach_notes (
+      owner TEXT NOT NULL, uid TEXT NOT NULL, text TEXT NOT NULL, until TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0, by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (owner, uid))`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_coach_notes_seq ON learn_coach_notes (owner, sync_seq)');
+    db.exec(`CREATE TABLE IF NOT EXISTS learn_coach_summary (
+      owner TEXT NOT NULL PRIMARY KEY, text TEXT NOT NULL DEFAULT '', covers_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0,
+      reset_at INTEGER NOT NULL DEFAULT 0, by TEXT NOT NULL DEFAULT '', sync_seq INTEGER NOT NULL DEFAULT 0)`);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_learn_coach_summary_seq ON learn_coach_summary (owner, sync_seq)');
     // Schema 22: every card's state from the replay of its answers, a changed one with a new review-state clock and change number after every one
     // stored (also those of the settings and the level in system_state), so the linked engines get it.
     if (!cards.includes('fsrs_stability')) {
@@ -97,10 +106,11 @@ const newestOf = (db, sql) => Number(db.prepare(sql).pluck().get()) || 0;
 function newestClock(db) {
   return Math.max(newestOf(db, 'SELECT MAX(MAX(content_at), MAX(state_at)) FROM learn_cards'), newestOf(db, 'SELECT MAX(at) FROM learn_card_moves'),
     newestOf(db, 'SELECT MAX(at) FROM learn_chats'), newestOf(db, 'SELECT MAX(MAX(title_at), MAX(journal_at), MAX(deleted_at), MAX(updated_at)) FROM learn_convos'),
-    newestOf(db, 'SELECT MAX(at) FROM learn_convo_messages'));
+    newestOf(db, 'SELECT MAX(at) FROM learn_convo_messages'), newestOf(db, 'SELECT MAX(updated_at) FROM learn_coach_notes'),
+    newestOf(db, 'SELECT MAX(MAX(updated_at), MAX(reset_at)) FROM learn_coach_summary'));
 }
 function newestSeq(db) {
-  return Math.max(...['learn_cards', 'learn_reviews', 'learn_card_moves', 'learn_reports', 'learn_chats', 'learn_convos', 'learn_convo_messages']
+  return Math.max(...['learn_cards', 'learn_reviews', 'learn_card_moves', 'learn_reports', 'learn_chats', 'learn_convos', 'learn_convo_messages', 'learn_coach_notes', 'learn_coach_summary']
     .map(table => newestOf(db, `SELECT MAX(sync_seq) FROM ${table}`)));
 }
 // The change numbers kept in system_state (the version of the learning settings and the level of each owner), which services/learn-sync.js
@@ -133,8 +143,10 @@ function pruneChats(db, cardId) {
 // it elsewhere later brings it back (the newer message wins over the older tombstone). Journal chats are never pruned. Returns how many were pruned.
 const MAX_CONVOS = 50;
 const MAX_CONVO_MESSAGES = 100;
+// The coach conversation (uid COACH_UID, docs/design/learn-english-coach.md) is never pruned and has no message limit.
+const COACH_UID = 'coach';
 function pruneConvos(db, owner) {
-  const old = db.prepare(`SELECT uid, updated_at, deleted_at FROM learn_convos WHERE owner = ? AND deleted = 0 AND journal = 0
+  const old = db.prepare(`SELECT uid, updated_at, deleted_at FROM learn_convos WHERE owner = ? AND deleted = 0 AND journal = 0 AND uid <> 'coach'
     ORDER BY updated_at DESC, uid DESC LIMIT -1 OFFSET ?`).all(owner, MAX_CONVOS);
   for (const row of old) {
     db.prepare(`UPDATE learn_convos SET deleted = 1, deleted_at = ?, deleted_by = 'prune', sync_seq = ? WHERE owner = ? AND uid = ?`)
@@ -181,4 +193,4 @@ function onLearnChanged(listener) {
   return () => listeners.delete(listener);
 }
 
-module.exports = { MAX_CHAT_MESSAGES, pruneChats, MAX_CONVOS, MAX_CONVO_MESSAGES, pruneConvos, ensureSyncSchema, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };
+module.exports = { COACH_UID, MAX_CHAT_MESSAGES, pruneChats, MAX_CONVOS, MAX_CONVO_MESSAGES, pruneConvos, ensureSyncSchema, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };

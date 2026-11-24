@@ -2093,13 +2093,13 @@
   // ── "Remember this" ("Remember this" in docs/design/usage-time-page.md): a note of the person's own with the time, the task and the session ──
   // From a session's "⋯" (its row, or the session header's More while it is shown) or a task's "⋯": the dialog of the task dialogs chunk
   // (TaskDialogs.jsx `RememberDialog`), saved with POST /api/memories on this page's server. The task and session are named by engine-neutral ids
-  // (`<instance id>:<task id>[:<terminal id>]`, usage-beats.mjs), so a note opens its session from any device; a device whose instance id is not
+  // (`<instance id>|<task id>[|<terminal id>]`, usage-beats.mjs), so a note opens its session from any device; a device whose instance id is not
   // known yet saves the note without them. Never the terminal text.
   function askRemember(from, item, terminal, sessionTitle) {
     closeTerminalMenu();
     const instance = from && from.instanceId;
-    const task = instance ? `${instance}:${item.id}` : null;
-    ui.set({ taskDialog: dialogFor('remember', from, item, { task, session: task && terminal ? `${task}:${terminal}` : null, sessionTitle: sessionTitle || '' }) });
+    const task = instance ? `${instance}|${item.id}` : null;
+    ui.set({ taskDialog: dialogFor('remember', from, item, { task, session: task && terminal ? `${task}|${terminal}` : null, sessionTitle: sessionTitle || '' }) });
   }
   // The session the page shows (the session header's More, h5-shell/Header.jsx).
   ui.actions.rememberShown = () => {

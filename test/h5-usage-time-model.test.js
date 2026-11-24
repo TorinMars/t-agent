@@ -44,7 +44,7 @@ test('tiles, bars, tasks and kinds from a summary', async () => {
   assert.equal(days[0].text, 'Mon 11-16: Sessions 1 h, Learn 10 min, Other 0 min');
   const month = bars(Array.from({ length: 30 }, (_, i) => ({ day: `2026-10-${String(i + 1).padStart(2, '0')}`, sessions_s: 60 })), '30d');
   assert.deepEqual(month.filter(bar => bar.label).map(bar => bar.label), ['1', '6', '11', '16', '21', '26', '30']);
-  const rows = taskRows([{ task: 'inst-a:1', looked_s: 44400, worked_s: 100800 }, { task: 'inst-a:2', looked_s: 14700, worked_s: 32400 }]);
+  const rows = taskRows([{ task: 'inst-a|1', looked_s: 44400, worked_s: 100800 }, { task: 'inst-a|2', looked_s: 14700, worked_s: 32400 }]);
   assert.deepEqual(rows.map(row => Math.round(row.share * 100)), [100, 33]);
   assert.equal(lookedText(rows[0]), '12 h 20 min / 28 h');
   assert.equal(kindsLine([{ kind: 'claude', share: 0.62 }, { kind: 'codex', share: 21 }, { kind: 'terminal', share: 0.12 }, { kind: 'notebook', share: 0.05 }, { kind: 'x', share: 1 }]), 'Kinds of session: Claude 62%, Codex 21%, terminals 12%, notebooks 5%.');
@@ -58,6 +58,10 @@ test('the device chip lists the summary devices and says which device needs an u
   assert.equal(choices[3].note, 'K01 needs an update first');
   // A device that has not said what it can do yet (capabilities null) is not called old.
   assert.equal(deviceChoices({ devices: [] }, [{ key: 'remote:9', instanceId: 'x', label: 'Z', capabilities: null }]).length, 1);
+  // The server's own word (`supported: false`, from that engine's /v1/info) is enough, and the device is listed once.
+  const server = deviceChoices({ devices: [{ id: 'inst-a', name: 'MacBook', self: true, supported: true }, { id: 'inst-k', name: 'K01', self: false, supported: false }, { id: 'inst-n', name: 'New', self: false, supported: null }] }, SOURCES);
+  assert.deepEqual(server.map(choice => [choice.id, choice.old]), [['all', false], ['inst-a', false], ['inst-k', true], ['inst-n', false]]);
+  assert.equal(server[2].note, 'K01 needs an update first');
 });
 
 test('memories: the dot colour comes with a word, the place line, the target and the digest heading', async () => {
@@ -69,23 +73,28 @@ test('memories: the dot colour comes with a word, the place line, the target and
   assert.deepEqual(memoryLook({ kind: 'digest' }), { color: 'primary.main', word: 'digest' });
   const state = { sources: SOURCES, taskList: { tasks: [{ source: 'local', id: 4, title: 'SELF-TAGENT', sessions: { rows: [{ kind: 'terminal', id: 'c1', title: 'main dev' }] } }] } };
   const titles = titleLookup(state);
-  assert.equal(titles('inst-a:4'), 'SELF-TAGENT');
-  assert.equal(titles('inst-a:4:c1'), 'main dev');
-  assert.equal(titles('inst-k:4'), '');
+  assert.equal(titles('inst-a|4'), 'SELF-TAGENT');
+  assert.equal(titles('inst-a|4|c1'), 'main dev');
+  assert.equal(titles('inst-k|4'), '');
   const words = parts => parts.map(part => part.text).join('|');
-  assert.equal(words(memoryWhere({ kind: 'event', event: 'attention-confirm', task: 'inst-a:4' }, titles)), 'Task|SELF-TAGENT|event');
-  assert.equal(words(memoryWhere({ kind: 'note', task: 'inst-a:4', session: 'inst-a:4:c1' }, titles)), 'SELF-TAGENT|main dev|your note');
+  assert.equal(words(memoryWhere({ kind: 'event', event: 'attention-confirm', task: 'inst-a|4' }, titles)), 'Task|SELF-TAGENT|event');
+  assert.equal(words(memoryWhere({ kind: 'note', task: 'inst-a|4', session: 'inst-a|4|c1' }, titles)), 'SELF-TAGENT|main dev|your note');
   assert.equal(words(memoryWhere({ kind: 'event', event: 'learn-practice' }, titles)), 'Learn|event');
   assert.equal(words(memoryWhere({ kind: 'event', event: 'engine-down' }, titles)), 'Engines|event');
   assert.equal(words(memoryWhere({ kind: 'note', task: 'zz:1', task_title: 'From the server' }, titles)), 'From the server|your note');
-  assert.ok(memoryWhere({ kind: 'note', task: 'inst-a:4' }, titles)[0].name, 'a title is marked as a name (never translated)');
-  assert.deepEqual(memoryTarget({ task: 'inst-a:4', session: 'inst-a:4:c1' }, SOURCES), { sourceKey: 'local', taskId: '4', terminalId: 'c1' });
-  assert.deepEqual(memoryTarget({ task: 'inst-k:9' }, SOURCES), { sourceKey: 'remote:7', taskId: '9', terminalId: null });
+  assert.ok(memoryWhere({ kind: 'note', task: 'inst-a|4' }, titles)[0].name, 'a title is marked as a name (never translated)');
+  assert.deepEqual(memoryTarget({ task: 'inst-a|4', session: 'inst-a|4|c1' }, SOURCES), { sourceKey: 'local', taskId: '4', terminalId: 'c1' });
+  assert.deepEqual(memoryTarget({ task: 'inst-k|9' }, SOURCES), { sourceKey: 'remote:7', taskId: '9', terminalId: null });
   assert.equal(memoryTarget({ task: null }, SOURCES), null);
   assert.equal(memoryDate(new Date(2026, 10, 24, 9).getTime()), '11-24');
   const sunday = new Date(2026, 10, 22, 21, 0).getTime();
-  assert.deepEqual(digestHeading({ at: sunday, week: '2026-11-16' }, sunday + 3600000), { title: 'This week, in short', written: 'written Sun 21:00' });
-  assert.equal(digestHeading({ at: sunday, week: '2026-11-16' }, sunday + 9 * 86400000).title, 'Week of 11-16');
+  assert.deepEqual(digestHeading({ at: sunday, week: '2026-W47' }, sunday + 3600000), { title: 'This week, in short', written: 'written Sun 21:00' });
+  assert.equal(digestHeading({ at: sunday, week: '2026-W47' }, sunday + 9 * 86400000).title, 'Week of 11-16');
+  const { isoWeekOf, mondayOfWeek } = await load();
+  assert.equal(isoWeekOf(new Date(2026, 10, 24, 10).getTime()), '2026-W48');
+  assert.equal(isoWeekOf(new Date(2027, 0, 1, 10).getTime()), '2026-W53');
+  assert.equal(memoryDate(mondayOfWeek('2026-W48')), '11-23');
+  assert.equal(mondayOfWeek('2026-11-16'), null);
 });
 
 test('opening a target closes Settings and uses the page actions', async () => {

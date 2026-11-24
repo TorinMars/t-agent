@@ -57,7 +57,8 @@ function createMemories({ db = require('../db'), now = Date.now, identity = null
     if (row.sources) { try { sources = JSON.parse(row.sources); } catch { sources = null; } }
     return {
       uid: row.uid, at: row.at, kind: row.kind, event: time.orNull(row.event), text: row.text, task: time.orNull(row.task), session: time.orNull(row.session),
-      task_title: row.task ? store.taskTitle(row.task) : null, source: time.orNull(row.source), week: time.orNull(row.week), sources,
+      task_title: row.task ? store.taskTitle(row.task) : null,
+      session_title: row.session ? store.sessionTitle(row.session) : null, source: time.orNull(row.source), week: time.orNull(row.week), sources,
       private: Boolean(row.private), engine: row.engine || me(), updated_at: row.updated_at,
     };
   }

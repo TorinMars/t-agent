@@ -32,18 +32,18 @@ test('surfaces come from the store; a session beat names its kind and engine-neu
   assert.equal(surfaceOf({ mindmapOpen: true }), 'mindmaps');
   assert.equal(surfaceOf({ columns: { shown: true, tab: 'maps' } }), 'mindmaps');
   assert.equal(surfaceOf({ columns: { shown: true, tab: 'columns' } }), 'sessions');
-  assert.deepEqual(neutralIds(shown, SOURCES), { task: 'inst-k:12', session: 'inst-k:12:c1' });
+  assert.deepEqual(neutralIds(shown, SOURCES), { task: 'inst-k|12', session: 'inst-k|12|c1' });
   assert.deepEqual(neutralIds({ sourceKey: 'remote:9', taskId: 1, terminalId: 'x' }, SOURCES), { task: null, session: null }, 'no instance id: no ids');
-  assert.deepEqual(refOfNeutral('inst-k:12:c1', SOURCES), { sourceKey: 'remote:7', taskId: '12', terminalId: 'c1' });
-  assert.deepEqual(refOfNeutral('inst-a:3', SOURCES), { sourceKey: 'local', taskId: '3', terminalId: null });
-  assert.equal(refOfNeutral('gone:3', SOURCES), null);
-  assert.deepEqual(beatOf({ shownTarget: shown, terminalAgent: 'claude', sources: SOURCES }, 5), { at: 5, surface: 'sessions', kind: 'claude', task: 'inst-k:12', session: 'inst-k:12:c1', seconds: STEP_S });
+  assert.deepEqual(refOfNeutral('inst-k|12|c1', SOURCES), { sourceKey: 'remote:7', taskId: '12', terminalId: 'c1' });
+  assert.deepEqual(refOfNeutral('inst-a|3', SOURCES), { sourceKey: 'local', taskId: '3', terminalId: null });
+  assert.equal(refOfNeutral('gone|3', SOURCES), null);
+  assert.deepEqual(beatOf({ shownTarget: shown, terminalAgent: 'claude', sources: SOURCES }, 5), { at: 5, surface: 'sessions', kind: 'claude', task: 'inst-k|12', session: 'inst-k|12|c1', seconds: STEP_S });
   assert.equal(beatOf({ shownTarget: shown, terminalAgent: null, sources: SOURCES }, 5).kind, 'terminal');
   assert.equal(beatOf({ shownTarget: shown, notebook: { path: 'a.tnb' }, sources: SOURCES }, 5).kind, 'notebook');
   assert.deepEqual(beatOf({ shownTarget: shown, settingsOpen: true, sources: SOURCES }, 5), { at: 5, surface: 'settings', kind: null, task: null, session: null, seconds: 15 });
   // The multi-column view: the focused column's session.
   const columns = { shown: true, tab: 'columns', focus: 'p2', titles: { p1: { target: { sourceKey: 'local', taskId: 1, terminalId: 'a' } }, p2: { target: { sourceKey: 'local', taskId: 2, terminalId: 'b' }, agent: 'codex' } } };
-  assert.deepEqual(beatOf({ columns, sources: SOURCES }, 9), { at: 9, surface: 'sessions', kind: 'codex', task: 'inst-a:2', session: 'inst-a:2:b', seconds: 15 });
+  assert.deepEqual(beatOf({ columns, sources: SOURCES }, 9), { at: 9, surface: 'sessions', kind: 'codex', task: 'inst-a|2', session: 'inst-a|2|b', seconds: 15 });
 });
 
 test('the first screen and the sender agree on what counts as activity', async () => {
@@ -149,9 +149,10 @@ test('the sender beats every 15 s while active and visible, stops after 2 idle m
   assert.equal(page.posts.length, 1, 'a batch 2 minutes after its first beat');
   assert.equal(page.posts[0].url, '/api/usage-time/beats');
   assert.equal(page.posts[0].body.client, 'computer');
+  assert.ok(Number.isFinite(page.posts[0].body.sent), 'the batch says when it was sent (the server corrects a page clock that is off)');
   assert.equal(page.posts[0].body.beats.length, 8);
   assert.deepEqual(Object.keys(page.posts[0].body.beats[0]).sort(), ['at', 'kind', 'seconds', 'session', 'surface', 'task']);
-  assert.deepEqual(page.posts[0].body.beats[0], { at: page.posts[0].body.beats[0].at, surface: 'sessions', kind: 'claude', task: 'inst-a:4', session: 'inst-a:4:c1', seconds: 15 });
+  assert.deepEqual(page.posts[0].body.beats[0], { at: page.posts[0].body.beats[0].at, surface: 'sessions', kind: 'claude', task: 'inst-a|4', session: 'inst-a|4|c1', seconds: 15 });
   assert.equal(sender.queued(), 0, 'idle: no beat');
   // The first beat after the gap counts 15 s.
   page.act();

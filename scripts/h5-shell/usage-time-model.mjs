@@ -4,15 +4,16 @@
 
 const plain = text => text;
 
-// The page's source key and task id of an engine-neutral task or session id, or null (a device this page does not list).
+// The page's source key and task id of an engine-neutral task or session id (`<instance>|<task>[|<terminal>]`, usage-beats.mjs neutralIds), or
+// null (a device this page does not list).
 export function refOfNeutral(id, sources) {
   if (typeof id !== 'string') return null;
-  const parts = id.split(':');
+  const parts = id.split('|');
   if (parts.length < 2) return null;
   const [instance, taskId, ...rest] = parts;
   const from = (Array.isArray(sources) ? sources : []).find(item => item && item.instanceId === instance);
   if (!from || !taskId) return null;
-  return { sourceKey: from.key, taskId, terminalId: rest.length ? rest.join(':') : null };
+  return { sourceKey: from.key, taskId, terminalId: rest.length ? rest.join('|') : null };
 }
 
 export const RANGES = [['week', 'This week'], ['today', 'Today'], ['30d', '30 days']];
@@ -94,10 +95,14 @@ export function kindsLine(kinds, t = plain) {
   return t(`Kinds of session: ${list.map(row => `${t(KIND_NAMES[row.kind])} ${percent(row.share)}%`).join(', ')}.`);
 }
 
-// The devices of the device chip: All devices, then each device of the summary; then the page's devices whose engine does not offer `usage:time`
-// yet (`sources` of the store: a remote device that said what it can do without it), each "needs an update first" and not selectable.
+// The devices of the device chip: All devices, then each device of the summary (one the server says does not record time, `supported: false`,
+// is "needs an update first" and not selectable); then the page's devices whose engine does not offer `usage:time` yet (`sources` of the store: a
+// remote device that said what it can do without it), each "needs an update first" too.
 export function deviceChoices(summary, sources, t = plain) {
-  const known = (summary && Array.isArray(summary.devices) ? summary.devices : []).filter(row => row && row.id).map(row => ({ id: String(row.id), name: String(row.name || row.id), old: false }));
+  const known = (summary && Array.isArray(summary.devices) ? summary.devices : []).filter(row => row && row.id).map(row => {
+    const name = String(row.name || row.id);
+    return row.supported === false ? { id: String(row.id), name, old: true, note: t(`${name} needs an update first`) } : { id: String(row.id), name, old: false };
+  });
   const ids = new Set(known.map(row => row.id));
   const old = (Array.isArray(sources) ? sources : [])
     .filter(from => from && from.key !== 'local' && Array.isArray(from.capabilities) && !from.capabilities.includes('usage:time') && !(from.instanceId && ids.has(from.instanceId)))
@@ -175,11 +180,31 @@ export function titleLookup(state) {
   };
 }
 
+// The local Monday (ms) of an ISO week 'YYYY-Www' (the server's `week` of a digest), or null.
+export function mondayOfWeek(week) {
+  const match = /^(\d{4})-W(\d{2})$/.exec(String(week || ''));
+  if (!match) return null;
+  const jan4 = new Date(Number(match[1]), 0, 4);
+  const weekday = jan4.getDay() || 7;
+  return new Date(Number(match[1]), 0, 4 - weekday + 1 + (Number(match[2]) - 1) * 7).getTime();
+}
+
 // The digest card's heading: "This week, in short" for the current week, else "Week of 11-17"; and when it was written ("written Sun 21:00").
 export function digestHeading(digest, now = Date.now(), t = plain) {
   const at = new Date(Number(digest && digest.at) || now);
   const written = `${t(WEEKDAYS[at.getDay()])} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
   const ageDays = (now - at.getTime()) / 86400000;
-  const title = ageDays < 7 ? t('This week, in short') : t(`Week of ${digest && digest.week ? String(digest.week).slice(5) : memoryDate(at.getTime())}`);
+  const monday = mondayOfWeek(digest && digest.week);
+  const title = ageDays < 7 ? t('This week, in short') : t(`Week of ${monday ? memoryDate(monday) : memoryDate(at.getTime())}`);
   return { title, written: t(`written ${written}`) };
+}
+
+// The ISO week of a time in the person's zone, 'YYYY-Www' (the week a digest is written for: POST /api/memories/digest { week }).
+export function isoWeekOf(ms = Date.now()) {
+  const local = new Date(Number(ms));
+  const date = new Date(Date.UTC(local.getFullYear(), local.getMonth(), local.getDate()));
+  const weekday = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - weekday); // the Thursday of this week
+  const week = Math.ceil(((date.getTime() - Date.UTC(date.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }

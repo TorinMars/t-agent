@@ -27,20 +27,20 @@ const SUMMARY = range => ({
   range, since: Date.UTC(2026, 10, 18), until: Date.UTC(2026, 10, 25),
   tiles: { page_s: 85200, working_s: 147900, waiting_s: 12000, learn_s: 7500, page_delta: 7800, working_delta: -3600, waiting_delta: 0, learn_delta: 900, median_wait_s: 360, learn_days: 5, away_working_s: 104400 },
   days: DAYS.map((day, i) => ({ day, sessions_s: [12240, 15120, 10080, 18360, 15840, 5760, 7920][i], learn_s: [2160, 2880, 0, 1800, 2520, 720, 1440][i], other_s: [1800, 1440, 1080, 2160, 1080, 720, 720][i] })),
-  tasks: [{ task: 'inst-home:1', title: 'Acme merger', looked_s: 44400, worked_s: 100800, waiting_s: 3600 }, { task: 'inst-home:2', title: 'Board deck', looked_s: 14700, worked_s: 32400, waiting_s: 600 }],
+  tasks: [{ task: 'inst-home|1', title: 'Acme merger', looked_s: 44400, worked_s: 100800, waiting_s: 3600 }, { task: 'inst-home|2', title: 'Board deck', looked_s: 14700, worked_s: 32400, waiting_s: 600 }],
   kinds: [{ kind: 'claude', share: 0.62 }, { kind: 'codex', share: 0.21 }, { kind: 'terminal', share: 0.12 }, { kind: 'notebook', share: 0.05 }],
   devices: [{ id: 'inst-home', name: 'Home' }],
 });
 const EMPTY_SUMMARY = range => ({ ...SUMMARY(range), tiles: {}, days: DAYS.map(day => ({ day, sessions_s: 0, learn_s: 0, other_s: 0 })), tasks: [], kinds: [] });
 const at = (day, hour) => new Date(`${day}T${String(hour).padStart(2, '0')}:00:00`).getTime();
 const MEMORIES = () => [
-  { uid: 'd1', at: at('2026-11-22', 21), kind: 'digest', text: 'You spent most of the week on the merger.', week: '2026-11-16', sources: { events: 12, notes: 3, items: 6 }, source: 'auto' },
-  { uid: 'e1', at: at('2026-11-24', 9), kind: 'event', event: 'attention-confirm', text: 'Confirmed: quarterly numbers', task: 'inst-home:1', session: null, source: 'auto' },
-  { uid: 'n1', at: at('2026-11-24', 8), kind: 'note', text: 'The tab group stays unless ungrouped first', task: 'inst-home:1', session: 'inst-home:1:c1', source: 'user' },
+  { uid: 'd1', at: at('2026-11-22', 21), kind: 'digest', text: 'You spent most of the week on the merger.', week: '2026-W47', sources: { events: 12, notes: 3, items: 6 }, source: 'auto' },
+  { uid: 'e1', at: at('2026-11-24', 9), kind: 'event', event: 'attention-confirm', text: 'Confirmed: quarterly numbers', task: 'inst-home|1', session: null, source: 'auto' },
+  { uid: 'n1', at: at('2026-11-24', 8), kind: 'note', text: 'The tab group stays unless ungrouped first', task: 'inst-home|1', session: 'inst-home|1|c1', source: 'user' },
   { uid: 'e2', at: at('2026-11-23', 18), kind: 'event', event: 'learn-practice', text: 'Spelling finished: 25 words, 22 right', task: null, session: null, source: 'auto' },
   { uid: 'e3', at: at('2026-11-22', 7), kind: 'event', event: 'engine-down', text: 'An engine went down for 40 min', task: null, session: null, source: 'auto' },
 ];
-const OLDER = [{ uid: 'n0', at: at('2026-11-10', 12), kind: 'note', text: 'Older note from before', task: 'inst-home:2', session: null, source: 'user' }];
+const OLDER = [{ uid: 'n0', at: at('2026-11-10', 12), kind: 'note', text: 'Older note from before', task: 'inst-home|2', session: null, source: 'user' }];
 const UI_SUMMARY = {
   enabled: true, days: 30, layout: null, total: 10, top: [{ key: 'h5-translate-button', count: 10, surfaces: [{ surface: 'bottom-row', count: 10 }], layouts: { wide: 10, narrow: 0 }, details: [] }],
   unused: [], next: [], data: { count: 10, first_at: Date.UTC(2026, 10, 19), retention_days: 90, bytes: 2048 },
@@ -86,8 +86,8 @@ async function openPage(browser, viewport, { touch, server }) {
       }
       if (p === '/api/usage-time/beats' && method === 'POST') { if (!server.record) return json({ ok: false }, 403); server.batches.push(JSON.parse(body)); return json({ ok: true }); }
       if (p === '/api/usage-time/summary') return json(server.timeCleared ? EMPTY_SUMMARY(url.searchParams.get('range')) : SUMMARY(url.searchParams.get('range')));
-      if (p === '/api/usage-time/task') return json([{ session: 'inst-home:1:c1', title: 'Night build', kind: 'claude', looked_s: 30000, worked_s: 90000, waiting_s: 3000 }, { session: 'inst-home:1:default', title: 'Payroll shell', kind: 'terminal', looked_s: 14400, worked_s: 10800, waiting_s: 600 }]);
-      if (p === '/api/usage-time/day') return json({ day: url.searchParams.get('day'), tasks: [{ task: 'inst-home:2', title: 'Board deck', looked_s: 3600, worked_s: 0, waiting_s: 0, sessions: [{ session: 'inst-home:2:d1', title: 'Terminal 1', kind: 'terminal', looked_s: 3600, worked_s: 0, waiting_s: 0 }] }] });
+      if (p === '/api/usage-time/task') return json([{ session: 'inst-home|1|c1', title: 'Night build', kind: 'claude', looked_s: 30000, worked_s: 90000, waiting_s: 3000 }, { session: 'inst-home|1|default', title: 'Payroll shell', kind: 'terminal', looked_s: 14400, worked_s: 10800, waiting_s: 600 }]);
+      if (p === '/api/usage-time/day') return json({ day: url.searchParams.get('day'), tasks: [{ task: 'inst-home|2', title: 'Board deck', looked_s: 3600, worked_s: 0, waiting_s: 0, sessions: [{ session: 'inst-home|2|d1', title: 'Terminal 1', kind: 'terminal', looked_s: 3600, worked_s: 0, waiting_s: 0 }] }] });
       if (p === '/api/usage-time/export') return route.fulfill({ status: 200, contentType: 'text/csv', headers: { 'Content-Disposition': 'attachment; filename="t-agent-time-2026-11-24.csv"' }, body: 'day,page_s\n' });
       if (p === '/api/usage-time' && method === 'DELETE') { if (url.searchParams.get('table') === 'time') server.timeCleared = true; else server.memories = []; return json({ cleared: 1 }); }
       if (p === '/api/memories' && method === 'GET') {
@@ -154,7 +154,7 @@ async function checkBeats(page, server, { touch }) {
   const first = server.batches[start].beats;
   assert.equal(first.length, 8, `8 beats in 2 minutes: ${first.length}`);
   assert.ok(first.every(beat => beat.seconds === 15 && beat.surface === 'sessions'));
-  assert.deepEqual([first[0].task, first[0].session, first[0].kind], ['inst-home:1', 'inst-home:1:c1', 'claude']);
+  assert.deepEqual([first[0].task, first[0].session, first[0].kind], ['inst-home|1', 'inst-home|1|c1', 'claude']);
   assert.deepEqual(Object.keys(first[0]).sort(), ['at', 'kind', 'seconds', 'session', 'surface', 'task']);
   assert.equal(server.batches[start].client, touch ? 'phone' : 'computer');
   assert.ok(first.every((beat, i) => !i || beat.at - first[i - 1].at === 15000), 'every 15 s');
@@ -255,7 +255,7 @@ async function checkTime(page, server, { touch, wide }) {
   assert.match(await page.locator('#h5-usage-time-hint').textContent(), /Kinds of session: Claude 62%, Codex 21%, terminals 12%, notebooks 5%\./);
   await press(page, touch, page.locator('.h5-usage-task').first());
   await page.locator('#h5-usage-task-sessions .h5-usage-session').first().waitFor({ state: 'visible' });
-  assert.ok(server.requests.some(r => r.path === '/api/usage-time/task?task=inst-home%3A1&range=week&device=all'));
+  assert.ok(server.requests.some(r => /^\/api\/usage-time\/task\?task=inst-home%7C1&range=week&device=all&tz=[\w%]+$/.test(r.path)));
   assert.deepEqual(await page.locator('#h5-usage-task-sessions .h5-usage-session-name').allTextContents(), ['Night build', 'Payroll shell']);
   assert.equal(await page.locator('.h5-usage-task').first().getAttribute('aria-expanded'), 'true');
   // The device chip: All devices, Home, and K01 that needs an update first.
@@ -266,10 +266,10 @@ async function checkTime(page, server, { touch, wide }) {
   assert.deepEqual(choices.map(text => text.replace(/\s+/g, ' ').trim()), ['All devices', 'Home', 'K01 needs an update first']);
   assert.equal(await page.locator('#h5-usage-device-menu [data-device="inst-k01"]').getAttribute('aria-disabled'), 'true');
   await press(page, touch, page.locator('#h5-usage-device-menu [data-device="inst-home"]'));
-  await wait(() => server.requests.some(r => r.path === '/api/usage-time/summary?range=week&device=inst-home'), 'the summary of one device');
+  await wait(() => server.requests.some(r => r.path.startsWith('/api/usage-time/summary?range=week&device=inst-home&tz=')), 'the summary of one device');
   // A range.
   await press(page, touch, page.locator('#h5-usage-range-today'));
-  await wait(() => server.requests.some(r => r.path === '/api/usage-time/summary?range=today&device=inst-home'), 'the summary of today');
+  await wait(() => server.requests.some(r => r.path.startsWith('/api/usage-time/summary?range=today&device=inst-home&tz=')), 'the summary of today');
   await page.locator('#h5-usage-range-today[aria-pressed="true"]').waitFor();
   if (touch) {
     const small = await page.evaluate(() => [...document.querySelectorAll('#h5-usage-panel-time .MuiChip-root, #h5-usage-panel-time .h5-usage-task, #h5-usage-panel-time button.MuiButton-root')]
@@ -313,7 +313,7 @@ async function checkMemories(page, server, { touch, wide }) {
   await press(page, touch, page.locator('#h5-memories-digest-enabled'));
   await wait(() => server.digest === true, 'the digest switch saved');
   await press(page, touch, page.locator('#h5-memories-digest-again'));
-  await wait(() => server.requests.some(r => r.method === 'POST' && r.path === '/api/memories/digest' && JSON.parse(r.body).week === '2026-11-16'), 'write it again');
+  await wait(() => server.requests.some(r => r.method === 'POST' && r.path === '/api/memories/digest' && JSON.parse(r.body).week === '2026-W47'), 'write it again');
   assert.equal(await page.locator('#h5-memories-list .h5-memory').first().locator('.h5-memory-text').textContent(), 'From the header');
   assert.equal(await page.locator('#h5-memories-list .h5-memory[data-uid="d1"]').count(), 0, 'the digest is the card, not a row');
   // More as the end of the list comes into view.
@@ -390,14 +390,14 @@ async function checkRemember(page, server, { touch }) {
     await press(page, touch, page.locator('.h5-terminal-row[data-session="c1"] .h5-terminal-more'));
     await press(page, touch, page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Remember this' }));
   }, 'Night build: the flaky test is the clock');
-  assert.deepEqual(note, { text: 'Night build: the flaky test is the clock', task: 'inst-home:1', session: 'inst-home:1:c1' });
+  assert.deepEqual(note, { text: 'Night build: the flaky test is the clock', task: 'inst-home|1', session: 'inst-home|1|c1' });
   // The task's "⋯": the task only.
   await tasks();
   note = await remember(page, server, touch, async () => {
     await press(page, touch, page.locator('.h5-task-more').nth(1));
     await press(page, touch, page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Remember this' }));
   }, 'Board deck goes out on Friday');
-  assert.deepEqual(note, { text: 'Board deck goes out on Friday', task: 'inst-home:2' });
+  assert.deepEqual(note, { text: 'Board deck goes out on Friday', task: 'inst-home|2' });
   // The session header's More, while a session is shown.
   if (touch) await page.evaluate(() => window.H5UI.actions.closeTasks && window.H5UI.actions.closeTasks());
   await page.waitForFunction(() => Boolean(window.H5UI.get().shownTarget));
@@ -405,8 +405,8 @@ async function checkRemember(page, server, { touch }) {
     await press(page, touch, page.locator('#h5-header-more'));
     await press(page, touch, page.locator('#h5-header-remember'));
   }, 'From the header');
-  assert.equal(note.task, 'inst-home:1');
-  assert.match(note.session, /^inst-home:1:/);
+  assert.equal(note.task, 'inst-home|1');
+  assert.match(note.session, /^inst-home\|1\|/);
   // Cancel saves nothing.
   const count = server.notes.length;
   await press(page, touch, page.locator('#h5-header-more'));

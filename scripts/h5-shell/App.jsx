@@ -48,7 +48,7 @@ const TASK_DIALOG_KEYS = ['taskDialog'];
 const NEW_SESSION_KEYS = ['menu'];
 const NEW_TASK_KEYS = ['newTaskOpen', 'sources', 'creatingTask'];
 const NOTICE_KEYS = ['notice'];
-const LEARN_KEYS = ['learnOpen', 'wide', 'pane', 'input', 'hasKeyboard'];
+const LEARN_KEYS = ['learnOpen', 'learnTarget', 'wide', 'pane', 'input', 'hasKeyboard'];
 const SWITCHER_KEYS = ['switcher']; // the open switcher reads the rest itself (Switcher.jsx), so closed it draws nothing on an activity push
 // What the page itself needs: the layout flags and which sheets and dialogs are open.
 const OPEN = state => ({

@@ -24,6 +24,8 @@ test('the exercise of a card in each step: spell, fill (a word inside its own se
   assert.equal(seriesExercise(plain, 'spell'), 'spell');
   assert.equal(seriesExercise(line, 'spell'), 'fill', 'a sentence gets the sentence exercise');
   assert.equal(seriesExercise(plain, 'retest'), 'spell');
+  assert.equal(seriesExercise(plain, 'review'), 'spell', 'a Review plan step spells a word');
+  assert.equal(seriesExercise(line, 'review'), 'fill', 'and gives a sentence the sentence exercise');
   assert.equal(seriesExercise(inSentence, 'fill'), 'fill');
   assert.equal(seriesExercise(plain, 'fill'), 'spell', 'a word without its sentence is spelled');
   assert.equal(seriesExercise(line, 'fill'), 'fill');
@@ -46,7 +48,7 @@ function mistakesPlan() {
   };
 }
 
-test('a series runs its steps in order; dictation is left out without speech output; the misses come back in the retest', async () => {
+test('a series runs its steps in order; dictation is left out without speech output; the misses come back in the retest; the result counts words', async () => {
   const { createSeries, seriesCurrent, seriesAnswer, seriesProgress, seriesDone, seriesResult } = await series();
   let state = createSeries(mistakesPlan(), { tts: false, now: 1000 });
   assert.deepEqual(state.steps.map(step => [step.mode, step.items.length]), [['spell', 3], ['fill', 2], ['retest', 0]]);
@@ -68,11 +70,12 @@ test('a series runs its steps in order; dictation is left out without speech out
   state = seriesAnswer(state, { correct: false, answer: 'necesary' }); // missed in the retest: not again
   assert.equal(seriesDone(state), true);
   assert.equal(seriesCurrent(state), null);
-  const result = seriesResult(state, { messageUid: 'm1', now: 1000 + 125000 });
+  const result = seriesResult(state, { messageUid: 'm1', proposalId: 'prop-1', kind: 'mistakes_series', now: 1000 + 125000 });
+  // Counted in words: receive and necessary are asked twice (Spell, Fill the gap) and are one word each; only separate was never wrong.
   assert.deepEqual(result, {
-    plan_id: 'p1', message_uid: 'm1',
+    plan_id: 'p1', message_uid: 'm1', proposal_id: 'prop-1', kind: 'mistakes_series',
     steps: [{ mode: 'spell', total: 3, done: 3, right: 2 }, { mode: 'fill', total: 2, done: 2, right: 0 }, { mode: 'retest', total: 2, done: 2, right: 1 }],
-    done: 5, total: 5, right: 2,
+    done: 3, total: 3, right: 1,
     missed: [{ en: 'receive', typed: 'recieve' }, { en: 'necessary', typed: 'neccesary' }],
     seconds: 125,
   });
@@ -211,4 +214,11 @@ test('the usage caption: lookups, calls and tokens, nothing without lookups or t
   assert.deepEqual(usageParts({ calls: 1, tool_rounds: 0 }), []);
   assert.deepEqual(usageParts(null), []);
   assert.deepEqual(usageOf({ meta: { usage: { calls: 1 } } }), { calls: 1 });
+});
+
+test('a Review plan (step mode review) runs: words are spelled, sentences get the sentence exercise', async () => {
+  const { createSeries, seriesCurrent } = await series();
+  const state = createSeries({ id: 'r', steps: [{ mode: 'review', cards: [word(1, 'merge'), sentence(2, 'We merged it.')] }] });
+  assert.deepEqual(state.steps.map(step => [step.mode, step.items.map(one => one.exercise)]), [['review', ['spell', 'fill']]]);
+  assert.equal(seriesCurrent(state).card.en, 'merge');
 });

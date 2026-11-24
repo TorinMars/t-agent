@@ -76,7 +76,7 @@ export function planOf(proposal) {
 }
 
 // The line of a step in a plan card (English dictionary keys).
-export const STEP_LABELS = { spell: 'Spell each word', fill: 'Fill the gap inside a sentence', dictation: 'Dictation', retest: 'A final retest of the words you missed again' };
+export const STEP_LABELS = { spell: 'Spell each word', review: 'Review the cards that are due', fill: 'Fill the gap inside a sentence', dictation: 'Dictation', retest: 'A final retest of the words you missed again' };
 // The plan card's caption: "25 words · about 8 minutes" as [template, ...values].
 export function planCaption(plan) {
   const words = plan.words === 1 ? ['1 word'] : ['{1} words', plan.words];

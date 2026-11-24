@@ -965,7 +965,9 @@
   ui.actions.openSettings = group => ui.set({ settingsOpen: true, settingsTarget: typeof group === 'string' && group ? { id: group, seq: ++settingsSeq } : null });
   ui.actions.closeSettings = () => ui.set({ settingsOpen: false, settingsTarget: null });
   // The Learn page (scripts/h5-shell/Learn.jsx, a destination of the rail and the bottom navigation; "The Learn page" in docs/design/learn-english-page.md).
-  ui.actions.openLearn = () => ui.set({ learnOpen: true });
+  // `view` 'chat' opens it on the English coach (the link /h5?learn=coach of the coach's reminder; "Which chat opens" in docs/design/learn-english-coach-page.md).
+  let learnSeq = 0;
+  ui.actions.openLearn = view => ui.set({ learnOpen: true, ...(view === 'chat' ? { learnTarget: { view, seq: ++learnSeq } } : {}) });
   ui.actions.closeLearn = () => ui.set({ learnOpen: false });
   ui.actions.toggleTask = ref => { const hit = resolveRef(ref); if (hit) toggleTask(hit.from, hit.item); };
   // A tap on a session row: on the selected task it goes to the terminal or chat; on another task it selects that task and shows the session.
@@ -4794,6 +4796,14 @@
       query.delete('openTerminal');
       const rest = query.toString();
       try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays; nothing else changes */ }
+    }
+    // Or with the link of the English coach (?learn=coach, the coach's reminder in T-Attention): Learn opens on the coach. Taken out of the address
+    // at once, like openTerminal.
+    if (query.get('learn') === 'coach') {
+      query.delete('learn');
+      const rest = query.toString();
+      try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays */ }
+      ui.actions.openLearn('chat');
     }
     const savedId = Number(store.get(`task:${assumed.key}`));
     if (savedId > 0 && !link && !terminalAsked) {

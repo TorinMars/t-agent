@@ -15,6 +15,11 @@ The English chat becomes ONE continuous conversation with a coach. The approved 
   engine without the coach, also an HTML 404) keeps the old English chat (`ChatView`, "English chat on the page" in
   [learn-english-chat.md](learn-english-chat.md)) unchanged; any other answer (also a network failure, which then shows the coach's own error with
   Try again) opens the coach. The local engine's `/info` has no capabilities on the page, so the route itself is the test.
+- **The link `/h5?learn=coach`** (the coach's reminder in T-Attention): `public/js/h5.js` takes it out of the address at start (like `openTerminal`) and
+  calls `ui.actions.openLearn('chat')`, which sets the store's `learnTarget`; Learn opens the coach for it once and clears it.
+- **A company computer whose home is away** (`GET /coach` with `offline` or `home_older`): an info Alert "Your English coach is on a normal computer,
+  which cannot be reached right now" (or "…needs an update first"), no starters, nothing can be sent. `translator: false` on the GET shows the
+  translator notice at once.
 - With the coach the home card reads "Your coach: practice, your progress and any English question" and shows no count of chats.
 
 ## The conversation
@@ -27,7 +32,7 @@ The English chat becomes ONE continuous conversation with a coach. The approved 
 - **Messages**: the person's and her bubbles are the old chat's (`Bubble`: markdown-lite, `lang`, the `<<meta>>` guard); `meta.cards` give the
   "Add to my cards" chips as before. A `practice` message is a centred caption divider (`practiceLine`): "Spelling finished · 25 words · 8 min"
   (plan kinds `today_spelling`, `more_new_words`), "Practice finished · N words · M min" otherwise, "Stopped after 9 of 25" for `stopped`; the numbers
-  are the result's `total` (items the plan gave), `done` and `seconds` (at least 1 min).
+  are the result's `total` (the different cards the plan gave), `done` (of those, the cards answered) and `seconds` (at least 1 min).
 - **Usage**: under an answer whose `meta.usage` (or the `done` line's `usage`) has `tool_rounds` > 0 or tokens, a caption "Looked at your data 3
   times", plus "3 calls · 18,400 tokens" when tokens are counted (`usageParts`).
 - **Suggestions**: `meta.suggestions` of the newest answer (texts or `{ text }`, at most 4) as a "What next?" card of outlined buttons (the first
@@ -69,7 +74,7 @@ shows the translator notice. A plain JSON body (a company computer) is taken as 
 `SeriesSession` (Learn.jsx) runs the plan of `plans/start` (`{ id, steps: [{ mode, cards }] }`) in Learn's mode page (phone) or the right pane
 (computer), with the existing exercises and `POST /cards/:id/answer` (grading, FSRS and counters unchanged). `learn-series.mjs`:
 
-- **Exercise per card** (`seriesExercise`): `spell` and `retest` spell a word, a sentence gets Fill the gap; `fill` takes a sentence, or a word
+- **Exercise per card** (`seriesExercise`): `spell`, `review` (the step of a Review plan; title "Daily review") and `retest` spell a word, a sentence gets Fill the gap; `fill` takes a sentence, or a word
   inside its own `context` (the word is the gap, `exerciseCard` gives the exercise the sentence with `card.gap`; the answer stays the word card's),
   else the word is spelled; `dictation` only where the page can speak, else the step is left out. Build the sentence stays hidden.
 - **Misses come back** (`seriesAnswer`): a card missed outside the retest goes into the retest step when the plan has one (each card once; the
@@ -79,8 +84,9 @@ shows the translator notice. A plain JSON body (a company computer) is taken as 
   ("7 / 9 · from your chat" for a one-step plan); the chip "Back to chat when done"; the progress bar is the share answered.
 - **Leaving** (back arrow, the back button, Escape: `leaveView` in Learn calls the series) asks nothing; the answers are kept. Leaving or the end
   returns to the coach with `{ kind: 'chat', result, planKind }`; the coach posts `practice-result` once (`seriesResult`: `plan_id`,
-  `message_uid`, `steps: [{ mode, total, done, right }]`, `done` / `total` / `right` of the items the plan gave, `missed: [{ en, typed }]` with the
-  first wrong typing, `seconds`, `stopped: true` when left early) and shows its divider while her reply streams in. Nothing answered: nothing is
+  `message_uid`, `proposal_id` and `kind` of the plan card, `steps: [{ mode, total, done, right }]` in items, `total` / `done` / `right` in different
+  cards of the items the plan gave (a word asked in Spell and again in Fill the gap is one word; right: answered there and never wrong there),
+  `missed: [{ en, typed }]` with the first wrong typing, `seconds`, `stopped: true` when left early) and shows its divider while her reply streams in. Nothing answered: nothing is
   posted.
 
 ## Menu and Earlier chats
@@ -104,5 +110,6 @@ learning settings (shared, synced); the first three are on unless false.
 
 `test/h5-learn-coach.test.js` (the series: exercises, steps, the retest, misses at the end, leaving, the result; the stream lines, merging, the
 cards, the divider, suggestions, Remembered, notes, usage) and `scripts/test-h5-learn-coach-browser.cjs` (390x844 touch and 1440x900 against a
-stub of the contract; an engine without the coach keeps the old chat). The old chat's own test (`scripts/test-h5-learn-chat-browser.cjs`) runs
+stub of the contract; a company computer whose home is away; an engine without the coach keeps the old chat), and end to end with the real server
+`scripts/test-h5-learn-coach-e2e-browser.cjs` (see "Tests" in [learn-english-coach.md](learn-english-coach.md)). The old chat's own test (`scripts/test-h5-learn-chat-browser.cjs`) runs
 against a stub without the coach route.

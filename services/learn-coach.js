@@ -280,17 +280,29 @@ function createLearnCoach({
     const rows = allMessages(owner).filter(row => row.at > summary.covers_at);
     const total = rows.reduce((sum, row) => sum + modelMessage(row).content.length, 0);
     if (total <= budget) return false;
+    // The batch: the oldest messages until the rest fits in 60% of the window, at most MAX_FOLD_INPUT characters of input (everything folded is
+    // read by the model: a longer backlog is folded over the next sends, one batch each).
+    const lineOf = row => `${row.role === 'assistant' ? 'Coach' : row.role === 'practice' ? 'Practice' : 'Person'}: ${cut(row.text, 2000)}`;
     let left = total;
+    let size = 0;
     const batch = [];
     for (const row of rows) {
       if (left <= budget * 0.6) break;
+      const length = lineOf(row).length + 1;
+      if (batch.length && size + length > MAX_FOLD_INPUT) break;
       batch.push(row);
+      size += length;
       left -= modelMessage(row).content.length;
     }
-    // Never end the batch on a question: its answer goes with it.
-    while (batch.length < rows.length && batch.length && batch[batch.length - 1].role !== 'assistant') batch.push(rows[batch.length]);
-    let input = batch.map(row => `${row.role === 'assistant' ? 'Coach' : row.role === 'practice' ? 'Practice' : 'Person'}: ${cut(row.text, 2000)}`).join('\n');
-    if (input.length > MAX_FOLD_INPUT) input = input.slice(input.length - MAX_FOLD_INPUT);
+    // Never end the batch on a question: its answer goes with it (or, past the input cap, the question waits for the next batch).
+    while (batch.length < rows.length && batch.length && batch[batch.length - 1].role !== 'assistant') {
+      const next = rows[batch.length];
+      if (size + lineOf(next).length + 1 > MAX_FOLD_INPUT + 2000) break;
+      batch.push(next);
+      size += lineOf(next).length + 1;
+    }
+    while (batch.length > 1 && batch[batch.length - 1].role !== 'assistant') batch.pop();
+    const input = batch.map(lineOf).join('\n');
     const system = [
       'You keep the running summary of a conversation between an English coach and a learner. Update the summary with the new messages.',
       `Facts only, at most ${merge.MAX_SUMMARY} characters, plain sentences: goals, progress, questions asked, conclusions and agreements. Never copy raw text, journal entries or secrets.`,
@@ -573,7 +585,8 @@ function createLearnCoach({
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new LearnError('Invalid practice result', 400);
     const practice = merge.cleanPractice(body);
     if (!practice.total) throw new LearnError('Invalid practice result', 400);
-    const found = findProposal(owner, body.message_uid, body.proposal_id, false);
+    // The plan card it came from: by its id, or (a page that does not send it) the only practice card of that answer.
+    const found = findProposal(owner, body.message_uid, body.proposal_id, false) || onlyPractice(owner, body.message_uid);
     const title = found && found.proposal.kind === 'practice' ? found.proposal.plan.title : '';
     if (!practice.kind && found && found.proposal.kind === 'practice') practice.kind = found.proposal.plan.kind;
     begin(owner);
@@ -613,6 +626,12 @@ function createLearnCoach({
     const proposal = meta && Array.isArray(meta.proposals) ? meta.proposals.find(item => item.id === id) : null;
     if (!proposal) { if (must) throw new LearnError('This proposal was not found', 404); return null; }
     return { row, meta, proposal };
+  }
+  function onlyPractice(owner, messageUid) {
+    const row = messageRow(owner, messageUid);
+    const meta = row && row.role === 'assistant' ? merge.parseMeta(row.meta) : null;
+    const plans = meta && Array.isArray(meta.proposals) ? meta.proposals.filter(item => item.kind === 'practice') : [];
+    return plans.length === 1 ? { row, meta, proposal: plans[0] } : null;
   }
   function setState(owner, found, state) {
     const proposals = found.meta.proposals.map(item => (item.id === found.proposal.id ? { ...item, state, state_at: stamp() } : item));

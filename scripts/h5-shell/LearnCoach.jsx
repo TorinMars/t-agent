@@ -20,20 +20,23 @@ import { Icon } from './Icons.jsx';
 import { SwitchRow } from './Form.jsx';
 import { Fmt, TranslatorNotice, shortDate } from './Learn.jsx';
 import { Bubble, CardChips, ChatView, HEADERS, readJson } from './LearnChat.jsx';
+import { NewReportLine } from './LearnMistakes.jsx';
 import { ndjsonLines } from './learn-model.mjs';
 import { cardContext, cardKey, enterSends } from './learn-chat.mjs';
 import { createSeries } from './learn-series.mjs';
 import {
   COACH_PAGE, COACH_STARTERS, COACH_TEXT_MAX, NOTES_MAX, NOTE_MAX, NO_TOOLS, STATUS_TEXT, STEP_LABELS, UNDO_MS, cardSections, cardsAction, chipList, cleanNote,
   coachLine, mergeCoach, metaOf, noteLine, planCaption, planOf, practiceLine, practiceOf, proposalType, proposalsOf, rememberedLine, rememberedOf,
-  reminderLine, settingRows, suggestionsOf, usageOf, usageParts, zoneLabel,
+  reminderLine, screenView, screensOf, settingRows, suggestionsOf, usageOf, usageParts, zoneLabel,
 } from './learn-coach.mjs';
 
 // The English coach ("Learn English: the coach, the page" in docs/design/learn-english-coach-page.md): ONE continuous conversation with the coach
-// behind the home entry `#h5-learn-mode-chat` (the server: GET /api/learn/coach, POST /coach/send …). Her answers stream in; proposal cards wait for a
-// tap (a practice plan with Start, settings, cards, a reminder, a note to remember); a practice series runs in Learn's mode page (Learn.jsx
-// `SeriesSession`) and comes back here with its result, which she answers. An engine without the coach (its GET answers 404) keeps the old English
-// chat (LearnChat.jsx) unchanged. No chats list and no New chat; the menu has Reset the summary, Earlier chats (read-only) and Coach settings.
+// that is the whole Learn page when the engine has it (the server: GET /api/learn/coach, POST /coach/send …). Her answers stream in; proposal cards
+// wait for a tap (a practice plan with Start, settings, cards, a reminder, a note to remember); the buttons of open_screen open Learn's other screens
+// (Mistakes, Progress, Your material, Learn settings, How learning works, a practice mode), whose back returns here; a practice series runs in
+// Learn's mode page (Learn.jsx `SeriesSession`) and comes back here with its result, which she answers. `back` closes Learn. An engine without the
+// coach (its GET answers 404) keeps the old English chat (LearnChat.jsx) and the Learn home unchanged. No chats list and no New chat; the menu has
+// Reset the summary, Earlier chats (read-only) and Learn settings (the way in to the settings while she cannot answer).
 
 const ERROR_STOPPED = 'The answer stopped before it was complete.';
 const NO_TRANSLATOR = 'Translation service not configured yet';
@@ -114,7 +117,7 @@ export function CoachView(props) {
 // One practice result is posted once, also when the view is drawn again (`view.seq`).
 const posted = new Set();
 
-function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech }) {
+function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech, covered = false }) {
   const [messages, setMessages] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loaded, setLoaded] = useState({ state: 'loading', error: '' });
@@ -166,12 +169,13 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   }, [reloads]); // eslint-disable-line react-hooks/exhaustive-deps -- read again on Try again
   useEffect(() => { if (keys && input.current) input.current.focus({ preventScroll: true }); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- on open
   // On a phone the bottom navigation steps aside while the chat is open (BottomNav.jsx `state.learnCoach`): the input sits at the bottom and the
-  // header's back arrow returns ("The conversation" in docs/design/learn-english-coach-page.md).
+  // header's back arrow returns ("The conversation" in docs/design/learn-english-coach-page.md). A screen she opened over her (`covered`, a phone)
+  // keeps the bar like every other Learn page.
   useEffect(() => {
-    if (!phone || !ui || typeof ui.set !== 'function') return undefined;
+    if (!phone || covered || !ui || typeof ui.set !== 'function') return undefined;
     ui.set({ learnCoach: true });
     return () => ui.set({ learnCoach: false });
-  }, [phone, ui]);
+  }, [phone, ui, covered]);
 
   const loadOlder = async () => {
     if (older || !hasMore || !messages.length) return;
@@ -265,6 +269,8 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the view opens with a result
 
   const busy = Boolean(pending);
+  const summary = data && data.summary;
+  const newReport = summary && summary.new_report && summary.new_report.uid ? summary.new_report : null;
   const blocked = busy || !translator || Boolean(away);
 
   // ── the proposal cards ──
@@ -367,7 +373,9 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
     }
   };
   const earlier = () => { setMenu(null); open(phone ? { kind: 'chats', readOnly: true, parent: { kind: 'chat' } } : { kind: 'oldchat', parent: { kind: 'chat' } }); };
-  const coachSettings = () => { setMenu(null); open({ kind: 'settings', focus: 'coach', parent: { kind: 'chat' } }); };
+  const learnSettings = () => { setMenu(null); open({ kind: 'settings', parent: { kind: 'chat' } }); };
+  // A button of open_screen: the screen's view, whose back returns to the coach.
+  const openScreen = name => { const next = screenView(name, speech || {}); if (next) open({ ...next, parent: { kind: 'chat' } }); };
 
   const lastAnswer = [...messages].reverse().find(one => one.role !== 'practice');
   // "What next?" of her newest answer: a strip of chips right above the input, not in the message list.
@@ -420,6 +428,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
                   <UsageLine usage={usageOf(item)} />
                   <CardChips message={{ ...item, cards: meta.cards }} added={added} adding={adding} error={cardError && cardError.uid === item.uid ? cardError.message : ''} onAdd={addCard} />
                   {proposalsOf(item, states).map(proposal => <ProposalCard key={proposal.id} proposal={proposal} {...cardProps(item)} />)}
+                  <ScreenButtons list={screensOf(item, speech || {})} onOpen={openScreen} touch={!keys} />
                   {rememberedLines(item, rememberedOf(item))}
                 </Box>
               );
@@ -434,6 +443,9 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
             {failed && failed.local.role === 'user' ? <Bubble role="user" text={failed.local.text} /> : null}
             {failed && failed.local.role === 'practice' ? <PracticeDivider result={practiceOf(failed.local)} /> : null}
           </Box>
+          {/* A new weekly mistake report (the summary's `new_report`): with no home, the coach shows its notice under the newest message; View opens
+              the report, whose back returns here. */}
+          {newReport ? <NewReportLine report={newReport} onView={() => open({ kind: 'report', uid: newReport.uid, parent: { kind: 'chat' } })} /> : null}
           {failed ? (
             <Alert severity="error" id="h5-learn-coach-error" role="alert" action={<Button color="inherit" size="small" id="h5-learn-coach-retry" disabled={busy} onClick={() => run(failed.url, failed.body, failed.local)}>{t('Try again')}</Button>}>
               {failed.message}
@@ -468,7 +480,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
     <Menu id="h5-learn-coach-menu" anchorEl={menu} open={Boolean(menu)} onClose={() => setMenu(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
       <MenuItem id="h5-learn-coach-reset" onClick={resetSummary}>{t('Reset the summary')}</MenuItem>
       <MenuItem id="h5-learn-coach-earlier" onClick={earlier}>{t('Earlier chats')}</MenuItem>
-      <MenuItem id="h5-learn-coach-settings-open" onClick={coachSettings}>{t('Coach settings')}</MenuItem>
+      <MenuItem id="h5-learn-coach-settings-open" onClick={learnSettings}>{t('Learn settings')}</MenuItem>
     </Menu>
   );
   if (phone) {
@@ -476,8 +488,9 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
       <>
         <AppBar position="static" color="default" enableColorOnDark elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
           <Toolbar disableGutters sx={{ minHeight: 56, px: 0.5, gap: 0.5 }}>
-            <IconButton id="h5-learn-back" onClick={back} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
-            <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ flex: '1 1 auto', minWidth: 0, fontWeight: 500 }}>{t('English chat')}</Typography>
+            {/* Ids of her own: on a phone a screen she opens lies over her with its own #h5-learn-back and title. */}
+            <IconButton id="h5-learn-coach-back" onClick={back} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
+            <Typography id="h5-learn-coach-title" variant="subtitle1" component="h2" noWrap sx={{ flex: '1 1 auto', minWidth: 0, fontWeight: 500 }}>{t('English chat')}</Typography>
             {moreButton}
           </Toolbar>
         </AppBar>
@@ -543,6 +556,19 @@ function Suggestions({ list, disabled, onPick, phone, touch }) {
         <Chip key={text} className="h5-learn-coach-suggestion" variant="outlined" color={index ? 'default' : 'primary'} disabled={disabled} onClick={() => onPick(text)}
           label={text} translate="no"
           sx={{ flex: '0 0 auto', scrollSnapAlign: 'start', height: touch ? 44 : 32, borderRadius: touch ? '22px' : '16px', maxWidth: phone ? '85%' : 'none', typography: 'body2' }} />
+      ))}
+    </Box>
+  );
+}
+
+// The buttons of open_screen under an answer: outlined buttons with the screen's icon and name (44px high for touch input), each opens that screen.
+function ScreenButtons({ list, onOpen, touch }) {
+  if (!list.length) return null;
+  return (
+    <Box className="h5-learn-coach-screens" sx={{ alignSelf: 'flex-start', display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+      {list.map(screen => (
+        <Button key={screen.name} variant="outlined" className="h5-learn-coach-screen" data-screen={screen.name} startIcon={<Icon name={screen.icon} size={18} />}
+          onClick={() => onOpen(screen.name)} sx={{ minHeight: touch ? 44 : 36 }}>{t(screen.label)}</Button>
       ))}
     </Box>
   );

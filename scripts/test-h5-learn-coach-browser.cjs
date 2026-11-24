@@ -3,12 +3,15 @@
 // with `before`, `has_more`, `tools_ok`), POST /coach/send and /coach/practice-result (NDJSON: `status`, `delta`, `proposals`, `remembered`, `done`
 // with the stored messages, `tools` and `usage`), /coach/proposals/:id/run|cancel, /coach/undo, /coach/plans/start, /coach/notes, /coach/summary/reset;
 // answers go to the existing POST /cards/:id/answer. No model is ever called; one answer is fed piece by piece through a fetch stand-in.
-// - 390x844 (touch): the home entry; the chat without the bottom navigation and with a message list of at least 55% of the window; the conversation with older pages read when scrolled to the top; a streamed answer with the status line, the
+// - 390x844 (touch): Learn is only the coach (no home; her back arrow closes Learn); the chat without the bottom navigation and with a message list of at least 55% of the window; the conversation with older pages read when scrolled to the top; a streamed answer with the status line, the
 //   plan card in one row and the usage line (one line, opened by a tap); Start runs the series (Spell; a miss comes back at the end) and returns with the result and her reply; the
 //   mistakes series (Spell, Fill the gap, Dictation left out without speech output, the retest) with its header; leaving early; the settings,
-//   cards and reminder cards (Cancel, run, Undo); the Remembered line and its Undo; suggestions as a strip of chips above the input; "tools: false"; the menu; Coach settings (switches,
-//   the notes edited and deleted with Undo, Save tokens, Reset the summary); Earlier chats read-only.
-// - 1440x900 (mouse): the coach in the right pane, the series in the same pane and back, Escape leaves a series early, Earlier chats read-only.
+//   cards and reminder cards (Cancel, run, Undo); the Remembered line and its Undo; suggestions as a strip of chips above the input; "tools: false"; the buttons of open_screen
+//   (Mistakes, Progress, How learning works) whose back returns to her; the menu with Learn settings (the coach group: switches, the notes edited and
+//   deleted with Undo, Save tokens, Reset the summary); Earlier chats read-only.
+// - 1440x900 (mouse): the coach fills the page (no home column), the series in the same place and back, Escape leaves a series early, a screen
+//   button and a link (/h5?learn=progress) open a screen whose × returns to her, Earlier chats read-only, Escape from her closes Learn.
+// - A company computer whose home is away: the coach says so; the menu still opens Learn settings.
 // - An engine without the coach (GET /coach answers 404): the old English chat, unchanged.
 // H5_SHOT_DIR=<dir> saves learn-coach-*.png.
 const { chromium } = require('playwright');
@@ -79,6 +82,8 @@ function coachMock({ coach = true, away = '' } = {}) {
       mock.notes.push(note);
       return { lines: [{ delta: 'Good to know.' }, { type: 'remembered', note }], answer: answerOf('Good to know. We can practise interview answers.') };
     }
+    if (/show my mistakes/i.test(text)) return { lines: [{ delta: 'Here are your mistakes and your progress.' }], answer: answerOf('Here are your mistakes and your progress.', { screens: ['mistakes', 'progress', 'dictation'] }) };
+    if (/how does learning work/i.test(text)) return { lines: [{ delta: 'It is all explained here.' }], answer: answerOf('It is all explained here.', { screens: ['how'] }) };
     if (/tools off/i.test(text)) return { lines: [{ delta: 'From the summary: 12 due.' }], answer: answerOf('From the summary: 12 due.'), tools: false };
     return { lines: [{ delta: 'Sure.' }], answer: answerOf('Sure.') };
   };
@@ -91,6 +96,8 @@ function coachMock({ coach = true, away = '' } = {}) {
     if (p === '/api/learn/chats' && method === 'GET') return { chats: [{ uid: 'c1', title: 'Scheduling words', journal: false, journal_by: '', created_at: '2026-11-19T02:00:00.000Z', updated_at: '2026-11-19T02:05:00.000Z', count: 2 }, { uid: 'c2', title: 'A slow deploy', journal: true, journal_by: 'model', created_at: '2026-11-18T02:00:00.000Z', updated_at: '2026-11-18T02:05:00.000Z', count: 2 }], translator: true };
     const old = p.match(/^\/api\/learn\/chats\/(c\d)$/);
     if (old) return { chat: { uid: old[1], title: old[1] === 'c1' ? 'Scheduling words' : 'A slow deploy', journal: false, count: 2 }, messages: [{ uid: `${old[1]}q`, role: 'user', text: 'How do I say it?', at: '2026-11-19T02:00:00.000Z' }, { uid: `${old[1]}a`, role: 'assistant', text: 'Say **we scheduled it**.', at: '2026-11-19T02:05:00.000Z', cards: [], mistakes: [] }] };
+    if (p === '/api/learn/mistakes') return { mistakes: [], total: 0 };
+    if (p === '/api/learn/reports' && method === 'GET') return { reports: [], since: { from: null, mistakes: 0, answers: 0 }, model: { ready: false, label: '', name: '' }, running: false, auto: true };
     const answered = p.match(/^\/api\/learn\/cards\/(\d+)\/answer$/);
     if (answered) return { card: { id: Number(answered[1]) } };
     if (!p.startsWith('/api/learn/coach')) return [404, { error: 'not mocked' }];
@@ -156,7 +163,7 @@ function coachFeedMock() {
   };
 }
 
-async function openPage(browser, { viewport, touch = false, coach = true, away = '' }) {
+async function openPage(browser, { viewport, touch = false, coach = true, away = '', at = '/h5' }) {
   const context = await browser.newContext({ viewport, timezoneId: 'Asia/Taipei', ...(touch ? { isMobile: true, hasTouch: true } : {}), ...(SHOTS ? { deviceScaleFactor: 3 } : {}) });
   const page = await context.newPage();
   const mock = coachMock({ coach, away });
@@ -208,7 +215,7 @@ async function openPage(browser, { viewport, touch = false, coach = true, away =
     if (p === '/api/attention' && method === 'GET') return json({ items: [], host: 'T01' });
     return json({ error: 'not mocked' }, 404);
   });
-  await page.goto(`${ORIGIN}/h5`);
+  await page.goto(`${ORIGIN}${at}`);
   return { context, page, mock };
 }
 
@@ -270,17 +277,11 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      // Learn opens straight in the coach; the back arrow returns to the home, where the card of the coach is.
-      await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor();
-      await page.locator('#h5-learn-back').tap();
-      const entry = page.locator('#h5-learn-mode-chat');
-      await entry.waitFor();
-      await waitFor(async () => (await text(page, '#h5-learn-mode-chat')).includes('Your coach'), 'the coach note on the home card');
-      assert.equal(await text(page, '#h5-learn-mode-chat .h5-learn-count'), '', 'one conversation: no count of chats');
-      await entry.tap();
-      await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor();
+      // Learn is only the coach: no home under her, no card or button of the old home anywhere.
+      await page.locator('#h5-learn[data-coach="only"] #h5-learn-coach[data-layout="phone"]').waitFor();
+      assert.equal(await page.locator('.h5-learn-home, #h5-learn-mode-chat, #h5-learn-today, #h5-learn-settings, #h5-learn-how, #h5-learn-material').count(), 0, 'no Learn home');
       await waitFor(async () => (await page.locator('#h5-learn-coach .h5-learn-chat-msg').count()) === 50, 'the newest page of 50 messages');
-      assert.equal(await text(page, '#h5-learn-view-title'), 'English chat');
+      assert.equal(await text(page, '#h5-learn-coach-title'), 'English chat');
       // The chat takes the whole window on a phone: no bottom navigation, the input at the bottom, the message list at least 55% of the height.
       await page.waitForFunction(() => !document.documentElement.hasAttribute('data-bnav'));
       assert.equal(await page.locator('#h5-bnav').isVisible(), false, 'no bottom navigation in the coach chat');
@@ -476,15 +477,43 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       await waitText(page, '#h5-learn-coach-no-tools', 'This service cannot look up your data; she answers from a short summary.');
       await settled(page);
 
-      // The menu: Reset the summary, Earlier chats, Coach settings.
+      // The buttons of open_screen: one per screen this browser can open (no Dictation without speech output), 44px high; each opens its screen,
+      // whose back arrow returns to her.
+      await say(page, 'Show my mistakes', touch);
+      await page.locator('.h5-learn-coach-screens').waitFor();
+      await settled(page);
+      assert.deepEqual(await texts(page, '.h5-learn-coach-screen'), ['Mistakes', 'Progress']);
+      assert.ok((await page.locator('.h5-learn-coach-screen').first().boundingBox()).height >= 44, 'a 44px button');
+      await shot(page, 'learn-coach-screens.png');
+      for (const [screen, title] of [['mistakes', 'Mistakes'], ['progress', 'Progress']]) {
+        await page.locator(`.h5-learn-coach-screen[data-screen="${screen}"]`).tap();
+        await waitText(page, '#h5-learn-view-title', title);
+        // The screen slides in over her as a page of its own (she stays under it, so her conversation is kept).
+        assert.equal(await page.locator('#h5-learn-mode #h5-learn-view-title').isVisible(), true, `${title} over the coach`);
+        await page.locator('#h5-learn-back').tap();
+        await page.locator('#h5-learn-mode').waitFor({ state: 'detached' });
+        await page.locator('#h5-learn-coach').waitFor();
+        await settled(page);
+      }
+      await say(page, 'How does learning work?', touch);
+      await page.locator('.h5-learn-coach-screen[data-screen="how"]').waitFor();
+      await settled(page);
+      await page.locator('.h5-learn-coach-screen[data-screen="how"]').tap();
+      await waitText(page, '#h5-learn-view-title', 'How learning works');
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-coach').waitFor();
+      await settled(page);
+
+      // The menu: Reset the summary, Earlier chats, Learn settings (no other way in to the screens).
       await page.locator('#h5-learn-coach-more').tap();
-      assert.deepEqual(await texts(page, '#h5-learn-coach-menu .MuiMenuItem-root'), ['Reset the summary', 'Earlier chats', 'Coach settings']);
+      assert.deepEqual(await texts(page, '#h5-learn-coach-menu .MuiMenuItem-root'), ['Reset the summary', 'Earlier chats', 'Learn settings']);
       await page.locator('#h5-learn-coach-reset').tap();
       await waitFor(() => mock.of('POST', /summary\/reset$/).length === 1, 'the summary is reset');
 
-      // Coach settings: the group, its switches (synced learn settings), the notes edited and deleted with Undo.
+      // Learn settings with the coach group: its switches (synced learn settings), the notes edited and deleted with Undo.
       await page.locator('#h5-learn-coach-more').tap();
       await page.locator('#h5-learn-coach-settings-open').tap();
+      await waitText(page, '#h5-learn-view-title', 'Learn settings');
       await page.locator('#h5-learn-coach-settings').waitFor();
       await waitFor(async () => (await page.locator('.h5-learn-coach-note').count()) === 2, 'the notes');
       assert.equal(await text(page, '#h5-learn-coach-notes-count'), '2 of 40 notes. Tap a line to edit it, × deletes it (with Undo). Secrets such as passwords are never kept.');
@@ -528,11 +557,15 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       await page.locator('#h5-learn-chats .h5-learn-chat-row').first().waitFor();
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-coach').waitFor();
-      // The back arrow of the coach returns to the Learn home, where the bottom navigation is back.
-      await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode-chat').waitFor();
+      // The back arrow of the coach closes Learn: the terminal and the bottom navigation are back, and no home was in between.
+      await page.locator('#h5-learn-coach-back').tap();
+      await page.locator('#h5-learn').waitFor({ state: 'detached' });
       await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
-      assert.equal(await page.locator('#h5-bnav').isVisible(), true, 'the bottom navigation is back on the Learn home');
+      assert.equal(await page.locator('#h5-bnav').isVisible(), true, 'the bottom navigation is back');
+      assert.equal(await page.locator('.h5-learn-home').count(), 0);
+      // The bottom navigation opens her again.
+      await page.locator('#h5-bnav-learn').tap();
+      await page.locator('#h5-learn[data-coach="only"] #h5-learn-coach').waitFor();
       await context.close();
     }
 
@@ -541,19 +574,22 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       const touch = false;
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-chat').click();
-      await page.locator('#h5-learn .h5-learn-pane #h5-learn-coach[data-layout="wide"]').waitFor();
+      // The coach fills the page right of the rail: no home column.
+      await page.locator('#h5-learn[data-coach="only"] .h5-learn-pane #h5-learn-coach[data-layout="wide"]').waitFor();
       await settled(page);
+      assert.equal(await page.locator('.h5-learn-home, #h5-learn-mode-chat').count(), 0, 'no Learn home');
+      const fill = await page.evaluate(() => ({ learn: document.getElementById('h5-learn').getBoundingClientRect(), coach: document.getElementById('h5-learn-coach').getBoundingClientRect() }));
+      assert.ok(Math.abs(fill.coach.width - fill.learn.width) <= 1 && Math.abs(fill.coach.left - fill.learn.left) <= 1, `the coach fills the page (${fill.coach.width} of ${fill.learn.width})`);
       await page.locator('#h5-learn-coach-input').click();
       await page.keyboard.type("Give me today's spelling practice");
       await page.keyboard.press('Enter');
       const card = page.locator('.h5-learn-coach-card[data-id="p-spell"]');
       await card.waitFor();
       await shot(page, 'learn-coach-desktop.png');
-      // The series opens in the right pane; the home stays.
+      // The series takes the coach's place.
       await card.locator('.h5-learn-coach-start').click();
       await page.locator('#h5-learn .h5-learn-pane #h5-learn-series').waitFor();
-      assert.equal(await page.locator('#h5-learn .h5-learn-home').isVisible(), true);
+      assert.equal(await page.locator('#h5-learn .h5-learn-home, #h5-learn-coach').count(), 0);
       assert.equal(await subtitle(page, false), '1 / 3 · from your chat');
       for (const one of SPELLING) await answer(page, mock, one.en, touch);
       await page.locator('.h5-learn-coach-divider', { hasText: 'Spelling finished · 3 words · 1 min' }).waitFor();
@@ -577,6 +613,33 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       assert.equal(await page.locator('#h5-learn-chat-input, #h5-learn-chat-new').count(), 0);
       await page.locator('#h5-learn-back').click();
       await page.locator('#h5-learn-coach').waitFor();
+      await settled(page);
+      // A screen button opens Mistakes in the page; its × returns to her.
+      await page.locator('#h5-learn-coach-input').click();
+      await page.keyboard.type('Show my mistakes');
+      await page.keyboard.press('Enter');
+      await page.locator('.h5-learn-coach-screen[data-screen="mistakes"]').waitFor();
+      await settled(page);
+      await page.locator('.h5-learn-coach-screen[data-screen="mistakes"]').click();
+      await waitText(page, '#h5-learn-view-title', 'Mistakes');
+      await shot(page, 'learn-coach-desktop-mistakes.png');
+      await page.locator('#h5-learn-back').click();
+      await page.locator('#h5-learn-coach').waitFor();
+      await settled(page);
+      // Escape from the coach closes Learn.
+      await page.locator('#h5-learn-coach-input').blur();
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-learn').waitFor({ state: 'detached' });
+      await context.close();
+    }
+
+    // ── A link into Learn (/h5?learn=progress): Progress opens, its × returns to the coach ──
+    {
+      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, at: '/h5?learn=progress' });
+      await waitText(page, '#h5-learn-view-title', 'Progress');
+      assert.equal(await page.evaluate(() => location.search), '', 'the link is taken out of the address');
+      await page.locator('#h5-learn-back').click();
+      await page.locator('#h5-learn[data-coach="only"] #h5-learn-coach').waitFor();
       await context.close();
     }
 
@@ -584,15 +647,18 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
     {
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, away: 'offline' });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-chat').click();
       await waitText(page, '#h5-learn-coach-away', 'Your English coach is on a normal computer, which cannot be reached right now');
       assert.equal(await page.locator('#h5-learn-coach-start, #h5-learn-coach-no-translator').count(), 0, 'no starters and no translator notice while away');
       await page.locator('#h5-learn-coach-input').fill('Hello');
       assert.equal(await page.locator('#h5-learn-coach-send').isDisabled(), true, 'nothing can be sent');
+      // She cannot answer, but the menu still opens Learn settings.
+      await page.locator('#h5-learn-coach-more').click();
+      await page.locator('#h5-learn-coach-settings-open').click();
+      await waitText(page, '#h5-learn-view-title', 'Learn settings');
       await context.close();
     }
 
-    // ── An engine without the coach: the old English chat ──
+    // ── An engine without the coach: the Learn home and the old English chat, unchanged ──
     {
       const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, coach: false });
       await page.locator('#h5-nav-learn').click();

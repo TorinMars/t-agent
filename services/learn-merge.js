@@ -353,6 +353,8 @@ const PROPOSAL_KINDS = ['practice', 'settings', 'cards', 'reminder'];
 const PROPOSAL_STATES = ['open', 'done', 'cancelled', 'undone'];
 const PLAN_KINDS = ['today_spelling', 'review', 'mistakes_series', 'more_new_words', 'dictation', 'fill_gap'];
 const STEP_MODES = ['spell', 'fill', 'dictation', 'retest', 'review'];
+// The screens of Learn a coach answer can open with a button (the tool open_screen; "Screens the coach opens" in docs/design/learn-english-coach.md).
+const COACH_SCREENS = ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'review', 'practice', 'spell', 'dictation', 'fill', 'say'];
 const MAX_SUGGESTIONS = 4;
 const MAX_SUGGESTION = 60;
 const MAX_BATCH = 50;
@@ -464,6 +466,7 @@ function cleanCoachMeta(raw, text, role = 'assistant') {
   out.proposals = (Array.isArray(value.proposals) ? value.proposals : []).slice(0, 8).map(cleanProposal).filter(item => item && !seen.has(item.id) && seen.add(item.id));
   out.remembered = (Array.isArray(value.remembered) ? value.remembered : []).slice(0, 5).filter(note => note && typeof note.uid === 'string' && CHAT_UID.test(note.uid))
     .map(note => ({ uid: note.uid, text: oneLine(note.text, MAX_NOTE), until: noteUntil(note.until) }));
+  out.screens = [...new Set((Array.isArray(value.screens) ? value.screens : []).filter(screen => COACH_SCREENS.includes(screen)))].slice(0, 3);
   out.tools = value.tools !== false;
   if (value.usage && typeof value.usage === 'object') {
     const usage = {};
@@ -604,7 +607,7 @@ module.exports = {
   reportBody, reportFromPeer, reportToPeer, reportWins, chatFromPeer, chatToPeer, MAX_QUESTION, MAX_CHAT_TEXT,
   cleanMeta, convoTitle, convoDeleted, convoFromPeer, convoToPeer, mergeConvo, convoMessageFromPeer, convoMessageToPeer, parseMeta,
   MAX_CONVO_QUESTION, MAX_CONVO_ANSWER, MAX_CONVO_TITLE, MAX_META_CARDS, MAX_META_MISTAKES, MAX_MISTAKE_TAG,
-  COACH_UID, PROPOSAL_KINDS, PROPOSAL_STATES, PLAN_KINDS, STEP_MODES, COACH_CHANGES, MAX_NOTE, MAX_SUMMARY, MAX_BATCH, cleanChanges, cleanPlan, cleanProposal, cleanPractice,
+  COACH_UID, COACH_SCREENS, PROPOSAL_KINDS, PROPOSAL_STATES, PLAN_KINDS, STEP_MODES, COACH_CHANGES, MAX_NOTE, MAX_SUMMARY, MAX_BATCH, cleanChanges, cleanPlan, cleanProposal, cleanPractice,
   cleanCoachMeta, mergeCoachMeta, looksSecret, noteUntil, noteText, noteFromPeer, noteToPeer, noteWins, summaryFromPeer, summaryToPeer, mergeSummary,
   CONTENT, STATE, PICKED, FIELDS, KEPT_SETTINGS, CONTEXT_SOURCES,
 };

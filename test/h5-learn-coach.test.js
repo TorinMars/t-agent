@@ -222,3 +222,21 @@ test('a Review plan (step mode review) runs: words are spelled, sentences get th
   assert.deepEqual(state.steps.map(step => [step.mode, step.items.map(one => one.exercise)]), [['review', ['spell', 'fill']]]);
   assert.equal(seriesCurrent(state).card.en, 'merge');
 });
+
+test('the screens a coach answer opens: each once, at most 3, only those this browser can run; the views of the links', async () => {
+  const { screensOf, screenView, COACH_SCREENS } = await coach();
+  const message = { meta: { screens: ['mistakes', 'mistakes', 'dictation', 'admin', 'progress', 'how', 'settings'] } };
+  assert.deepEqual(screensOf(message).map(one => one.name), ['mistakes', 'progress', 'how'], 'Dictation needs speech output');
+  assert.deepEqual(screensOf(message, { tts: true }).map(one => one.name), ['mistakes', 'dictation', 'progress']);
+  assert.deepEqual(screensOf({ meta: JSON.stringify({ screens: ['material'] }) })[0], { name: 'material', label: 'Your material', icon: 'learnMaterial' });
+  assert.deepEqual(screensOf({ meta: {} }), []);
+  assert.deepEqual(screenView('coach'), { kind: 'chat' });
+  assert.deepEqual(screenView('review'), { kind: 'session', mode: 'review' });
+  assert.deepEqual(screenView('practice'), { kind: 'session', mode: 'mixed' });
+  assert.equal(screenView('say'), null);
+  assert.deepEqual(screenView('say', { voice: true }), { kind: 'session', mode: 'say' });
+  assert.equal(screenView('toString'), null);
+  assert.equal(screenView('nope'), null);
+  // The same names as the server's allow-list.
+  assert.deepEqual(Object.keys(COACH_SCREENS), require('../services/learn-merge').COACH_SCREENS);
+});

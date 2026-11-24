@@ -4,6 +4,7 @@
 // `{"delta"}` lines and a last `{"done","chat","messages"}` or `{"error","status"}` line, or plain JSON from a company computer; PATCH and DELETE
 // /chats/:uid). Cards are added with POST /api/learn/cards. No model is ever called. A streamed answer the test feeds piece by piece goes through a
 // fetch stand-in (Playwright routes cannot keep a response open).
+// The engine here has no coach (GET /api/learn/coach answers 404): the old chat behind the home card of such an engine.
 // - 390x844 (touch): the home entry with its count (read from GET /chats when the summary has none); a new chat: the starter chips (three fill
 //   the input with the caret in place, two send with their topic), the privacy line; Enter on a touch screen never sends; a streamed answer whose
 //   first `chat` line names the chat, a trailing `<<meta>>` never shown, `done` replacing the temporary bubbles and naming the chat; the menu (mark

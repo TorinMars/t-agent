@@ -1,6 +1,7 @@
 // Learn: "Type it yourself" after every Spell answer and English input while spelling (scripts/h5-shell/Learn.jsx, learn-practice.mjs,
 // learn-input.mjs), in real Chromium with every route mocked. No model is ever called. See "Type it yourself" and "English input" in
-// docs/design/learn-spell-practice.md.
+// docs/design/learn-spell-practice.md. Learn is the coach (GET /api/learn/coach answers): Spell and Review are opened the way the coach opens them,
+// ui.actions.openLearn(name).
 // - 390x844 (touch, the page's letter keyboard): the row after a right answer (meaning layout), a wrong one, "I don't know" in the sentence layout and
 //   a phrase; the focus in the row with inputmode="none" and the keyboard open; a right letter kept, a wrong key shown in its slot in the error
 //   colour and not kept, "Not that letter", Backspace, the word typed in full counted ("Typed right 1 time", read out politely) and the row empty
@@ -55,6 +56,8 @@ function learnMock(spell) {
       return { cards: [] };
     }
     if (/^\/api\/learn\/cards\/\d+\/answer$/.test(p)) return { card: { ...NECESSARY, reps: 1 } };
+    // The coach: Learn is only her, and the screens open from her.
+    if (p === '/api/learn/coach' && method === 'GET') return { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     return [404, { error: 'not mocked' }];
   };
   mock.answers = () => mock.requests.filter(item => item.method === 'POST' && /\/answer$/.test(item.path)).map(item => ({ id: item.path.match(/cards\/(\d+)/)[1], ...item.body }));
@@ -168,6 +171,9 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
   el.dispatchEvent(new CompositionEvent('compositionend', { data: zh, bubbles: true }));
 }, [`Key${letter.toUpperCase()}`, NE]);
 
+// A screen of Learn opened the way the coach opens it (her buttons, the links /h5?learn=<name>).
+const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.openLearn(view), name);
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -176,7 +182,8 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true, spell: [NECESSARY, INCIDENT, EXPIRES, LOOK_UP] });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       assert.equal(await page.locator('.h5-learn-practice').count(), 0, 'no row before the answer');
       // Compact practice on a phone with the letter keyboard open: the header on one line (56px), three rows of 44px keys, Hide in the actions, and
@@ -292,7 +299,8 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 }, spell: [NECESSARY, INCIDENT, LATENCY, MERGE] });
       const cdp = await context.newCDPSession(page);
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-spell').click();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-spell-input').waitFor();
       await waitFor(async () => (await active(page)) === 'h5-learn-spell-input', 'the answer field has the focus');
       await page.keyboard.type('necessary');
@@ -381,7 +389,7 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
       await waitFor(() => mock.answers().length === 4, 'graded with 3');
       assert.equal(mock.answers()[3].grade, 'good');
       // Review uses the same exercise, so the same row.
-      await page.locator('#h5-learn-start').click();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-spell-input').waitFor();
       await waitFor(async () => (await active(page)) === 'h5-learn-spell-input', 'the review card has the focus');
       await page.keyboard.type('incident');
@@ -396,7 +404,8 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
       const cdp = await context.newCDPSession(page);
       const calls = () => page.evaluate(() => window.inputSourceCalls.slice());
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-spell').click();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-spell-input').waitFor();
       await waitFor(async () => (await calls()).length === 1, 'english on the focus');
       assert.deepEqual(await calls(), ['english']);
@@ -413,8 +422,8 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
       await page.waitForTimeout(300);
       assert.deepEqual(await calls(), ['english', 'restore', 'english']);
       assert.equal(await page.locator('#h5-learn-ime-notice').count(), 0, 'no notice in the app');
-      // Learn closes: restore at once.
-      await page.locator('#h5-learn-close').click();
+      // Learn closes (the rail's Learn again, ui.actions.closeLearn) with the focus in the row: restore at once.
+      await page.evaluate(() => window.H5UI.actions.closeLearn());
       await waitFor(async () => (await calls()).length === 4, 'restore when Learn closes');
       assert.deepEqual(await calls(), ['english', 'restore', 'english', 'restore']);
       await context.close();

@@ -186,6 +186,43 @@ export function suggestionsOf(message) {
   return out;
 }
 
+// The screens of Learn a coach answer opens with a button (the server's open_screen; "Screens the coach opens" in
+// docs/design/learn-english-coach-page.md), with the coach Learn has no other way in to them. `view`: the Learn view (Learn.jsx) it opens; a
+// practice mode `needs` speech output (tts) or a way to hear the person (voice). The names are the server's COACH_SCREENS (services/learn-merge.js).
+export const COACH_SCREENS = {
+  mistakes: { label: 'Mistakes', icon: 'learnMistakes', view: { kind: 'mistakes' } },
+  reports: { label: 'Mistake reports', icon: 'learnMistakes', view: { kind: 'reports' } },
+  progress: { label: 'Progress', icon: 'learnChart', view: { kind: 'progress' } },
+  material: { label: 'Your material', icon: 'learnMaterial', view: { kind: 'material' } },
+  settings: { label: 'Learn settings', icon: 'setting', view: { kind: 'settings' } },
+  how: { label: 'How learning works', icon: 'learnHow', view: { kind: 'how' } },
+  review: { label: 'Daily review', icon: 'learnHistory', view: { kind: 'session', mode: 'review' } },
+  practice: { label: 'Practice', icon: 'learnSpell', view: { kind: 'session', mode: 'mixed' } },
+  spell: { label: 'Spell the word', icon: 'learnSpell', view: { kind: 'session', mode: 'spell' } },
+  dictation: { label: 'Dictation', icon: 'learnDictation', view: { kind: 'session', mode: 'dictation' }, needs: 'tts' },
+  fill: { label: 'Fill the gap', icon: 'learnFill', view: { kind: 'session', mode: 'fill' } },
+  say: { label: 'Say it', icon: 'voice', view: { kind: 'session', mode: 'say' }, needs: 'voice' },
+};
+// The Learn view of a screen name (also the links /h5?learn=<name> and ui.actions.openLearn(name)), or null: an unknown name, or a mode this
+// browser cannot run. `coach` and `chat` are the coach itself.
+export function screenView(name, { tts = false, voice = false } = {}) {
+  if (name === 'chat' || name === 'coach') return { kind: 'chat' };
+  const screen = Object.prototype.hasOwnProperty.call(COACH_SCREENS, name) ? COACH_SCREENS[name] : null;
+  if (!screen || (screen.needs === 'tts' && !tts) || (screen.needs === 'voice' && !voice)) return null;
+  return { ...screen.view };
+}
+// The screen buttons of an answer (meta.screens), each once, at most 3, only those this browser can open: [{ name, label, icon }].
+export function screensOf(message, speech = {}) {
+  const list = metaOf(message).screens;
+  const out = [];
+  for (const name of Array.isArray(list) ? list : []) {
+    if (typeof name !== 'string' || out.some(one => one.name === name) || !screenView(name, speech)) continue;
+    out.push({ name, label: COACH_SCREENS[name].label, icon: COACH_SCREENS[name].icon });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 // The proposals of a message (meta.proposals), with the newest state the page knows (`states`: id -> state) put in.
 export function proposalsOf(message, states = {}) {
   const list = metaOf(message).proposals;

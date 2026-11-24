@@ -273,6 +273,37 @@ test('proposals: settings, cards (a removal on its own card), a reminder; run, c
   await assert.rejects(ctx.coach.runProposal('me', 'nope-nope-1', { message_uid: uid }), { statusCode: 404 });
 });
 
+test('open_screen: a button under the answer for an allowed screen (each once, at most 3); a bad screen is an error; the prompt asks for it; a no-tools answer names screens in its last line', async t => {
+  const ctx = setup(t, {
+    script: (request, index) => (index === 0 ? {
+      toolCalls: [
+        call('open_screen', { screen: 'mistakes' }, 'o1'), call('open_screen', { screen: 'mistakes' }, 'o2'), call('open_screen', { screen: 'admin' }, 'o3'),
+        call('open_screen', { screen: 'progress' }, 'o4'), call('open_screen', { screen: 'settings' }, 'o5'), call('open_screen', { screen: 'how' }, 'o6'),
+      ],
+    } : { content: [`Here they are.${meta({ suggestions: ['Show my progress'] })}`] }),
+  });
+  const result = await ctx.coach.send('me', { text: 'Show my mistakes' });
+  assert.deepEqual(result.message.meta.screens, ['mistakes', 'progress', 'settings']);
+  const results = ctx.provider.requests[1].messages.filter(item => item.role === 'tool').map(item => JSON.parse(item.content));
+  assert.equal(results[0].ok, true);
+  assert.equal(results[1].ok, true, 'the same screen twice is one button');
+  assert.match(results[2].error, /^screen must be one of mistakes, reports, progress/);
+  assert.match(results[5].error, /At most 3 screen buttons/);
+  assert.deepEqual(coachModule.TOOLS.find(tool => tool.name === 'open_screen').parameters.properties.screen.enum, ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'review', 'practice', 'spell', 'dictation', 'fill', 'say']);
+  assert.match(ctx.provider.requests[0].system, /call open_screen/);
+  assert.match(ctx.provider.requests[0].system, /Show my progress/);
+  assert.deepEqual(ctx.coach.view('me').messages[1].meta.screens, ['mistakes', 'progress', 'settings'], 'stored with the answer');
+  const other = await ctx.coach.send('me', { text: 'Thanks' });
+  assert.deepEqual(other.message.meta.screens, []);
+
+  const plain = setup(t, {
+    script: () => new ToolsUnsupportedError('no tools'),
+    converse: async (owner, system, messages, options) => { const text = `See them.${meta({ screens: ['mistakes', 'nope', 'how'] })}`; if (options.onDelta) options.onDelta(text); return text; },
+  });
+  const named = await plain.coach.send('me', { text: 'Show my mistakes' });
+  assert.deepEqual(named.message.meta.screens, ['mistakes', 'how']);
+});
+
 test('remember: a note at once with a remembered line and Undo; secrets, 40 notes and the memory switch are refused to the model', async t => {
   const ctx = setup(t, {
     script: (request, index) => (index === 0 ? { toolCalls: [call('remember', { text: 'Job interview in March, in English', until: '2027-03-31' }, 'r1'), call('remember', { text: 'My password is hunter2' }, 'r2')] } : { content: [`Good to know.${meta()}`] }),

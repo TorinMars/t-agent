@@ -36,6 +36,7 @@ import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMis
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
 import { CoachSettings, CoachView, useCoachSupport } from './LearnCoach.jsx';
+import { screenView } from './learn-coach.mjs';
 import { createSeries, exerciseCard, seriesAnswer, seriesCurrent, seriesDone, seriesProgress, seriesResult } from './learn-series.mjs';
 import { ProgressView } from './LearnProgress.jsx';
 import { gradeIntervals } from './learn-progress.mjs';
@@ -45,6 +46,9 @@ import { cleanTyped, createComposer, hasImeText, inputSourceBridge, isImeKey, ke
 // The Learn page (the "Learn" destination of the navigation rail and the bottom navigation; a chunk of its own, screen-learn.jsx). English practice
 // with the person's own material: the sentences sent with "Chinese -> English" and the words looked up in the chat (the server's /api/learn, see
 // docs/design/learn-english.md), plus an optional starter list.
+// - With the coach (an engine whose GET /api/learn/coach answers) the page is ONLY the coach, on a phone and a computer: no home; the modes,
+//   Mistakes, Progress, Your material, Learn settings and How learning works open from her and return to her ("Learn is the coach" in
+//   docs/design/learn-english-coach-page.md). The home below is that of an engine without the coach.
 // - Computer: a page right of the rail (like Settings): the home on the left (today's due cards, the goal, the streak, Start review, the practice modes
 //   with their counts, Mistakes, English chat, Your material, Learn settings) and the open mode on the right ("How learning works" while none is open). Escape closes
 //   the open mode, then the page; the back button closes the page (entry.jsx).
@@ -81,6 +85,8 @@ export const shortDate = iso => {
 // A phone page: from the top of the window to the bottom navigation, or to the top of the system keyboard while it is up (the bar is away then).
 const PHONE_ROOT = { top: 0, bottom: 'auto', height: 'calc(var(--h5-height, 100dvh) - var(--h5-bnav-space, 0px))', transform: 'translateZ(0)' };
 const PAPER = { backgroundImage: 'none', bgcolor: 'background.default' };
+// The view Learn shows with the coach while no other is open: the coach herself.
+const COACH_HOME = { kind: 'chat', seq: 0 };
 const modalOpen = () => [...document.body.children].some(el => el.classList && el.classList.contains('MuiModal-root') && !el.classList.contains('MuiModal-hidden') && el.id !== 'h5-learn' && el.id !== 'h5-learn-mode');
 
 export function LearnPage({ state, ui }) {
@@ -133,6 +139,14 @@ function Learn({ state, ui }) {
   const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats' | 'oldchat' | 'series' | 'progress', mode?, preset?, uid?, seq }
   const viewRef = useRef(null);
   viewRef.current = view;
+  // With the coach (the engine's GET /api/learn/coach answers) Learn is ONLY the coach: no home; every other screen is opened by the coach (her
+  // buttons, a series, a link) and returns to her, and her back arrow closes Learn ("Learn is the coach" in docs/design/learn-english-coach-page.md).
+  // An engine without the coach keeps the home. Until that is known (one request per page load) the page waits.
+  const coachSupport = useCoachSupport();
+  const coachOnly = coachSupport === true;
+  const coachOnlyRef = useRef(coachOnly);
+  coachOnlyRef.current = coachOnly;
+  const shown = coachOnly ? view || COACH_HOME : view;
   const close = () => ui.actions.closeLearn();
   const back = () => { setView(null); void data.reload(); };
   const open = next => setView({ ...next, seq: Date.now() });
@@ -141,32 +155,26 @@ function Learn({ state, ui }) {
   // Leaving a practice series (back arrow, back button, Escape) goes through the series, which posts what was answered and returns to the coach.
   const seriesLeave = useRef(null);
   // Back (the back button, Escape) from a view: a series ends, an earlier chat returns to its list (phone) or the coach, a view opened from the
-  // coach (its settings, its earlier chats) returns there; every other view goes to the home.
+  // coach (its settings, its earlier chats) returns there; every other view goes to the home (with the coach: to her; from her, Learn closes).
   const leaveView = () => {
     const now = viewRef.current;
-    if (!now) return;
+    if (!now || (now.kind === 'chat' && coachOnlyRef.current)) { close(); return; }
     if (now.kind === 'series' && seriesLeave.current) { seriesLeave.current(); return; }
     if (now.kind === 'oldchat') { open(phone ? { kind: 'chats', readOnly: true, parent: now.parent || { kind: 'chat' } } : now.parent || { kind: 'chat' }); return; }
     if (now.kind === 'chats' || (now.kind === 'settings' && now.parent && now.parent.kind === 'chat')) { open(now.parent || { kind: 'chat' }); return; }
     back();
   };
-  const common = { ui, phone, keys, speech, openTranslator, data, open, back, seriesLeave };
-  // Opened with a view (ui.actions.openLearn('chat'): the coach's link /h5?learn=coach): that view, once.
+  // The coach's own back arrow closes Learn when she is the page; the old English chat of an engine without her returns to the home.
+  const common = { ui, phone, keys, speech, openTranslator, data, open, back, seriesLeave, chatBack: coachOnly ? close : back };
+  // Opened with a view (ui.actions.openLearn(name), the links /h5?learn=coach | mistakes | progress …, learn-coach.mjs `screenView`): that view,
+  // once; its back returns to the coach (or the home without one). A practice mode this browser cannot run opens nothing more than Learn.
   const target = state.learnTarget;
   useEffect(() => {
-    if (!target || target.view !== 'chat') return;
-    open({ kind: 'chat' });
+    if (!target) return;
+    const next = screenView(target.view, speech);
+    if (next) open(next);
     ui.set({ learnTarget: null });
   }, [target && target.seq]); // eslint-disable-line react-hooks/exhaustive-deps -- once per link
-  // Opening Learn lands in the coach (one tap to the agent) when the engine has one; the back arrow still returns to the home, and a view the person
-  // opened first (a link, a card tapped before the support is known) is never replaced. Once per opening.
-  const coachSupport = useCoachSupport();
-  const landed = useRef(false);
-  useEffect(() => {
-    if (landed.current || coachSupport !== true) return;
-    landed.current = true;
-    if (!viewRef.current && !state.learnTarget) open({ kind: 'chat' });
-  }, [coachSupport]); // eslint-disable-line react-hooks/exhaustive-deps -- once per opening
   const input = useLearnInputState();
 
   // Computer: Escape closes the open mode, then the page (unless something above takes it); the focus goes into the page and back to the opener.
@@ -188,6 +196,43 @@ function Learn({ state, ui }) {
     };
   }, [phone]); // eslint-disable-line react-hooks/exhaustive-deps -- close and back read the store and the ref
 
+  if (coachSupport === null) {
+    // One request decides between the coach and the home: a quiet "Loading…" until it answers (no home that turns into the coach).
+    return phone ? (
+      <Dialog id="h5-learn-mode" open fullScreen onClose={close} aria-label={t('Learn English')} sx={PHONE_ROOT} slotProps={{ paper: { className: 'h5-learn-mode-page', sx: PAPER } }}>
+        <Typography id="h5-learn-loading" variant="body2" color="text.secondary" sx={{ p: 3 }}>{t('Loading…')}</Typography>
+      </Dialog>
+    ) : (
+      <Box id="h5-learn" role="region" aria-label={t('Learn English')} data-layout="wide"
+        sx={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: state.pane ? 0 : NAV_WIDTH, zIndex: 1255, bgcolor: 'background.default', color: 'text.primary', p: 3 }}>
+        <Typography id="h5-learn-loading" variant="body2" color="text.secondary">{t('Loading…')}</Typography>
+      </Box>
+    );
+  }
+  if (coachOnly) {
+    if (phone) return <LearnInput.Provider value={input}><CoachLearnPhone {...common} view={shown} leave={leaveView} close={close} /></LearnInput.Provider>;
+    // Computer: the coach fills the page right of the rail; a screen she opens takes its place (in the pane of a mode, at most 880px wide) until
+    // its back (×) returns to her.
+    const chat = shown.kind === 'chat' || shown.kind === 'chats' || shown.kind === 'oldchat';
+    return (
+      <LearnInput.Provider value={input}>
+      <Box ref={root} id="h5-learn" role="region" aria-label={t('Learn English')} data-layout="wide" data-coach="only"
+        sx={{ position: 'fixed', top: 0, right: 0, bottom: 0, left: state.pane ? 0 : NAV_WIDTH, zIndex: 1255, display: 'flex', bgcolor: 'background.default', color: 'text.primary' }}>
+        {chat ? (
+          <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex' }}>
+            {shown.kind === 'oldchat' ? <ChatView key={shown.seq} view={shown} readOnly {...common} />
+              : shown.kind === 'chats' ? <ChatView key={shown.seq} view={shown.parent || { kind: 'chat' }} {...common} />
+                : <CoachView key={shown.seq} view={shown} {...common} back={close} />}
+          </Box>
+        ) : (
+          <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', px: 4, py: 3, '@media (min-width: 1200px)': { '&:has(#h5-learn-ask[data-layout="side"])': { pr: `${ASK_WIDTH + 32}px` } } }}>
+            <Box sx={{ maxWidth: 880, mx: 'auto' }}><ViewBody key={shown.seq} view={shown} {...common} /></Box>
+          </Box>
+        )}
+      </Box>
+      </LearnInput.Provider>
+    );
+  }
   const home = <Home {...common} modes={modes} current={view && view.kind === 'session' ? view.mode : view && view.kind} />;
   if (!phone) {
     // The coach fills the pane (LearnCoach.jsx; the old English chat with its chats list on an engine without it); Earlier chats is a phone's screen,
@@ -314,6 +359,29 @@ function ImeNotice({ onOk, field }) {
   );
 }
 
+// The phone with the coach: the coach is the full-screen page (`#h5-learn`, where the home is without her) and a screen she opens slides in over
+// her (`#h5-learn-mode`, like a mode over the home), so each is a modal of its own and one back press closes one (back.mjs). Back (and Escape) on her closes Learn, on a screen
+// it goes through `leave` back to her. She stays drawn under a screen; a view of hers with a practice result (a new `seq`) draws her again.
+function CoachLearnPhone({ view, back, leave, close, ...common }) {
+  const chat = useRef(COACH_HOME);
+  if (view.kind === 'chat') chat.current = view;
+  const screen = view.kind === 'chat' ? null : view;
+  const last = useRef(null);
+  if (screen) last.current = screen;
+  return (
+    <>
+      <Dialog id="h5-learn" open fullScreen onClose={close} aria-labelledby="h5-learn-coach-title" data-coach="only" sx={PHONE_ROOT}
+        slotProps={{ paper: { className: 'h5-learn-page', sx: PAPER } }}>
+        <ViewBody key={chat.current.seq} view={chat.current} back={back} covered={Boolean(screen)} {...common} />
+      </Dialog>
+      <Dialog id="h5-learn-mode" open={Boolean(screen)} fullScreen onClose={leave} aria-labelledby="h5-learn-view-title" sx={PHONE_ROOT}
+        slots={{ transition: Slide }} slotProps={{ transition: { direction: 'left', onExited: () => { last.current = null; } }, paper: { className: 'h5-learn-mode-page', sx: PAPER } }}>
+        {last.current ? <ViewBody key={last.current.seq} view={last.current} back={back} {...common} /> : null}
+      </Dialog>
+    </>
+  );
+}
+
 function PhoneLearn({ view, close, home, back, leave, ...common }) {
   const last = useRef(null);
   if (view) last.current = view;
@@ -337,7 +405,7 @@ function PhoneLearn({ view, close, home, back, leave, ...common }) {
   );
 }
 
-function ViewBody({ view, phone, back, open, data, seriesLeave, ...common }) {
+function ViewBody({ view, phone, back, open, data, seriesLeave, chatBack, covered = false, ...common }) {
   // A report opened from the Mistakes page (or the list of reports) goes back there (`parent`); every other view back to the home.
   const frame = title => ({ phone, title, onBack: view.parent ? () => open(view.parent) : back });
   if (view.kind === 'session') {
@@ -354,7 +422,7 @@ function ViewBody({ view, phone, back, open, data, seriesLeave, ...common }) {
   if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} open={open} openTranslator={common.openTranslator} />;
   if (view.kind === 'reports') return <ReportsView frame={frame(t('Mistake reports'))} ui={common.ui} open={open} />;
   if (view.kind === 'report') return <ReportView frame={frame(t('Mistake report'))} view={view} ui={common.ui} open={open} data={data} />;
-  if (view.kind === 'chat') return <CoachView view={view} phone={phone} back={back} open={open} data={data} {...common} />;
+  if (view.kind === 'chat') return <CoachView view={view} phone={phone} back={chatBack || back} open={open} data={data} covered={covered} {...common} />;
   if (view.kind === 'oldchat') return <ChatView view={view} phone={phone} back={back} open={open} readOnly {...common} />;
   if (view.kind === 'chats') return <EarlierChats parent={view.parent} open={open} readOnly={Boolean(view.readOnly)} />;
   if (view.kind === 'progress') return <ProgressView frame={frame(t('Progress'))} />;

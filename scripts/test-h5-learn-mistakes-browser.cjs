@@ -1,6 +1,8 @@
 // The Mistakes page and the mistake reports of Learn (scripts/h5-shell/LearnMistakes.jsx), in real Chromium with every route mocked, /api/learn
 // following docs/design/learn-english.md ("Mistakes", "Mistake reports"). No model is ever called: POST /api/learn/reports is answered by the mock.
-// - 1440x900 (mouse): the one line on the Learn home for a new weekly report and its View; the report (range, summary, kinds as bars, findings with
+// The engine has the coach (GET /api/learn/coach answers), so Learn is only the coach and each screen is opened as the coach opens it
+// (ui.actions.openLearn('mistakes' | 'settings' …)); back returns to the coach.
+// - 1440x900 (mouse): the notice of a new weekly report in the coach and its View; the report (range, summary, kinds as bars, findings with
 //   cause, what to do and cards); opening it marks it seen (PUT report_seen); "Practise these N cards" finds the cards by text and starts a session;
 //   the Mistakes page: the Analyze card with the count since the last report, every wrong answer newest first with its mode chip and tag chip,
 //   Show more, Analyze (the body has only the page's language, the report opens), a model error shown in the card, All reports; the weekly switch in
@@ -61,6 +63,8 @@ function learnMock() {
     if (p === '/api/learn/summary') return { ...mock.summary, new_report: mock.summary.new_report && mock.summary.new_report.uid !== mock.settings.report_seen ? mock.summary.new_report : null };
     if (p === '/api/learn/settings' && method === 'GET') return mock.settings;
     if (p === '/api/learn/settings' && method === 'PUT') { mock.settings = { ...mock.settings, ...body }; return mock.settings; }
+    // The coach: an empty conversation (Learn is only the coach).
+    if (p === '/api/learn/coach' && method === 'GET') return { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     if (p === '/api/learn/mistakes') {
       const before = url.searchParams.get('before');
       const list = before ? mock.mistakes.filter(item => item.at < before) : mock.mistakes;
@@ -154,6 +158,9 @@ async function toTerminal(page) {
   await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
 
+// Opens a screen of Learn the way the coach's button or a link does (ui.actions.openLearn).
+const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.openLearn(view), name);
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -161,8 +168,9 @@ async function toTerminal(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await page.locator('#h5-nav-learn').click();
-      // The new weekly report: one line on the home with View.
-      await page.locator('#h5-learn-new-report').waitFor();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      // The new weekly report: one notice in the coach, under the newest message, with View.
+      await page.locator('#h5-learn-coach #h5-learn-new-report').waitFor();
       assert.equal(await text(page, '#h5-learn-new-report .MuiAlert-message'), 'Your weekly mistake report is ready (38 mistakes).');
       assert.equal(mock.posts(/\/settings$/).length, 0, 'the page language is the stored one: nothing to tell');
       await page.locator('#h5-learn-new-report-view').click();
@@ -177,7 +185,14 @@ async function toTerminal(page) {
       assert.deepEqual(await texts(page, '.h5-learn-finding h3'), ['Double letters', 'Present perfect with "already"']);
       assert.match(await text(page, '.h5-learn-finding'), /Cause · You drop or move one of a pair.*What to do · Spell these 8 words.*necessary · address · occurred \+2/);
       await waitFor(() => mock.posts(/\/settings$/).some(item => item.body.report_seen === REPORT.uid), 'the report is marked as seen');
+      // Its back returns to the coach, where the notice is gone.
+      await page.locator('#h5-learn-back').click();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       await page.locator('#h5-learn-new-report').waitFor({ state: 'detached' });
+      await page.locator('#h5-learn-coach-start').waitFor();
+      await openScreen(page, 'mistakes');
+      await page.locator('#h5-learn-last-report').click();
+      await page.locator('#h5-learn-report-summary').waitFor();
       assert.equal(await text(page, '#h5-learn-report-practise'), 'Practise these 6 cards');
       await page.locator('#h5-learn-report-practise').click();
       await waitFor(() => mock.posts(/\/cards\/find$/).length === 1, 'the cards are found by text');
@@ -188,7 +203,7 @@ async function toTerminal(page) {
 
       // The Mistakes page.
       mock.page = 4;
-      await page.locator('#h5-learn-mode-mistakes').click();
+      await openScreen(page, 'mistakes');
       await page.locator('#h5-learn-mistakes').waitFor();
       assert.equal(await text(page, '#h5-learn-analyze-card h3'), 'Why do I get these wrong?');
       assert.match(await text(page, '#h5-learn-analyze-note'), /^5 mistakes since the last report \(\d\d-\d\d\)\. The analysis uses your translation model\.$/);
@@ -215,7 +230,7 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-report-summary', { hasText: 'Fresh report.' }).waitFor();
       // A model error is shown in the card, the page stays whole.
       mock.analyze = () => [502, { error: "The model's answer could not be read. Try again." }];
-      await page.locator('#h5-learn-mode-mistakes').click();
+      await openScreen(page, 'mistakes');
       await page.locator('#h5-learn-analyze:not([disabled])').click();
       await page.locator('#h5-learn-analyze-error').waitFor();
       assert.equal(await text(page, '#h5-learn-analyze-error'), "The model's answer could not be read. Try again.");
@@ -227,7 +242,7 @@ async function toTerminal(page) {
       assert.match(await text(page, '.h5-learn-report-row'), /38 mistakes · Weekly/);
       assert.match(await texts(page, '.h5-learn-report-row').then(all => all[1]), /the start – .*12 mistakes · Asked for/);
       // The weekly switch in Learn settings.
-      await page.locator('#h5-learn-settings').click();
+      await openScreen(page, 'settings');
       await page.locator('#h5-learn-analysis-auto').waitFor();
       assert.equal(await page.locator('#h5-learn-analysis-auto').isChecked(), true);
       await page.locator('#h5-learn-analysis-auto').click();
@@ -240,7 +255,7 @@ async function toTerminal(page) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       mock.settings.report_lang = 'zh';
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-today').waitFor();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       await waitFor(() => mock.posts(/\/settings$/).length === 1, 'the language is told');
       assert.deepEqual(mock.posts(/\/settings$/)[0].body, { report_lang: 'en' });
       await context.close();
@@ -252,7 +267,8 @@ async function toTerminal(page) {
       mock.summary = { ...SUMMARY, new_report: null };
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-mode-mistakes').tap();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'mistakes');
       await page.locator('#h5-learn-mistakes').waitFor();
       await page.waitForTimeout(400);
       assert.equal(await noSidewaysScroll(page), true, 'the Mistakes page fits 390px');
@@ -266,15 +282,15 @@ async function toTerminal(page) {
       await shot(page, 'mistakes-report-phone.png');
       await page.locator('#h5-learn-report-findings').scrollIntoViewIfNeeded();
       await shot(page, 'mistakes-report-findings-phone.png');
-      // Back goes to the Mistakes page the report was opened from, then to the home.
+      // Back goes to the Mistakes page the report was opened from, then to the coach.
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-analyze-card').waitFor();
       assert.equal(await text(page, '#h5-learn-view-title'), 'Mistakes');
       // No usable model: said in the card with Open Settings; Analyze is off; the list stays.
       mock.state = { ...mock.state, model: { ready: false, label: '', name: '' } };
       await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode').waitFor({ state: 'detached' });
-      await page.locator('#h5-learn-mode-mistakes').tap();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'mistakes');
       await page.locator('#h5-learn-analyze-no-model').waitFor();
       assert.match(await text(page, '#h5-learn-analyze-no-model'), /needs an AI translation model.*The list and the tags work without it/);
       assert.equal(await page.locator('#h5-learn-analyze').isDisabled(), true);

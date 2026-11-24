@@ -1,7 +1,9 @@
 // Learn's Progress view, the grade intervals and the review schedule setting (scripts/h5-shell/LearnProgress.jsx, Learn.jsx), in real Chromium with
 // every route mocked: GET /api/learn/stats as in docs/design/learn-english-stats.md, queue cards with the FSRS server's `next`, learning settings with
 // `desired_retention` ("Progress", "Grade intervals" and "Learn settings" in docs/design/learn-english-page.md).
-// - 1440x900 (mouse): the Progress button of the Today card opens the view in the right pane; the four tiles; the four charts two per row (columns,
+// Learn is the coach (GET /api/learn/coach answers), so every screen is opened the way the coach opens it (ui.actions.openLearn(name), the same as
+// her buttons and the links /h5?learn=<name>), and its back returns to her.
+// - 1440x900 (mouse): Progress opens in the page; the four tiles; the four charts two per row (columns,
 //   the line with its last value, the memory bars, the due columns); a tooltip on hovering a column and the line (with its crosshair); Table shows
 //   every chart as a table and Charts goes back; a failed load with Retry; the grade buttons with when each grade brings the card back, Enter takes the
 //   suggested one; REVIEW SCHEDULE saves desired_retention at once (PUT).
@@ -12,6 +14,9 @@
 // H5_SHOT_DIR=<dir> saves progress-desktop.png, progress-desktop-table.png, progress-phone.png, progress-phone-bottom.png, progress-phone-tooltip.png,
 // progress-phone-table.png, progress-phone-empty.png, grades-desktop.png, grades-phone-390.png, grades-phone-320.png, schedule-desktop.png.
 const { chromium } = require('playwright');
+// Opens a screen of Learn the way the coach does (her buttons, the links): ui.actions.openLearn(name).
+const openScreen = (page, name) => page.evaluate(screen => window.H5UI.actions.openLearn(screen), name);
+const COACH = '[data-coach="only"] #h5-learn-coach';
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -69,6 +74,7 @@ function learnMock() {
     if (p === '/api/learn/meaning') return { zh: ZH_SHIP, phonetic: '' };
     if (p === '/api/learn/level') return { level: null, picking: { enabled: false, picked: 0, skipped: 0, sentences: 0, pending: 0, running: false }, translator: false };
     if (p === '/api/learn/chats') return { chats: [], translator: false };
+    if (p === '/api/learn/coach' && method === 'GET') return { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     return [404, { error: 'not mocked' }];
   };
   mock.posts = re => mock.requests.filter(item => item.method !== 'GET' && re.test(item.path));
@@ -187,13 +193,11 @@ async function checkCharts(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-today').waitFor();
-      assert.equal(await text(page, '#h5-learn-progress'), 'Progress');
-      assert.equal(await page.locator('#h5-learn-progress svg').count(), 1, 'the bar chart icon');
-      await page.locator('#h5-learn-progress').click();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'progress');
       await page.locator('#h5-learn-progress-tiles').waitFor();
       assert.equal(await text(page, '#h5-learn-view-title'), 'Progress');
-      assert.equal(await page.locator('.h5-learn-pane #h5-learn-progress-charts').count(), 1, 'in the right pane');
+      assert.equal(await page.locator('.h5-learn-pane #h5-learn-progress-charts').count(), 1, 'in the page');
       await page.locator('#h5-learn-chart-daily-svg').waitFor();
       await checkCharts(page);
       // Two charts per row, four tiles in a row.
@@ -250,7 +254,8 @@ async function checkCharts(page) {
       // A failed load: said with Retry, which loads again.
       mock.statsFail = true;
       await page.locator('#h5-learn-back').click();
-      await page.locator('#h5-learn-progress').click();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'progress');
       await page.locator('#h5-learn-progress-error').waitFor();
       assert.match(await text(page, '#h5-learn-progress-error'), /Learning data is not available right now/);
       mock.statsFail = false;
@@ -258,7 +263,7 @@ async function checkCharts(page) {
       await page.locator('#h5-learn-progress-tiles').waitFor();
 
       // The grade buttons: when each grade brings the card back; the suggested one stays contained and Enter takes it.
-      await page.locator('#h5-learn-start').click();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-spell-input').waitFor();
       await page.locator('.h5-learn-letters').click();
       await page.keyboard.type('ship');
@@ -287,7 +292,7 @@ async function checkCharts(page) {
       await page.locator('#h5-learn-done').waitFor();
 
       // REVIEW SCHEDULE: 90% chosen; 95% is saved at once.
-      await page.locator('#h5-learn-settings').click();
+      await openScreen(page, 'settings');
       await page.locator('#h5-learn-retention').waitFor();
       assert.equal(await text(page, '#h5-learn-schedule-card'), 'Remember How sure you want to be when a card comes back 85% 90% 95% Cards are scheduled with FSRS, a model of how memory fades, from your own answers. Higher means more reviews; 90% is a good balance.');
       assert.equal(await page.locator('#h5-learn-retention [data-value="0.9"]').getAttribute('aria-pressed'), 'true');
@@ -300,7 +305,7 @@ async function checkCharts(page) {
       await page.locator('#h5-learn-schedule-card').scrollIntoViewIfNeeded();
       await shot(page, 'schedule-desktop.png');
       // How learning works describes FSRS, not the old fixed steps.
-      await page.locator('#h5-learn-how').click();
+      await openScreen(page, 'how');
       assert.match(await text(page, '#h5-learn-how-card'), /FSRS, a model of how memory fades/);
       assert.doesNotMatch(await text(page, '#h5-learn-how-card'), /1, 3, 7, 15, 30/);
       await context.close();
@@ -311,7 +316,8 @@ async function checkCharts(page) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-progress').tap();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'progress');
       await page.locator('#h5-learn-mode #h5-learn-chart-daily-svg').waitFor();
       await page.waitForTimeout(400);
       assert.equal(await text(page, '#h5-learn-view-title'), 'Progress');
@@ -351,18 +357,18 @@ async function checkCharts(page) {
       // The empty state: one line instead of the charts, no Table.
       mock.stats = EMPTY_STATS;
       await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
-      await page.locator('#h5-learn-progress').tap();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'progress');
       await page.locator('#h5-learn-progress-empty').waitFor();
       assert.equal(await text(page, '#h5-learn-progress-empty'), 'Answer a few cards and your progress shows here.');
       assert.equal(await page.locator('#h5-learn-progress-charts').count(), 0);
       assert.equal(await page.locator('#h5-learn-progress-table').count(), 0);
       await shot(page, 'progress-phone-empty.png');
       await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+      await page.locator(COACH).waitFor();
 
       // The grade buttons in the pinned actions: one row, 44px targets, the interval under each label.
-      await page.locator('#h5-learn-start').tap();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       await tapKeys(page, 'ship');
       await page.locator('#h5-learn-check').tap();
@@ -376,15 +382,19 @@ async function checkCharts(page) {
       await page.locator('#h5-learn-grade-good').tap();
       await waitFor(() => mock.posts(/\/answer$/).length === 1, 'the answer');
       assert.equal(lastAnswer(mock).grade, 'good');
+      // The back button: the session returns to the coach, then the coach closes Learn.
       await page.evaluate(() => history.back());
-      await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
+      await page.locator('#h5-learn-mode').waitFor({ state: 'detached' });
+      await page.locator(COACH).waitFor();
 
-      // Settings of an older server (no desired_retention): no REVIEW SCHEDULE.
+      // Settings of an older server (no desired_retention): no REVIEW SCHEDULE. The session was a modal of its own over the coach, so the next
+      // back press closes Learn at once (no wait for back.mjs to take an entry again).
       delete mock.settings.desired_retention;
       await page.evaluate(() => history.back());
       await page.locator('#h5-learn').waitFor({ state: 'detached' });
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-settings').tap();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'settings');
       await page.locator('#h5-learn-settings-card').waitFor();
       assert.equal(await page.locator('#h5-learn-retention').count(), 0);
       await context.close();
@@ -396,7 +406,8 @@ async function checkCharts(page) {
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
       mock.queue = [{ ...QUEUE[0], next: { again: 600000, hard: 20 * DAY, good: 400 * DAY } }];
-      await page.locator('#h5-learn-start').tap();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       await tapKeys(page, 'ship');
       await page.locator('#h5-learn-check').tap();

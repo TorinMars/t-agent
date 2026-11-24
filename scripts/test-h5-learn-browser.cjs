@@ -613,14 +613,18 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-meaning').waitFor();
       await page.waitForTimeout(400);
-      assert.equal(await text(page, '#h5-learn-mode .h5-learn-subtitle'), '1 / 2 · from words you looked up');
+      assert.equal(await text(page, '#h5-learn-mode .h5-learn-subtitle'), '1 / 2');
+      assert.equal(await text(page, '#h5-learn-mode .h5-learn-subtitle-note'), 'from words you looked up', 'the source small on the same line');
       const spell = '#h5-learn-spell-input';
       assert.equal(await page.locator(spell).getAttribute('inputmode'), 'none', 'the system keyboard never opens');
       assert.equal(await active(page), 'h5-learn-spell-input', 'the field has the focus (and the caret) on start');
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       assert.equal(await ui(page, 'softKeyboard'), false);
       const rows = await page.locator('#h5-learn-keys .h5-osk-row').evaluateAll(list => list.map(row => [...row.children].map(key => key.dataset.char || key.dataset.key || (key.hasAttribute('data-shift') ? 'Shift' : '?')).join(' ')));
-      assert.deepEqual(rows, ['q w e r t y u i o p', 'a s d f g h j k l', 'Shift z x c v b n m Backspace', "' - Hide"], 'the letter layout: no Space, no digits');
+      assert.deepEqual(rows, ['q w e r t y u i o p', "a s d f g h j k l '", 'Shift z x c v b n m - Backspace'], 'the phone letter layout: three rows, no Space, no digits');
+      assert.equal(await page.locator('#h5-learn-keys button[data-char="-"]').getAttribute('aria-label'), 'Hyphen');
+      assert.equal(await page.locator('#h5-learn-keys-hide').getAttribute('aria-label'), 'Hide keyboard');
+      assert.equal(await page.locator('.h5-learn-footer #h5-learn-keys-hide').count(), 1, 'Hide in the pinned actions');
       assert.equal(await page.locator('#h5-learn-keys button[data-char="\'"]').getAttribute('aria-label'), 'Apostrophe');
       assert.equal(await page.locator('#h5-learn-keys button[data-key="Backspace"]').getAttribute('aria-label'), 'Backspace');
       assert.equal(await page.locator('#h5-learn-keys button[data-shift]').getAttribute('aria-label'), 'Shift');
@@ -635,7 +639,11 @@ async function toTerminal(page) {
       assert.ok(keyboard.bottom <= 844 && keyboard.bottom >= 844 - 16, `the keyboard sits at the bottom (${keyboard.bottom})`);
       const check = await rect(page, '#h5-learn-check');
       assert.ok(check.bottom <= keyboard.y && check.bottom > keyboard.y - 80, `Check is right above the keyboard (${check.bottom}, ${keyboard.y})`);
-      // Show first letter and Hear it keep the focus in the field.
+      // Show first letter (a hint icon in the "I don't know" row) and Hear it (an icon of the audio row) keep the focus in the field.
+      assert.equal(await page.locator('.h5-learn-footer #h5-learn-first').getAttribute('aria-label'), 'Show first letter');
+      assert.match(await page.locator('#h5-learn-hear').getAttribute('title'), /^(Hear it|Playing \d of \d)$/);
+      assert.equal(await page.locator('#h5-learn-stop').getAttribute('aria-label'), 'Stop');
+      assert.equal(await page.locator('#h5-learn-slow').getAttribute('aria-label'), 'Play slowly');
       await page.locator('#h5-learn-first').tap();
       assert.equal(await value(page, spell), 'e');
       assert.equal(await active(page), 'h5-learn-spell-input', 'Show first letter keeps the focus');
@@ -666,7 +674,7 @@ async function toTerminal(page) {
       assert.equal(await value(page, spell), 'expi');
       await shot(page, 'learn-phone-spell.png');
       // Hide closes it (the bottom navigation comes back); a tap on the letters opens it again.
-      await tapKeys(page, '{Hide}');
+      await page.locator('#h5-learn-keys-hide').tap();
       await page.locator('#h5-learn-keys').waitFor({ state: 'detached' });
       await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
       assert.equal(await page.locator('#h5-bnav').isVisible(), true);
@@ -784,14 +792,21 @@ async function toTerminal(page) {
       // The word plays when its card appears, twice with a pause of 1 s; the button says so, with Stop.
       await waitFor(async () => (await spokenOf('expire')).length >= 1, 'the word plays when the card appears');
       await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
-      assert.match(await text(page, '#h5-learn-hear'), /^Playing [12] of 2$/);
-      assert.equal(await page.locator('#h5-learn-stop').count(), 1, 'Stop while it plays');
+      // On a phone the sound is a row of icons: the name (aria-label and title) says it plays, Stop is enabled.
+      assert.match(await page.locator('#h5-learn-hear').getAttribute('aria-label'), /^Playing [12] of 2$/);
+      assert.equal(await page.locator('#h5-learn-stop').isEnabled(), true, 'Stop while it plays');
       if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'learn-phone-spell-playing.png') }); }
       await waitFor(async () => (await spokenOf('expire')).length === 2, 'the repeat', 4000);
       const [first, second] = await spokenOf('expire');
       assert.ok(second.at - first.at >= 1000 && second.at - first.at < 1800, `the pause between repeats (${Math.round(second.at - first.at)} ms)`);
       await waitFor(async () => (await page.locator('#h5-learn-hear[data-playing]').count()) === 0, 'idle after the repeats');
-      assert.equal(await text(page, '#h5-learn-hear'), 'Hear it');
+      assert.equal(await page.locator('#h5-learn-hear').getAttribute('aria-label'), 'Hear it');
+      assert.equal(await page.locator('#h5-learn-hear').getAttribute('title'), 'Hear it');
+      assert.equal(await page.locator('#h5-learn-stop').isDisabled(), true, 'Stop waits for a play');
+      // Play, Stop and Play slowly in one row, each a 44px target.
+      const audioRow = await page.locator('.h5-learn-audio button').evaluateAll(list => list.map(el => { const r = el.getBoundingClientRect(); return [el.id, Math.round(r.width), Math.round(r.height), Math.round(r.top)]; }));
+      assert.deepEqual(audioRow.map(item => item[0]), ['h5-learn-hear', 'h5-learn-stop', 'h5-learn-slow']);
+      assert.ok(audioRow.every(([, w, h, top]) => w >= 44 && h >= 44 && top === audioRow[0][3]), `one row of 44px targets (${JSON.stringify(audioRow)})`);
       // The transcription next to Hear it (the sound is offered there), as user content.
       assert.equal(await text(page, '#h5-learn-phonetic'), '/ɪkˈspaɪər/');
       assert.equal(await page.locator('#h5-learn-phonetic').getAttribute('translate'), 'no');
@@ -807,7 +822,7 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-stop').tap();
       await page.waitForTimeout(1500);
       assert.equal((await spokenOf('expire')).length, before + 2, 'Stop: no repeat');
-      assert.equal(await page.locator('#h5-learn-stop').count(), 0);
+      assert.equal(await page.locator('#h5-learn-stop').isDisabled(), true);
       assert.equal(await active(page), 'h5-learn-spell-input', 'Hear it and Stop leave the focus in the letters');
       // The key bubble: on pointerdown over a character key, the character larger above it, inside the keyboard; away on pointerup. One haptic tick a press.
       const vibrations = await page.evaluate(() => window.vibrations.length);

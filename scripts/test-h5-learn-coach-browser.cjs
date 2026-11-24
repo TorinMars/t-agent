@@ -258,6 +258,8 @@ async function answer(page, mock, value, touch) {
   return right;
 }
 const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-subtitle' : '#h5-learn .h5-learn-subtitle');
+// A phone's header line: the small text before the counter ("Step 1 of 3 \u00b7 from your chat").
+const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
@@ -321,13 +323,22 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       await page.locator('#h5-learn-series').waitFor();
       assert.deepEqual(mock.of('POST', /plans\/start$/).at(-1).body, { message_uid: fed.answer.uid, proposal_id: 'p-spell' });
       assert.equal(await text(page, '#h5-learn-view-title'), 'Spell the word');
-      assert.equal(await subtitle(page, true), '1 / 3 · from your chat');
-      assert.equal(await text(page, '#h5-learn-series-note'), 'Back to chat when done');
+      assert.equal(await subtitle(page, true), '1 / 3');
+      assert.equal(await note(page), 'from your chat');
+      // One header line: the title, the small note and the counter side by side; the arrow is named "Back to chat"; no chip row.
+      const line = await page.evaluate(() => ['#h5-learn-view-title', '#h5-learn-mode .h5-learn-subtitle-note', '#h5-learn-mode .h5-learn-subtitle'].map(sel => {
+        const box = document.querySelector(sel).getBoundingClientRect();
+        return Math.round(box.top + box.height / 2);
+      }));
+      assert.ok(Math.max(...line) - Math.min(...line) <= 3, `the header is one line (${line})`);
+      assert.equal(await page.locator('#h5-learn-back').getAttribute('aria-label'), 'Back to chat');
+      assert.equal(await page.locator('#h5-learn-back').getAttribute('title'), 'Back to chat');
+      assert.equal(await page.locator('#h5-learn-series-note').count(), 0, 'no "Back to chat when done" row');
       await shot(page, 'learn-coach-series.png');
       assert.equal(await answer(page, mock, 'separate', touch), true);
       assert.equal(await answer(page, mock, 'recieve', touch), false);
       assert.equal(await answer(page, mock, 'necessary', touch), true);
-      await waitFor(async () => (await subtitle(page, true)) === '4 / 4 · from your chat', 'the missed word at the end');
+      await waitFor(async () => (await subtitle(page, true)) === '4 / 4', 'the missed word at the end');
       assert.equal(await answer(page, mock, 'receive', touch), true);
       await page.locator('#h5-learn-coach').waitFor();
       await page.locator('.h5-learn-coach-divider', { hasText: 'Spelling finished · 3 words · 1 min' }).waitFor();
@@ -355,16 +366,19 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       assert.deepEqual(await texts(page, '.h5-learn-coach-card[data-id="p-mistakes"] .h5-learn-coach-plan-steps li'), ['Spell each word', 'Fill the gap inside a sentence', 'Dictation', 'A final retest of the words you missed again']);
       await mistakes.locator('.h5-learn-coach-start').tap();
       await page.locator('#h5-learn-series').waitFor();
-      assert.equal(await subtitle(page, true), 'Step 1 of 3 · 1 / 2 · from your chat');
+      assert.equal(await subtitle(page, true), '1 / 2');
+      assert.equal(await note(page), 'Step 1 of 3 · from your chat');
       assert.equal(await answer(page, mock, 'ocurred', touch), false);
       assert.equal(await answer(page, mock, 'committee', touch), true);
       await waitFor(async () => (await page.locator('#h5-learn-series').getAttribute('data-exercise')) === 'fill', 'Fill the gap');
-      assert.equal(await subtitle(page, true), 'Step 2 of 3 · 1 / 1 · from your chat');
+      assert.equal(await subtitle(page, true), '1 / 1');
+      assert.equal(await note(page), 'Step 2 of 3 · from your chat');
       assert.equal(await text(page, '#h5-learn-view-title'), 'Fill the gap');
       assert.equal(await text(page, '.h5-learn-gap'), 'The met on Monday.', 'the word asked inside its own sentence');
       assert.equal(await answer(page, mock, 'committee', touch), true);
       await waitFor(async () => (await text(page, '#h5-learn-view-title')) === 'Final retest', 'the retest');
-      assert.equal(await subtitle(page, true), 'Step 3 of 3 · 1 / 1 · from your chat');
+      assert.equal(await subtitle(page, true), '1 / 1');
+      assert.equal(await note(page), 'Step 3 of 3 · from your chat');
       assert.equal(await answer(page, mock, 'occurred', touch), true);
       await page.locator('.h5-learn-coach-divider', { hasText: 'Practice finished · 2 words · 1 min' }).waitFor();
       await settled(page);

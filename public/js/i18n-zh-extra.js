@@ -307,5 +307,5 @@ I18n.add({
   "Every day at {1} ({2} time): \"{3}\".": "每天 {1}（{2} 时间）：“{3}”。",
   "Every {1} at {2} ({3} time): \"{4}\".": "每{1} {2}（{3} 时间）：“{4}”。",
   "{1} of {2} notes. Tap a line to edit it, × deletes it (with Undo). Secrets such as passwords are never kept.": "共 {1} / {2} 条记忆。点按一行可编辑，× 删除（可撤销）。密码等机密信息从不保存。",
-  "Step {1} of {2} · {3} / {4}": "第 {1} 步，共 {2} 步 · {3} / {4}",
+  "Step {1} of {2}": "第 {1} 步，共 {2} 步",
 });

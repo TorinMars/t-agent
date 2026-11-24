@@ -2,7 +2,7 @@
 
 > Part of the T-Agent design document. The index of all parts is [DESIGN.md](../../DESIGN.md). The Learn page itself (Spell the word, the page's
 > own keyboard, the keys of a computer) is in [learn-english-page.md](learn-english-page.md); the Mac app's side of the input source switch is
-> "English input while spelling" in [mac-app.md](mac-app.md).
+> "English input while spelling" in [mac-app.md](mac-app.md). Also here: the compact practice layout of a phone.
 
 ## Type it yourself
 
@@ -56,8 +56,40 @@ Code: `learn-input.mjs`, `useLatinInput` in `Learn.jsx`; on the Spell answer fie
   `insertText`) and WeType-like input with dispatched composition events; Safari's order of events is handled from its documented behaviour
   only.
 
+## Compact practice on a phone
+
+Code: `ViewFrame`, `useRevealFocus`, `AudioIcons`, `FirstLetterIcon`, `ClampText`, `PHONE_LETTER_ROWS` in `Learn.jsx`; the icons `learnStop`,
+`learnSlow`, `learnHint` in `learn-icons.mjs`. Every practice page on a phone (Spell the word, Learn it in parts, Fill the gap, Dictation, a
+coach's series), so the card keeps room while the page's letter keyboard is open (it was about a third of the screen):
+
+- **Header on one line** (56px): back arrow, the title (subtitle1), then at the end "Step 1 of 4 · from your chat" / "from your translations" in
+  caption, text.secondary (`.h5-learn-subtitle-note`, shrinks first with an ellipsis) and the counter "7 / 10" (body2, `.h5-learn-subtitle`). In
+  a series the arrow is named "Back to chat" (aria-label and title); the "Back to chat when done" chip row is gone. A computer keeps its title
+  row ("Step 1 of 4 · 7 / 10 · from your chat").
+- **Keeps slipping** is a small tag (20px chip, warning on its 12% tint) in the top right corner of the card (the Prompt's badge), not a row.
+- **While the keyboard is open** (`kb.compact`): the card's main text one step smaller (the meaning and the Chinese of a sentence h5 -> h6, the
+  sentence of Spell's sentence layout h6 -> subtitle1), and a translation line (`#h5-learn-sentence-zh`, Fill the gap's Chinese) kept to two lines
+  (`-webkit-line-clamp`); when it is cut it is a `role="button"` with `aria-expanded`, a tap shows all of it and another folds it, without taking
+  the field's focus.
+- **Sound**: one row of icon buttons (`.h5-learn-audio`): Hear it / Play (named "Playing 1 of 2" while it plays), Stop (disabled while nothing
+  plays) and Play slowly, each a 44px target with aria-label and title, keeping the field's focus. **Show first letter** is a hint (bulb) icon
+  button in the action row, next to "I don't know" (Spell) or at its start (Fill the gap). A computer keeps the text buttons.
+- **Letter keyboard**: 44px keys in three rows: `qwertyuiop` / `asdfghjkl'` (no half-key indent) / Shift `zxcvbnm` `-` Backspace (Shift and
+  Backspace one letter wide). Three extra keys and Hide do not fit three rows of ten letter widths, so Hide is an icon button
+  (`#h5-learn-keys-hide`, "Hide keyboard", the chevron `down`) at the start of the pinned actions right above the keyboard. The full keyboard of
+  sentences and the letter keyboard of a larger touch screen keep their Hide key.
+- **Never cut by the actions**: the page scrolls, and the field with the focus is kept whole above the pinned actions (`revealInPage`): when a field
+  gets the focus and whenever the page or its content changes size (the keyboard opens, a result appears), the page scrolls just enough for the
+  whole answer box (the letter slots, the practice row, a text field with its label such as "Copy it once").
+- Measured at 390x844 with the keyboard open: the content area above the pinned actions is about 66% of the screen (the test asks for 45%).
+
 ## Tests
 
+- Compact practice on a phone: `scripts/test-h5-learn-practice-browser.cjs` (one-line 56px header, three rows of 44px keys, Hide in the
+  actions, the content area at least 45% of 390x844 with the keyboard open; `learn-practice-compact.png`), `test-h5-learn-browser.cjs` (the
+  phone letter layout, Hide keyboard, Show first letter in the actions, the audio row of 44px icons with Stop disabled when idle),
+  `test-h5-learn-coach-browser.cjs` (the series header on one line, "Back to chat"), `test-h5-learn-pace-browser.cjs` (the tag in the card's
+  corner, "Copy it once" whole above the actions), `test-h5-learn-pick-browser.cjs` (subtitle1 sentence, the translation clamped to two lines).
 - `scripts/test-h5-learn-practice-browser.cjs` (mocked `/api/learn`; 390x844 touch with the page keyboard and 1440x900): "Type it yourself" after
   a right answer, a wrong one, I don't know in the sentence layout and a phrase (its space by itself); the focus in the row, `inputmode="none"`,
   the keyboard open, the row above the keyboard and the pinned grades, the slot size of the answer; a right letter kept, a wrong key in its slot in

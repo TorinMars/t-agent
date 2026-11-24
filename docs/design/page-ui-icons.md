@@ -125,6 +125,9 @@
 | Remember this (the session header's More menu) | star (Ant Design StarOutlined) | @ant-design/icons-svg 4.4.2 `outlined/star` | `star` in `Icons.jsx`, 20px |
 | Learn destination (navigation rail `#h5-nav-learn`, bottom navigation `#h5-bnav-learn`) | read | 4766888 | `learn` in `Icons.jsx`, 24px: an open book |
 | Hear it, Play (the Learn page) | sound | 4766907 | `learnSound` in `learn-icons.mjs`, 20px in a text button, 22px as the icon-only "Hear it" of a phone |
+| Stop, Play slowly (the audio row of a Learn practice card on a phone) | pause-circle with a square in place of its bars (the collection has no stop-circle) / dashboard (Ant Design's PauseCircleOutlined / DashboardOutlined; iconfont.cn ids not looked up) | — | `learnStop` / `learnSlow` in `learn-icons.mjs`, 22px icon buttons |
+| Show first letter (the action row of a Learn practice card on a phone) | bulb (Ant Design's BulbOutlined; iconfont.cn id not looked up) | — | `learnHint` in `learn-icons.mjs`, 22px icon button |
+| Hide keyboard (the pinned actions of a Learn practice card on a phone) | down | — | `down` in `Icons.jsx`, 22px icon button |
 | Spell the word / Build the sentence / Dictation / Fill the gap / Mistakes (the Learn page's modes) | font-size / align-left / customerservice / border / close-circle | 4767081 / 4767064 / 4766762 / 4766265 / 4765725 | `learnSpell` / `learnBuild` / `learnDictation` / `learnFill` / `learnMistakes` in `learn-icons.mjs`, 22px in a 40px tinted tile |
 | Say it (the Learn page's mode and its microphone) | audio | 5756281 | `voice`, the voice input icon, 22px in the mode tile, 26px in the 56px microphone button |
 | Ask (the text button of every Learn practice card, "Ask about this question") | message | 4765866 | `learnAsk` (20px start icon) in `learn-icons.mjs`; the sheet's send button uses `send` (22px) |

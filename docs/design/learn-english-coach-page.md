@@ -80,8 +80,10 @@ shows the translator notice. A plain JSON body (a company computer) is taken as 
 - **Misses come back** (`seriesAnswer`): a card missed outside the retest goes into the retest step when the plan has one (each card once; the
   server's retest card list is not used: the page decides from the answers); without a retest it is added once after the last step's items. A
   retest with nothing missed is skipped.
-- **Header**: the exercise's title ("Spell the word", "Fill the gap", "Dictation", "Final retest") and "Step 2 of 4 · 7 / 9 · from your chat"
-  ("7 / 9 · from your chat" for a one-step plan); the chip "Back to chat when done"; the progress bar is the share answered.
+- **Header**: the exercise's title ("Spell the word", "Fill the gap", "Dictation", "Final retest"); on a phone one line with "Step 2 of 4 ·
+  from your chat" in caption size and the counter "7 / 9" at the end ("from your chat" alone for a one-step plan), the back arrow named "Back to
+  chat" (no separate "Back to chat when done" chip; "Compact practice on a phone" in [learn-spell-practice.md](learn-spell-practice.md)); on a
+  computer "Step 2 of 4 · 7 / 9 · from your chat"; the progress bar is the share answered.
 - **Leaving** (back arrow, the back button, Escape: `leaveView` in Learn calls the series) asks nothing; the answers are kept. Leaving or the end
   returns to the coach with `{ kind: 'chat', result, planKind }`; the coach posts `practice-result` once (`seriesResult`: `plan_id`,
   `message_uid`, `proposal_id` and `kind` of the plan card, `steps: [{ mode, total, done, right }]` in items, `total` / `done` / `right` in different

@@ -20,7 +20,7 @@
   Escape closes the open mode, then the page; the back button closes the page (entry.jsx layer); the focus goes into the page and back to the
   opener.
 - **Phone**: the home is a full-screen MUI dialog (`#h5-learn`, a back arrow `#h5-learn-close`), each mode a second one sliding in from the right
-  (`#h5-learn-mode`, back arrow `#h5-learn-back`, title and "7 / 20 · from your translations"). Both are back layers (back.mjs) and end at the
+  (`#h5-learn-mode`, back arrow `#h5-learn-back`, title, "from your translations" small and "7 / 20", one line). Both are back layers (back.mjs) and end at the
   bottom navigation; their root is `top: 0; height: calc(var(--h5-height) - var(--h5-bnav-space))`, so while the system keyboard is up (the bar
   steps aside and `--h5-height` is the visual viewport, h5.js `fitViewport`) they end at the top of the keyboard. A mode's actions (Check, I
   don't know, Hint, then the grades) are pinned at the bottom of its page, so the answer field and Check stay in sight above the keyboard.
@@ -157,7 +157,8 @@
   textarea), so the system keyboard never opens; T-Agent's keyboard (the terminal's `Keyboard` of `Osk.jsx`: same look, Shift one-shot or caps
   lock on a double tap, Backspace repeating after 400 ms every 60 ms, keys that never take the focus) sits at the bottom of the mode, where the
   system keyboard would be. Single words (`data-kind="letters"`): `qwertyuiop` / `asdfghjkl` / Shift `zxcvbnm` Backspace / apostrophe, hyphen and
-  Hide at the right; no Space, no digits. Sentences (`data-kind="full"`): the terminal's full layout (letters, `123`, `#+=`, Space, Backspace)
+  Hide at the right; on a phone three rows instead (`asdfghjkl'` / Shift `zxcvbnm-` Backspace, Hide an icon button in the pinned actions; "Compact
+  practice on a phone" in [learn-spell-practice.md](learn-spell-practice.md)); no Space, no digits. Sentences (`data-kind="full"`): the terminal's full layout (letters, `123`, `#+=`, Space, Backspace)
   with Hide where Enter is: Check (then the grades) is right above it, so Enter is left out. It opens by itself when a card starts (the field gets
   the focus, as on a computer) except in Build, where the tiles come first and a tap on the answer opens it; Hide closes it (pressed on click, not
   on pointerdown, so the rest of the tap cannot land on the bottom navigation that comes back); a tap on the letters or the field opens it again.

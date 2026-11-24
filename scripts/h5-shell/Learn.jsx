@@ -352,48 +352,93 @@ function ViewBody({ view, phone, back, open, data, seriesLeave, ...common }) {
   return <HowView frame={frame(t('How learning works'))} />;
 }
 
-// The frame of a mode: on a phone an app bar (back arrow, title, "7 / 20 · from your translations") over the page that scrolls and the actions pinned
-// at its bottom; on a computer a title row with the counter, the progress bar and a close button, then the content.
-// `keyboard`: the page's own keyboard (useLearnKeys), under the page on a phone, at the bottom of the pane on a computer-sized touch screen.
-// `action`: a text button at the right of the bar (Table of the Progress view).
-// `lead`: a line above the content (the "Back to chat when done" chip of a practice series).
-export function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, action = null, lead = null, children }) {
+// The frame of a mode: on a phone one app bar line (back arrow, title, "Step 1 of 4 · from your chat" in caption size, "7 / 20") over the page that
+// scrolls and the actions pinned at its bottom; on a computer a title row with the counter, the progress bar and a close button, then the content.
+// `counter`: "7 / 20"; `step` ("Step 1 of 4") and `source` ("from your translations"): the small text before the counter on a phone (a computer shows
+// the step before the counter and the source only with `wideSource`). `backLabel`: the name of a phone's back arrow ("Back to chat" in a series).
+// `keyboard`: the page's own keyboard (useLearnKeys), under the page on a phone, at the bottom of the pane on a computer-sized touch screen;
+// `keysHide`: its Hide button, at the start of a phone's pinned actions (the phone's letter keyboard has no Hide key).
+// `action`: a text button at the right of the bar (Table of the Progress view). See "Compact practice on a phone" in docs/design/learn-spell-practice.md.
+export function ViewFrame({ phone, title, counter = '', step = '', source = '', wideSource = false, backLabel = '', progress = null, onBack = null, footer = null, keyboard = null, keysHide = null, action = null, children }) {
+  const scroll = useRef(null);
+  useRevealFocus(scroll, phone);
   if (phone) {
-    const subtitle = [counter, source].filter(Boolean).join(' · ');
+    const note = [step, source].filter(Boolean).join(' · ');
+    const actions = footer || keysHide;
     return (
       <>
         <AppBar position="static" color="default" enableColorOnDark elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
           <Toolbar disableGutters sx={{ minHeight: 56, px: 0.5, gap: 0.5 }}>
-            <IconButton id="h5-learn-back" onClick={onBack} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
-            <Box sx={{ minWidth: 0, flex: '1 1 auto' }}>
-              <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ fontWeight: 500, lineHeight: 1.3 }}>{title}</Typography>
-              {subtitle ? <Typography variant="caption" component="p" color="text.secondary" noWrap className="h5-learn-subtitle">{subtitle}</Typography> : null}
-            </Box>
+            <IconButton id="h5-learn-back" onClick={onBack} {...named(backLabel || t('Back'))}><Icon name="back" size={22} /></IconButton>
+            <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ fontWeight: 500, lineHeight: 1.3, flex: '0 1 auto', minWidth: 0 }}>{title}</Typography>
+            <Box sx={{ flex: '1 1 auto', minWidth: 8 }} />
+            {note ? <Typography variant="caption" component="p" color="text.secondary" noWrap className="h5-learn-subtitle-note" sx={{ flex: '0 1000 auto', minWidth: 0 }}>{note}</Typography> : null}
+            {counter ? (
+              <Typography variant="body2" component="p" color="text.secondary" noWrap className="h5-learn-subtitle"
+                sx={{ flexShrink: 0, ml: 0.5, mr: action ? 0 : 1.5, fontVariantNumeric: 'tabular-nums' }}>{counter}</Typography>
+            ) : null}
             {action ? <Box sx={{ flexShrink: 0, mr: 1 }}>{action}</Box> : null}
           </Toolbar>
         </AppBar>
-        <Box className="h5-learn-scroll" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>{lead}{children}</Box>
-          {footer ? <Box className="h5-learn-footer" sx={{ mt: 'auto', position: 'sticky', bottom: 0, px: 2, py: 1.5, display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'background.default' }}>{footer}</Box> : null}
+        <Box ref={scroll} className="h5-learn-scroll" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>{children}</Box>
+          {actions ? <Box className="h5-learn-footer" sx={{ mt: 'auto', position: 'sticky', bottom: 0, px: 2, py: 1.5, display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'background.default' }}>{keysHide}{footer}</Box> : null}
         </Box>
         {keyboard}
       </>
     );
   }
+  const subtitle = [step, counter, wideSource ? source : ''].filter(Boolean).join(' · ');
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minHeight: 40 }}>
         <Typography id="h5-learn-view-title" variant="h6" component="h2" noWrap sx={{ flex: '1 1 auto', minWidth: 0 }}>{title}</Typography>
-        {counter ? <Typography variant="body2" color="text.secondary" className="h5-learn-subtitle">{counter}</Typography> : null}
+        {subtitle ? <Typography variant="body2" color="text.secondary" className="h5-learn-subtitle">{subtitle}</Typography> : null}
         {action}
         {progress !== null ? <LinearProgress className="h5-learn-progress" variant="determinate" value={Math.round(progress * 100)} aria-label={t('Progress')} sx={{ width: 160, height: 6, borderRadius: 3 }} /> : null}
         {onBack ? <IconButton id="h5-learn-back" size="small" onClick={onBack} {...named(t('Close'))}><Icon name="close" size={20} /></IconButton> : null}
       </Box>
-      {lead}
       {children}
       {keyboard}
     </Box>
   );
+}
+
+// On a phone the field with the focus stays in sight above the pinned actions (scrollIntoView does not know the sticky footer): when a field of the
+// page gets the focus and when the page or its content changes size (the page's keyboard opens, a result appears), the page scrolls just enough.
+// The box revealed is the whole answer around the field (the letter slots, the "Type it yourself" row, a text field with its label).
+// See "Compact practice on a phone" in docs/design/learn-spell-practice.md.
+const REVEAL = ['.h5-learn-practice', '.h5-learn-letters', '.h5-learn-answer', '.h5-learn-gap', '.MuiFormControl-root', '.MuiInputBase-root'];
+function revealInPage(el, scroller) {
+  if (!el || !scroller || !el.isConnected || !scroller.contains(el)) return;
+  const target = REVEAL.map(selector => el.closest(selector)).find(found => found && scroller.contains(found)) || el;
+  const footer = scroller.querySelector('.h5-learn-footer');
+  const box = target.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  const top = view.top + 8;
+  const bottom = view.bottom - (footer ? footer.offsetHeight : 0) - 8;
+  // Down until its bottom is above the actions, but never so far that its top leaves the page; up when its top is hidden.
+  if (box.bottom > bottom) scroller.scrollTop += Math.min(box.bottom - bottom, box.top - top);
+  else if (box.top < top) scroller.scrollTop -= top - box.top;
+}
+function useRevealFocus(scroll, on) {
+  useEffect(() => {
+    const scroller = scroll.current;
+    if (!on || !scroller) return undefined;
+    const reveal = () => {
+      const el = document.activeElement;
+      if (el && el !== document.body && scroller.contains(el)) revealInPage(el, scroller);
+    };
+    const focus = event => requestAnimationFrame(() => revealInPage(event.target, scroller));
+    scroller.addEventListener('focusin', focus);
+    let watch = null;
+    if (typeof ResizeObserver === 'function') {
+      watch = new ResizeObserver(() => requestAnimationFrame(reveal));
+      watch.observe(scroller);
+      if (scroller.firstElementChild) watch.observe(scroller.firstElementChild);
+    }
+    return () => { scroller.removeEventListener('focusin', focus); if (watch) watch.disconnect(); };
+  }, [on, scroll]);
 }
 
 // ── Home ──
@@ -754,7 +799,8 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
 // ── A practice series of the coach ("The practice series" in docs/design/learn-english-coach-page.md) ──
 // The plan of POST /api/learn/coach/plans/start (`series.plan`) run step after step with the same exercises and the same answer endpoint as a session
 // (learn-series.mjs decides the exercise of each card, the progress and the misses that come back at the end). The header: the exercise's title and
-// "Step 2 of 4 · 7 / 9 · from your chat"; the back arrow leaves (the answers are kept) and the end returns by itself, both to the coach with the result.
+// "Step 2 of 4 · from your chat" small and "7 / 9", all on one line on a phone; the back arrow (named "Back to chat" there) leaves (the answers are
+// kept) and the end returns by itself, both to the coach with the result.
 const SERIES_TITLES = { spell: 'Spell the word', review: 'Daily review', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
 function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settings, leaveRef, onEnd, onDone }) {
   const audio = useAudio(settings, speech.tts);
@@ -805,12 +851,10 @@ function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settin
   };
   const skip = () => { register.current = null; setRun(now => seriesAnswer(now, { skipped: true })); };
   const progress = seriesProgress(run);
-  const where = progress.steps > 1 ? tf('Step {1} of {2} · {3} / {4}', progress.step, progress.steps, progress.at, progress.of) : `${progress.at} / ${progress.of}`;
   const frame = {
-    phone, title: t(SERIES_TITLES[current ? current.mode : 'spell']), onBack: () => end(!seriesDone(runRef.current)), counter: `${where} · ${t('from your chat')}`, progress: progress.share,
-    lead: (
-      <Chip id="h5-learn-series-note" variant="outlined" color="primary" size="small" label={t('Back to chat when done')} sx={{ alignSelf: 'flex-start' }} />
-    ),
+    phone, title: t(SERIES_TITLES[current ? current.mode : 'spell']), onBack: () => end(!seriesDone(runRef.current)), backLabel: t('Back to chat'),
+    counter: `${progress.at} / ${progress.of}`, step: progress.steps > 1 ? tf('Step {1} of {2}', progress.step, progress.steps) : '', source: t('from your chat'), wideSource: true,
+    progress: progress.share,
   };
   if (!current) return <ViewFrame {...frame}><Typography variant="body2" color="text.secondary" id="h5-learn-series-ending">{t('Back to the chat…')}</Typography></ViewFrame>;
   const Exercise = EXERCISES[current.exercise];
@@ -1008,8 +1052,9 @@ function Origin({ card }) {
     </Typography>
   );
 }
-const ChineseText = ({ card, id }) => (
-  <Typography variant="h5" component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.zh || '—'}</Typography>
+// The Chinese of a sentence card; while the page's keyboard is open on a phone (`compact`) a step smaller (h6) and kept to two lines (ClampText).
+const ChineseText = ({ card, id, compact = false, field = null }) => (
+  <ClampText clamp={compact} field={field} variant={compact ? 'h6' : 'h5'} component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.zh || '—'}</ClampText>
 );
 // The actions under an answer: before Check the exercise's own buttons, after it the grades (on a phone, pinned at the bottom).
 // `detail()`: what a wrong answer was asked for and its tag, when the exercise knows better than the card's text (Fill the gap).
@@ -1122,6 +1167,58 @@ function AudioButton({ audio, text, phone, field, id = 'h5-learn-hear', label = 
     </>
   );
 }
+// On a phone the sound is one row of icon buttons ("Compact practice on a phone" in docs/design/learn-spell-practice.md): Hear it / Play (named
+// "Playing 1 of 2" while it plays), Stop (disabled while nothing of this text plays) and Play slowly, each a 44px target with its name as aria-label
+// and title; they keep the answer field's focus. A browser that refused the first play shows "Tap to play" in place of the first one.
+function AudioIcons({ audio, text, field, id = 'h5-learn-hear', label = 'Hear it', slow = true, onPress = null }) {
+  const press = slowly => { if (onPress) onPress(); audio.play(text, slowly ? { slow: true } : {}); };
+  const { state } = audio;
+  const playing = state.playing && state.text === text;
+  const tint = theme => (playing ? { bgcolor: alpha(theme.palette.primary.main, 0.12) } : {});
+  const first = state.blocked && state.text === text
+    ? <Button id="h5-learn-tap-play" variant="outlined" startIcon={<Icon name="learnSound" size={20} />} onClick={() => press(false)}>{t('Tap to play')}</Button>
+    : (
+      <IconButton id={id} data-playing={playing ? 'true' : undefined} onClick={() => press(false)} {...keepFocus(field)} {...named(playing ? tf('Playing {1} of {2}', state.index, state.total) : t(label))}
+        sx={theme => ({ color: 'primary.main', ...tint(theme) })}><Icon name="learnSound" size={22} /></IconButton>
+    );
+  return (
+    <Box className="h5-learn-audio" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+      {first}
+      <IconButton id="h5-learn-stop" disabled={!playing} onClick={() => audio.stop()} {...keepFocus(field)} {...named(t('Stop'))} color="primary"><Icon name="learnStop" size={22} /></IconButton>
+      {slow ? <IconButton id="h5-learn-slow" onClick={() => press(true)} {...keepFocus(field)} {...named(t('Play slowly'))} color="primary"><Icon name="learnSlow" size={22} /></IconButton> : null}
+    </Box>
+  );
+}
+// Show first letter on a phone: a hint icon button in the action row ("I don't know" row of Spell, the row of Fill the gap).
+const FirstLetterIcon = ({ disabled, onClick, field }) => (
+  <IconButton id="h5-learn-first" disabled={disabled} onClick={onClick} {...keepFocus(field)} {...named(t('Show first letter'))} color="primary">
+    <Icon name="learnHint" size={22} />
+  </IconButton>
+);
+// A translation line that keeps to `lines` lines while `clamp` (the page's keyboard is open on a phone); a tap shows all of it and another tap
+// folds it again. It never takes the answer field's focus. Not clamped (or short enough) it is plain text.
+function ClampText({ clamp, lines = 2, field, sx, children, ...props }) {
+  const ref = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [cut, setCut] = useState(false);
+  const folded = clamp && !open;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setCut(folded ? el.scrollHeight > el.clientHeight + 1 : open && clamp);
+  });
+  const toggle = cut ? {
+    role: 'button', tabIndex: 0, 'aria-expanded': folded ? 'false' : 'true', ...(field ? keepFocus(field) : null),
+    onClick: () => setOpen(now => !now),
+    onKeyDown: event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setOpen(now => !now); } },
+  } : null;
+  return (
+    <Typography ref={ref} data-clamped={folded && cut ? 'true' : undefined} {...props} {...toggle}
+      sx={{ ...sx, ...(folded ? { display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : null), ...(cut ? { cursor: 'pointer' } : null) }}>
+      {children}
+    </Typography>
+  );
+}
 // The phonetic transcription of a word (IPA, American English), shown with the word; nothing when none is known.
 function Phonetic({ text, id, sx }) {
   if (!text) return null;
@@ -1156,25 +1253,34 @@ function useAutoCheck({ register, ready, value, result }) {
 // when a card starts (not in Build, where the tiles come first: a tap on the answer opens it); Hide closes it, a tap on the field opens it again.
 // A key edits the field at its caret through the exercise's own `change` (the same handling as typing) and the field keeps the focus. While it is
 // open on a phone the bottom navigation steps aside (`state.learnKeys`, BottomNav.jsx) and the actions stay right above it.
+// On a phone the letters take three rows, not four ("Compact practice on a phone" in docs/design/learn-spell-practice.md): the apostrophe ends the
+// second row (no half-key indent), the hyphen sits between M and Backspace (Shift and Backspace one letter wide), and Hide is an icon button at the
+// start of the pinned actions right above the keyboard (`keysHide` of ViewFrame), so the page keeps one row of keys more.
 const hideKey = () => ({ send: 'Hide', label: t('Hide'), span: 5, fn: true, col: 16, click: true });
+const APOSTROPHE = { ch: "'", aria: 'Apostrophe', fn: true };
+const HYPHEN = { ch: '-', aria: 'Hyphen', fn: true };
 const LETTER_ROWS = () => [chars('qwertyuiop'), chars('asdfghjkl', 2), [SHIFT, ...chars('zxcvbnm'), BACKSPACE],
-  [{ ch: "'", aria: 'Apostrophe', span: 3, fn: true }, { ch: '-', aria: 'Hyphen', span: 3, fn: true }, hideKey()]];
+  [{ ...APOSTROPHE, span: 3 }, { ...HYPHEN, span: 3 }, hideKey()]];
+const PHONE_LETTER_ROWS = () => [chars('qwertyuiop'), [...chars('asdfghjkl'), APOSTROPHE], [{ ...SHIFT, span: 2 }, ...chars('zxcvbnm'), HYPHEN, { ...BACKSPACE, span: 2 }]];
 const FULL_ROWS = layer => rowsFor(layer, hideKey());
 
-function LearnKeys({ letters, onKey }) {
+function LearnKeys({ letters, phone, onKey }) {
+  const rows = letters ? (phone ? PHONE_LETTER_ROWS : LETTER_ROWS) : FULL_ROWS;
   return (
     <Box className="h5-learn-keys-bar" sx={{ flexShrink: 0, position: 'sticky', bottom: 0, zIndex: 1, bgcolor: 'background.paper', backgroundImage: overlay(1), borderTop: 1, borderColor: 'divider', pb: 'env(safe-area-inset-bottom)' }}>
-      <Keyboard id="h5-learn-keys" aria-label={t('On-screen keyboard')} data-kind={letters ? 'letters' : 'full'} rows={letters ? LETTER_ROWS : FULL_ROWS} onKey={onKey} sx={{ pb: 1 }} />
+      <Keyboard id="h5-learn-keys" aria-label={t('On-screen keyboard')} data-kind={letters ? 'letters' : 'full'} rows={rows} onKey={onKey} sx={{ pb: 1 }} />
     </Box>
   );
 }
 
 // `field`: the answer field's ref; `change(text)`: the exercise's change handling; `letters`: the letter keyboard; `atStart`: open when the card
-// starts; `emptyBack`: Backspace in the empty field (Build takes the last tile back).
-function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true, emptyBack = null }) {
+// starts; `emptyBack`: Backspace in the empty field (Build takes the last tile back); `phone`: the phone's three letter rows and Hide in the actions.
+// `frame`: the props for ViewFrame (`keyboard`, `keysHide`); `compact`: the keyboard is open on a phone (the card's text a step smaller).
+function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true, emptyBack = null, phone = false }) {
   const touch = !keys;
   const [open, setOpen] = useState(atStart);
   const shown = touch && open;
+  const phoneLetters = phone && letters;
   useEffect(() => {
     if (!shown) return undefined;
     ui.set({ learnKeys: true });
@@ -1211,11 +1317,19 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
     caret.current = start + 1;
     change(text.slice(0, start) + ch + text.slice(end));
   };
+  const node = shown ? <LearnKeys letters={letters} phone={phoneLetters} onKey={onKey} /> : null;
+  const keysHide = shown && phoneLetters ? (
+    <IconButton id="h5-learn-keys-hide" data-key="Hide" onMouseDown={event => event.preventDefault()} onClick={() => setOpen(false)} {...named(t('Hide keyboard'))} sx={{ ml: -1, flexShrink: 0 }}>
+      <Icon name="down" size={22} />
+    </IconButton>
+  ) : null;
   return {
     touch,
     show: () => { if (touch) setOpen(true); },
     inputProps: touch ? { inputMode: 'none' } : null,
-    node: shown ? <LearnKeys letters={letters} onKey={onKey} /> : null,
+    node,
+    compact: Boolean(phone && shown),
+    frame: { keyboard: node, keysHide },
   };
 }
 
@@ -1393,23 +1507,13 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   // "Type it yourself" under the result: it takes the focus at once, and the page's keyboard types into it once the answer is checked.
   const practice = usePractice({ word, onIme: learnInput.seen });
   const checked = Boolean(result);
-  const kb = useLearnKeys({ ui, keys, field: checked ? practice.field : input, change: checked ? practice.change : change, letters: true });
+  const kb = useLearnKeys({ ui, keys, phone, field: checked ? practice.field : input, change: checked ? practice.change : change, letters: true });
   useEffect(() => {
     const el = practice.field.current;
     if (!checked || !el) return;
     el.focus({ preventScroll: true });
-    // Into sight once its slots are measured and drawn: on a phone above the pinned grades (scrollIntoView does not know the sticky footer).
-    const row = el.closest('.h5-learn-practice');
-    requestAnimationFrame(() => {
-      const scroller = row && row.isConnected && row.closest('.h5-learn-scroll, .h5-learn-pane');
-      if (!scroller) return;
-      const footer = scroller.querySelector('.h5-learn-footer');
-      const box = row.getBoundingClientRect();
-      const view = scroller.getBoundingClientRect();
-      const bottom = view.bottom - (footer ? footer.offsetHeight : 0) - 8;
-      if (box.bottom > bottom) scroller.scrollTop += box.bottom - bottom;
-      else if (box.top < view.top) scroller.scrollTop -= view.top - box.top;
-    });
+    // Into sight once its slots are measured and drawn: on a phone above the pinned grades (revealInPage; the page does it on the focus too).
+    requestAnimationFrame(() => revealInPage(el, el.isConnected ? el.closest('.h5-learn-scroll, .h5-learn-pane') : null));
   }, [checked]); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the answer is checked
   const ask = useAsk({ card, exercise, result, answer: () => value, gap: Boolean(cloze), field: input, phone, keys, openTranslator });
   const giveUp = () => { if (!result) setResult({ ...spellCheck(word, value), ok: false, correct: false, helped: true, gaveUp: true }); };
@@ -1433,6 +1537,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   layout.rows.reduce((at, size) => { rows.push([at, size]); return at + size; }, 0);
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} focus={false} /> : actionsRow(<>
     <Button id="h5-learn-dont-know" onClick={giveUp}>{t("I don't know")}</Button>
+    {phone ? <FirstLetterIcon disabled={Boolean(value)} onClick={showFirst} field={input} /> : null}
     <Box sx={{ flex: '1 1 auto' }} />
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
   </>);
@@ -1460,10 +1565,12 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       }))}
     </Box>
   );
+  // On a phone the sound is a row of icons (AudioIcons) and Show first letter is in the action row; a computer keeps the text buttons.
+  const compact = kb.compact;
   const helpers = (
     <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
-      {tts ? <AudioButton audio={audio} text={spoken} field={input} /> : null}
-      <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>
+      {tts ? (phone ? <AudioIcons audio={audio} text={spoken} field={input} /> : <AudioButton audio={audio} text={spoken} field={input} />) : null}
+      {phone ? null : <Button id="h5-learn-first" disabled={Boolean(result) || Boolean(value)} onClick={showFirst} {...keepFocus(input)}>{t('Show first letter')}</Button>}
       {ask.button}
     </Box>
   );
@@ -1476,12 +1583,12 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     {meaning.state === 'no-translator' ? <TranslatorNotice onOpen={openTranslator} sx={{ mt: 1 }} /> : null}
   </>;
   return (
-    <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
+    <ViewFrame {...frame} footer={phone ? actions : null} {...kb.frame}>
       {cloze ? (
         <Prompt label={t('Fill in the word')} badge={generated ? <Chip size="small" id="h5-learn-example-sentence" label={t('example sentence')} sx={CHIP_SX} />
           : <Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? ask.row : helpers}>
-          <SentenceWithGap cloze={cloze} result={result} />
-          <Typography variant="body2" color="text.secondary" component="p" lang="zh" translate="no" id="h5-learn-sentence-zh" sx={{ mt: 1, overflowWrap: 'break-word' }}>{cloze.zh}</Typography>
+          <SentenceWithGap cloze={cloze} result={result} compact={compact} />
+          <ClampText clamp={compact} field={input} variant="body2" color="text.secondary" component="p" lang="zh" translate="no" id="h5-learn-sentence-zh" sx={{ mt: 1, overflowWrap: 'break-word' }}>{cloze.zh}</ClampText>
           <Divider sx={{ my: 1.5 }} />
           {result ? (
             <WordLine word={word} phonetic={meaning.phonetic} className="h5-learn-word" phoneticId="h5-learn-feedback-phonetic">
@@ -1498,7 +1605,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
         </Prompt>
       ) : (
       <Prompt label={t('Meaning')} footer={helpers}>
-        {meaning.zh ? <Typography variant="h5" component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography> : null}
+        {meaning.zh ? <Typography variant={compact ? 'h6' : 'h5'} component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography> : null}
         {/* The transcription next to Hear it: the sound is offered there already, so it gives nothing more away. */}
         {tts && meaning.phonetic ? <Box sx={{ mt: 0.5 }}><Phonetic text={meaning.phonetic} id="h5-learn-phonetic" /></Box> : null}
         {meaningState}
@@ -1564,10 +1671,11 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
 // word in its parts (the card's `parts` from the translator, else splitParts) in alternating colours, the transcription, Hear it and Slowly, the card's
 // tip, and the word copied once (Next only when the copy matches). Step 2, "Now from memory": the word hidden, the meaning and the sound kept, the
 // number of parts; Show parts and Hint count as help (Hard). Check grades step 2 like Spell (Right, Almost, Not quite); step 1 is never graded.
-const WARN_CHIP_SX = theme => ({ height: 24, typography: 'caption', fontWeight: 'fontWeightMedium', color: 'warning.main', bgcolor: alpha(theme.palette.warning.main, 0.12), '& .MuiChip-label': { px: 1 } });
+// "Keeps slipping · missed N times": a small tag in the top right corner of the card (the badge of its Prompt), not a row of its own.
+const WARN_CHIP_SX = theme => ({ height: 20, typography: 'caption', fontWeight: 'fontWeightMedium', color: 'warning.main', bgcolor: alpha(theme.palette.warning.main, 0.12), ml: 'auto', mr: -1, '& .MuiChip-label': { px: 1 } });
 function SlippingChip({ card }) {
   const missed = Number(card.missed) || 0;
-  return <Box><Chip id="h5-learn-slipping" size="small" label={missed > 0 ? tf('Keeps slipping · missed {1} times', missed) : t('Keeps slipping')} sx={WARN_CHIP_SX} /></Box>;
+  return <Chip id="h5-learn-slipping" size="small" label={missed > 0 ? tf('Keeps slipping · missed {1} times', missed) : t('Keeps slipping')} sx={WARN_CHIP_SX} />;
 }
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 function PartsWord({ parts, word }) {
@@ -1621,7 +1729,7 @@ function PartsExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
     audio.typed();
     if (step === 'copy') setCopy(next); else setValue(next);
   };
-  const kb = useLearnKeys({ ui, keys, field: input, change, letters: true });
+  const kb = useLearnKeys({ ui, keys, phone, field: input, change, letters: true });
   const ask = useAsk({ card, exercise, result, answer: () => value, field: input, phone, keys, openTranslator });
   // Hint: the next part after those already typed right.
   const hint = () => {
@@ -1642,20 +1750,20 @@ function PartsExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       : <Button id="h5-learn-next" variant="contained" disabled={!copied} onClick={() => register.current.check()}>{t('Next step')}</Button>}
   </>);
   const audioRow = (
-    <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', justifyContent: recall ? 'flex-start' : 'center', ml: recall ? -1 : 0 }}>
-      {tts ? <AudioButton audio={audio} text={word} field={input} /> : null}
-      {tts && !recall ? <AudioButton audio={audio} text={word} field={input} id="h5-learn-slow" label="Slowly" slow /> : null}
+    <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', justifyContent: recall || phone ? 'flex-start' : 'center', ml: recall || phone ? -1 : 0 }}>
+      {tts && phone ? <AudioIcons audio={audio} text={word} field={input} /> : null}
+      {tts && !phone ? <AudioButton audio={audio} text={word} field={input} /> : null}
+      {tts && !phone && !recall ? <AudioButton audio={audio} text={word} field={input} id="h5-learn-slow" label="Slowly" slow /> : null}
       {recall ? <Button id="h5-learn-show-parts" disabled={shown || Boolean(result)} onClick={showParts} {...keepFocus(input)}>{t('Show parts')}</Button> : null}
       {ask.button}
     </Box>
   );
   const meaningText = meaning.zh
-    ? <Typography variant="h5" component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography>
+    ? <Typography variant={kb.compact ? 'h6' : 'h5'} component="p" lang="zh" translate="no" id="h5-learn-meaning" sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{meaning.zh}</Typography>
     : meaning.state === 'loading' ? <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>{t('Looking up the meaning…')}</Typography> : null;
   return (
-    <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
-      <SlippingChip card={card} />
-      <Prompt label={recall ? t('Now from memory') : t('Learn it in parts')} footer={<>{audioRow}{recall ? null : <TipBox tip={card.tip} />}</>}>
+    <ViewFrame {...frame} footer={phone ? actions : null} {...kb.frame}>
+      <Prompt label={recall ? t('Now from memory') : t('Learn it in parts')} badge={<SlippingChip card={card} />} footer={<>{audioRow}{recall ? null : <TipBox tip={card.tip} />}</>}>
         {meaningText}
         {meaning.state === 'no-translator' && !meaning.zh ? <TranslatorNotice onOpen={openTranslator} sx={{ mt: 1 }} /> : null}
         {recall ? (
@@ -1704,12 +1812,12 @@ function SentenceGap({ word }) {
     </Box>
   );
 }
-// The sentence of Spell's sentence layout, in the h6 size: a primary underline per letter where the word goes; after Check the word in it (the success colour
+// The sentence of Spell's sentence layout, in the h6 size (subtitle1 while the page's keyboard is open on a phone): a primary underline per letter where the word goes; after Check the word in it (the success colour
 // when right, the error colour when wrong: the right word either way).
-function SentenceWithGap({ cloze, result }) {
+function SentenceWithGap({ cloze, result, compact = false }) {
   const tone = result && result.correct ? 'success.light' : 'error.light';
   return (
-    <Typography variant="h6" component="p" lang="en" translate="no" id="h5-learn-sentence" sx={{ mt: 1, fontWeight: 'fontWeightRegular', lineHeight: 1.6, overflowWrap: 'break-word' }}>
+    <Typography variant={compact ? 'subtitle1' : 'h6'} component="p" lang="en" translate="no" id="h5-learn-sentence" sx={{ mt: 1, fontWeight: 'fontWeightRegular', lineHeight: 1.6, overflowWrap: 'break-word' }}>
       {cloze.before}
       {result ? <Box component="span" id="h5-learn-sentence-word" data-correct={result.correct ? 'true' : 'false'} sx={{ color: tone, fontWeight: 'fontWeightMedium', borderBottom: 2, borderColor: tone }}>{cloze.word}</Box>
         : <SentenceGap word={cloze.word} />}
@@ -1760,7 +1868,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
   useCardAudio(audio, exercise, card.en, result);
   const takeBack = () => { if (placed.length && !result) setPlaced(now => now.slice(0, -1)); };
   const type = next => { if (!result) { audio.typed(); setTyped(next); } };
-  const kb = useLearnKeys({ ui, keys, field, change: type, atStart: false, emptyBack: takeBack });
+  const kb = useLearnKeys({ ui, keys, phone, field, change: type, atStart: false, emptyBack: takeBack });
   const ask = useAsk({ card, exercise, result, answer: () => answer, field, phone, keys, openTranslator });
   const place = id => { if (!result) setPlaced(now => (now.includes(id) ? now : [...now, id])); };
   const remove = id => { if (!result) setPlaced(now => now.filter(item => item !== id)); };
@@ -1802,7 +1910,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
     </Box>
   );
   return (
-    <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
+    <ViewFrame {...frame} footer={phone ? actions : null} {...kb.frame}>
       <Prompt label={t('Chinese')} footer={ask.row}>
         <ChineseText card={card} id="h5-learn-chinese" />
         <Origin card={card} />
@@ -1835,7 +1943,7 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
   });
   useCardAudio(audio, exercise, card.en, result); // Dictation always plays at the start: listening is the task
   const change = next => { if (!result) { audio.typed(); setValue(next); } };
-  const kb = useLearnKeys({ ui, keys, field, change });
+  const kb = useLearnKeys({ ui, keys, phone, field, change });
   const ask = useAsk({ card, exercise, result, answer: () => value, field, phone, keys, openTranslator });
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
@@ -1843,15 +1951,17 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
   </>);
   return (
-    <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
+    <ViewFrame {...frame} footer={phone ? actions : null} {...kb.frame}>
       <Prompt label={t('Listen and type what you hear')} footer={(
-        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', ml: -1 }}>
-          <AudioButton audio={audio} text={card.en} field={field} id="h5-learn-play" label="Play" />
-          <Button id="h5-learn-slow" onClick={() => audio.play(card.en, { slow: true })} {...keepFocus(field)}>{t('Slow')}</Button>
+        <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap', alignItems: 'center', ml: -1 }}>
+          {phone ? <AudioIcons audio={audio} text={card.en} field={field} id="h5-learn-play" label="Play" /> : <>
+            <AudioButton audio={audio} text={card.en} field={field} id="h5-learn-play" label="Play" />
+            <Button id="h5-learn-slow" onClick={() => audio.play(card.en, { slow: true })} {...keepFocus(field)}>{t('Slow')}</Button>
+          </>}
           {ask.button}
         </Box>
       )}>
-        {result ? <ChineseText card={card} id="h5-learn-chinese" /> : null}
+        {result ? <ChineseText card={card} id="h5-learn-chinese" compact={kb.compact} field={field} /> : null}
       </Prompt>
       <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <OutlinedInput inputRef={field} multiline minRows={2} value={value} onChange={event => change(event.target.value)} onClick={kb.show} placeholder={t('Type the sentence')}
@@ -1948,7 +2058,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   // The gap word's length is known: the answer is checked by itself once that many letters are typed (Check stays for a shorter one).
   useAutoCheck({ register, ready: Boolean(gap) && typedInFull(value, gap.word), value, result });
   const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '')); } };
-  const kb = useLearnKeys({ ui, keys, field, change, letters: true });
+  const kb = useLearnKeys({ ui, keys, phone, field, change, letters: true });
   const ask = useAsk({ card, exercise, result, answer: () => value, expected: gap ? gap.word : '', gap: true, field, phone, keys, openTranslator });
   if (!gap) {
     return (
@@ -1960,17 +2070,18 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
       </ViewFrame>
     );
   }
+  const showFirst = () => { setHelped(true); setValue(gap.word.slice(0, 1)); if (field.current) field.current.focus({ preventScroll: true }); };
   const actions = result ? <Grades suggested={suggested} onGrade={grade} busy={busy} keys={keys} next={card.next} /> : actionsRow(<>
-    <Button id="h5-learn-first" disabled={Boolean(value)} onClick={() => { setHelped(true); setValue(gap.word.slice(0, 1)); if (field.current) field.current.focus({ preventScroll: true }); }} {...keepFocus(field)}>{t('Show first letter')}</Button>
+    {phone ? <FirstLetterIcon disabled={Boolean(value)} onClick={showFirst} field={field} />
+      : <Button id="h5-learn-first" disabled={Boolean(value)} onClick={showFirst} {...keepFocus(field)}>{t('Show first letter')}</Button>}
     <Box sx={{ flex: '1 1 auto' }} />
     {phone ? null : <Button id="h5-learn-skip" onClick={onSkip}>{t('Skip')}</Button>}
     <Button id="h5-learn-check" variant="contained" disabled={!value.trim()} onClick={() => register.current.check()}>{t('Check')}</Button>
   </>);
   return (
-    <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
-      {card.leech ? <SlippingChip card={card} /> : null}
-      <Prompt label={t('Chinese')} footer={ask.row}>
-        <ChineseText card={card} id="h5-learn-chinese" />
+    <ViewFrame {...frame} footer={phone ? actions : null} {...kb.frame}>
+      <Prompt label={t('Chinese')} badge={card.leech ? <SlippingChip card={card} /> : null} footer={ask.row}>
+        <ChineseText card={card} id="h5-learn-chinese" compact={kb.compact} field={field} />
         <Origin card={card} />
       </Prompt>
       <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -1982,7 +2093,12 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
             sx={theme => ({ ...theme.typography.h6, fontWeight: 400, mx: 0.5, verticalAlign: 'baseline', '& input': { p: 0, borderBottom: `2px solid ${theme.palette.primary.main}`, textAlign: 'center' } })} />
           {gap.after}
         </Typography>
-        {tts ? <Box sx={{ ml: -1, display: 'flex', gap: 1, flexWrap: 'wrap' }}><AudioButton audio={audio} text={card.en} field={field} onPress={() => { if (!result) setHelped(true); }} /></Box> : null}
+        {tts ? (
+          <Box sx={{ ml: -1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            {phone ? <AudioIcons audio={audio} text={card.en} field={field} onPress={() => { if (!result) setHelped(true); }} />
+              : <AudioButton audio={audio} text={card.en} field={field} onPress={() => { if (!result) setHelped(true); }} />}
+          </Box>
+        ) : null}
         {phone || result ? null : actions}
       </Card>
       {result ? (

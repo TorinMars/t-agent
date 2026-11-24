@@ -360,7 +360,7 @@ async function checkTasks(page, label, touch) {
 
   // Move to a group.
   await taskMenu(page, 'Fix login');
-  assert.deepEqual(await page.locator('#h5-session-menu-actions [role="menuitem"]').allTextContents(), [...(touch ? ['New session'] : []), '✓ Move to “In progress”', 'Move to “To do”', 'Move to “Done”', 'Rename', 'Edit working directory', 'Archive', 'Delete']);
+  assert.deepEqual(await page.locator('#h5-session-menu-actions [role="menuitem"]').allTextContents(), [...(touch ? ['New session'] : []), '✓ Move to “In progress”', 'Move to “To do”', 'Move to “Done”', 'Rename', 'Remember this', 'Edit working directory', 'Archive', 'Delete']);
   await shot(page, `${label}-task-menu`);
   await menuItem(page, 'Done').click();
   await until(() => callsTo('PUT', '/api/tasks/1').length === 1, 'move PUT');

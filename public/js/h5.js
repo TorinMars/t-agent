@@ -1369,6 +1369,7 @@
       ...steps.map(([label, step]) => [label, () => moveStep(step), null, null, null, !ui.taskOrder.stepTarget(display, key, step)]),
       ...ordered.map(group => [`${item.status === group.key ? '\u2713 ' : ''}${tr('Move to')} \u201C${tr(group.name)}\u201D`, () => void moveTask(from, item, group.key), 'raw']),
       ['Rename', () => void askTaskRename(from, item)],
+      ['Remember this', () => askRemember(from, item, null, '')],
       ['Edit working directory', () => { closeTerminalMenu(); ui.set({ taskDialog: dialogFor('workdir', from, item) }); }],
       ...(choosesVisibility(from) ? [['Visible to', () => void askVisibility(from, item)]] : []),
       ...(movesTasks(from) ? [['Move to another machine\u2026', () => void askTaskMove(from, item)]] : []),
@@ -2062,6 +2063,7 @@
       ...(open ? [['Copy text', () => { closeTerminalMenu(); closeTasks(); openCopy(); }]] : []),
       // Agent terminals too: a name given here is kept (title_custom) and wins over the Claude / Codex session title from then on.
       ['Rename', () => askRename(row.title)],
+      ['Remember this', () => askRemember(source, task, row.terminal_id, row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ...sessionSteps(source, task, row.terminal_id),
       ...(recent ? removeStep(source, task.id, row.terminal_id) : []),
@@ -2078,6 +2080,7 @@
     const target = menuScope = { from, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
+      ['Remember this', () => askRemember(from, item, entry.terminal_id, entry.title)],
       ['Open', () => { closeTerminalMenu(); ui.actions.openRow(taskRef(from, item.id), { kind: row.kind, id: row.id }); }],
       ...sessionSteps(from, item, entry.terminal_id),
       ...(recent ? removeStep(from, item.id, entry.terminal_id) : []),
@@ -2087,6 +2090,33 @@
       ] : []),
     ], { anchor });
   }
+  // ── "Remember this" ("Remember this" in docs/design/usage-time-page.md): a note of the person's own with the time, the task and the session ──
+  // From a session's "⋯" (its row, or the session header's More while it is shown) or a task's "⋯": the dialog of the task dialogs chunk
+  // (TaskDialogs.jsx `RememberDialog`), saved with POST /api/memories on this page's server. The task and session are named by engine-neutral ids
+  // (`<instance id>:<task id>[:<terminal id>]`, usage-beats.mjs), so a note opens its session from any device; a device whose instance id is not
+  // known yet saves the note without them. Never the terminal text.
+  function askRemember(from, item, terminal, sessionTitle) {
+    closeTerminalMenu();
+    const instance = from && from.instanceId;
+    const task = instance ? `${instance}:${item.id}` : null;
+    ui.set({ taskDialog: dialogFor('remember', from, item, { task, session: task && terminal ? `${task}:${terminal}` : null, sessionTitle: sessionTitle || '' }) });
+  }
+  // The session the page shows (the session header's More, h5-shell/Header.jsx).
+  ui.actions.rememberShown = () => {
+    const row = task && terminalId && !agentChat ? terminals.find(entry => entry.terminal_id === terminalId) : null;
+    if (row) askRemember(source, task, row.terminal_id, row.title);
+  };
+  ui.actions.rememberSave = async text => {
+    const dialog = ui.get().taskDialog;
+    const note = String(text || '').trim().slice(0, 500);
+    if (!dialog || dialog.kind !== 'remember' || dialog.busy || !note) return;
+    patchDialog({ busy: true, error: '' });
+    try {
+      await api('POST', '/api/memories', { text: note, ...(dialog.task ? { task: dialog.task } : {}), ...(dialog.session ? { session: dialog.session } : {}) });
+      ui.set({ taskDialog: null });
+      tell('Saved to Memories', 'success');
+    } catch (error) { patchDialog({ busy: false, error: `${tr('Could not save the note')}: ${tr(error.message)}` }); }
+  };
   // Shows a saved name: in the list of the selected task, or under a task that is not selected. That list is read again too, so that an older read still on
   // its way cannot bring the old name back, and a name the server cleaned up is shown as it was kept.
   async function showRenamed(scope, id, title) {

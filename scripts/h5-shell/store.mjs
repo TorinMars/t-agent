@@ -141,4 +141,6 @@ export const initialState = () => ({
   switcher: null,
   // Usage data (usage-track.mjs): whether this server records button use; null until the page has read the switch (Settings > Usage data sets it).
   usageRecording: null,
+  // Page time (usage-time.mjs): whether this server records time on the page ("Record time"); null until the page has read the switch.
+  usageTimeRecording: null,
 });

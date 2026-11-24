@@ -20,6 +20,7 @@ import { startColumns } from './Columns.jsx';
 // chunk (screen-settings.jsx), which is loaded when Settings first opens (lazy-screens.jsx).
 import { preloadOnIntent } from './lazy-screens.jsx';
 import { startUsageTracking } from './usage-track.mjs';
+import { startUsageTime } from './usage-time.mjs';
 
 // One breakpoint for the shell and for h5.js (which reads it from `H5UI.media.wideQuery`), so the two can never disagree.
 const wideQuery = window.matchMedia('(min-width: 900px)');
@@ -147,3 +148,6 @@ preloadOnIntent(document);
 // Usage data (usage-track.mjs, "Usage data" in docs/design/usage-data.md): which buttons are pressed, sent in batches to this server while the
 // switch in Settings > Usage data is on. A pane records its own presses (its document is its own).
 startUsageTracking(ui);
+// Page time (usage-time.mjs, "Page time" in docs/design/usage-time-page.md): 15-second beats while the page is visible and in use, sent in batches while
+// the switch "Record time" is on. A pane only tells its top page that the person is active in it.
+startUsageTime(ui);

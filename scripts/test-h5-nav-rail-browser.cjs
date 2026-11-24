@@ -148,7 +148,7 @@ async function openTerminal(page, task, terminal, how = 'click') {
       assert.equal(await header.locator('#h5-sidebar-toggle').count(), 1, 'the fold toggle stays at the left');
       await page.locator('#h5-header-more').click();
       await page.locator('#h5-header-more-menu [role="menu"]').waitFor();
-      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => [el.id, el.textContent])), [['h5-refresh', 'Refresh the page']], 'More holds Refresh the page');
+      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => [el.id, el.textContent])), [['h5-header-remember', 'Remember this'], ['h5-refresh', 'Refresh the page']], 'More holds Remember this (a session is shown) and Refresh the page');
       assert.equal(await page.locator('#h5-header-more-menu [role="menu"]').getAttribute('aria-label'), 'More');
       await page.keyboard.press('Escape');
       await page.locator('#h5-header-more-menu [role="menu"]').waitFor({ state: 'hidden' });
@@ -267,7 +267,7 @@ async function openTerminal(page, task, terminal, how = 'click') {
       await page.locator('#h5-header-more[data-attention="true"]').waitFor({ timeout: 5000 });
       await page.locator('#h5-header-more').tap();
       await page.locator('#h5-header-more-menu [role="menu"]').waitFor();
-      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-refresh', 'h5-header-update']);
+      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-header-remember', 'h5-refresh', 'h5-header-update']);
       assert.equal(await page.locator('#h5-term-width').textContent(), 'Terminal width: Fit to screen');
       assert.equal(await page.locator('#h5-header-update').getAttribute('data-attention'), 'true');
       await page.waitForTimeout(400); // the menu's grow animation

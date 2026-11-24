@@ -1704,7 +1704,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
     await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete session'], 'the open terminal also offers Copy text (and, as the last of its task, Move up)');
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Remember this', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete session'], 'the open terminal also offers Copy text (and, as the last of its task, Move up)');
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
     await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the popup closed at "Rename"); Save does not blur it
@@ -1759,7 +1759,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // shows both versions, and offers the update.
     const openUpdate = async () => { await page.locator('#h5-header-more').click(); await page.locator('#h5-header-update').click(); };
     await page.locator('#h5-header-more').click();
-    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-refresh', 'h5-header-update'], 'More: Terminal width, Refresh the page, Update');
+    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-header-remember', 'h5-refresh', 'h5-header-update'], 'More: Terminal width, Refresh the page, Update');
     await page.locator('#h5-header-update').click();
     await page.locator('#h5-update-dialog [role="dialog"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-modal'), 'true');

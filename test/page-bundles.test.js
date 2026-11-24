@@ -68,7 +68,7 @@ test('React and highlight.js exist once among the bundles, and every chunk on di
   // screen-skew is the task list's banner of an engine on an older version (VersionSkew.jsx), loaded only while one is named;
 // key-feedback is the haptic tick and the key bubble of the page's own keyboard (Osk.jsx), loaded at the first key press.
   const dynamic = new Set(files.flatMap(url => importsOf(read(url)).dynamics).map(url => url.replace(/-[A-Z0-9]{8}\.js$/, '').replace('/js/chunks/', '')));
-  assert.deepEqual([...dynamic].sort(), ['key-feedback', 'markdown-view-entry', 'screen-attention', 'screen-design', 'screen-dialogs', 'screen-files', 'screen-learn', 'screen-recent', 'screen-settings', 'screen-skew', 'screen-switcher', 'screen-task-dialog', 'screen-update', 'screen-updated', 'usage-recorder']);
+  assert.deepEqual([...dynamic].sort(), ['key-feedback', 'markdown-view-entry', 'screen-attention', 'screen-design', 'screen-dialogs', 'screen-files', 'screen-learn', 'screen-recent', 'screen-settings', 'screen-skew', 'screen-switcher', 'screen-task-dialog', 'screen-update', 'screen-updated', 'usage-recorder', 'usage-time-sender']);
 });
 
 test('shell-core.mjs names every module entry.jsx imports, so the first screen stays in one shared chunk', () => {

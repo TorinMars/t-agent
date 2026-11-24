@@ -123,7 +123,7 @@ export function Header({ ui }) {
         ) : null}
         {wide && state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <PlanUsageButton ui={ui} phone={!wide} />
-        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} />
+        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} />
       </Toolbar>
     </AppBar>
   );
@@ -235,7 +235,9 @@ function StateWord({ ui }) {
 // On a phone, while a terminal is shown (`width`, h5.js `state.terminalWidth`), the terminal width comes first (`#h5-term-width`, "Terminal width:
 // 160 columns" with a ›, its icon in the primary colour while Wide): it replaces this menu with the width choices (`WidthMenu` with its Back row, at the
 // same place), since the bar has no room for the computer's switch.
-function MoreMenu({ ui, phone, updateDot, notebook = false, width = null }) {
+// While a terminal session is shown (`remember`), "Remember this" (a note with the time, the task and the session; h5.js `rememberShown`) comes
+// before Refresh the page ("Remember this" in docs/design/usage-time-page.md).
+function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false }) {
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
   const [widthOpen, setWidthOpen] = useState(false);
@@ -271,6 +273,12 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null }) {
           </MenuItem>
         )) : null}
         {notebook ? <Divider /> : null}
+        {remember ? (
+          <MenuItem id="h5-header-remember" aria-haspopup="dialog" onClick={() => { setOpen(false); if (ui.actions.rememberShown) ui.actions.rememberShown(); }} sx={{ minHeight: 44 }}>
+            <ListItemIcon><Icon name="star" size={20} /></ListItemIcon>
+            <ListItemText>{t('Remember this')}</ListItemText>
+          </MenuItem>
+        ) : null}
         <MenuItem id="h5-refresh" onClick={() => { setOpen(false); ui.actions.refresh(); }} sx={{ minHeight: 44 }}>
           <ListItemIcon><Icon name="reload" size={20} /></ListItemIcon>
           <ListItemText>{t('Refresh the page')}</ListItemText>

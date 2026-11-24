@@ -7,6 +7,8 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
+import Tab from '@mui/material/Tab';
+import Tabs from '@mui/material/Tabs';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
@@ -14,12 +16,16 @@ import { api, t } from './common.jsx';
 import { Feedback, Group, Hint, Section, SettingsNav, SubHeading, SwitchRow, failure, useFeedback } from './Form.jsx';
 import { InTab } from './DeviceTarget.jsx';
 import { ScopeLabel } from './ScopeLabel.jsx';
+import { UsageTime } from './UsageTime.jsx';
+import { UsageMemories } from './UsageMemories.jsx';
 
 // The Settings group "Usage data" ("Usage data" in docs/design/usage-data.md): the switch "Record button use" (one choice for every linked engine:
 // the settings sync group usage-record, so it is in the Shared tab), the most pressed controls of the last 30 days (all, computer or phone), the
 // controls shown but not pressed in that time, and the store (count, size, where it is kept, Clear, Export JSON). The data is one set for the linked
 // normal engines ("Merged across linked devices"), so the cards are the same in every tab. It reads GET /api/ui-events/settings and /summary each
 // time it opens; the switch is saved at once (PUT) and tells this page's recorder through `usageRecording` (usage-track.mjs).
+// The group has three tabs (MD2 fixed tabs): Buttons (the parts above, unchanged), Time (UsageTime.jsx) and Memories (UsageMemories.jsx); see
+// "Usage time and memories: the page" in docs/design/usage-time-page.md. Every tab stays mounted once shown, so a search or a range is kept.
 
 // Readable names of the main controls (English; the page translates them). Any other key is shown as it is.
 const NAMES = {
@@ -111,11 +117,25 @@ function unusedChips(unused, filter) {
   });
 }
 
+// The tab of a part opened from code (`openSettings('usage-time')`, settings-target.mjs).
+const TAB_OF = { 'usage-time': 'time', 'usage-time-record': 'time', 'usage-memories': 'memories', 'usage-digest': 'memories' };
+const TABS = [['buttons', 'Buttons'], ['time', 'Time'], ['memories', 'Memories']];
+
 export function UsageDataGroup({ ui, request }) {
   const [opened, setOpened] = useState(0);
+  const [tab, setTab] = useState('buttons');
+  const [seen, setSeen] = useState(() => new Set(['buttons']));
+  const choose = next => { setTab(next); setSeen(before => (before.has(next) ? before : new Set([...before, next]))); };
+  useEffect(() => { if (request && TAB_OF[request.section]) choose(TAB_OF[request.section]); }, [request]); // eslint-disable-line react-hooks/exhaustive-deps -- a new request is a new object
+  const panel = id => ({ id: `h5-usage-panel-${id}`, role: 'tabpanel', 'aria-labelledby': `h5-usage-tab-${id}`, hidden: tab !== id, sx: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, '&[hidden]': { display: 'none' } } });
   return (
     <Group id="usage-data" title="Usage data" onOpen={() => setOpened(count => count + 1)} request={request}>
-      <UsageParts ui={ui} opened={opened} />
+      <Tabs id="h5-usage-tabs" value={tab} onChange={(event, value) => choose(value)} aria-label={t('Usage data')} variant="fullWidth" sx={{ borderBottom: 1, borderColor: 'divider', maxWidth: 480, minHeight: 48 }}>
+        {TABS.map(([id, label]) => <Tab key={id} id={`h5-usage-tab-${id}`} value={id} label={t(label)} aria-controls={`h5-usage-panel-${id}`} sx={{ minHeight: 48 }} />)}
+      </Tabs>
+      <Box {...panel('buttons')}><UsageParts ui={ui} opened={opened} /></Box>
+      <Box {...panel('time')}>{seen.has('time') ? <UsageTime ui={ui} opened={opened} shown={tab === 'time'} /> : null}</Box>
+      <Box {...panel('memories')}>{seen.has('memories') ? <UsageMemories ui={ui} opened={opened} shown={tab === 'memories'} /> : null}</Box>
     </Group>
   );
 }

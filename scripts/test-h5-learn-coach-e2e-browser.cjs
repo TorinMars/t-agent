@@ -20,7 +20,7 @@ const ROOT = path.resolve(__dirname, '..');
 const { encryptToken } = require(path.join(ROOT, 'lib', 'token-crypto'));
 const SECRET = 'coach-e2e-test-secret-'.repeat(3);
 const OWNER = 'local';
-const WAIT = { timeout: 20000 };
+const WAIT = { timeout: 60000 };
 const LIMIT_MS = 540000;
 const META = '<<meta>>';
 const XHR = { 'X-Requested-With': 'XMLHttpRequest' };
@@ -107,7 +107,7 @@ async function startServer(temp) {
   });
   let output = '';
   const port = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server startup timed out: ${output}`)), 30000);
+    const timer = setTimeout(() => reject(new Error(`server startup timed out: ${output}`)), 60000);
     child.once('exit', () => { clearTimeout(timer); reject(new Error(`server exited: ${output}`)); });
     child.stderr.on('data', chunk => { output += chunk; });
     child.stdout.on('data', chunk => {

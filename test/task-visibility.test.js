@@ -211,6 +211,7 @@ const REVIEWED_ROUTES = new Set([
 // /learn-sync: the English learning cards, answers and settings linked services keep as one set (routes/learn-sync.js), never a task, link tokens only.
 // /mindmap-sync: the mind maps linked services each keep a copy of (routes/mindmap-sync.js); maps belong to no task, link tokens only.
 // /usage-sync: the usage data (button presses) linked services keep as one set (routes/ui-events-sync.js), never a task, link tokens only.
+// /usage-sync/time: the usage time and memories linked services keep as one set (routes/usage-time-sync.js): seconds and counts per day, task and session ids, the person's own notes; never a task's content, link tokens only.
 // /attention-copy: the read copies of T-Attention items between linked services (routes/attention-copy.js), never a task, link tokens only.
 // /page-state: the page state linked services keep as one set (routes/page-state.js): recent sessions as ids and titles, never a task's content;
 // the entries of this service's tasks a link may not see are left out of what it gets; link tokens only.
@@ -223,7 +224,7 @@ const REVIEWED_ROUTES = new Set([
 // /agent-usage: the plan windows of this engine's Claude and Codex logins with a hash of the account (routes/agent-usage.js), never a task.
 // /updated-notice: this service's "Updated to v…" notice (versions, a time and release notes from DESIGN.md; routes/updated-notice.js), never a task,
 // and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/attention-copy', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/task-move', '/sign-in-handover', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files', '/agent-usage']);
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/usage-sync/time', '/attention-copy', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/task-move', '/sign-in-handover', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files', '/agent-usage']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

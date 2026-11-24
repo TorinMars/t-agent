@@ -158,6 +158,15 @@ function Learn({ state, ui }) {
     open({ kind: 'chat' });
     ui.set({ learnTarget: null });
   }, [target && target.seq]); // eslint-disable-line react-hooks/exhaustive-deps -- once per link
+  // Opening Learn lands in the coach (one tap to the agent) when the engine has one; the back arrow still returns to the home, and a view the person
+  // opened first (a link, a card tapped before the support is known) is never replaced. Once per opening.
+  const coachSupport = useCoachSupport();
+  const landed = useRef(false);
+  useEffect(() => {
+    if (landed.current || coachSupport !== true) return;
+    landed.current = true;
+    if (!viewRef.current && !state.learnTarget) open({ kind: 'chat' });
+  }, [coachSupport]); // eslint-disable-line react-hooks/exhaustive-deps -- once per opening
   const input = useLearnInputState();
 
   // Computer: Escape closes the open mode, then the page (unless something above takes it); the focus goes into the page and back to the opener.

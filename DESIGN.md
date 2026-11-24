@@ -248,3 +248,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.162.0 English coach: one continuous conversation that can look up your learning data with SQL, start practice series (today's spelling, new words, mistakes) from buttons and read the result, propose settings, card and reminder changes that wait for your tap, remember notes about you, and keep long chats in budget with a rolling summary; Learn settings → Coach
 > v2.163.0 Usage data: Time and Memories tabs (time on the page, time each session and task was looked at, worked on by the agent and waiting for you; a timeline of events, your own 'Remember this' notes and an optional weekly digest); Learn Spell: every word gets its own example sentence, the gap shows its letter count, and the phonetic transcription is shown
 > v2.164.0 Compact phone layouts: practice page, coach chat, draft box and session header
+> v2.164.1 Learn opens straight in the English coach

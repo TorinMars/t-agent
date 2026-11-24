@@ -284,6 +284,9 @@ async function phoneRun(browser, server, fake) {
   // The Learn home: the coach behind "English chat".
   await page.reload();
   await openLearn(page, touch);
+  // Learn opens straight in the coach; the back arrow returns to the home.
+  await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor(WAIT);
+  await press(page, '#h5-learn-back', touch);
   await waitFor(async () => (await text(page, '#h5-learn-mode-chat')).includes('Your coach'), 'the coach note on the home card');
   await press(page, '#h5-learn-mode-chat', touch);
   await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor(WAIT);

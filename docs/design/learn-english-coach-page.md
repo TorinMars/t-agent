@@ -124,3 +124,7 @@ least 55% of the window, the plan card in one row, the usage line opened by a ta
 stub of the contract; a company computer whose home is away; an engine without the coach keeps the old chat), and end to end with the real server
 `scripts/test-h5-learn-coach-e2e-browser.cjs` (see "Tests" in [learn-english-coach.md](learn-english-coach.md)). The old chat's own test (`scripts/test-h5-learn-chat-browser.cjs`) runs
 against a stub without the coach route.
+
+## Learn opens in the coach
+
+When the engine has the coach, opening Learn (the navigation, a column, a link without a view) lands directly in the coach chat, once per opening (`landed` in `Learn` of `scripts/h5-shell/Learn.jsx`), so the agent is one tap away. On a phone the chat covers the home and its back arrow returns to the Learn home; on a computer the home stays at the left and the chat fills the pane. A view opened first (a link with `learnTarget`) is never replaced. An engine without the coach still opens the home.

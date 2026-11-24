@@ -270,6 +270,9 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
+      // Learn opens straight in the coach; the back arrow returns to the home, where the card of the coach is.
+      await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor();
+      await page.locator('#h5-learn-back').tap();
       const entry = page.locator('#h5-learn-mode-chat');
       await entry.waitFor();
       await waitFor(async () => (await text(page, '#h5-learn-mode-chat')).includes('Your coach'), 'the coach note on the home card');

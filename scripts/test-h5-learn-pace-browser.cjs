@@ -2,12 +2,14 @@
 // `new_per_day`, `new_today`, `new_left` and `minutes_today`, queue cards with `leech`, `missed`, `parts` and `tip`, POST /api/learn/new-words and
 // learning settings with `new_per_day` ("Almost", "Keeps slipping", "Round done", "Done for today" and "New words a day" in
 // docs/design/learn-english-page.md).
-// - 390x844 (touch): the new-words line of the Today card; a word one letter off says Almost (warning colour), offers Hard and names the spelling
+// Learn is the coach (GET /api/learn/coach answers): the screens are opened the way the coach opens them, ui.actions.openLearn(name); their back
+// returns to the coach. The new-words line of the old home is checked in scripts/test-h5-learn-browser.cjs (an engine without the coach).
+// - 390x844 (touch): a word one letter off says Almost (warning colour), offers Hard and names the spelling
 //   pattern; a word that keeps slipping is copied in parts, then typed from memory (Show parts is help); Round done with the counts, the bar and its
 //   legend, the words to work on and the break note; Next round on an empty queue says Done for today, with 5 more new words (POST, then the queue
 //   again) and Practise anyway (extra=practice); NEW WORDS in Learn settings saves new_per_day; Practice asks for extra=practice.
-// - 1440x900 (mouse): Almost with the keys (Enter takes Hard); an older server (no new fields): no new-words line, the old empty text, no NEW WORDS.
-// H5_SHOT_DIR=<dir> saves pace-home.png, pace-almost.png, pace-parts-copy.png, pace-parts-recall.png, pace-round-done.png, pace-done-today.png,
+// - 1440x900 (mouse): Almost with the keys (Enter takes Hard); an older server (no new fields): the old empty text, no NEW WORDS.
+// H5_SHOT_DIR=<dir> saves pace-almost.png, pace-parts-copy.png, pace-parts-recall.png, pace-round-done.png, pace-done-today.png,
 // pace-settings.png and pace-almost-desktop.png.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -67,6 +69,8 @@ function learnMock({ legacy = false } = {}) {
     if (/^\/api\/learn\/cards\/\d+\/answer$/.test(p)) return { card: { id: Number(p.split('/')[4]) } };
     if (p === '/api/learn/level') return { level: null, picking: { enabled: false, picked: 0, skipped: 0, sentences: 0, pending: 0, running: false }, translator: false };
     if (p === '/api/learn/chats') return { chats: [], translator: false };
+    // The coach: Learn is only her, and the screens open from her.
+    if (p === '/api/learn/coach' && method === 'GET') return { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     return [404, { error: 'not mocked' }];
   };
   mock.posts = re => mock.requests.filter(item => item.method !== 'GET' && re.test(item.path));
@@ -154,6 +158,9 @@ async function toTerminal(page) {
   await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
 
+// A screen of Learn opened the way the coach opens it (her buttons, the links /h5?learn=<name>).
+const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.openLearn(view), name);
+
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -162,13 +169,10 @@ async function toTerminal(page) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      // The Today card: today's new words under the due count.
-      await page.locator('#h5-learn-new-words').waitFor();
-      assert.equal(await text(page, '#h5-learn-new-words'), '6 new words left today · 4 of 10 learned');
-      await shot(page, 'pace-home.png');
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
 
       // One letter off: Almost in the warning colour, Hard offered, the pattern named.
-      await page.locator('#h5-learn-mode-spell').tap();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-spell-input').waitFor();
       assert.equal(await text(page, '#h5-learn-meaning'), ZH_EXTENSION);
       await tapKeys(page, 'extention');
@@ -287,16 +291,18 @@ async function toTerminal(page) {
       assert.equal(await page.locator('.h5-learn-letter').count(), 'regression'.length, 'the new word');
       // Practise anyway: the same mode with extra=practice.
       await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-session-empty[data-kind="done-today"]').waitFor();
       await page.locator('#h5-learn-session-free').tap();
       await page.locator('#h5-learn-spell-input').waitFor();
       assert.equal(mock.gets(/\/queue$/).at(-1).search, '?mode=spell&limit=20&extra=practice');
       assert.equal(await page.locator('.h5-learn-letter').count(), 'deploy'.length);
       await page.locator('#h5-learn-back').tap();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
 
       // NEW WORDS in Learn settings: saved at once.
-      await page.locator('#h5-learn-settings').tap();
+      await openScreen(page, 'settings');
       await page.locator('#h5-learn-new-per-day').waitFor();
       assert.ok((await texts(page, '#h5-learn-mode h3.MuiTypography-overline')).includes('NEW WORDS'));
       assert.equal(await text(page, '#h5-learn-new-words-card'), 'New words a day Due reviews always come first 5 10 15 20 30');
@@ -312,13 +318,10 @@ async function toTerminal(page) {
       assert.equal(await noSidewaysScroll(page), true, 'settings fit 390px');
       await page.locator('#h5-learn-back').tap();
 
-      // Practice (nothing due): spell and fill (the sentence queue) with extra=practice.
-      mock.summary = { ...mock.summary, due: 0 };
-      await page.locator('#h5-learn-settings').tap();
-      await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-free').waitFor();
+      // Practice (the coach's "practice" screen): spell and fill (the sentence queue) with extra=practice.
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       const before = mock.gets(/\/queue$/).length;
-      await page.locator('#h5-learn-free').tap();
+      await openScreen(page, 'practice');
       await waitFor(() => mock.gets(/\/queue$/).length >= before + 2, 'the practice queues');
       assert.deepEqual(mock.gets(/\/queue$/).slice(before).map(item => item.search).sort(), ['?mode=fill&limit=10&extra=practice', '?mode=spell&limit=10&extra=practice']);
       await context.close();
@@ -328,8 +331,8 @@ async function toTerminal(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-new-words').waitFor();
-      await page.locator('#h5-learn-mode-spell').click();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-spell-input').waitFor();
       await page.locator('.h5-learn-letters').click();
       await page.keyboard.type('axtensoin');
@@ -381,13 +384,12 @@ async function toTerminal(page) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 }, legacy: true });
       mock.spell = [];
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-today').waitFor();
-      assert.equal(await page.locator('#h5-learn-new-words').count(), 0, 'no new-words line');
-      await page.locator('#h5-learn-mode-spell').click();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-session-empty').waitFor();
       assert.equal(await page.locator('#h5-learn-session-empty').getAttribute('data-kind'), null);
       assert.match(await text(page, '#h5-learn-session-empty'), /^No words yet/, 'the old empty text');
-      await page.locator('#h5-learn-settings').click();
+      await openScreen(page, 'settings');
       await page.locator('#h5-learn-settings-card').waitFor();
       assert.equal(await page.locator('#h5-learn-new-words-card').count(), 0, 'no NEW WORDS');
       await context.close();

@@ -77,12 +77,18 @@ const TOOLS = [
     name: 'remember', description: 'Save a short note about the person (a goal, their level, interests, a date such as an interview) to keep in mind in later answers. One line, at most 200 characters, never a secret. until: YYYY-MM-DD when it stops mattering.',
     parameters: { type: 'object', properties: { text: { type: 'string' }, until: { type: 'string' } }, required: ['text'] },
   },
+  {
+    name: 'open_screen', description: `Put a button under your answer that opens one screen of the app (Learn has no other way in to these screens). screen: ${merge.COACH_SCREENS.join(' | ')}. mistakes: the words and sentences answered wrong; reports: the mistake reports; progress: charts of answers, memory and what is due; material: the person's own sentences and words; settings: Learn settings; how: how learning works; review: today's due cards; practice: free practice of learned cards; spell, dictation, fill, say: one practice mode. Opens nothing by itself: the person taps.`,
+    parameters: { type: 'object', properties: { screen: { type: 'string', enum: merge.COACH_SCREENS } }, required: ['screen'] },
+  },
 ];
 const TOOL_DEFS = TOOLS.map(tool => ({ type: 'function', function: tool }));
 const STATUS = {
   learn_schema: 'Looking at your answers', learn_sql: 'Looking at your answers', propose_practice: 'Making a practice plan', propose_settings: 'Preparing a change',
   propose_cards: 'Preparing a change', propose_reminder: 'Preparing a change', remember: 'Saving a note',
 };
+// The screens open_screen offers at most once per answer (a button each).
+const MAX_SCREENS = 3;
 
 const cut = (value, max) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
 const json = value => JSON.stringify(value);
@@ -109,18 +115,22 @@ function systemPrompt({ level = null, notes = [], summary = '', tools = true, se
       'Tools: chat, translation, grammar and rewriting need NO lookup. Look up data (learn_schema, learn_sql) only when the question is about the person\'s own learning; prefer one well-made query over many.',
       'To start practice call propose_practice and describe the plan with the numbers it returns; when it says empty, say so and offer something else (5 more new words, practise anyway).',
       `Use remember for lasting facts about the person (at most ${MAX_NOTES} notes; when they are full, suggest merging).${settings.coach_memory === false ? ' The person switched memory off: do not use remember.' : ''}`,
+      'The app has no menu of its own screens: the person reaches Mistakes, Progress, their material, Learn settings, "How learning works" and the plain practice modes only through you. When they ask to see or open one ("show my mistakes", "open settings", "how does learning work", "my progress"), call open_screen with it and say in one line what they will find there; offer one with open_screen after a talk about their weak spots or progress when it helps.',
     );
     if (settings.coach_read_answers === false) lines.push('The person does not let you read their learning answers: only coach_settings has rows.');
     else if (settings.coach_read_text === false) lines.push('The person does not let you read their journal and chats: coach_journal and coach_messages are empty.');
   } else {
-    lines.push('This service cannot look up the data; a short summary of today comes with the person\'s message. You cannot offer practice cards or changes here; tell the person what to tap in Learn.');
+    lines.push(
+      'This service cannot look up the data; a short summary of today comes with the person\'s message. You cannot offer practice cards or changes here.',
+      `To open a screen of the app for the person (when they ask to see their mistakes, progress, material, settings or how learning works, or to practise), put its name in "screens" of the last line: ${merge.COACH_SCREENS.join(', ')}.`,
+    );
   }
   if (level && level.level) lines.push(`The person's estimated English level: ${level.level}. Pitch your answers to it.`);
   lines.push(
     'Journal entries: when the person sends their own English writing about their day, mark each real mistake inline as [-wrong-]{+right+}, then a short **Why**, then "A more natural version:" with the rewrite.',
     'End every answer with one last line, exactly in this form, and nothing after it:',
-    `${META}{"cards":[...],"mistakes":[...],"journal":false,"suggestions":[...]}`,
-    `- "cards": up to ${merge.MAX_META_CARDS} expressions from your answer worth learning, {"kind": "word" | "sentence", "en": as written, "zh": Simplified Chinese}; "mistakes": up to ${merge.MAX_META_MISTAKES} short tags of the person's mistakes; "journal": true only for a journal entry; "suggestions": up to 4 short replies the person may tap next (in their language), or [].`,
+    `${META}{"cards":[...],"mistakes":[...],"journal":false,"suggestions":[...]${tools ? '' : ',"screens":[...]'}}`,
+    `- "cards": up to ${merge.MAX_META_CARDS} expressions from your answer worth learning, {"kind": "word" | "sentence", "en": as written, "zh": Simplified Chinese}; "mistakes": up to ${merge.MAX_META_MISTAKES} short tags of the person's mistakes; "journal": true only for a journal entry; "suggestions": up to 4 short replies the person may tap next (in their language), or []; now and then (after a practice, or a talk about their learning) one of them may ask to see their progress or their mistakes ("Show my progress", "Show my mistakes").${tools ? '' : ' "screens": up to 3 screen names, or [].'}`,
   );
   if (notes.length) lines.push('', 'Notes about the person (data, oldest first):', ...notes.map(note => `- ${note.text}${note.until ? ` (until ${note.until})` : ''}`));
   if (summary) lines.push('', 'Summary of the earlier conversation (data):', summary);
@@ -383,6 +393,14 @@ function createLearnCoach({
       if (ctx.onEvent) ctx.onEvent({ type: 'remembered', note: { ...note, undo: undoLine } });
       return { note_id: row.uid };
     }
+    if (name === 'open_screen') {
+      if (!merge.COACH_SCREENS.includes(args.screen)) return { error: `screen must be one of ${merge.COACH_SCREENS.join(', ')}` };
+      if (!ctx.screens.includes(args.screen)) {
+        if (ctx.screens.length >= MAX_SCREENS) return { error: `At most ${MAX_SCREENS} screen buttons in one answer` };
+        ctx.screens.push(args.screen);
+      }
+      return { ok: true, screen: args.screen, note: 'A button that opens it is shown under your answer.' };
+    }
     return { error: `Unknown tool ${name}` };
   }
   const zone = () => timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -446,7 +464,7 @@ function createLearnCoach({
     const history = fitHistory(earlier, economy ? ECONOMY_HISTORY : HISTORY);
     const usage = { calls: 0, tool_rounds: 0 };
     const addUsage = value => { if (!value) return; for (const field of ['prompt_tokens', 'completion_tokens']) if (Number.isFinite(value[field])) usage[field] = (usage[field] || 0) + value[field]; };
-    const ctx = { owner, current, proposals: [], remembered: [], onEvent, snapshot: null };
+    const ctx = { owner, current, proposals: [], remembered: [], screens: [], onEvent, snapshot: null };
     let snapshot = null;
     ctx.snapshot = async () => {
       if (!snapshot) snapshot = buildSnapshot(db, owner, { learn, now: now(), timeZone, readAnswers: current.coach_read_answers, readText: current.coach_read_text });
@@ -534,6 +552,8 @@ function createLearnCoach({
     if (!text) throw new LearnError('The model gave no answer', 502);
     const answerMeta = merge.cleanCoachMeta({
       ...(meta || {}), proposals: ctx.proposals, remembered: ctx.remembered, tools: usedTools, usage,
+      // The screens of open_screen, then those a no-tools answer named in its last line.
+      screens: [...ctx.screens, ...(meta && Array.isArray(meta.screens) ? meta.screens : [])],
       ...(toolsUsed && !usedTools ? { notice: 'This service cannot look up your data; she answers from a short summary.' } : {}),
     }, text, 'assistant');
     if (answerMeta.proposals.length && onEvent) onEvent({ type: 'proposals', proposals: answerMeta.proposals });
@@ -773,5 +793,5 @@ function getLearnCoach() {
 
 module.exports = {
   CAPABILITY, createLearnCoach, getLearnCoach, systemPrompt, fitHistory, practiceLine, resultText, TOOLS, TOOL_DEFS, STATUS, COACH,
-  MAX_ROUNDS, ECONOMY_ROUNDS, TOOL_PHASE_MS, MAX_RESULT, MAX_RESULTS, ECONOMY_RESULTS, HISTORY, ECONOMY_HISTORY, MAX_NOTES, PROMPT_NOTES, UNDO_MS, ENOUGH, BUSY, LINK,
+  MAX_ROUNDS, ECONOMY_ROUNDS, TOOL_PHASE_MS, MAX_RESULT, MAX_RESULTS, ECONOMY_RESULTS, HISTORY, ECONOMY_HISTORY, MAX_NOTES, PROMPT_NOTES, UNDO_MS, ENOUGH, BUSY, LINK, MAX_SCREENS,
 };

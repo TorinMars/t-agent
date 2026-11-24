@@ -1,5 +1,7 @@
 // The Learn page (scripts/h5-shell/Learn.jsx, the "Learn" destination), in real Chromium with every route mocked, /api/learn following the contract
 // of docs/design/learn-english.md. See "The Learn page" in docs/design/learn-english-page.md.
+// The engine here has no coach (GET /api/learn/coach answers 404), so this is the test that the Learn home of such an engine still works
+// ("Learn is the coach" in docs/design/learn-english-coach-page.md: with the coach there is no home).
 // - 1440x900 (mouse): the rail's Learn destination and the page right of it; the home numbers (due, estimate, streak, goal, mode counts) without
 //   Build the sentence (hidden on purpose, BUILD_HIDDEN in learn-model.mjs); Review with a word spelled and a sentence as Fill the gap (the diff,
 //   the grades posted with the keys 3 and 2, the end of a session), a sentence without a content word as Dictation and Skip;

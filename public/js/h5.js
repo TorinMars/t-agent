@@ -967,7 +967,10 @@
   // The Learn page (scripts/h5-shell/Learn.jsx, a destination of the rail and the bottom navigation; "The Learn page" in docs/design/learn-english-page.md).
   // `view` 'chat' opens it on the English coach (the link /h5?learn=coach of the coach's reminder; "Which chat opens" in docs/design/learn-english-coach-page.md).
   let learnSeq = 0;
-  ui.actions.openLearn = view => ui.set({ learnOpen: true, ...(view === 'chat' ? { learnTarget: { view, seq: ++learnSeq } } : {}) });
+  const LEARN_VIEWS = /^(?:chat|coach|mistakes|reports|progress|material|settings|how|review|practice|spell|dictation|fill|say)$/;
+  // `view`: a Learn view to open with it (learn-coach.mjs `screenView`: chat, coach, mistakes, reports, progress, material, settings, how, review,
+  // practice, spell, dictation, fill, say); Learn opens it once and clears learnTarget.
+  ui.actions.openLearn = view => ui.set({ learnOpen: true, ...(typeof view === 'string' && LEARN_VIEWS.test(view) ? { learnTarget: { view, seq: ++learnSeq } } : {}) });
   ui.actions.closeLearn = () => ui.set({ learnOpen: false });
   ui.actions.toggleTask = ref => { const hit = resolveRef(ref); if (hit) toggleTask(hit.from, hit.item); };
   // A tap on a session row: on the selected task it goes to the terminal or chat; on another task it selects that task and shows the session.
@@ -4832,13 +4835,14 @@
       const rest = query.toString();
       try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays; nothing else changes */ }
     }
-    // Or with the link of the English coach (?learn=coach, the coach's reminder in T-Attention): Learn opens on the coach. Taken out of the address
-    // at once, like openTerminal.
-    if (query.get('learn') === 'coach') {
+    // Or with a link into Learn (?learn=coach, the coach's reminder in T-Attention; ?learn=mistakes, progress … a screen of Learn, LEARN_VIEWS):
+    // Learn opens on it. Taken out of the address at once, like openTerminal.
+    if (query.has('learn')) {
+      const learnView = query.get('learn') || '';
       query.delete('learn');
       const rest = query.toString();
       try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays */ }
-      ui.actions.openLearn('chat');
+      if (LEARN_VIEWS.test(learnView)) ui.actions.openLearn(learnView === 'coach' ? 'chat' : learnView);
     }
     const savedId = Number(store.get(`task:${assumed.key}`));
     if (savedId > 0 && !link && !terminalAsked) {

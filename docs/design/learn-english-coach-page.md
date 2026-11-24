@@ -11,25 +11,28 @@ The English chat becomes ONE continuous conversation with a coach. The approved 
 
 ## Which chat opens
 
-- `#h5-learn-mode-chat` opens the view `{ kind: 'chat' }`. `useCoachSupport` asks `GET /api/learn/coach?limit=1` once per page load: a 404 (an
-  engine without the coach, also an HTML 404) keeps the old English chat (`ChatView`, "English chat on the page" in
-  [learn-english-chat.md](learn-english-chat.md)) unchanged; any other answer (also a network failure, which then shows the coach's own error with
-  Try again) opens the coach. The local engine's `/info` has no capabilities on the page, so the route itself is the test.
-- **The link `/h5?learn=coach`** (the coach's reminder in T-Attention): `public/js/h5.js` takes it out of the address at start (like `openTerminal`) and
-  calls `ui.actions.openLearn('chat')`, which sets the store's `learnTarget`; Learn opens the coach for it once and clears it.
+- `useCoachSupport` asks `GET /api/learn/coach?limit=1` once per page load: a 404 (an engine without the coach, also an HTML 404) keeps the Learn
+  home and its old English chat (`#h5-learn-mode-chat` opens `ChatView`, "English chat on the page" in [learn-english-chat.md](learn-english-chat.md))
+  unchanged; any other answer (also a network failure, which then shows the coach's own error with Try again) makes Learn the coach ("Learn is the
+  coach" below). The local engine's `/info` has no capabilities on the page, so the route itself is the test. Until it answers, Learn shows only
+  "Loading…" (`#h5-learn-loading`), never a home that turns into the coach.
+- **Links into Learn** `/h5?learn=<name>`: `coach` (the coach's reminder in T-Attention) or a screen name of `screenView` (learn-coach.mjs: `mistakes`,
+  `reports`, `progress`, `material`, `settings`, `how`, `review`, `practice`, `spell`, `dictation`, `fill`, `say`). `public/js/h5.js` takes it out of
+  the address at start (like `openTerminal`) and calls `ui.actions.openLearn(name)` (`LEARN_VIEWS`), which sets the store's `learnTarget`; Learn opens
+  that view once and clears it. Its back returns to the coach (or the home without one). A practice mode the browser cannot run opens just Learn.
 - **A company computer whose home is away** (`GET /coach` with `offline` or `home_older`): an info Alert "Your English coach is on a normal computer,
   which cannot be reached right now" (or "…needs an update first"), no starters, nothing can be sent. `translator: false` on the GET shows the
   translator notice at once.
-- With the coach the home card reads "Your coach: practice, your progress and any English question" and shows no count of chats.
+- On an engine without the coach nothing changes: the home, its cards and its chat card with the count of chats.
 
 ## The conversation
 
 - **Phone**: a Learn mode page with its app bar (back arrow, "English chat", the menu `#h5-learn-coach-more`), the conversation
   (`#h5-learn-coach[data-layout="phone"]`) and the input at the bottom. While the coach is open on a phone the bottom navigation steps aside
   (`state.learnCoach`, set by `Coach`, read by BottomNav.jsx like a keyboard: no room kept), so the input sits at the bottom of the window with the
-  safe-area inset and the message list keeps at least 55% of a 390x844 window; the header's back arrow returns (the bar is back on the Learn home).
-  Only the coach does this: the old chat, the series and the other Learn pages keep the bar. **Computer**: the right pane without padding, the title in h6 with the menu
-  and Close (`#h5-learn-back`), the messages in a 760px column. No chats list, no New chat.
+  safe-area inset and the message list keeps at least 55% of a 390x844 window; the header's back arrow closes Learn (the bar is back).
+  Only the coach does this: the old chat, the series and the other Learn pages keep the bar. **Computer**: the whole page right of the rail without
+  padding, the title in h6 with the menu and Close (`#h5-learn-back`, closes Learn; so does Escape), the messages in a 760px column. No chats list, no New chat.
 - **Pages**: `GET /api/learn/coach?limit=50`, newest page; scrolled to within 80px of the top with `has_more` it reads
   `?before=<at of the oldest>&limit=50` ("Loading earlier messages…") and keeps what was in view where it was. `tools_ok: false` shows the line below.
 - **Messages**: the person's and her bubbles are the old chat's (`Bubble`: markdown-lite, `lang`, the `<<meta>>` guard); `meta.cards` give the
@@ -101,8 +104,9 @@ shows the translator notice. A plain JSON body (a company computer) is taken as 
 
 ## Menu and Earlier chats
 
-The menu (`#h5-learn-coach-menu`): "Reset the summary" (`POST /coach/summary/reset`, a notice), "Earlier chats", "Coach settings" (Learn settings
-scrolled to the Coach group; back returns to the coach). Earlier chats reuse the old chat view read-only: on a phone the list
+The menu (`#h5-learn-coach-menu`): "Reset the summary" (`POST /coach/summary/reset`, a notice), "Earlier chats", "Learn settings"
+(`#h5-learn-coach-settings-open`: the whole Learn settings with the Coach group; back returns to the coach). Learn settings is the one manual way
+in to a screen: it works while she cannot answer (no model set up, a company computer whose home is away). Nothing else is added to the menu. Earlier chats reuse the old chat view read-only: on a phone the list
 (`{ kind: 'chats', readOnly }`, no New chat) and a chat (`{ kind: 'oldchat', uid }`: messages only, no input, no menu, back to the list); on a
 computer the 260px list and the conversation in the pane ("Pick a chat to read it…", Close back to the coach).
 
@@ -121,10 +125,39 @@ learning settings (shared, synced); the first three are on unless false.
 `test/h5-learn-coach.test.js` (the series: exercises, steps, the retest, misses at the end, leaving, the result; the stream lines, merging, the
 cards, the divider, suggestions, Remembered, notes, usage) and `scripts/test-h5-learn-coach-browser.cjs` (390x844 touch, with the checks of the compact layout: no bottom navigation, the message list at
 least 55% of the window, the plan card in one row, the usage line opened by a tap, the chips in one line above the input; and 1440x900 against a
-stub of the contract; a company computer whose home is away; an engine without the coach keeps the old chat), and end to end with the real server
+stub of the contract; Learn as only the coach (no home on either size, her back closes Learn, the coach filling the page at 1440x900); the
+buttons of `open_screen` and the screens they open, whose back returns to her; the link `/h5?learn=progress`; the menu's Learn settings also while
+her home is away; a company computer whose home is away; an engine without the coach keeps the home and the old chat), and end to end with the real server
 `scripts/test-h5-learn-coach-e2e-browser.cjs` (see "Tests" in [learn-english-coach.md](learn-english-coach.md)). The old chat's own test (`scripts/test-h5-learn-chat-browser.cjs`) runs
 against a stub without the coach route.
 
-## Learn opens in the coach
+## Learn is the coach
 
-When the engine has the coach, opening Learn (the navigation, a column, a link without a view) lands directly in the coach chat, once per opening (`landed` in `Learn` of `scripts/h5-shell/Learn.jsx`), so the agent is one tap away. On a phone the chat covers the home and its back arrow returns to the Learn home; on a computer the home stays at the left and the chat fills the pane. A view opened first (a link with `learnTarget`) is never replaced. An engine without the coach still opens the home.
+When the engine has the coach (`coachOnly` in `Learn` of `scripts/h5-shell/Learn.jsx`), the Learn page is ONLY the coach, on a phone and a computer:
+no home (no today card, practice modes, Mistakes, Ask card, Your material, Learn settings or How learning works buttons). Every way into Learn (the
+rail, the bottom navigation, a column, a link) opens her. The view with nothing else open is `COACH_HOME` (`{ kind: 'chat' }`).
+
+- **Phone**: she is the full-screen page (`#h5-learn[data-coach="only"]`, `CoachLearnPhone`; where the home is without her), and a screen she
+  opens slides in over her as a second modal (`#h5-learn-mode`), so one back press (back.mjs) closes one layer: a screen returns to her
+  (`leaveView`), then she closes Learn. Her header has ids of its own (`#h5-learn-coach-back`, `#h5-learn-coach-title`) because she stays drawn
+  under a screen (which has `#h5-learn-back` and `#h5-learn-view-title`); while covered she gives the bottom navigation back (`covered`).
+- **Computer**: `#h5-learn[data-coach="only"]` right of the rail; she fills it (no 420px home column). A screen she opens takes her place in a
+  scrolling pane (at most 880px wide, centred); its × (`#h5-learn-back`) and Escape return to her. Her own × and Escape close Learn.
+- **The other screens** stay, without a manual entry: practice sessions (Daily review, Practice, Spell the word, Dictation, Fill the gap, Say it),
+  Mistakes (with its reports), Progress, Your material, Learn settings and How learning works. They open only from her: a plan card's Start (the
+  series), a button of `open_screen` under her answer, a link (`learnTarget`), or the menu's Learn settings. Their back returns to her, never to a
+  home.
+- **A new weekly mistake report** (the summary's `new_report`, the home's line on an engine without the coach) is the same info Alert
+  (`#h5-learn-new-report`, `NewReportLine`) under her newest message; View opens the report (`parent: { kind: 'chat' }`), and the notice goes once
+  it is seen.
+- An engine without the coach keeps the home exactly as before ("The Learn page" in [learn-english-page.md](learn-english-page.md)).
+
+## Screens the coach opens
+
+The server tool `open_screen({ screen })` ("Screens the coach opens" in [learn-english-coach.md](learn-english-coach.md)) puts the screen's name in
+the answer's `meta.screens`. Under the answer (after the proposal cards) the page draws one outlined button per screen (`.h5-learn-coach-screens`,
+`.h5-learn-coach-screen[data-screen]`): the screen's icon and name ("Mistakes", "Progress", "Your material", "Learn settings", "How learning works",
+"Mistake reports", "Daily review", "Practice", or the mode's name), 44px high for touch input, 36px with a mouse. `screensOf` (learn-coach.mjs)
+keeps each name once, at most 3, and leaves out a practice mode this browser cannot run (Dictation without speech output, Say it without a way to
+hear the person). A tap opens the view of `screenView(name)` with `parent: { kind: 'chat' }`; the buttons stay on older answers. The "What next?"
+chips are her suggestions: the prompt asks her to offer "Show my progress" / "Show my mistakes" now and then, which she answers with the button.

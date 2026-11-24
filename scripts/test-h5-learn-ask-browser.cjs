@@ -9,8 +9,13 @@
 //   503 translator notice. A sentence in Review (Fill the gap, since Build the sentence is hidden): Ask in the card, the sentence chips.
 // - 1440x900 (mouse): a sentence in Review (Fill the gap) with the 380px side panel next to the card (the card makes room and stays usable); Enter in the panel sends the
 //   question and never checks the exercise; Escape closes the panel, not the mode, and the focus goes back to the answer field.
+// Learn is the coach (GET /api/learn/coach answers): each practice is opened the way the coach opens it (ui.actions.openLearn(name), the same as
+// her buttons and the links /h5?learn=<name>).
 // H5_SHOT_DIR=<dir> saves learn-ask-sheet.png, learn-ask-checked.png and learn-ask-desktop.png.
 const { chromium } = require('playwright');
+// Opens a screen of Learn the way the coach does (her buttons, the links): ui.actions.openLearn(name).
+const openScreen = (page, name) => page.evaluate(screen => window.H5UI.actions.openLearn(screen), name);
+const COACH = '[data-coach="only"] #h5-learn-coach';
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -77,6 +82,7 @@ function learnMock() {
       const answer = 'Because the subject is singular.';
       return { ndjson: [{ delta: 'Because the ' }, { delta: 'subject is singular.' }, { done: true, messages: stored(ask[1], body.question, answer) }] };
     }
+    if (p === '/api/learn/coach' && method === 'GET') return { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     return [404, { error: 'not mocked' }];
   };
   mock.asks = () => mock.requests.filter(item => item.method === 'POST' && /\/ask$/.test(item.path));
@@ -184,7 +190,8 @@ async function tapKeys(page, keys) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-sentence').waitFor();
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       await tapKeys(page, 'exp');
@@ -336,7 +343,8 @@ async function tapKeys(page, keys) {
       mock.translator = false;
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-start').tap();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-gap-input').waitFor();
       assert.equal(await page.locator('.h5-learn-pool').count(), 0, 'Fill the gap, not Build');
       const prompt = await page.locator('#h5-learn-mode .h5-learn-prompt').boundingBox();
@@ -361,7 +369,8 @@ async function tapKeys(page, keys) {
       const gapWord = gapFor(SENTENCE_CARD).word;
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-start').click();
+      await page.locator(COACH).waitFor();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-gap-input').waitFor();
       assert.equal(await active(page), 'h5-learn-gap-input');
       await page.locator('#h5-learn-ask-open').click();
@@ -405,7 +414,7 @@ async function tapKeys(page, keys) {
       await panel.waitFor({ state: 'detached' });
 
       // Fill the gap sends the gap word as `expected` (the server cannot know it).
-      await page.locator('#h5-learn-mode-fill').click();
+      await openScreen(page, 'fill');
       await page.locator('#h5-learn-gap-input').waitFor();
       await page.locator('#h5-learn-ask-open').click();
       await panel.waitFor();

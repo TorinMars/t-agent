@@ -26,8 +26,20 @@ The English chat of Learn becomes ONE continuous conversation with a coach (an a
 | `propose_cards({ add?, update?, remove? })` | add `{ kind, en, zh }` (the card rules `checkEnglish`), change a meaning `{ id, zh }`, remove ids of the owner's cards; a removal is always its own proposal | `{ proposal_ids, add, update, remove, skipped? }` |
 | `propose_reminder({ time, days?, text })` | a recurring T-Attention task at HH:MM in the engine's time zone, days 1 (Monday) .. 7 (none: every day) | `{ proposal_id, time, days, text, time_zone }` |
 | `remember({ text, until? })` | saves a note at once (see Memory) and sends the line `remembered` | `{ note_id }` or `{ error }` (memory off, a secret, 40 notes) |
+| `open_screen({ screen })` | a button under the answer that opens one screen of Learn (see "Screens the coach opens") | `{ ok, screen, note }` or `{ error }` (not allowed, more than 3) |
 
 The tools list is always the same (also with the memory off), so the request prefix stays the same.
+
+### Screens the coach opens
+
+With the coach, Learn has no home: the coach is the only way in to its other screens ("Learn is the coach" in
+[learn-english-coach-page.md](learn-english-coach-page.md)). `open_screen` takes one name of `COACH_SCREENS` (services/learn-merge.js: `mistakes`,
+`reports`, `progress`, `material`, `settings`, `how`, `review`, `practice`, `spell`, `dictation`, `fill`, `say`); each name once, at most
+`MAX_SCREENS` (3) per answer, kept in the answer's `meta.screens` (`cleanCoachMeta` keeps only allowed names, deduplicated, at most 3; an older
+engine drops the field, so its copy of the answer has no buttons). Nothing opens by itself: the page draws a button. The system prompt says that
+the person reaches Mistakes, Progress, their material, Learn settings, How learning works and the plain practice modes only through her, to call
+`open_screen` when they ask ("show my mistakes", "open settings", "how does learning work"), and to put "Show my progress" / "Show my mistakes" among
+the suggestions now and then. Without tools (a provider that refuses them) the last line has a `"screens"` field instead, read the same way.
 
 ### Prompt and budgets (cache friendly)
 

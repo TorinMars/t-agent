@@ -15,6 +15,11 @@
   also checks that the page is not in the first download). The page's keyboard (below) reuses the terminal's `Keyboard` of `Osk.jsx`, which is in
   the first screen already; its letter layout and the editing live in the chunk: 777,246 -> 777,481 bytes. The key feel (`key-feedback.mjs`) is a
   chunk loaded at the first key press: 778,014 -> 778,144 bytes.
+- **With the coach the page is only the coach** (an engine whose `GET /api/learn/coach` answers): no home on a phone or a computer, the coach
+  fills the page and her back closes Learn; the screens below (the modes, Mistakes, Progress, Your material, Learn settings, How learning works)
+  have no manual entry and open only from the coach (her `open_screen` buttons, a plan's Start, a link `/h5?learn=<screen>`, her menu's Learn
+  settings), and their back returns to her. See "Learn is the coach" in [learn-english-coach-page.md](learn-english-coach-page.md). The home, the
+  420px column and the home dialog described here are those of an engine without the coach.
 - **Computer**: a page right of the rail (`#h5-learn`, a region, `left: NAV_WIDTH`, z-index 1255 over either view, under the rail and the
   modals), like Settings. Left, a 420px column with the home; right, the open mode, list or panel, and "How learning works" while none is open.
   Escape closes the open mode, then the page; the back button closes the page (entry.jsx layer); the focus goes into the page and back to the
@@ -385,6 +390,11 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
   card due for Say it or Dictation is built instead). The box can always be typed in.
 
 ## Tests
+
+- With the coach there is no home, so the screen tests (mistakes, progress, pace, pick, ask, practice) mock `GET /api/learn/coach` and open each
+  screen as the coach does (`ui.actions.openLearn('<screen>')`); their back returns to the coach. `scripts/test-h5-learn-browser.cjs`,
+  `scripts/test-h5-learn-chat-browser.cjs` and `scripts/test-h5-learn-collect-browser.cjs` run on an engine without the coach (its GET answers 404):
+  they are the proof that such an engine keeps the home and the old chat.
 
 - `scripts/test-h5-learn-practice-browser.cjs` and `test/h5-learn-practice.test.js`: see "Tests" in [learn-spell-practice.md](learn-spell-practice.md).
 - `scripts/test-h5-learn-pace-browser.cjs` (mocked summary with `new_per_day` / `new_today` / `new_left` / `minutes_today`, queue cards with `leech`,

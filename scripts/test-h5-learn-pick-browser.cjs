@@ -1,7 +1,8 @@
 // Learn: words picked from the person's translations (scripts/h5-shell/Learn.jsx), in real Chromium with every route mocked, /api/learn following the
 // contract of "Words from your translations" in docs/design/learn-english.md (GET /level, POST /level/check, GET /cards?source=translation, the
 // `context_zh` of a card, `pick_words` of the settings). No model is ever called. See "Spell the word" and "Learn settings" in
-// docs/design/learn-english-page.md.
+// docs/design/learn-english-page.md. The engine has the coach (GET /api/learn/coach answers), so Learn is only the coach: Spell, Review and Learn
+// settings are opened as the coach opens them (ui.actions.openLearn('spell' | 'review' | 'settings')), and back returns to the coach.
 // - 390x844 (touch): Spell asks a word with `context_zh` inside its sentence (the "your translation" chip, the sentence with a primary gap of one
 //   underline per letter, the Chinese of the sentence, a divider, "The word: <meaning>" with the transcription, Hear it, Show first letter, the
 //   letter slots and the page's keyboard); the last letter checks by itself and the word fills the gap in the success colour, the word with its transcription and meaning under
@@ -84,6 +85,8 @@ function learnMock() {
       const cards = [PICKED, NO_MEANING, NOT_IN_IT, STARTER, SENTENCE_CARD].filter(item => (!source || item.source === source) && (!kind || item.kind === kind));
       return { cards, total: cards.length };
     }
+    // The coach: an empty conversation (Learn is only the coach).
+    if (p === '/api/learn/coach' && method === 'GET') return { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     return [404, { error: 'not mocked' }];
   };
   mock.posts = re => mock.requests.filter(item => item.method !== 'GET' && re.test(item.path));
@@ -173,9 +176,10 @@ async function toTerminal(page) {
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
   await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
-async function openSettings(page, touch) {
-  const button = page.locator('#h5-learn-settings');
-  if (touch) await button.tap(); else await button.click();
+// Opens a screen of Learn the way the coach's button or a link does (ui.actions.openLearn).
+const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.openLearn(view), name);
+async function openSettings(page) {
+  await openScreen(page, 'settings');
   await page.locator('#h5-learn-level-card').waitFor();
 }
 
@@ -187,7 +191,8 @@ async function openSettings(page, touch) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
       await page.locator('#h5-bnav-learn').tap();
-      await page.locator('#h5-learn-mode-spell').tap();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-sentence').waitFor();
       await page.waitForTimeout(400);
       // Frame 1: the label with its chip, the sentence with a gap, the Chinese, a divider, the word's meaning, Hear it and Show first letter.
@@ -320,7 +325,7 @@ async function openSettings(page, touch) {
 
       // Learn settings (frame 4): MY LEVEL, WORDS FROM MY TRANSLATIONS, the privacy caption.
       await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode').waitFor({ state: 'detached' });
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       await openSettings(page, true);
       await page.locator('#h5-learn-level').waitFor();
       await page.waitForTimeout(400);
@@ -422,7 +427,7 @@ async function openSettings(page, touch) {
       assert.equal(await text(page, '#h5-learn-level'), 'B1', 'a level synced from another engine is still shown');
       assert.match(await text(page, '#h5-learn-level-no-translator'), /need a translator/);
       await page.locator('#h5-learn-back').tap();
-      await page.locator('#h5-learn-mode').waitFor({ state: 'detached' });
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       mock.level = { level: null, picking: { ...PICKING }, translator: true };
       mock.check = () => [503, { error: 'No translator is configured' }];
       await openSettings(page, true);
@@ -454,7 +459,8 @@ async function openSettings(page, touch) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
       mock.spell = [PICKED, GENERATED];
       await page.locator('#h5-nav-learn').click();
-      await page.locator('#h5-learn-mode-spell').click();
+      await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
+      await openScreen(page, 'spell');
       await page.locator('#h5-learn-sentence').waitFor();
       assert.equal(await page.locator('#h5-learn-keys').count(), 0, 'no page keyboard on a computer');
       assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-spell-input');
@@ -494,7 +500,7 @@ async function openSettings(page, touch) {
       await page.locator('#h5-learn-grade-good').click();
       await waitFor(() => lastAnswer(mock) && lastAnswer(mock).id === '35', 'the second word answered');
       // Review asks a picked word the same way.
-      await page.locator('#h5-learn-start').click();
+      await openScreen(page, 'review');
       await page.locator('#h5-learn-sentence').waitFor();
       assert.equal(await text(page, '#h5-learn-view-title'), 'Daily review');
       assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-letters'), '7');

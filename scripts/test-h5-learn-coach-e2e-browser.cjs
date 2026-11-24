@@ -231,7 +231,9 @@ async function openLearn(page, touch) {
     const nav = page.locator('#h5-bnav-learn');
     try { await nav.waitFor({ state: 'visible', timeout: 4000 }); await nav.tap(); } catch { await page.evaluate(() => window.H5UI.actions.openLearn()); }
   } else await page.locator('#h5-nav-learn').click();
-  await page.locator('#h5-learn-mode-chat').waitFor(WAIT);
+  // Learn is only the coach: she is the page at once, with no home.
+  await page.locator('[data-coach="only"] #h5-learn-coach').waitFor(WAIT);
+  assert.equal(await page.locator('.h5-learn-home, #h5-learn-mode-chat').count(), 0, 'no Learn home');
 }
 async function openCoachSettings(page, touch) {
   await press(page, '#h5-learn-coach-more', touch);
@@ -281,14 +283,9 @@ async function phoneRun(browser, server, fake) {
   const chats = await api(page, 'GET', '/api/learn/chats');
   assert.equal(chats.data.chats.length, 1, 'one earlier chat; the coach is not in the chats list');
 
-  // The Learn home: the coach behind "English chat".
+  // Learn is the coach.
   await page.reload();
   await openLearn(page, touch);
-  // Learn opens straight in the coach; the back arrow returns to the home.
-  await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor(WAIT);
-  await press(page, '#h5-learn-back', touch);
-  await waitFor(async () => (await text(page, '#h5-learn-mode-chat')).includes('Your coach'), 'the coach note on the home card');
-  await press(page, '#h5-learn-mode-chat', touch);
   await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor(WAIT);
   await page.locator('#h5-learn-coach-start').waitFor(WAIT);
   const probe = one.traffic.find(item => item.path === '/api/learn/coach' && /limit=1(&|$)/.test(item.search));
@@ -305,7 +302,7 @@ async function phoneRun(browser, server, fake) {
   await say(page, "Give me today's spelling practice", touch);
   const sent = fake.requests.slice(mark).filter(item => item.kind === 'tools');
   assert.equal(sent.length, 2, 'two rounds: the tool call, then the answer');
-  assert.deepEqual(toolsOf(sent[0]), ['learn_schema', 'learn_sql', 'propose_practice', 'propose_settings', 'propose_cards', 'propose_reminder', 'remember'], 'the tools list');
+  assert.deepEqual(toolsOf(sent[0]), ['learn_schema', 'learn_sql', 'propose_practice', 'propose_settings', 'propose_cards', 'propose_reminder', 'remember', 'open_screen'], 'the tools list');
   assert.equal(sent[0].body.tool_choice, 'auto');
   assert.equal(sent[0].auth, 'Bearer dummy-test-key');
   assert.equal(sent[0].body.model, 'fake-model');
@@ -593,6 +590,20 @@ async function phoneRun(browser, server, fake) {
   await backToCoach(page, touch);
   log('phone: no tools and earlier chats ok');
 
+  // -- "Show my mistakes": open_screen -> a button under her answer -> Mistakes, whose back returns to her --
+  fake.queue.push({ tools: [['open_screen', { screen: 'mistakes' }], ['open_screen', { screen: 'nowhere' }]] });
+  fake.queue.push(body => { const results = toolResults({ body }).map(item => JSON.parse(item)); return { content: answerText(results[0].ok && results[1].error ? 'Your mistakes are here.' : 'Unexpected.') }; });
+  mark = fake.requests.length;
+  await say(page, 'Show my mistakes', touch);
+  const opened = fake.requests.slice(mark).filter(item => item.kind === 'tools');
+  assert.match(opened[0].body.messages[0].content, /call open_screen/, 'the prompt asks for open_screen');
+  await lastAnswer(page).locator('.h5-learn-coach-screen[data-screen="mistakes"]').waitFor(WAIT);
+  assert.match(await lastAnswer(page).evaluate(el => el.textContent), /Your mistakes are here\./);
+  await press(page, lastAnswer(page).locator('.h5-learn-coach-screen[data-screen="mistakes"]'), touch);
+  await page.waitForFunction(() => document.getElementById('h5-learn-view-title')?.textContent === 'Mistakes', null, WAIT);
+  await backToCoach(page, touch);
+  log('phone: open_screen ok');
+
   // -- /h5?learn=coach (the reminder's link) opens the coach --
   await page.goto(`${server.base}/h5?learn=coach`);
   await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor(WAIT);
@@ -608,7 +619,6 @@ async function wideRun(browser, server, fake) {
   const one = await openPage(browser, server.base, { viewport: { width: 1440, height: 900 } });
   const { page } = one;
   await openLearn(page, touch);
-  await page.locator('#h5-learn-mode-chat').click();
   await page.locator('#h5-learn .h5-learn-pane #h5-learn-coach[data-layout="wide"]').waitFor(WAIT);
   // The persisted conversation of the phone.
   await page.locator('.h5-learn-chat-msg[data-role="assistant"]', { hasText: 'From the summary: you have some words due.' }).waitFor(WAIT);
@@ -632,7 +642,7 @@ async function wideRun(browser, server, fake) {
   assert.equal(await newLeft(), leftBefore, 'the allowance is not raised before Start');
   await card.locator('.h5-learn-coach-start').click();
   await page.locator('#h5-learn .h5-learn-pane #h5-learn-series').waitFor(WAIT);
-  assert.equal(await page.locator('#h5-learn .h5-learn-home').isVisible(), true, 'the home stays beside the series');
+  assert.equal(await page.locator('#h5-learn .h5-learn-home, #h5-learn-coach').count(), 0, 'the series takes her place; no home');
   const plan = one.responses.at(-1).body.plan;
   const words = plan.steps[0].cards.map(item => item.en);
   assert.equal(words.length, 3, `3 new words: ${words}`);
@@ -688,8 +698,6 @@ async function longRun(one, server, fake) {
   } finally { db.close(); }
   await page.reload();
   await openLearn(page, false);
-  await page.locator('#h5-learn-mode-chat').click();
-  await page.locator('#h5-learn-coach').waitFor(WAIT);
   await waitFor(async () => (await answers(page).count()) > 0, 'the newest page');
   const shown = await page.locator('#h5-learn-coach .h5-learn-chat-msg, #h5-learn-coach .h5-learn-coach-divider').count();
   assert.ok(shown <= 50, `the newest page only (${shown})`);

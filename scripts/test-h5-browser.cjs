@@ -1755,10 +1755,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
 
     // Settings: the Settings row below the task list opens a sheet with the language toggle; the header has no settings button.
     assert.equal(await page.locator('#h5-open-settings').count(), 0, 'the header has no settings button');
-    // On a phone, Update is in the header's More menu (with Refresh the page); it opens a modal that checks, shows both versions, and offers the update.
+    // On a phone, Update is in the header's More menu (after the terminal width of a shown terminal and Refresh the page); it opens a modal that checks,
+    // shows both versions, and offers the update.
     const openUpdate = async () => { await page.locator('#h5-header-more').click(); await page.locator('#h5-header-update').click(); };
     await page.locator('#h5-header-more').click();
-    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-refresh', 'h5-header-update'], 'More: Refresh the page, Update');
+    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-refresh', 'h5-header-update'], 'More: Terminal width, Refresh the page, Update');
     await page.locator('#h5-header-update').click();
     await page.locator('#h5-update-dialog [role="dialog"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-modal'), 'true');

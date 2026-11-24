@@ -240,3 +240,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.159.1 Plan usage: a window that has not started counting shows a full time bar
 > v2.160.0 Phone header: stacked plan usage bars, terminal width in the ⋯ menu with the current width shown, no engine tag over the session name; terminal widths Fit, 200, 500, 1000, 2000 columns; Settings → Keyboard: key vibration strength or off, and the key row vibrates too
 > v2.161.0 tcli browser: open --record opens its own window in front (--background for an agent-driven recording); a recording follows the windows and tabs the page opens (extension 1.0.6)
+> v2.161.1 tcli browser: a closed T-Agent tab leaves its group first, so Chrome keeps no saved T-Agent group (extension 1.0.7)

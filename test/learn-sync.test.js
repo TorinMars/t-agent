@@ -24,6 +24,7 @@ const { createLearnAnalysis } = require('../services/learn-analysis');
 const { createLearnPick } = require('../services/learn-pick');
 const { createLearnAsk } = require('../services/learn-ask');
 const { createLearnChat } = require('../services/learn-chat');
+const { createLearnCoach } = require('../services/learn-coach');
 const { createEngineLearnSyncRouter } = require('../routes/learn-sync');
 const { createSettingsSync } = require('../services/settings-sync');
 const { createDeviceTier, CAPABILITY: TIER_CAPABILITY } = require('../services/device-tier');
@@ -278,9 +279,23 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
         return pieces.join('');
       },
     });
+    // The English coach with a stubbed model too: it names the engine that answered (no tool calls).
+    side.coachQuestions = [];
+    side.coach = createLearnCoach({
+      db, learn: side.learn, sync: side.sync, isConfigured: () => true, timeZone: TZ, activeModel: () => ({ provider: 'stub', model: name }),
+      converse: async () => `Folded on ${name}.`,
+      converseTools: async (owner, system, messages, options) => {
+        side.coachQuestions.push(messages);
+        const last = messages[messages.length - 1].content;
+        if (/practise/.test(last) && !messages.some(item => item.role === 'tool')) return { content: '', toolCalls: [{ id: 'call_1', name: 'propose_practice', arguments: '{"kind":"today_spelling"}' }] };
+        const text = `Coached on ${name}.\n<<meta>>{"cards":[],"mistakes":[],"suggestions":[]}`;
+        if (options.onDelta) options.onDelta(text);
+        return { content: text, toolCalls: [] };
+      },
+    });
     const app = express();
     app.use(express.json({ limit: '32mb' }));
-    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, chat: side.chat, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
+    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, chat: side.chat, coach: side.coach, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     app.use('/api/device-tier', createDeviceTierRouter({ tier: () => tier }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -700,6 +715,54 @@ test('English chats: a company computer chats on its home, which answers with it
     const away = await K.page(method, route, body);
     assert.deepEqual([away.status, away.body], [503, { error: offline }], route);
   }
+});
+
+test('the English coach: a company computer talks to it on its home (one JSON), a plan starts with its own card ids, notes; away, it says so', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  await noStarter(T);
+  await noStarter(K);
+  await T.page('POST', '/learn/cards', word('separate', { zh: ZH }));
+  await T.page('POST', '/learn/cards', word('receive', { zh: ZH }));
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+
+  const asked = await K.page('POST', '/learn/coach/send', { text: 'Hello coach' });
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  assert.deepEqual([asked.body.message.text, asked.body.tools], ['Coached on T.', true]);
+  assert.deepEqual(asked.body.messages.map(item => item.role), ['user', 'assistant']);
+  assert.equal(K.coachQuestions.length, 0, 'the company computer asked no model');
+  assert.equal(K.db.prepare("SELECT COUNT(*) FROM learn_convo_messages").pluck().get(), 0, 'kept on the home only');
+  assert.equal(T.db.prepare("SELECT COUNT(*) FROM learn_convo_messages WHERE convo_uid = 'coach'").pluck().get(), 2);
+  const viewed = (await K.page('GET', '/learn/coach')).body;
+  assert.deepEqual([viewed.messages.length, viewed.tools_ok, viewed.settings.read_text], [2, true, true]);
+
+  // A plan proposed on the home starts on the company computer with the cards of the company computer (their ids differ).
+  const plan = await K.page('POST', '/learn/coach/send', { text: 'Let me practise' });
+  const [proposal] = plan.body.message.meta.proposals;
+  assert.equal(proposal.plan.words, 2);
+  const started = await K.page('POST', '/learn/coach/plans/start', { message_uid: plan.body.message.uid, proposal_id: proposal.id });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const localIds = K.db.prepare("SELECT id FROM learn_cards WHERE owner = 'me' ORDER BY id").pluck().all();
+  assert.deepEqual(started.body.plan.steps[0].cards.map(card => card.id).sort(), localIds.sort());
+  assert.ok(started.body.plan.steps[0].cards.every(card => card.next), 'as GET /queue gives them');
+
+  // Notes and the summary are kept on the home.
+  T.db.prepare("INSERT INTO learn_coach_notes (owner, uid, text, created_at, updated_at, sync_seq) VALUES ('me', 'note-00001', 'Prefers short answers', 1, 1, 0)").run();
+  assert.deepEqual((await K.page('GET', '/learn/coach/notes')).body.notes.map(note => note.text), ['Prefers short answers']);
+  assert.equal((await K.page('DELETE', '/learn/coach/notes/note-00001')).status, 200);
+  assert.equal(T.db.prepare("SELECT deleted FROM learn_coach_notes WHERE uid = 'note-00001'").pluck().get(), 1);
+  assert.deepEqual((await K.page('POST', '/learn/coach/summary/reset')).body, { ok: true });
+  const refused = await K.page('POST', '/learn/coach/send', { text: '' });
+  assert.deepEqual([refused.status, refused.body], [400, { error: 'Enter your question' }]);
+
+  setOnline(K, 'T', false);
+  const away = (await K.page('GET', '/learn/coach')).body;
+  assert.deepEqual([away.messages, away.offline, away.translator], [[], true, false]);
+  const offline = await K.page('POST', '/learn/coach/send', { text: 'Away?' });
+  assert.deepEqual([offline.status, offline.body], [503, { error: 'Your English coach is on a normal computer, which cannot be reached right now' }]);
 });
 
 test('every machine marked as a company computer: nothing moves and nothing is lost', async t => {

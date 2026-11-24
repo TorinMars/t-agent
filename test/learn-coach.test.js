@@ -20,7 +20,7 @@ const { createLearnCoach, MAX_ROUNDS, ECONOMY_ROUNDS, MAX_RESULT, ENOUGH, BUSY }
 
 const NOW = Date.UTC(2026, 10, 24, 4, 0, 0);
 const TZ = 'UTC';
-const ZH = '世界';
+const ZH = '\u4e16\u754c';
 
 function database(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-learn-coach-'));

@@ -16,7 +16,9 @@ const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'a
   // The desired retention of the review ("Desired retention" in docs/design/learn-review-fsrs.md).
   desired_retention: 0.9,
   // New words a day and the words added for one day ("New words a day" in docs/design/learn-review-fsrs.md).
-  new_per_day: 10, extra_new: { day: '', count: 0 } };
+  new_per_day: 10, extra_new: { day: '', count: 0 },
+  // The English coach's switches ("Views" and "Memory" in docs/design/learn-english-coach.md).
+  coach_read_answers: true, coach_read_text: true, coach_memory: true, coach_economy: false };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');

@@ -389,7 +389,7 @@ test('a recording opens its own window and follows the tabs its page opens', {
   let shared, rec, other;
   await t.test('the hello lists open.window and record.tabs', async () => {
     for (const f of ['open.window', 'record.tabs', 'open.record']) assert(socket.messages[0].features.includes(f), f);
-    assert.equal(require('../manifest.json').version, '1.0.6');
+    assert.equal(require('../manifest.json').version, '1.0.7');
     assert(require('../manifest.json').permissions.includes('webNavigation'));
   });
   await t.test('window needs record, and is front or back', async () => {

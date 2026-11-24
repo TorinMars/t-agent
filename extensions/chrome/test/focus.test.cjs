@@ -356,10 +356,12 @@ test('focus, background window, dialogs, the person\'s use and self reload', {
       tab_id: c.tab.tab_id,
       auto: true
     }), /TAB_NOT_ALLOWED/);
+    const before = ungrouped.length;
     await dispatch('tabs.close', {
       tab_id: c.tab.tab_id
     });
     assert(!tabs.has(c.tab.tab_id));
+    assert(ungrouped.slice(before).includes(c.tab.tab_id), 'a closed tab leaves its group first, so Chrome keeps no saved "T-Agent" group');
     assert.deepEqual(focusCalls, [], 'nothing was activated or focused');
   });
   await t.test('only activate, open --active and reveal bring anything to the front', async () => {

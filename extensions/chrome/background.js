@@ -7,6 +7,7 @@ import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summ
 // 1.0.5 ("Focus and closing" in docs/design/browser-extension.md): tabs open in T-Agent's own background window, `tabs.open` with `keep`,
 // `tabs.close` with `auto` (closes only an owned tab that is not kept), a visible screenshot of a tab that is not active, page dialogs answered
 // while the debugger is attached, `tab.used` when the person uses a T-Agent tab, and the `reload` request of the bridge.
+// 1.0.7: a closed T-Agent tab leaves its group first (`closeTab`), so Chrome keeps no saved "T-Agent" group in the bookmarks bar.
 // 1.0.6: `tabs.open` with `window` ('front' / 'back': a recording's own window, "The recording's own window" in docs/design/browser-extension.md)
 // and recordings that follow the tabs and windows the recorded page opens (`tab.opened`, "A recording follows the windows the page opens").
 export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload', 'open.window', 'record.tabs'];
@@ -123,6 +124,15 @@ async function allowed(t) {
     if (g.title === 'T-Agent') return 'group';
   }
   fail('TAB_NOT_ALLOWED', 'Hand this tab over using the extension button');
+}
+// Closes a tab of T-Agent's group. Chrome keeps the group of a closed tab as a saved tab group in the bookmarks bar (it only forgets it when the
+// group is emptied by ungrouping), so the tab leaves the group first: no empty "T-Agent" group is left behind ("Focus and closing" in
+// docs/design/browser-extension.md).
+async function closeTab(id) {
+  try {
+    await chrome.tabs.ungroup(id);
+  } catch {/* Not grouped, or already closed. */}
+  await chrome.tabs.remove(id);
 }
 async function getTab(id) {
   await ready;
@@ -1093,7 +1103,7 @@ async function run(method, p, meta) {
       joined.delete(t.id);
       kept.delete(t.id);
       await persist();
-      await chrome.tabs.remove(t.id).catch(() => {});
+      await closeTab(t.id).catch(() => {});
       throw e;
     } finally {
       grouping.delete(t.id);
@@ -1166,7 +1176,7 @@ async function run(method, p, meta) {
         released: true
       };
     }
-    await chrome.tabs.remove(id);
+    await closeTab(id);
     return {};
   }
   if (method === 'tabs.activate') {

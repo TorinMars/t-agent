@@ -14,6 +14,8 @@
 // - When: after a new translated sentence is saved (a few seconds later, in the background), the backlog every hour on one engine (the smallest
 //   instance id among the online normal engines that pick), after the level changed here, and when the switch is turned on. A run goes batch after
 //   batch and stops at the first failure of the model; the hourly check tries again.
+// - A sentence for every word: when several word cards would be asked inside one sentence, the first keeps it and every other gets an example
+//   sentence of its own, in the background after the pick and a few a day for the cards that already share one (services/learn-sentences.js).
 // - Never on a company computer (it reads the synced level and asks its home). Privacy: only the texts of the cards and the counts and tags of the
 //   answers; never a time, a name or a written answer. Tests hand in their own `chat` and clock.
 const {
@@ -22,6 +24,7 @@ const {
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
 const phonetics = require('./phonetics');
+const { createLearnSentences } = require('./learn-sentences');
 
 const DAY = review.DAY;
 const BATCH = 10;
@@ -153,9 +156,10 @@ const pickRunner = (me, peers) => !peers.some(peer => typeof peer.instance_id ==
 
 // `learn`: the learning service of this database; `chat(owner, system, user, options)`, `isConfigured(owner)`: the translator; `sync`: the learning
 // sync (me(), pickPeers(), setPicker()) or null; `company()`: the company computer flag; `onNewWords(owner)`: new word cards were picked (by default
-// the translation ahead of time of services/learn-prefill.js is told: a picked word has its meaning, maybe not its transcription).
+// the translation ahead of time of services/learn-prefill.js is told: a picked word has its meaning, maybe not its transcription). `converse`: the
+// translator's conversation, which writes the example sentences of services/learn-sentences.js (null: none are written).
 function createLearnPick({
-  db, learn, chat, isConfigured, sync = null, company = null, owner = () => require('./single-user').ensureSingleUser().login,
+  db, learn, chat, converse = null, isConfigured, sync = null, company = null, owner = () => require('./single-user').ensureSingleUser().login,
   now = Date.now, log = console, timeoutMs = MODEL_TIMEOUT_MS, checkEveryMs = CHECK_EVERY_MS, firstCheckMs = FIRST_CHECK_MS,
   afterSentenceMs = AFTER_SENTENCE_MS, random = Math.random, lookupPhonetic = phonetics.lookupPhonetic,
   onNewWords = name => require('./learn-prefill').afterNewWords(name),
@@ -165,6 +169,11 @@ function createLearnPick({
   const isCompany = () => Boolean(company ? company() : sync && sync.company());
   const stamp = () => syncStore.stamp(db, now());
   const seq = () => syncStore.nextSeq(db);
+  // The example sentences of the words that would share one (services/learn-sentences.js). The daily pass runs on the engine that picks the backlog.
+  const sentences = createLearnSentences({
+    db, converse, isConfigured, level: name => learn.level(name), isCompany, now, log,
+    runner: () => !sync || pickRunner(sync.me(), sync.pickPeers()),
+  });
 
   // Logged once per reason, without any content; once more when it works again.
   const reported = new Map();
@@ -271,7 +280,9 @@ function createLearnPick({
     const getWord = db.prepare("SELECT * FROM learn_cards WHERE owner = ? AND kind = 'word' AND norm = ?");
     const rightOf = db.prepare('SELECT COUNT(*) FROM learn_reviews WHERE card_id = ? AND correct = 1').pluck();
     const sentenceOf = db.prepare("SELECT id, created_at FROM learn_cards WHERE owner = ? AND kind = 'sentence' AND en = ?");
+    const askedInside = db.prepare("SELECT COUNT(*) FROM learn_cards WHERE owner = ? AND kind = 'word' AND context = ? AND id <> ?").pluck();
     let added = 0;
+    const touched = []; // the word cards this pick put into a sentence
     let waiting = Number(db.prepare("SELECT COUNT(*) FROM learn_cards WHERE owner = ? AND kind = 'word' AND source = 'translation' AND reps = 0 AND suspended = 0").pluck().get(name)) || 0;
     db.transaction(() => {
       for (const item of batch) {
@@ -284,26 +295,32 @@ function createLearnPick({
             const due = at + Math.floor(waiting / PICK_PER_DAY) * DAY;
             waiting += 1;
             added += 1;
-            db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
+            touched.push(Number(db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
               VALUES (?, 'word', ?, ?, ?, ?, 'translation', ?, ?, ?, 0, ?, ?, ?)`)
-              .run(name, word.en, word.norm, word.zh, lookupPhonetic(word.en) || '', row.en, at, due, review.EASE_START, stamp(), seq());
+              .run(name, word.en, word.norm, word.zh, lookupPhonetic(word.en) || '', row.en, at, due, review.EASE_START, stamp(), seq()).lastInsertRowid));
             continue;
           }
           if (card.suspended) continue;
           if (review.isKnown(card, rightOf.get(card.id))) { skipped += 1; continue; }
           if (card.context === row.en) continue;
+          // A word with a sentence of its own (or none) takes this one only when no other word is asked inside it (it would be shared again).
+          if (card.context_source && askedInside.get(name, row.en, card.id)) continue;
           // A word already asked inside a newer sentence keeps it.
           const current = card.context ? sentenceOf.get(name, card.context) : null;
           if (current && current.id !== row.id && (current.created_at > row.created_at || (current.created_at === row.created_at && current.id > row.id))) continue;
           // The sentence becomes its context; its source, meaning and progress stay (an empty meaning or transcription is filled in).
-          db.prepare(`UPDATE learn_cards SET context = ?, zh = ?, phonetic = ?, content_at = ?, content_by = '', sync_seq = ? WHERE id = ?`)
+          db.prepare(`UPDATE learn_cards SET context = ?, context_zh = '', context_source = '', zh = ?, phonetic = ?, content_at = ?, content_by = '', sync_seq = ? WHERE id = ?`)
             .run(row.en, card.zh || word.zh, card.phonetic || lookupPhonetic(card.en) || '', stamp(), seq(), card.id);
+          touched.push(card.id);
         }
         db.prepare('UPDATE learn_cards SET picked_level = ?, picked_skipped = ?, picked_at = ?, sync_seq = ? WHERE id = ?').run(level, skipped, stamp(), seq(), row.id);
       }
     })();
     syncStore.learnChanged(db);
     if (added) { try { onNewWords(name); } catch { /* the hourly run translates them */ } }
+    // The words this pick put into a sentence that would share it get a sentence of their own, in the background (the cards that shared one
+    // before wait for the daily pass).
+    if (touched.length) track(sentences.afterPick(name, touched).catch(() => null));
   }
 
   // One run over the pending sentences of the owner: batch after batch until none is left (at most MAX_BATCHES_PER_RUN), estimating the level
@@ -358,10 +375,12 @@ function createLearnPick({
     if (entry.timer.unref) entry.timer.unref();
   }
 
-  // The hourly check of the backlog. Returns the reason it did not run, or what the run returned.
+  // The hourly check of the backlog. Returns the reason it did not run, or what the run returned. It also spends the day's budget of example
+  // sentences for the words that already share one (services/learn-sentences.js daily: nothing without a translator or on another engine).
   async function checkBacklog() {
     if (isCompany()) return 'company';
     const name = owner();
+    track(sentences.daily(name).catch(() => null));
     if (!learn.settings(name).pick_words) return 'off';
     if (!isConfigured(name)) return 'no-model';
     if (picking.has(name)) return 'running';
@@ -397,7 +416,7 @@ function createLearnPick({
     soon.clear();
   }
 
-  const api = { view, check, estimate, afterReport, afterSentence, kick, run, checkBacklog, settle, start, stop, counts };
+  const api = { view, check, estimate, afterReport, afterSentence, kick, run, checkBacklog, settle, start, stop, counts, sentences };
   if (sync && typeof sync.setPicker === 'function') sync.setPicker({ view, check, afterSentence, kick });
   return api;
 }
@@ -420,7 +439,7 @@ function getLearnPick() {
   const translator = require('./translator').createTranslator({ db, sessionSecret: config.sessionSecret });
   const learn = require('./learn').createLearn({ db, cacheOnly: () => Boolean(sync && sync.cacheOnly()) });
   singleton = createLearnPick({
-    db, learn, sync, chat: (...args) => translator.chat(...args), isConfigured: name => translator.isConfigured(name),
+    db, learn, sync, chat: (...args) => translator.chat(...args), converse: (...args) => translator.converse(...args), isConfigured: name => translator.isConfigured(name),
     company: () => require('./device-tier').getDeviceTier().isCompany(),
   });
   // A new weekly mistake report: the level again.

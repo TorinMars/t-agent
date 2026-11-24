@@ -811,6 +811,34 @@ test('a schema 23 database gets the coach tables learn_coach_notes and learn_coa
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
+test('a schema 24 database gets the context_zh and context_source columns of a word card (schema 25), its cards kept, with a copy taken first; a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: learn_cards without context_zh and context_source, user_version 24, a word asked inside a sentence.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE learn_cards DROP COLUMN context_zh; ALTER TABLE learn_cards DROP COLUMN context_source');
+  old.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, content_at, sync_seq)
+    VALUES ('owner', 'word', 'deploy', 'deploy', 'z', 'translation', 'We deploy the service on Friday.', 1, 2, 5, 3)`).run();
+  old.pragma('user_version = 24');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 24 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.deepEqual(after.prepare('SELECT en, context, context_zh, context_source, content_at, sync_seq FROM learn_cards').get(),
+    { en: 'deploy', context: 'We deploy the service on Friday.', context_zh: '', context_source: '', content_at: 5, sync_seq: 3 }, 'kept, its context the person\'s own');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-24-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
 test('a database of this schema is refused by a version that knows the one before at most', t => {
   // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);

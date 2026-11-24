@@ -108,7 +108,7 @@ test('a card is created once per owner, kind and text; adding it again returns i
   assert.equal(first.status, 200);
   assert.equal(first.body.created, true);
   const card = first.body.card;
-  assert.deepEqual(Object.keys(card).sort(), ['context', 'context_zh', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'retrievability', 'source', 'suspended', 'zh'].sort());
+  assert.deepEqual(Object.keys(card).sort(), ['context', 'context_source', 'context_zh', 'created_at', 'due_at', 'ease', 'en', 'id', 'interval_days', 'kind', 'last_at', 'last_result', 'lapses', 'phonetic', 'reps', 'retrievability', 'source', 'suspended', 'zh'].sort());
   assert.equal(card.en, 'Please fix the login page.');
   assert.equal(card.zh, '');
   assert.equal(card.context, 'Fix login');

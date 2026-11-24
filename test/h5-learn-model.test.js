@@ -194,6 +194,27 @@ test('Spell asks a word inside its sentence only with the Chinese of the sentenc
   assert.equal(sentenceGap(null), null);
 });
 
+test('the gap of the sentence layout has one underline per letter, at most 12em wide; a generated sentence uses the same whole-word rule as the server', async () => {
+  const { gapLayout, sentenceGap, findWholeWord } = await load();
+  assert.deepEqual(gapLayout('expires'), { count: 7, segment: 0.5, space: 0.2 });
+  assert.deepEqual(gapLayout("don't"), { count: 5, segment: 0.5, space: 0.2 }, 'an apostrophe has its place too, like the letter slots');
+  for (const length of [1, 9, 12, 13, 20, 40]) {
+    const { count, segment, space } = gapLayout('a'.repeat(length));
+    assert.equal(count, length);
+    assert.ok(count * segment + (count - 1) * space <= 12.01, `${length} letters fit 12em`);
+    assert.ok(segment >= 0.15);
+  }
+  assert.equal(gapLayout('').count, 1);
+  // A card with an example sentence of its own: asked inside it like a sentence of the person's.
+  const generated = { id: 2, kind: 'word', en: 'deploy', context: 'Our team will deploy the new plan next week.', context_zh: '\u4f8b\u53e5', context_source: 'generated' };
+  assert.equal(sentenceGap(generated).word, 'deploy');
+  // services/learn-sentences.js checks a generated sentence with the same rule the page finds the word with.
+  const { wholeWordPlaces } = require('../services/learn-sentences');
+  const cases = [['The session cookie expires after thirty minutes.', 'expires'], ['Please log-in again', 'log'], ['We don\u2019t merge', "don't"],
+    ["It says 'expires' here", 'expires'], ['re-run the tests', 're-run'], ['expire', 'expires'], ['Deploy, then deploy again.', 'deploy'], ['A2B deploy', 'deploy']];
+  for (const [text, word] of cases) assert.equal(wholeWordPlaces(text, word)[0] ?? -1, findWholeWord(text, word), `${text} / ${word}`);
+});
+
 test('the notes of MY LEVEL and WORDS FROM MY TRANSLATIONS', async () => {
   const { levelNote, pickedNote, shortDateTime } = await load();
   const updated = new Date(2026, 10, 21, 9, 5).toISOString();

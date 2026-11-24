@@ -3,6 +3,7 @@ import Alert from '@mui/material/Alert';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import Divider from '@mui/material/Divider';
@@ -164,6 +165,13 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
     return () => { live = false; };
   }, [reloads]); // eslint-disable-line react-hooks/exhaustive-deps -- read again on Try again
   useEffect(() => { if (keys && input.current) input.current.focus({ preventScroll: true }); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- on open
+  // On a phone the bottom navigation steps aside while the chat is open (BottomNav.jsx `state.learnCoach`): the input sits at the bottom and the
+  // header's back arrow returns ("The conversation" in docs/design/learn-english-coach-page.md).
+  useEffect(() => {
+    if (!phone || !ui || typeof ui.set !== 'function') return undefined;
+    ui.set({ learnCoach: true });
+    return () => ui.set({ learnCoach: false });
+  }, [phone, ui]);
 
   const loadOlder = async () => {
     if (older || !hasMore || !messages.length) return;
@@ -362,6 +370,8 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   const coachSettings = () => { setMenu(null); open({ kind: 'settings', focus: 'coach', parent: { kind: 'chat' } }); };
 
   const lastAnswer = [...messages].reverse().find(one => one.role !== 'practice');
+  // "What next?" of her newest answer: a strip of chips right above the input, not in the message list.
+  const suggestions = !busy && lastAnswer && lastAnswer.role === 'assistant' ? suggestionsOf(lastAnswer) : [];
   const cardProps = message => ({
     message, settings: (data && data.settings) || {}, busy: blocked, states, undos, working, errors, empty,
     onRun: proposal => act(message, proposal, 'run'), onCancel: proposal => act(message, proposal, 'cancel'), onUndo: undo, onStart: proposal => start(message, proposal),
@@ -404,7 +414,6 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
               if (item.role === 'practice') return <PracticeDivider key={item.uid} result={{ ...practiceOf(item) }} />;
               if (item.role === 'user') return <Bubble key={item.uid} role="user" text={item.text} />;
               const meta = metaOf(item);
-              const suggestions = !busy && item === lastAnswer ? suggestionsOf(item) : [];
               return (
                 <Box key={item.uid} className="h5-learn-coach-answer" data-uid={item.uid} sx={{ display: 'contents' }}>
                   {item.text ? <Bubble role="assistant" text={item.text} /> : null}
@@ -412,7 +421,6 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
                   <CardChips message={{ ...item, cards: meta.cards }} added={added} adding={adding} error={cardError && cardError.uid === item.uid ? cardError.message : ''} onAdd={addCard} />
                   {proposalsOf(item, states).map(proposal => <ProposalCard key={proposal.id} proposal={proposal} {...cardProps(item)} />)}
                   {rememberedLines(item, rememberedOf(item))}
-                  {suggestions.length ? <Suggestions list={suggestions} disabled={blocked} onPick={send} /> : null}
                 </Box>
               );
             })}
@@ -436,16 +444,19 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
       {!tools ? (
         <Typography id="h5-learn-coach-no-tools" variant="caption" component="p" color="text.secondary" sx={{ flex: '0 0 auto', px: phone ? 2 : 3, pt: 1 }}>{t(NO_TOOLS)}</Typography>
       ) : null}
-      <Box component="form" onSubmit={event => { event.preventDefault(); send(draft); }}
-        sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'flex-end', gap: 1, px: phone ? 2 : 3, pt: 1, pb: phone ? 'calc(12px + env(safe-area-inset-bottom))' : 1.5, borderTop: 1, borderColor: 'divider' }}>
-        <OutlinedInput inputRef={input} fullWidth size="small" multiline maxRows={6} value={draft} placeholder={t('Reply or write more')}
-          onChange={event => setDraft(event.target.value.slice(0, COACH_TEXT_MAX))}
-          onKeyDown={event => { if (enterSends(event, { keys })) { event.preventDefault(); send(draft); } }}
-          inputProps={{ id: 'h5-learn-coach-input', 'aria-label': t('Reply or write more'), maxLength: COACH_TEXT_MAX, enterKeyHint: keys ? 'send' : 'enter' }}
-          sx={{ typography: 'body2', borderRadius: '22px' }} />
-        <IconButton id="h5-learn-coach-send" type="submit" color="primary" onMouseDown={event => event.preventDefault()} disabled={blocked || !draft.trim()} {...named(t('Send'))}>
-          <Icon name="send" size={22} />
-        </IconButton>
+      <Box sx={{ flex: '0 0 auto', borderTop: 1, borderColor: 'divider' }}>
+        {suggestions.length ? <Suggestions list={suggestions} disabled={blocked} onPick={send} phone={phone} touch={!keys} /> : null}
+        <Box component="form" onSubmit={event => { event.preventDefault(); send(draft); }}
+          sx={{ display: 'flex', alignItems: 'flex-end', gap: 1, px: phone ? 2 : 3, pt: 1, pb: phone ? 'calc(12px + env(safe-area-inset-bottom))' : 1.5 }}>
+          <OutlinedInput inputRef={input} fullWidth size="small" multiline maxRows={6} value={draft} placeholder={t('Reply or write more')}
+            onChange={event => setDraft(event.target.value.slice(0, COACH_TEXT_MAX))}
+            onKeyDown={event => { if (enterSends(event, { keys })) { event.preventDefault(); send(draft); } }}
+            inputProps={{ id: 'h5-learn-coach-input', 'aria-label': t('Reply or write more'), maxLength: COACH_TEXT_MAX, enterKeyHint: keys ? 'send' : 'enter' }}
+            sx={{ typography: 'body2', borderRadius: '22px' }} />
+          <IconButton id="h5-learn-coach-send" type="submit" color="primary" onMouseDown={event => event.preventDefault()} disabled={blocked || !draft.trim()} {...named(t('Send'))}>
+            <Icon name="send" size={22} />
+          </IconButton>
+        </Box>
       </Box>
     </>
   );
@@ -498,23 +509,42 @@ function PracticeDivider({ result }) {
   );
 }
 
-// The caption of an answer that looked things up or whose tokens were counted: "Looked at your data 3 times · 3 calls · 18,400 tokens".
+// The caption of an answer that looked things up or whose tokens were counted: one line of small grey text ("Looked at your data 3 times", the
+// first part) that a tap opens to the whole caption ("Looked at your data 3 times · 3 calls · 18,400 tokens") and closes again. A caption of one part
+// is only text. The tap area reaches 44px in height without taking more room (`::after`).
 function UsageLine({ usage }) {
+  const [open, setOpen] = useState(false);
   const parts = usageParts(usage, numberText);
   if (!parts.length) return null;
-  return <Typography className="h5-learn-coach-usage" variant="caption" component="p" color="text.secondary" sx={{ alignSelf: 'flex-start', mt: -1, px: 0.5 }}><Parts parts={parts} /></Typography>;
+  const sx = { alignSelf: 'flex-start', mt: -1, px: 0.5, color: 'text.secondary', typography: 'caption', textAlign: 'left' };
+  if (parts.length === 1) return <Typography className="h5-learn-coach-usage" variant="caption" component="p" color="text.secondary" sx={sx}><Parts parts={parts} /></Typography>;
+  return (
+    <ButtonBase className="h5-learn-coach-usage" aria-expanded={open ? 'true' : 'false'} data-open={open ? 'true' : 'false'} onClick={() => setOpen(now => !now)}
+      sx={theme => ({ ...sx, position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: '100%', borderRadius: 1,
+        '&.Mui-focusVisible': { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 2 },
+        '&::after': { content: '""', position: 'absolute', left: 0, right: 0, top: '50%', height: 44, transform: 'translateY(-50%)' } })}>
+      <Box component="span" sx={open ? {} : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Parts parts={open ? parts : parts.slice(0, 1)} /></Box>
+      <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none' }}><Icon name="down" size={12} /></Box>
+    </ButtonBase>
+  );
 }
 
-// "WHAT NEXT?" under her newest answer: each button sends its text as the person's reply.
-function Suggestions({ list, disabled, onPick }) {
+// "What next?" of her newest answer: a strip of chips right above the input (a group named "What next?"); each sends its text as the person's
+// reply, the first in the primary colour. On a phone one line that scrolls sideways (scroll snap, no scrollbar); on a computer the chips wrap.
+// 44px high for touch input, 32px with a mouse.
+function Suggestions({ list, disabled, onPick, phone, touch }) {
+  const strip = phone
+    ? { flexWrap: 'nowrap', overflowX: 'auto', scrollSnapType: 'x proximity', scrollPaddingInline: 16, overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }
+    : { flexWrap: 'wrap' };
   return (
-    <Card className="h5-learn-coach-suggestions" sx={{ alignSelf: 'flex-start', width: '88%', boxSizing: 'border-box', p: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <Typography variant="overline" component="p" color="text.secondary" sx={{ lineHeight: 1.6 }}>{t('What next?')}</Typography>
+    <Box id="h5-learn-coach-next" className="h5-learn-coach-suggestions" role="group" aria-label={t('What next?')}
+      sx={{ display: 'flex', gap: 1, px: phone ? 2 : 3, pt: 1, ...strip }}>
       {list.map((text, index) => (
-        <Button key={text} className="h5-learn-coach-suggestion" variant="outlined" color={index ? 'inherit' : 'primary'} disabled={disabled} onClick={() => onPick(text)}
-          translate="no" sx={{ minHeight: 44, justifyContent: 'center', ...(index ? { borderColor: 'divider' } : {}) }}>{text}</Button>
+        <Chip key={text} className="h5-learn-coach-suggestion" variant="outlined" color={index ? 'default' : 'primary'} disabled={disabled} onClick={() => onPick(text)}
+          label={text} translate="no"
+          sx={{ flex: '0 0 auto', scrollSnapAlign: 'start', height: touch ? 44 : 32, borderRadius: touch ? '22px' : '16px', maxWidth: phone ? '85%' : 'none', typography: 'body2' }} />
       ))}
-    </Card>
+    </Box>
   );
 }
 
@@ -544,15 +574,16 @@ function ProposalCard({ proposal, settings, busy, states, undos, working, errors
   if (type === 'plan') {
     const plan = planOf(proposal);
     return (
-      <Card className="h5-learn-coach-card" data-type="plan" data-id={id} sx={CARD_SX}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+      <Card className="h5-learn-coach-card" data-type="plan" data-id={id} sx={{ ...CARD_SX, py: 1, px: 1.5 }}>
+        <Box className="h5-learn-coach-plan-row" sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
           <Box aria-hidden="true" sx={theme => ({ flex: '0 0 36px', height: 36, borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.16) })}>
             <Icon name={PLAN_ICONS[plan.kind] || 'learnSpell'} size={20} />
           </Box>
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="subtitle2" component="p" className="h5-learn-coach-plan-title" translate="no">{plan.title || t('Practice')}</Typography>
-            <Typography variant="caption" component="p" color="text.secondary" className="h5-learn-coach-plan-caption"><Parts parts={planCaption(plan)} /></Typography>
+          <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+            <Typography variant="subtitle2" component="p" noWrap className="h5-learn-coach-plan-title" translate="no">{plan.title || t('Practice')}</Typography>
+            <Typography variant="caption" component="p" noWrap color="text.secondary" className="h5-learn-coach-plan-caption"><Parts parts={planCaption(plan)} /></Typography>
           </Box>
+          <Button variant="contained" className="h5-learn-coach-start" disabled={busy || running} onClick={() => onStart(proposal)} sx={{ flexShrink: 0, minHeight: 44 }}>{t('Start')}</Button>
         </Box>
         {plan.steps.length > 1 ? (
           <Box component="ol" className="h5-learn-coach-plan-steps" sx={{ m: 0, pl: 2.5, typography: 'body2', color: 'text.secondary' }}>
@@ -562,7 +593,6 @@ function ProposalCard({ proposal, settings, busy, states, undos, working, errors
         {plan.notes ? <Typography variant="body2" color="text.secondary" translate="no" className="h5-learn-coach-plan-notes">{plan.notes}</Typography> : null}
         {empty[id] ? <Typography variant="body2" color="text.secondary" className="h5-learn-coach-plan-empty">{t('Nothing left of this practice')}</Typography> : null}
         {error}
-        <Button variant="contained" className="h5-learn-coach-start" disabled={busy || running} onClick={() => onStart(proposal)} sx={{ minHeight: 44 }}>{t('Start')}</Button>
       </Card>
     );
   }

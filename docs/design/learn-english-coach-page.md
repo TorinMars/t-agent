@@ -25,7 +25,10 @@ The English chat becomes ONE continuous conversation with a coach. The approved 
 ## The conversation
 
 - **Phone**: a Learn mode page with its app bar (back arrow, "English chat", the menu `#h5-learn-coach-more`), the conversation
-  (`#h5-learn-coach[data-layout="phone"]`) and the input at the bottom. **Computer**: the right pane without padding, the title in h6 with the menu
+  (`#h5-learn-coach[data-layout="phone"]`) and the input at the bottom. While the coach is open on a phone the bottom navigation steps aside
+  (`state.learnCoach`, set by `Coach`, read by BottomNav.jsx like a keyboard: no room kept), so the input sits at the bottom of the window with the
+  safe-area inset and the message list keeps at least 55% of a 390x844 window; the header's back arrow returns (the bar is back on the Learn home).
+  Only the coach does this: the old chat, the series and the other Learn pages keep the bar. **Computer**: the right pane without padding, the title in h6 with the menu
   and Close (`#h5-learn-back`), the messages in a 760px column. No chats list, no New chat.
 - **Pages**: `GET /api/learn/coach?limit=50`, newest page; scrolled to within 80px of the top with `has_more` it reads
   `?before=<at of the oldest>&limit=50` ("Loading earlier messages…") and keeps what was in view where it was. `tools_ok: false` shows the line below.
@@ -34,9 +37,13 @@ The English chat becomes ONE continuous conversation with a coach. The approved 
   (plan kinds `today_spelling`, `more_new_words`), "Practice finished · N words · M min" otherwise, "Stopped after 9 of 25" for `stopped`; the numbers
   are the result's `total` (the different cards the plan gave), `done` (of those, the cards answered) and `seconds` (at least 1 min).
 - **Usage**: under an answer whose `meta.usage` (or the `done` line's `usage`) has `tool_rounds` > 0 or tokens, a caption "Looked at your data 3
-  times", plus "3 calls · 18,400 tokens" when tokens are counted (`usageParts`).
-- **Suggestions**: `meta.suggestions` of the newest answer (texts or `{ text }`, at most 4) as a "What next?" card of outlined buttons (the first
-  in the primary colour); a tap sends the text. Only under the newest answer and not while one streams.
+  times", plus "3 calls · 18,400 tokens" when tokens are counted (`usageParts`). With more than one part it is one line of small grey text with
+  only the first part and a small down arrow (`.h5-learn-coach-usage`, a button with `aria-expanded`); a tap shows the whole caption and a second
+  tap folds it again. The tap area is 44px high without taking room (`::after`). A caption of one part is plain text.
+- **Suggestions**: `meta.suggestions` of the newest answer (texts or `{ text }`, at most 4) as a strip of outlined chips right above the input
+  (`#h5-learn-coach-next`, a group named "What next?", outside the message list; the first chip in the primary colour); a tap sends the text. On a
+  phone one line that scrolls sideways (no wrap, scroll snap, no visible scrollbar); on a computer the chips wrap. 44px high for touch input,
+  32px with a mouse. Only for the newest answer and not while one streams.
 - **Empty**: "Your English coach", a line, and four starters that send at once ("Give me today's spelling practice", …).
 - **Input**: "Reply or write more", multiline, at most 4,000 characters; Enter sends with a hardware keyboard or mouse (`enterSends`), the button
   on touch.
@@ -54,9 +61,10 @@ shows the translator notice. A plain JSON body (a company computer) is taken as 
 
 ## The cards
 
-- **Plan** (`proposalType` 'plan': kind `practice` or a plan kind, or `plan` / `steps`): the icon of the plan kind, the title, "25 words · about
-  8 minutes" (the server's numbers, `planCaption`), for more than one step the numbered steps ("Spell each word", "Fill the gap inside a sentence",
-  "Dictation", "A final retest of the words you missed again"), the notes, and one contained Start button (44px). Start posts
+- **Plan** (`proposalType` 'plan': kind `practice` or a plan kind, or `plan` / `steps`): one compact row (`.h5-learn-coach-plan-row`) of the icon
+  of the plan kind, the title over one line "25 words · about 8 minutes" (the server's numbers, `planCaption`; both cut with an ellipsis) and the
+  contained Start button (44px) at the right; under the row only what a plan has beyond that: for more than one step the numbered steps ("Spell each word", "Fill the gap inside a sentence",
+  "Dictation", "A final retest of the words you missed again"), the notes. Start posts
   `plans/start { message_uid, proposal_id }`; `{ empty: true }`, no plan, or a plan this browser cannot run (only Dictation without speech) shows
   "Nothing left of this practice" on the card; else the series opens. The button stays usable (an old button reads the queue again).
 - **Settings** ("SETTING": "New words a day: 10 → 15"; the from value is the card's `before`, else the learning settings now), **cards** ("ADD 6
@@ -111,7 +119,8 @@ learning settings (shared, synced); the first three are on unless false.
 ## Tests
 
 `test/h5-learn-coach.test.js` (the series: exercises, steps, the retest, misses at the end, leaving, the result; the stream lines, merging, the
-cards, the divider, suggestions, Remembered, notes, usage) and `scripts/test-h5-learn-coach-browser.cjs` (390x844 touch and 1440x900 against a
+cards, the divider, suggestions, Remembered, notes, usage) and `scripts/test-h5-learn-coach-browser.cjs` (390x844 touch, with the checks of the compact layout: no bottom navigation, the message list at
+least 55% of the window, the plan card in one row, the usage line opened by a tap, the chips in one line above the input; and 1440x900 against a
 stub of the contract; a company computer whose home is away; an engine without the coach keeps the old chat), and end to end with the real server
 `scripts/test-h5-learn-coach-e2e-browser.cjs` (see "Tests" in [learn-english-coach.md](learn-english-coach.md)). The old chat's own test (`scripts/test-h5-learn-chat-browser.cjs`) runs
 against a stub without the coach route.

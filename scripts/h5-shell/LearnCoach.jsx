@@ -130,6 +130,8 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   const [pending, setPending] = useState(null); // { question?, practice?, text, status, proposals }
   const [failed, setFailed] = useState(null); // { text, message, practice? }
   const [draft, setDraft] = useState('');
+  // The input has the focus (the system keyboard is up on a phone): the home-indicator allowance under the input goes, so no empty band sits above the keyboard.
+  const [typing, setTyping] = useState(false);
   const [menu, setMenu] = useState(null);
   const [states, setStates] = useState({}); // proposal id -> open | done | cancelled | undone
   const [undos, setUndos] = useState({}); // proposal id -> undo token (while it can be undone)
@@ -459,9 +461,10 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
       <Box sx={{ flex: '0 0 auto', borderTop: 1, borderColor: 'divider' }}>
         {suggestions.length ? <Suggestions list={suggestions} disabled={blocked} onPick={send} phone={phone} touch={!keys} /> : null}
         <Box component="form" onSubmit={event => { event.preventDefault(); send(draft); }}
-          sx={{ display: 'flex', alignItems: 'flex-end', gap: 1, px: phone ? 2 : 3, pt: 1, pb: phone ? 'calc(12px + env(safe-area-inset-bottom))' : 1.5 }}>
+          sx={{ display: 'flex', alignItems: 'flex-end', gap: 1, px: phone ? 2 : 3, pt: 1, pb: phone ? (typing ? 1 : 'calc(12px + env(safe-area-inset-bottom))') : 1.5 }}>
           <OutlinedInput inputRef={input} fullWidth size="small" multiline maxRows={6} value={draft} placeholder={t('Reply or write more')}
             onChange={event => setDraft(event.target.value.slice(0, COACH_TEXT_MAX))}
+            onFocus={() => setTyping(true)} onBlur={() => setTyping(false)}
             onKeyDown={event => { if (enterSends(event, { keys })) { event.preventDefault(); send(draft); } }}
             inputProps={{ id: 'h5-learn-coach-input', 'aria-label': t('Reply or write more'), maxLength: COACH_TEXT_MAX, enterKeyHint: keys ? 'send' : 'enter' }}
             sx={{ typography: 'body2', borderRadius: '22px' }} />

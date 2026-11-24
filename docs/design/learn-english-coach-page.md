@@ -161,3 +161,5 @@ the answer's `meta.screens`. Under the answer (after the proposal cards) the pag
 keeps each name once, at most 3, and leaves out a practice mode this browser cannot run (Dictation without speech output, Say it without a way to
 hear the person). A tap opens the view of `screenView(name)` with `parent: { kind: 'chat' }`; the buttons stay on older answers. The "What next?"
 chips are her suggestions: the prompt asks her to offer "Show my progress" / "Show my mistakes" now and then, which she answers with the button.
+
+The coach input drops its bottom safe-area padding while it has the focus (`typing` in `LearnCoach.jsx`): the home indicator is under the system keyboard then, and the padding showed as an empty band between the input and the keyboard's accessory bar.

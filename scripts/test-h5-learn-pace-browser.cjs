@@ -10,6 +10,7 @@
 // H5_SHOT_DIR=<dir> saves pace-home.png, pace-almost.png, pace-parts-copy.png, pace-parts-recall.png, pace-round-done.png, pace-done-today.png,
 // pace-settings.png and pace-almost-desktop.png.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -151,7 +152,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 
 (async () => {
@@ -161,7 +162,7 @@ async function toTerminal(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       // The Today card: today's new words under the due count.
       await page.locator('#h5-learn-new-words').waitFor();
       assert.equal(await text(page, '#h5-learn-new-words'), '6 new words left today · 4 of 10 learned');

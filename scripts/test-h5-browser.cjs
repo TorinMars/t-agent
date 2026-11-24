@@ -1,6 +1,7 @@
 // Phone page (/h5) in real Chromium at phone size: key layout, task selection, phone-only terminals,
 // latched modifiers, paste, image upload, translate-and-send and the guard against engines without phone terminals.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -1798,7 +1799,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.equal(await page.locator('#h5-bnav-settings svg').count(), 1, 'a gear icon');
     assert.equal(await page.locator('#h5-bnav-settings').textContent(), 'Settings', 'a labelled item');
     if (await page.locator('#h5-tasks').isVisible()) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
-    await page.locator('#h5-bnav-settings').tap();
+    await bnavTap(page, '#h5-bnav-settings');
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-settings #h5-lang').count(), 1, 'the settings have the language button');
     assert.equal(await page.locator('#h5-lang').textContent(), '\u4e2d\u6587', 'it names the other language');
@@ -1810,9 +1811,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await Promise.all([page.waitForURL(`${ORIGIN}/torin/hide/login?return_to=/h5`), page.locator('#h5-logout').tap()]);
     assert.ok(calls.includes('POST /auth/logout'));
     await page.goto(`${ORIGIN}/h5`);
-    await page.locator('#h5-bnav-settings').waitFor();
+    await page.locator('#h5-bnav-settings').waitFor({ state: 'attached' }); // behind the pull handle when a session opens
     if (await page.locator('#h5-tasks').isVisible()) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
-    await page.locator('#h5-bnav-settings').tap();
+    await bnavTap(page, '#h5-bnav-settings');
     await page.locator('#h5-settings').waitFor({ state: 'visible' });
     // The settings sheet has no updater any more: the Update button's modal does the whole flow.
     assert.equal(await page.locator('#h5-settings #h5-update-check, #h5-settings #h5-update-log, #h5-settings #h5-update-hint').count(), 0, 'no updater in Settings');

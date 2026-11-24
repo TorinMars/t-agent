@@ -643,11 +643,11 @@ async function phone(browser, base, engine) {
   await settled(page);
   assert.equal(await page.locator('.h5-header-notebook #h5-session-name').textContent(), 'Release check');
   assert.equal(await page.locator('#h5-notebook-kernel').textContent(), 'Shell stopped');
-  // The action bar sits right above the bottom navigation; the view ends there.
+  // The action bar sits right above the bottom navigation's pull handle (the bar is hidden behind it on the session page); the view ends there.
   const bar = await page.locator('#h5-notebook .nb-actionbar').boundingBox();
-  const nav = await page.locator('#h5-bnav').boundingBox();
-  assert.ok(nav, `${label}: the bottom navigation is shown`);
-  assert.ok(Math.abs(bar.y + bar.height - nav.y) <= 1, `${label}: the action bar ends at the bottom navigation (${bar.y + bar.height} / ${nav.y})`);
+  const nav = await page.locator('#h5-bnav-handle').boundingBox();
+  assert.ok(nav, `${label}: the pull handle of the bottom navigation is shown`);
+  assert.ok(Math.abs(bar.y + bar.height - nav.y) <= 1, `${label}: the action bar ends at the pull handle (${bar.y + bar.height} / ${nav.y})`);
   assert.deepEqual(await page.locator('#h5-notebook .nb-actionbar button').allTextContents(), ['Run', 'Run all', 'Stop', '+ Cell']);
   assert.equal(await page.locator('#h5-notebook .nb-toolbar').isVisible(), false, `${label}: no wide toolbar`);
   // The run button of each cell: 44px, at the top right.

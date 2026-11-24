@@ -14,6 +14,7 @@
 // - an older server (no parent_id): no drag, no fold, no new fields; Chinese: the row buttons and the edit fields are translated.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -160,7 +161,7 @@ async function openPage(browser, { viewport, touch = true, items = ITEMS(), zh =
 // The sheet open and settled.
 async function openSheet(page, how) {
   if (how === 'click' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click(); // a computer: T-Attention is in More tools
-  await page.locator('#h5-attention')[how]();
+  await bnavTap(page, '#h5-attention', how);
   await page.locator('#h5-more-menu .MuiBackdrop-root').waitFor({ state: 'hidden' }); // the closing menu no longer takes the pointer
   await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => { const node = document.querySelector('#h5-attention-sheet .h5-attention-panel'); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); });

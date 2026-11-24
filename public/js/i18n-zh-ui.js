@@ -968,6 +968,7 @@ I18n.add({
   "Collapse the sidebar": "收起侧边栏",
   "Multi-column view": "多栏视图",
   "Views": "视图",
+  "Show navigation": "显示导航",
   "Sessions": "会话",
   "Columns": "多栏",
   "1 item needs you": "1 项需要你",

@@ -12,6 +12,7 @@
 // H5_SHOT_DIR=<dir> saves progress-desktop.png, progress-desktop-table.png, progress-phone.png, progress-phone-bottom.png, progress-phone-tooltip.png,
 // progress-phone-table.png, progress-phone-empty.png, grades-desktop.png, grades-phone-390.png, grades-phone-320.png, schedule-desktop.png.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -154,7 +155,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 
 async function checkCharts(page) {
@@ -310,7 +311,7 @@ async function checkCharts(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn-progress').tap();
       await page.locator('#h5-learn-mode #h5-learn-chart-daily-svg').waitFor();
       await page.waitForTimeout(400);
@@ -383,7 +384,7 @@ async function checkCharts(page) {
       delete mock.settings.desired_retention;
       await page.evaluate(() => history.back());
       await page.locator('#h5-learn').waitFor({ state: 'detached' });
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn-settings').tap();
       await page.locator('#h5-learn-settings-card').waitFor();
       assert.equal(await page.locator('#h5-learn-retention').count(), 0);
@@ -394,7 +395,7 @@ async function checkCharts(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 320, height: 640 }, touch: true });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       mock.queue = [{ ...QUEUE[0], next: { again: 600000, hard: 20 * DAY, good: 400 * DAY } }];
       await page.locator('#h5-learn-start').tap();
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });

@@ -2,6 +2,7 @@
 // the keyboard shortcuts, the on-screen bar and the touch gestures, autosave and conflicts, the back gesture, .xmind import and export, and the terminal staying connected.
 // Runs in a computer context and in a touch phone context; each case collects its failures and all of them are printed at the end.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -116,7 +117,7 @@ const openView = async (page, touch) => {
   if (touch) {
     // Mind maps in the bottom navigation (the drawer, open at the start, lies over it: closed first).
     if (await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
-    await page.locator('#h5-bnav-maps').tap();
+    await bnavTap(page, '#h5-bnav-maps');
   } else {
     // The full-window view (a computer's Mind maps destination in the navigation rail opens the columns view's tab instead, see
     // test-h5-columns-rail-browser.cjs; this view is what a page without the columns view shows).

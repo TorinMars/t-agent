@@ -2323,10 +2323,17 @@
     if (mindmapTab && text !== mindmapTab.sent) { mindmapTab.sent = text; mindmapTab.view.setSources(list); }
   }
   // The phone's bottom navigation (BottomNav.jsx, `html[data-bnav]` while it is shown): the full-window views end above it.
+  // On Sessions with a terminal only the bar's pull handle is there (`html[data-bnav-handle]`): a view over the terminal ends above its room, the
+  // bottom padding of `.h5-app` (the same whether the handle or, peeking, the bar over it is shown).
   const bottomNavSpace = () => {
-    if (!document.documentElement.hasAttribute('data-bnav')) return 0;
-    const bar = document.getElementById('h5-bnav');
-    return bar ? bar.getBoundingClientRect().height : 0;
+    const root = document.documentElement;
+    if (root.hasAttribute('data-bnav')) {
+      const bar = document.getElementById('h5-bnav');
+      return bar ? bar.getBoundingClientRect().height : 0;
+    }
+    if (!root.hasAttribute('data-bnav-handle')) return 0;
+    const app = document.getElementById('h5-app');
+    return app ? parseFloat(getComputedStyle(app).paddingBottom) || 0 : 0;
   };
   // The same height rule as fitViewport: visualViewport.height is believed only while something that raises a keyboard is focused (iOS Home Screen apps report wrong small heights).
   function fitMindmapView() {

@@ -10,6 +10,7 @@
 // - quick add "on K01" (remembered); hiding K01 in the task list takes its rows and stream away and showing it brings them back;
 // - phone 390 and 320 (touch, 3x screenshots with H5_SHOT_DIR), computer 1440 (mouse), Chinese, and a single engine that looks as before (no tags).
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -185,7 +186,7 @@ async function openPage(browser, world, { viewport, touch = true, zh = false }) 
 
 async function openSheet(page, how) {
   if (how === 'click' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click(); // a computer: T-Attention is in More tools
-  await page.locator('#h5-attention')[how]();
+  await bnavTap(page, '#h5-attention', how);
   await page.locator('#h5-more-menu .MuiBackdrop-root').waitFor({ state: 'hidden' }); // the closing menu no longer takes the pointer
   await page.locator(`${SHEET} .h5-attention-panel`).waitFor({ state: 'visible' });
   await page.waitForFunction(sheet => { const el = document.querySelector(`${sheet} .h5-attention-panel`); return el && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(el).transform); }, SHEET);

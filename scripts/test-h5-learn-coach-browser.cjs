@@ -561,8 +561,8 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       // The back arrow of the coach closes Learn: the terminal and the bottom navigation are back, and no home was in between.
       await page.locator('#h5-learn-coach-back').tap();
       await page.locator('#h5-learn').waitFor({ state: 'detached' });
-      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
-      assert.equal(await page.locator('#h5-bnav').isVisible(), true, 'the bottom navigation is back');
+      // Back on the session page the navigation is behind its pull handle (nothing resizes), and no home was in between.
+      await page.locator('#h5-bnav-handle').waitFor({ state: 'visible' });
       assert.equal(await page.locator('.h5-learn-home').count(), 0);
       // The bottom navigation opens her again.
       await bnavTap(page, '#h5-bnav-learn');

@@ -624,10 +624,9 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       assert.equal(await ui(page, 'softKeyboard'), false);
       const rows = await page.locator('#h5-learn-keys .h5-osk-row').evaluateAll(list => list.map(row => [...row.children].map(key => key.dataset.char || key.dataset.key || (key.hasAttribute('data-shift') ? 'Shift' : '?')).join(' ')));
-      assert.deepEqual(rows, ['q w e r t y u i o p', "a s d f g h j k l '", 'Shift z x c v b n m - Backspace'], 'the phone letter layout: three rows, no Space, no digits');
+      assert.deepEqual(rows, ['q w e r t y u i o p', 'a s d f g h j k l', 'Shift z x c v b n m Backspace', "' - Hide"], 'the phone letter layout: four rows, no Space, no digits');
       assert.equal(await page.locator('#h5-learn-keys button[data-char="-"]').getAttribute('aria-label'), 'Hyphen');
-      assert.equal(await page.locator('#h5-learn-keys-hide').getAttribute('aria-label'), 'Hide keyboard');
-      assert.equal(await page.locator('.h5-learn-footer #h5-learn-keys-hide').count(), 1, 'Hide in the pinned actions');
+      assert.equal(await page.locator('#h5-learn-keys button[data-key="Hide"]').count(), 1, 'Hide is a key of the keyboard');
       assert.equal(await page.locator('#h5-learn-keys button[data-char="\'"]').getAttribute('aria-label'), 'Apostrophe');
       assert.equal(await page.locator('#h5-learn-keys button[data-key="Backspace"]').getAttribute('aria-label'), 'Backspace');
       assert.equal(await page.locator('#h5-learn-keys button[data-shift]').getAttribute('aria-label'), 'Shift');
@@ -677,7 +676,7 @@ async function toTerminal(page) {
       assert.equal(await value(page, spell), 'expi');
       await shot(page, 'learn-phone-spell.png');
       // Hide closes it (the bottom navigation comes back); a tap on the letters opens it again.
-      await page.locator('#h5-learn-keys-hide').tap();
+      await page.locator('#h5-learn-keys button[data-key="Hide"]').tap();
       await page.locator('#h5-learn-keys').waitFor({ state: 'detached' });
       await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
       assert.equal(await page.locator('#h5-bnav').isVisible(), true);

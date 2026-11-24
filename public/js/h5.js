@@ -4101,8 +4101,11 @@
   // The one place that sets the height of the translate box: while it has focus it grows with its text and shows ALL of it (wrapped lines and Enter
   // new lines included), measured from the textarea's own scrollHeight. Only a safety cap makes it scroll inside: half of the visible viewport height
   // (visualViewport, so the on-screen keyboard is already subtracted), cut down to whole lines, so the key row, the buttons and part of the terminal stay in view.
+  // The touch draft box (one row with its send buttons, "Draft box" in docs/design/page-terminal-and-bottom-bar.md) stops at PHONE_MAX_LINES lines instead,
+  // so the terminal above it keeps its room while the system keyboard is up.
   // Called on input, on focus changes, after a send, when the viewport changes and at start.
   const TRANSLATE_MAX_VIEWPORT_FRACTION = 0.5;
+  const PHONE_MAX_LINES = 4;
   let oneLineInput = 0;
   // A column of the multi-column view has the compact bottom area (Terminal.jsx CompactBottom): one row whose draft box is always shown and grows
   // upward over the terminal, like a computer's. A column that is not the focused one keeps its box on one line (a window that lost the focus keeps
@@ -4130,7 +4133,9 @@
     const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
     const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
     const visible = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-    const maxLines = Math.max(2, Math.floor((visible * TRANSLATE_MAX_VIEWPORT_FRACTION - padding) / lineHeight));
+    const phoneBox = !pointerMode() && !COMPACT_ROW;
+    const fitLines = Math.max(2, Math.floor((visible * TRANSLATE_MAX_VIEWPORT_FRACTION - padding) / lineHeight));
+    const maxLines = phoneBox ? Math.min(PHONE_MAX_LINES, fitLines) : fitLines; // a phone on its side keeps the half-viewport cap too
     const cap = Math.round(lineHeight * maxLines + padding); // scrollHeight includes the padding
     const wanted = Math.min(input.scrollHeight, cap);
     input.style.height = `${style.boxSizing === 'border-box' ? wanted + border : wanted - padding}px`;

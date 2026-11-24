@@ -94,6 +94,7 @@
 | Insert | none | none | text "Ins" |
 | Delete | none | none | text "Del" |
 | Shift | self-drawn `keyShift` | none | self-drawn: a hollow up arrow (drawn at 26px, like Tab) |
+| Draft box (touch): Send as is | `keyEnter` | 4767097 | library icon (the return arrow, as the Enter key: the text goes in as typed), 22px in a 44px icon button, `aria-label` = `title` "Send as is" |
 | Terminal on-screen keyboard: Shift / Backspace / Enter | `keyShift` / `keyBackspace` / `keyEnter` | none / none / 4767097 | the same icons as row 1 (Shift 24px, the others 22px), `aria-label` = `title` |
 | Terminal on-screen keyboard: Caps lock | self-drawn `keyCapsLock` | none | self-drawn: the Shift arrow, shorter, over a bar (Shift tapped twice) |
 | Session kind mark: OpenCode (task rows, Recent, switcher cards, the New session dialog) | self-drawn, in `icon()` of `public/js/agent-chat.js` beside the Claude and Codex marks | none | self-drawn after OpenCode's logo: an outlined rounded rectangle x5-19 y4-20 (rx 2, stroke 1.5, round joins) with a filled block x8-16 y12-17, `currentColor`; an unknown agent gets `>_`, never Claude's sparkle |

@@ -32,6 +32,7 @@ const HEADER = state => {
     wide: state.wide, sidebarCollapsed: state.sidebarCollapsed, tasksOpen: state.tasksOpen, taskName: state.taskName, sourceLabel: state.sourceLabel,
     sessionName: state.sessionName, terminalWidth: state.terminalWidth, pane: state.pane, tag: shown ? shown.device : null,
     hasTarget: Boolean(state.shownTarget), agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot), notebook: state.notebook,
+    typing: state.keyboard === 'draft' && Boolean(state.softKeyboard),
   };
 };
 
@@ -42,6 +43,9 @@ const HEADER = state => {
 // Phone: a 56px MD2 top app bar: the menu button (opens the task drawer), the task name over a status line (dot, device tag, session, state), "Plan
 // usage" (one 48px button: Claude's bars above Codex's, without the numbers) and "More" ("Wide terminal" while a terminal is shown, Refresh the page,
 // Update with its red dot), so the names get the rest of the bar (about 230px at 390px).
+// Phone, while the draft box types with the system keyboard up (`typing`, the same rule that hides the bottom rows, Terminal.jsx `BottomArea`): ONE
+// 48px row of the menu button, the state dot, the task name and More; the device tag, the status line and Plan usage come back when the keyboard goes
+// (the terminal is pinned while the keyboard is up, h5.js `holdTerminalSize`, so the 8px it gains only shows more of it and nothing is resized).
 // A shell notebook (`state.notebook`, "Session header" in docs/design/shell-notebook-page.md): the flask and the notebook's name over "task · path ·
 // Saved" (computer) or over its shell's state (phone), the shell's chip (computer), no "Wide terminal", and "Notebook menu" with the notebook's actions
 // before Refresh the page.
@@ -69,11 +73,12 @@ export function Header({ ui }) {
   const taskName = state.taskName || t('Choose a task');
   const nb = state.notebook;
   if (nb) return <NotebookHeader ui={ui} state={state} wide={wide} docked={docked} fold={fold} device={device} />;
+  const collapsed = !wide && state.typing;
   return (
-    <AppBar position="static" color="default" elevation={0} className="h5-header" data-layout={wide ? 'wide' : 'phone'}
-      sx={{ flex: '0 0 auto', bgcolor: 'background.paper', backgroundImage: overlay(1), borderBottom: 1, borderColor: 'divider' }}>
-      {/* 47px + the 1px line = 48px on a computer; 55px + 1px = 56px on a phone (the skeleton in h5.html has the same heights). */}
-      <Toolbar variant="dense" disableGutters sx={{ minHeight: wide ? 47 : 55, px: wide ? 1 : 0.5, gap: wide ? 1 : 0.5 }}>
+    <AppBar position="static" color="default" elevation={0} className="h5-header" data-layout={wide ? 'wide' : 'phone'} data-collapsed={collapsed ? '' : undefined}
+      sx={{ flex: '0 0 auto', bgcolor: 'background.paper', backgroundImage: overlay(1), borderBottom: 1, borderColor: 'divider', ...(collapsed ? COLLAPSED_HEADER : null) }}>
+      {/* 47px + the 1px line = 48px on a computer and on a collapsed phone header; 55px + 1px = 56px on a phone (the skeleton in h5.html has the same heights). */}
+      <Toolbar variant="dense" disableGutters sx={{ minHeight: wide || collapsed ? 47 : 55, px: wide ? 1 : 0.5, gap: wide ? 1 : 0.5 }}>
         {wide ? (
           // Wide layout: fold the permanent sidebar away and back (the state is remembered; entry.jsx `toggleSidebar`).
           <IconButton id="h5-sidebar-toggle" {...named(t(fold))} aria-expanded={!state.sidebarCollapsed} aria-controls="h5-tasks" onClick={() => ui.actions.toggleSidebar()} sx={{ color: 'text.secondary' }}>
@@ -103,6 +108,12 @@ export function Header({ ui }) {
               </Typography>
             ) : <Box id="h5-session-name" className="h5-session-name" component="span" hidden />}
           </ButtonBase>
+        ) : collapsed ? (
+          <Box className="h5-task-line" sx={{ flex: '1 1 auto', minWidth: 0, pl: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+            {state.hasTarget ? <StateDot ui={ui} /> : null}
+            <Typography id="h5-task-name" className="h5-task-name" variant="subtitle1" component="div" noWrap translate={state.taskName ? 'no' : undefined}
+              sx={{ flex: '0 1 auto', minWidth: 0, fontWeight: 500, lineHeight: '22px' }}>{taskName}</Typography>
+          </Box>
         ) : (
           <Box sx={{ flex: '1 1 auto', minWidth: 0, pl: 0.5 }}>
             <Typography id="h5-task-name" className="h5-task-name" variant="subtitle1" component="div" noWrap translate={state.taskName ? 'no' : undefined}
@@ -128,6 +139,9 @@ export function Header({ ui }) {
     </AppBar>
   );
 }
+
+// The collapsed phone header keeps Plan usage mounted (its details may be anchored to it) and only hides it.
+const COLLAPSED_HEADER = { '& #h5-usage': { display: 'none' } };
 
 // The session header of a shell notebook (see `Header`). The kernel's words come from the view (scripts/notebook/model.mjs `kernelStatus`).
 const KERNEL_TEXT = { running: 'success.light', starting: 'primary.light', idle: 'text.secondary', stopped: 'text.secondary' };

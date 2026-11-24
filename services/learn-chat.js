@@ -231,10 +231,11 @@ function createLearnChat({
     };
   };
 
-  // GET /api/learn/chats: the chats, the newest message first.
+  // GET /api/learn/chats: the chats, the newest message first (not the coach conversation, docs/design/learn-english-coach.md; its uid 'coach' is
+  // not a chat uid, so no route here reads, changes or deletes it).
   function list(owner) {
     const rows = db.prepare(`SELECT c.*, (SELECT COUNT(*) FROM learn_convo_messages m WHERE m.owner = c.owner AND m.convo_uid = c.uid) AS count
-      FROM learn_convos c WHERE c.owner = ? AND c.deleted = 0 ORDER BY c.updated_at DESC, c.uid DESC`).all(owner);
+      FROM learn_convos c WHERE c.owner = ? AND c.deleted = 0 AND c.uid <> 'coach' ORDER BY c.updated_at DESC, c.uid DESC`).all(owner);
     return { chats: rows.map(row => chatJson(row, row.count)), translator: Boolean(isConfigured(owner)) };
   }
   // GET /api/learn/chats/:uid: the chat and its messages, oldest first.

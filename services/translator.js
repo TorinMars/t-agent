@@ -56,6 +56,13 @@ function parseWordAnswer(raw, word) {
 class TranslatorError extends Error {
   constructor(message, statusCode = 400) { super(message); this.statusCode = statusCode; }
 }
+// A provider that refuses the `tools` of a request (an HTTP 400 / 404 / 422 whose reason names tools or function calling): the English coach
+// (services/learn-coach.js) catches it and answers without tools from then on for that provider and model ("Mechanism" in
+// docs/design/learn-english-coach.md).
+class ToolsUnsupportedError extends TranslatorError {
+  constructor(message) { super(message, 502); this.code = 'TOOLS_UNSUPPORTED'; }
+}
+const TOOLS_REFUSED = /\btools?\b|tool_choice|tool_calls|function[ _-]?call/i;
 const controls = /[\x00-\x20\x7f]/;
 const text = value => (typeof value === 'string' ? value.trim() : '');
 const providerDefaults = id => ({ apiKey: '', baseUrl: PROVIDERS[id].baseUrl, model: PROVIDERS[id].model });
@@ -121,7 +128,7 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
 
   // One call of the provider's chat endpoint with these messages (after the system message). Answers the response when it is ok; every failure is a
   // TranslatorError with the provider's own reason. `signal` aborts the call (a timeout or the caller); the caller maps the abort.
-  async function post({ all, config, label }, system, messages, { temperature, json = false, stream = false, maxTokens = 0 }, signal) {
+  async function post({ all, config, label }, system, messages, { temperature, json = false, stream = false, maxTokens = 0, tools = null, toolChoice = null }, signal) {
     const response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
@@ -130,6 +137,7 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
         ...glmReasoning(all.provider, config.model),
         ...(json ? { response_format: { type: 'json_object' } } : {}),
         ...(maxTokens > 0 ? { max_tokens: maxTokens } : {}),
+        ...(tools ? { tools, ...(toolChoice ? { tool_choice: toolChoice } : {}), ...(stream ? { stream_options: { include_usage: true } } : {}) } : {}),
         messages: [{ role: 'system', content: system }, ...messages],
       }),
       signal,
@@ -140,6 +148,10 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
       try { const data = JSON.parse(raw); detail = data && typeof data === 'object' ? (data.error && typeof data.error === 'object' ? data.error : data) : null; } catch { /* not JSON: use a snippet of the raw text */ }
       const reason = detail && text(detail.message || detail.msg || detail.error_description || '');
       const code = detail && (detail.code || detail.type);
+      // A request with tools that the provider refuses because of them: a typed error, so the caller can go on without tools.
+      if (tools && [400, 404, 422].includes(response.status) && TOOLS_REFUSED.test(`${reason || ''} ${detail ? '' : raw}`)) {
+        throw new ToolsUnsupportedError(`${label} cannot use tools with this model${reason ? `: ${reason.slice(0, 200)}` : ''} (HTTP ${response.status})`);
+      }
       if (reason) throw new TranslatorError(`${label} returned an error: ${reason.slice(0, 200)} (HTTP ${response.status}${code ? `, error code ${code}` : ''})`, 502);
       if (!detail && raw.trim()) throw new TranslatorError(`${label} returned an error (HTTP ${response.status}): ${text(raw).replace(/\s+/g, ' ').slice(0, 200)}`, 502);
     }
@@ -210,6 +222,66 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
     }
   }
 
+  // One round of a conversation with tools (the English coach, services/learn-coach.js; "Mechanism" in docs/design/learn-english-coach.md): like
+  // `converse`, with `tools` (OpenAI-compatible function definitions) and `toolChoice` ('auto' | 'none'), and `messages` that may also hold the
+  // model's earlier tool calls ({ role: 'assistant', content, tool_calls: [{ id, type: 'function', function: { name, arguments } }] }) and their
+  // results ({ role: 'tool', tool_call_id, content }). Returns { content, toolCalls: [{ id, name, arguments (the JSON text as the model wrote it) }],
+// usage: { prompt_tokens, completion_tokens } | null (the provider's `usage` when it sends one) }. A stream asks for the usage (stream_options).
+  // With `onDelta(text)` the text is streamed (the tool calls arrive in pieces too and are put together); a provider that refuses the tools throws
+  // ToolsUnsupportedError. The same keys, errors, timeouts and provider options as `converse`.
+  async function converseTools(owner, system, messages, { tools, toolChoice = 'auto', timeoutMs = TIMEOUT_MS, temperature = 0.3, maxTokens = 0, onDelta = null, signal = null } = {}) {
+    if (!Array.isArray(tools) || !tools.length) throw new TranslatorError('Invalid conversation');
+    if (!Array.isArray(messages) || !messages.length || messages.some(item => !validToolMessage(item))) throw new TranslatorError('Invalid conversation');
+    const provider = activeProvider(owner);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const cancel = () => controller.abort();
+    if (signal) { if (signal.aborted) cancel(); else signal.addEventListener('abort', cancel, { once: true }); }
+    const stream = typeof onDelta === 'function';
+    try {
+      const response = await post(provider, system, messages.map(toolMessage), { temperature, stream, maxTokens, tools, toolChoice }, controller.signal);
+      const type = String((response.headers && typeof response.headers.get === 'function' && response.headers.get('content-type')) || '');
+      let content = '';
+      let toolCalls = [];
+      let usage = null;
+      if (!stream || !response.body || /application\/json/i.test(type)) {
+        const data = await response.json();
+        if (data && data.usage) usage = usageOf(data.usage);
+        const message = data && data.choices && data.choices[0] && data.choices[0].message;
+        content = message && typeof message.content === 'string' ? message.content : '';
+        toolCalls = (message && Array.isArray(message.tool_calls) ? message.tool_calls : []).map((call, index) => ({
+          id: call && typeof call.id === 'string' && call.id ? call.id : `call_${index}`,
+          name: call && call.function && typeof call.function.name === 'string' ? call.function.name : '',
+          arguments: call && call.function && typeof call.function.arguments === 'string' ? call.function.arguments
+            : JSON.stringify((call && call.function && call.function.arguments) || {}),
+        }));
+        if (stream && content) onDelta(content);
+      } else {
+        const parts = new Map(); // index -> { id, name, arguments }
+        await readStream(response.body, piece => { content += piece; onDelta(piece); }, (delta, event) => {
+          if (event && event.usage) usage = usageOf(event.usage);
+          for (const call of Array.isArray(delta.tool_calls) ? delta.tool_calls : []) {
+            const index = Number.isInteger(call.index) ? call.index : parts.size;
+            const part = parts.get(index) || { id: '', name: '', arguments: '' };
+            if (typeof call.id === 'string' && call.id) part.id = call.id;
+            if (call.function && typeof call.function.name === 'string') part.name += call.function.name;
+            if (call.function && typeof call.function.arguments === 'string') part.arguments += call.function.arguments;
+            parts.set(index, part);
+          }
+        });
+        toolCalls = [...parts.entries()].sort((a, b) => a[0] - b[0]).map(([index, part]) => ({ id: part.id || `call_${index}`, name: part.name, arguments: part.arguments }));
+      }
+      toolCalls = toolCalls.filter(call => call.name);
+      if (!content.trim() && !toolCalls.length) throw new TranslatorError('The model gave no answer', 502);
+      return { content, toolCalls, usage };
+    } catch (error) {
+      throw callFailure(error, Boolean(signal && signal.aborted));
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', cancel);
+    }
+  }
+
   // One piece (at most CHUNK_CHARS) keeps its lines: line N of the result is line N of the piece, blank lines stay blank and a line without Chinese is
   // kept exactly. The piece goes to the model in one call; when the answer has another number of lines, or a blank line in another place, the model
   // joined or split lines, so each line with Chinese is translated again on its own (LINE_CONCURRENCY at a time) and the lines are put back in order.
@@ -252,6 +324,8 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
     chat: (owner, system, user, options) => complete(owner, system, user, options),
     // Server side only (Learn's "Ask about a question", services/learn-ask.js): a conversation, streamed when `onDelta` is given (see converse above).
     converse: (owner, system, messages, options) => converse(owner, system, messages, options),
+    // Server side only (the English coach, services/learn-coach.js): one round with tools (see converseTools above).
+    converseTools: (owner, system, messages, options) => converseTools(owner, system, messages, options),
     // The label and model of the provider in use, for a page that names it (never the key).
     activeModel(owner) {
       const all = read(owner);
@@ -323,7 +397,8 @@ function createTranslator({ db, sessionSecret, fetchImpl = (...args) => fetch(..
 // Reads an OpenAI-compatible server-sent event stream (a web ReadableStream of bytes): every `data: {...}` line with choices[0].delta.content calls
 // `piece(text)`; `data: [DONE]` or the end of the body ends it. An error object in the stream ({"error": {...}}) is the provider's error. Comments,
 // `event:` lines, keep-alives and a reasoning model's `reasoning_content` are skipped. The body is cancelled at the end, also after a failure.
-async function readStream(body, piece) {
+// `each(delta, event)` (optional) gets every event as well (the pieces of tool calls, the `usage` of the last one).
+async function readStream(body, piece, each = null) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -342,6 +417,7 @@ async function readStream(body, piece) {
     }
     const delta = event && event.choices && event.choices[0] && event.choices[0].delta;
     if (delta && typeof delta.content === 'string' && delta.content) piece(delta.content);
+    if (each) each(delta || {}, event);
   };
   try {
     while (!done) {
@@ -358,6 +434,33 @@ async function readStream(body, piece) {
   } finally {
     reader.cancel().catch(() => {});
   }
+}
+
+// The token counts of a provider's `usage`, or null.
+function usageOf(value) {
+  const count = number => (Number.isSafeInteger(number) && number >= 0 ? number : null);
+  const prompt = count(value && value.prompt_tokens);
+  const completion = count(value && value.completion_tokens);
+  return prompt === null && completion === null ? null : { ...(prompt !== null ? { prompt_tokens: prompt } : {}), ...(completion !== null ? { completion_tokens: completion } : {}) };
+}
+// A message of a conversation with tools: a user or assistant text, an assistant message with tool calls, or a tool result.
+const TOOL_CALL_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+function validToolMessage(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.role === 'user') return typeof item.content === 'string';
+  if (item.role === 'tool') return typeof item.content === 'string' && typeof item.tool_call_id === 'string' && TOOL_CALL_ID.test(item.tool_call_id);
+  if (item.role !== 'assistant') return false;
+  if (item.tool_calls === undefined) return typeof item.content === 'string';
+  return (item.content === null || typeof item.content === 'string') && Array.isArray(item.tool_calls) && item.tool_calls.length > 0
+    && item.tool_calls.every(call => call && typeof call.id === 'string' && TOOL_CALL_ID.test(call.id) && typeof call.name === 'string' && typeof call.arguments === 'string');
+}
+// The form the provider takes.
+function toolMessage(item) {
+  if (item.role === 'tool') return { role: 'tool', tool_call_id: item.tool_call_id, content: item.content };
+  if (item.role === 'assistant' && item.tool_calls) {
+    return { role: 'assistant', content: item.content || '', tool_calls: item.tool_calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) };
+  }
+  return { role: item.role, content: item.content };
 }
 
 // Whether `translate` would call a provider for this input. Refused input and text with no Chinese are answered without one, so they never need a linked service.
@@ -407,4 +510,4 @@ const SYNC_GROUP = 'translate';
 const exportForSync = ({ db, sessionSecret }, owner) => syncStore.readState(db, `translator:${owner}`, sessionSecret);
 const importFromSync = ({ db, sessionSecret }, owner, value) => syncStore.writeState(db, `translator:${owner}`, syncStore.objectOrNull(value), sessionSecret);
 
-module.exports = { SYNC_GROUP, exportForSync, importFromSync, PROVIDERS, glmReasoning, readStream, createTranslator, TranslatorError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };
+module.exports = { SYNC_GROUP, exportForSync, importFromSync, PROVIDERS, glmReasoning, readStream, createTranslator, TranslatorError, ToolsUnsupportedError, MAX_INPUT_CHARS, CHUNK_CHARS, TIMEOUT_MS, splitForTranslation, hasCjk, needsProvider, translationTimeoutMs };

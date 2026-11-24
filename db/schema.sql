@@ -507,3 +507,31 @@ CREATE TABLE IF NOT EXISTS learn_convo_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_convo ON learn_convo_messages (owner, convo_uid, at);
 CREATE INDEX IF NOT EXISTS idx_learn_convo_messages_seq ON learn_convo_messages (owner, sync_seq);
+
+-- Schema 24: the English coach ("Storage" in docs/design/learn-english-coach.md; services/learn-coach.js). Its conversation is the learn_convos row
+-- with uid 'coach' (the same on every engine; never pruned or deleted) and its messages (role user | assistant | practice). The notes it keeps about
+-- the person (at most 40 live, one line of at most 200 characters, secrets refused) and the rolling summary of the older conversation (one row per
+-- owner). Personal data like the answers: a company computer keeps none (its page asks its home). services/learn-sync-store.js adds them.
+CREATE TABLE IF NOT EXISTS learn_coach_notes (
+  owner      TEXT    NOT NULL,
+  uid        TEXT    NOT NULL,                   -- a random UUID, the same on every engine
+  text       TEXT    NOT NULL,                   -- one line, at most 200 characters ('' in a tombstone)
+  until      TEXT,                               -- YYYY-MM-DD: the note is no longer used after this day; NULL for no end
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,                   -- the hybrid clock of the last change (the newer wins; a tombstone wins a tie)
+  deleted    INTEGER NOT NULL DEFAULT 0,         -- 1: a tombstone
+  by         TEXT    NOT NULL DEFAULT '',        -- the engine of the last change ('' is this one)
+  sync_seq   INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_learn_coach_notes_seq ON learn_coach_notes (owner, sync_seq);
+CREATE TABLE IF NOT EXISTS learn_coach_summary (
+  owner      TEXT    NOT NULL PRIMARY KEY,
+  text       TEXT    NOT NULL DEFAULT '',        -- at most 3000 characters: goals, progress, questions asked, conclusions
+  covers_at  INTEGER NOT NULL DEFAULT 0,         -- the `at` of the newest message folded in (0: none)
+  updated_at INTEGER NOT NULL DEFAULT 0,         -- the hybrid clock of the fold
+  reset_at   INTEGER NOT NULL DEFAULT 0,         -- the hybrid clock of the newest "Reset the summary": a summary folded before it is void
+  by         TEXT    NOT NULL DEFAULT '',
+  sync_seq   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_learn_coach_summary_seq ON learn_coach_summary (owner, sync_seq);

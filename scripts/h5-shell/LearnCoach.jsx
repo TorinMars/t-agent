@@ -653,7 +653,7 @@ function NoteRow({ note, onSave, onDelete }) {
     if (!text || text === note.text) { setEditing(null); return; }
     if (await onSave(note, text)) setEditing(null);
   };
-  const [line, ...values] = noteLine(note, { short: shortDate, day: dayLabel });
+  const sub = noteLine(note, { short: shortDate, day: dayLabel });
   return (
     <Box className="h5-learn-coach-note" data-uid={note.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1, minHeight: 56, py: 0.5, borderTop: 1, borderColor: 'divider' }}>
       <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
@@ -667,7 +667,7 @@ function NoteRow({ note, onSave, onDelete }) {
             <span translate="no">{note.text}</span>
           </Box>
         )}
-        <Typography variant="caption" color="text.secondary" component="p"><Fmt template={line} values={values} /></Typography>
+        <Typography variant="caption" color="text.secondary" component="p">{sub.made}{sub.until ? <>{' \u00b7 '}<Fmt template={sub.until[0]} values={[sub.until[1]]} /></> : null}</Typography>
       </Box>
       <IconButton className="h5-learn-coach-note-delete" onClick={() => onDelete(note)} {...named(t('Delete note'))}><Icon name="close" size={20} /></IconButton>
     </Box>

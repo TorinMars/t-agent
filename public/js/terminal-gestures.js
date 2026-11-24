@@ -6,8 +6,8 @@
 // A touch that never travels AXIS_SLOP is left to the browser (tap, double tap, long press). A sideways pan never ends in a click, so it never opens a link.
 const TerminalGestures = (() => {
   const AXIS_SLOP = 10; // px of travel that decide the axis of a pan
-  const WIDE_CHOICES = [120, 160, 200];
-  const DEFAULT_WIDE = 160;
+  const WIDE_CHOICES = [200, 500, 1000, 2000]; // a stored choice of an older page (120, 160) falls back to the default
+  const DEFAULT_WIDE = 200;
   const WRAP_HINT_BELOW = 100; // the copy view suggests Wide when Fit gives fewer columns than this
   const FOLLOW_MARGIN = 4; // cells kept beside the cursor when it is scrolled into view
 

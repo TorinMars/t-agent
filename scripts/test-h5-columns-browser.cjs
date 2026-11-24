@@ -633,9 +633,9 @@ const inbox = (page, id, event) => page.evaluate(([own, kind]) => (window.paneIn
       await page.locator(actOf('c1', 'width')).click();
       await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide', null, { timeout: 3000 });
       await page.locator(actOf('c1', 'width')).click({ button: 'right' });
-      await page.locator('#h5-column-width-menu [role="menuitem"]').first().waitFor();
-      await page.locator('#h5-column-width-menu [data-cols="200"]').click();
-      await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide' && window.H5UI.get().terminalWidth.cols === 200, null, { timeout: 3000 });
+      await page.locator('#h5-column-width-menu [role="menuitemradio"]').first().waitFor();
+      await page.locator('#h5-column-width-menu [data-cols="500"]').click();
+      await paneFrame(page, 'c1').waitForFunction(() => window.H5UI.get().terminalWidth.mode === 'wide' && window.H5UI.get().terminalWidth.cols === 500, null, { timeout: 3000 });
       await page.evaluate(() => document.querySelector('#h5-columns iframe[data-pane-id="c1"]').contentWindow.H5UI.actions.setTerminalWidth({ mode: 'fit', cols: 160 }));
       // Maximize (and Restore) from the menu: the single entry point of the columns.
       await openMenu('c1');

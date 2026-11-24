@@ -46,7 +46,7 @@ const TerminalViewport = (() => {
     if (!size) return;
     const cols = columns(term, host);
     if (cols) size.cols = cols;
-    if (minCols > size.cols) size.cols = Math.min(1000, minCols);
+    if (minCols > size.cols) size.cols = Math.min(2000, minCols); // the server's limit (routes/terminal.js `resize`)
     if (size.cols === term.cols && size.rows === term.rows) return;
     const saved = capture(term);
     const buffer = term.buffer.active;

@@ -1,9 +1,9 @@
 // The sideways pan and the width of the page's terminal (public/js/terminal-gestures.js, h5.js) in real Chromium, and how it lives with the wheel strip.
 // Phone (390 x 844, touch, real CDP touches): the strip is there and the terminal is touch-action: pan-y; a pan picks its axis in the first 10px and keeps
 // it; a vertical pan on the body scrolls the normal buffer once (xterm's own touch scrolling, 1:1) and sends the alternate buffer nothing; in Wide mode a sideways
-// pan moves the screen, but not from the strip, which stays at the right edge of the visible box; the cursor is followed after input; the switch in the header
-// toggles Fit / Wide (one tap) and its menu (long press) picks 120 / 160 / 200; the PTY gets the columns through the resize message; the copy view shows the wrap
-// hint in Fit mode and widens from there; the choice is remembered. The strip's own behaviour is in test-h5-browser.cjs and test-h5-wheel-stuck-browser.cjs.
+// pan moves the screen, but not from the strip, which stays at the right edge of the visible box; the cursor is followed after input; the terminal width in
+// the header's More menu ("Terminal width: …") picks Fit / 200 / 500 / 1000 / 2000 (the current one ticked); the PTY gets the columns through the resize message;
+// the copy view shows the wrap hint in Fit mode and widens from there (to the default 200); the choice is remembered. The strip's own behaviour is in test-h5-browser.cjs and test-h5-wheel-stuck-browser.cjs.
 // Computer (1440 x 900, mouse): Shift+wheel and a sideways wheel move the wide screen, the vertical wheel stays xterm's. The server is mocked (no data folder is used).
 // H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
@@ -99,9 +99,23 @@ const probe = page => page.evaluate(() => {
       const emit = data => page.evaluate(data => new Promise(done => { window.sockets.at(-1).emit(data); requestAnimationFrame(() => requestAnimationFrame(done)); }), data);
       assert.equal(await page.locator('#h5-wheel').count(), 1, 'the wheel strip is there');
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden])')).touchAction), 'pan-y', 'the body keeps pan-y: vertical drags stay the browser\'s and xterm\'s');
-      assert.equal(await page.locator('#h5-term-width').getAttribute('aria-pressed'), 'false', 'Fit mode at first');
-      assert.equal(await page.locator('#h5-term-width').getAttribute('aria-label'), 'Wide terminal');
-      assert.equal(await page.locator('#h5-term-width').getAttribute('title'), 'Wide terminal');
+      // The phone has the terminal width in More (the app bar has no room for the switch).
+      const widthMode = () => page.evaluate(() => window.H5UI.get().terminalWidth.mode);
+      const pickWidth = async label => {
+        await page.locator('#h5-header-more').tap();
+        await page.locator('#h5-term-width').tap();
+        await page.locator('#h5-term-width-menu [role="menu"]').waitFor();
+        const ticked = await page.locator('#h5-term-width-menu [aria-checked="true"]').getAttribute('data-cols');
+        await page.locator('#h5-term-width-menu [role="menuitemradio"]', { hasText: label }).tap();
+        await page.locator('#h5-term-width-menu').waitFor({ state: 'detached' });
+        return ticked;
+      };
+      assert.equal(await page.locator('.h5-header #h5-term-width').count(), 0, 'no width switch in the phone app bar');
+      assert.equal(await widthMode(), 'fit', 'Fit mode at first');
+      await page.locator('#h5-header-more').tap();
+      assert.equal(await page.locator('#h5-term-width').textContent(), 'Terminal width: Fit to screen');
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-header-more-menu').waitFor({ state: 'detached' });
       const fit = await probe(page);
       assert.ok(fit.lastCols > 20 && fit.lastCols < 100, `Fit gives the PTY the columns that fit (${fit.lastCols})`);
       assert.equal(fit.wide, false);
@@ -131,7 +145,7 @@ const probe = page => page.evaluate(() => {
       await page.touchscreen.tap(150, 300);
       assert.equal(await topLine(), lockedTop, 'a tap does not scroll');
 
-      // Copy view (long press): Fit under 100 columns shows the wrap hint; "Widen terminal" switches to Wide (160) and the PTY gets 160 columns.
+      // Copy view (long press): Fit under 100 columns shows the wrap hint; "Widen terminal" switches to Wide (200) and the PTY gets 200 columns.
       await touch('touchStart', 150, 300);
       await page.waitForTimeout(650);
       await touch('touchEnd');
@@ -140,12 +154,12 @@ const probe = page => page.evaluate(() => {
       assert.equal(await page.locator('#h5-copy-wrap-hint span').first().textContent(), `Lines are wrapped at ${fit.lastCols} columns`);
       if (shots) await page.screenshot({ path: path.join(shots, 'gestures-copy-hint.png') });
       await page.locator('#h5-copy-widen').tap();
-      await page.waitForFunction(() => { const sent = window.sockets.at(-1).sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item && item.type === 'resize'); return sent.at(-1)?.cols === 160; });
+      await page.waitForFunction(() => { const sent = window.sockets.at(-1).sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item && item.type === 'resize'); return sent.at(-1)?.cols === 200; });
       await page.locator('#h5-copy-wrap-hint').waitFor({ state: 'detached' });
       await page.locator('.MuiAlert-message', { hasText: 'The new width applies to new output' }).waitFor();
       await page.locator('#h5-copy-close').tap();
       await page.locator('#h5-copy').waitFor({ state: 'detached' });
-      assert.equal(await page.locator('#h5-term-width').getAttribute('aria-pressed'), 'true');
+      assert.equal(await widthMode(), 'wide');
       assert.equal(await page.evaluate(() => localStorage.getItem('h5-terminal-width')), 'wide', 'the choice is remembered');
       let wide = await probe(page);
       assert.equal(wide.wide, true);
@@ -190,27 +204,22 @@ const probe = page => page.evaluate(() => {
       // Output that moves the cursor past the right edge is followed (the view follows the cursor until the user pans away).
       await emit('x'.repeat(120));
       wide = await probe(page);
-      const cell = wide.content / 160;
+      const cell = wide.content / 200;
       assert.ok(wide.offset > 0 && 122 * cell <= wide.offset + wide.visible + 1, `the cursor at column 122 is kept in view (offset ${wide.offset})`);
 
-      // Header switch: long press opens the menu, pick 200 columns; a tap goes back to Fit.
-      await touch('touchStart', ...(await page.locator('#h5-term-width').boundingBox().then(box => [box.x + box.width / 2, box.y + box.height / 2])));
-      await page.waitForTimeout(650);
-      await touch('touchEnd');
-      await page.locator('#h5-term-width-menu').waitFor();
-      assert.equal(await page.locator('#h5-term-width-menu .Mui-selected').getAttribute('data-cols'), '160');
-      if (shots) await page.screenshot({ path: path.join(shots, 'gestures-width-menu.png') });
-      await page.locator('#h5-term-width-menu [data-cols="200"]').tap();
-      await page.waitForFunction(() => window.sockets.at(-1).sent.some(item => item.includes('"cols":200')));
-      await page.locator('#h5-term-width-menu').waitFor({ state: 'detached' });
-      assert.equal(await page.locator('#h5-term-width').getAttribute('aria-pressed'), 'true', 'the long press opened the menu, it did not toggle');
-      assert.equal(await page.evaluate(() => localStorage.getItem('h5-terminal-wide-cols')), '200');
-      await page.locator('#h5-term-width').tap();
+      // More > Terminal width: the list ticks 200; pick 500 columns; then Fit to screen goes back to the columns that fit.
+      assert.equal(await pickWidth('500 columns'), '200', 'the current width (200) is ticked');
+      await page.waitForFunction(() => window.sockets.at(-1).sent.some(item => item.includes('"cols":500')));
+      assert.equal(await widthMode(), 'wide');
+      assert.equal(await page.evaluate(() => localStorage.getItem('h5-terminal-wide-cols')), '500');
+      assert.equal((await probe(page)).lastCols, 500);
+      if (shots) { await page.locator('#h5-header-more').tap(); await page.locator('#h5-term-width').tap(); await page.waitForTimeout(400); await page.screenshot({ path: path.join(shots, 'gestures-width-menu.png') }); await page.keyboard.press('Escape'); await page.locator('#h5-term-width-menu').waitFor({ state: 'detached' }); }
+      assert.equal(await pickWidth('Fit to screen'), '500');
       await page.waitForFunction(cols => { const sent = window.sockets.at(-1).sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item && item.type === 'resize'); return sent.at(-1)?.cols === cols; }, fit.lastCols);
-      assert.equal(await page.locator('#h5-term-width').getAttribute('aria-pressed'), 'false', 'one tap goes back to Fit');
+      assert.equal(await widthMode(), 'fit', 'Fit to screen goes back to Fit');
       assert.equal((await probe(page)).wide, false);
-      await page.locator('#h5-term-width').tap(); // Wide 200 again for the alternate buffer
-      await page.waitForFunction(() => window.sockets.at(-1).sent.filter(item => item.includes('"cols":200')).length >= 2);
+      await pickWidth('500 columns'); // Wide 500 again for the alternate buffer
+      await page.waitForFunction(() => window.sockets.at(-1).sent.filter(item => item.includes('"cols":500')).length >= 2);
 
       // Alternate buffer with mouse tracking (Claude Code, vim with mouse): a vertical pan on the body sends nothing (that is the strip's job, as before
       // v2.90.0); the strip's spring sends wheel reports; a sideways pan moves the screen and sends nothing.
@@ -248,11 +257,11 @@ const probe = page => page.evaluate(() => {
       assert.equal((await arrows()).length, before, 'without mouse mode a pan on the body sends no arrows');
       await emit('\x1b[?1049l');
 
-      // Remembered: a new page starts in Wide 200 and sizes the PTY so at once.
+      // Remembered: a new page starts in Wide 500 and sizes the PTY so at once.
       await page.reload(); // the open terminal is remembered too
       await page.waitForFunction(() => window.sockets.length > 0 && window.sockets.at(-1).readyState === 1 && document.querySelector('.h5-xterm:not([hidden]) .xterm-rows'));
-      await page.waitForFunction(() => window.sockets.at(-1).sent.some(item => item.includes('"cols":200')));
-      assert.equal(await page.locator('#h5-term-width').getAttribute('aria-pressed'), 'true', 'Wide is remembered after a reload');
+      await page.waitForFunction(() => window.sockets.at(-1).sent.some(item => item.includes('"cols":500')));
+      assert.equal(await widthMode(), 'wide', 'Wide is remembered after a reload');
       await cdp.detach();
       await context.close();
     }

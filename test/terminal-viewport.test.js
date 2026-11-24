@@ -92,6 +92,9 @@ test('wide mode gives the PTY at least the chosen columns, never fewer than fit,
   viewport.fit(t.term, t.addon, { clientWidth: 1500, clientHeight: 600 }, 160);
   assert.equal(t.term.cols, 220, 'a screen wider than the choice keeps its fitted columns');
   const u = setup();
-  viewport.fit(u.term, u.addon, { clientWidth: 300, clientHeight: 200 }, 5000);
-  assert.equal(u.term.cols, 1000, 'never past the server limit');
+  viewport.fit(u.term, u.addon, { clientWidth: 300, clientHeight: 200 }, 2000);
+  assert.equal(u.term.cols, 2000, 'the widest choice');
+  const v = setup();
+  viewport.fit(v.term, v.addon, { clientWidth: 300, clientHeight: 200 }, 5000);
+  assert.equal(v.term.cols, 2000, 'never past the server limit');
 });

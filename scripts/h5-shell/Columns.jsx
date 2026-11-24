@@ -6,6 +6,8 @@ import ButtonBase from '@mui/material/ButtonBase';
 import Divider from '@mui/material/Divider';
 import GlobalStyles from '@mui/material/GlobalStyles';
 import IconButton from '@mui/material/IconButton';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import { alpha, getOverlayAlpha } from '@mui/material/styles';
@@ -372,7 +374,7 @@ const HEAD_TOUCH = 44;
 const VISUALLY_HIDDEN = { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' };
 const APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 const MAXIMIZE_KEYS = APPLE ? '⌘⇧↩' : 'Ctrl+Shift+Enter';
-const WIDE_CHOICES = [120, 160, 200];
+const WIDE_CHOICES = [200, 500, 1000, 2000]; // public/js/terminal-gestures.js `WIDE_CHOICES`
 // The MD2 dark theme shows elevation as a white overlay on the surface (1dp 5%, 4dp 9%, ...): `getOverlayAlpha` is MUI's own table.
 export const overlay = dp => `linear-gradient(${alpha('#fff', Number(getOverlayAlpha(dp)))}, ${alpha('#fff', Number(getOverlayAlpha(dp)))})`;
 // The state dot: the theme's success, warning and disabled colours (green 400, orange 400 and 38% white in the dark theme).
@@ -540,7 +542,7 @@ function ColumnMenu({ menu, columns, ui, onClose }) {
   );
 }
 
-// The width choices of a column's terminal (a right click on its width button), as the normal header's long press: Fit, or 120 / 160 / 200 columns.
+// The width choices of a column's terminal (a right click on its width button), as the normal header's long press: Fit, or 200 / 500 / 1000 / 2000 columns, the current one ticked.
 function WidthMenu({ menu, columns, ui, onClose }) {
   const info = menu ? columns.titles[menu.id] : null;
   const width = info && info.width ? info.width : null;
@@ -548,12 +550,15 @@ function WidthMenu({ menu, columns, ui, onClose }) {
   const pick = options => { onClose(); ui.actions.columnAction(menu.id, 'width', options); };
   return (
     <Menu id="h5-column-width-menu" anchorEl={menu ? menu.anchor : null} open={Boolean(menu)} onClose={onClose} slotProps={{ list: { 'aria-label': t('Wide terminal') } }}>
-      <MenuItem selected={!wide} onClick={() => pick({ mode: 'fit' })} sx={{ minHeight: 36, [TOUCH]: { minHeight: 44 } }}>{t('Fit to screen')}</MenuItem>
-      {WIDE_CHOICES.map(cols => (
-        <MenuItem key={cols} selected={wide && width.cols === cols} data-cols={cols} onClick={() => pick({ mode: 'wide', cols })} sx={{ minHeight: 36, [TOUCH]: { minHeight: 44 } }}>
-          {t(`${cols} columns, scroll sideways`)}
-        </MenuItem>
-      ))}
+      {[{ mode: 'fit' }, ...WIDE_CHOICES.map(cols => ({ mode: 'wide', cols }))].map(choice => {
+        const current = choice.mode === 'wide' ? wide && width.cols === choice.cols : !wide;
+        return (
+          <MenuItem key={choice.cols || 'fit'} role="menuitemradio" aria-checked={current} selected={current} data-cols={choice.cols} onClick={() => pick(choice)} sx={{ minHeight: 36, [TOUCH]: { minHeight: 44 } }}>
+            <ListItemIcon>{current ? <Icon name="check" size={20} /> : null}</ListItemIcon>
+            <ListItemText>{choice.cols ? t(`${choice.cols} columns, scroll sideways`) : t('Fit to screen')}</ListItemText>
+          </MenuItem>
+        );
+      })}
     </Menu>
   );
 }

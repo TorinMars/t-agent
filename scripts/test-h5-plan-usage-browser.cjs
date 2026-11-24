@@ -5,7 +5,8 @@
 // times, the pace line and the lines of K01; Escape closes it; Refresh posts; the GET every 5 minutes, every 60 s while a Claude or Codex session of
 // the shown engine runs, about 10 s after it stops (at most one in 30 s), at once when the page is shown again after more than 60 s; the states not
 // read yet, not signed in, offline (dimmed) and no answer (hidden).
-// 390x844 touch: the bars without the number, a 44px target, the bottom sheet with the rows, closed by back.
+// 390x844 touch: the bars without the number, stacked (Claude's row above Codex's, bars of 3 x 14px) in one 48px button with a 44px target; one agent:
+// one centred row (outlined while not read); the bottom sheet with the rows, closed by back.
 // SHOTS=<folder> saves screenshots.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -250,7 +251,16 @@ async function phone(browser) {
   assert.equal(await button.locator('.h5-usage-low').count(), 0, 'the phone shows the bars only');
   assert.equal(await button.locator('.h5-usage-bar[data-low="true"]').count(), 1, 'the low bar is still in the warning colour');
   const hit = await button.boundingBox();
-  assert.ok(hit.height >= 44 && hit.width >= 44, JSON.stringify(hit));
+  assert.ok(hit.height >= 44 && hit.width === 48, JSON.stringify(hit));
+  // Stacked: Claude's row above Codex's, each centred in the button; bars of 3 x 14px.
+  const rows = () => button.locator('.h5-usage-agent').evaluateAll(nodes => nodes.map(node => { const box = node.getBoundingClientRect(); return { agent: node.dataset.agent, top: box.top, bottom: box.bottom, centre: box.left + box.width / 2 }; }));
+  const stacked = await rows();
+  assert.deepEqual(stacked.map(row => row.agent), ['claude', 'codex']);
+  assert.ok(stacked[0].bottom <= stacked[1].top + 0.5, `Claude above Codex (${JSON.stringify(stacked)})`);
+  for (const row of stacked) assert.ok(Math.abs(row.centre - (hit.x + hit.width / 2)) < 1.5, `${row.agent}: centred (${JSON.stringify([row, hit])})`);
+  const sizes = await button.locator('.h5-usage-bar').evaluateAll(nodes => nodes.map(node => { const box = node.getBoundingClientRect(); return [box.width, box.height]; }));
+  assert.ok(sizes.every(([width, height]) => width === 3 && height === 14), JSON.stringify(sizes));
+  if (process.env.SHOTS) await page.locator('.h5-header').screenshot({ path: path.join(process.env.SHOTS, 'plan-usage-header-390.png') });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no sideways scroll at 390px');
   await button.tap();
   const details = page.locator('#h5-usage-details');
@@ -262,6 +272,16 @@ async function phone(browser) {
   assert.equal(await details.locator('.h5-usage-row').count(), 4);
   assert.ok((await page.locator('#h5-usage-refresh').boundingBox()).height >= 44, 'Refresh: a 44px target');
   if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'plan-usage-390.png') });
+  // One agent (Codex not signed in, Claude not read yet): one centred row of outlined bars.
+  world.local = 'states';
+  await page.locator('#h5-usage-refresh').tap();
+  await page.waitForFunction(() => document.querySelectorAll('#h5-usage .h5-usage-bar').length === 4);
+  const one = await rows();
+  assert.deepEqual(one.map(row => row.agent), ['claude']);
+  const middle = (hit.y + hit.height / 2);
+  assert.ok(Math.abs((one[0].top + one[0].bottom) / 2 - middle) < 1.5 && Math.abs(one[0].centre - (hit.x + hit.width / 2)) < 1.5, `one row, centred (${JSON.stringify([one, hit])})`);
+  assert.equal(await button.locator('.h5-usage-fill').count(), 0, 'outlined, not read yet');
+  assert.equal((await button.boundingBox()).width, 48, 'still 48px wide');
   // Back closes the sheet (back.mjs).
   await page.goBack();
   await details.waitFor({ state: 'detached' });

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
@@ -39,8 +39,9 @@ const HEADER = state => {
 // Computer (wide layout): a dense 48px bar that reads like a column header (Columns.jsx `ColumnHeader`): the sidebar fold toggle, the state dot of the
 // session shown, its device tag and "task · session" on one line cut with an ellipsis (a click unfolds a folded sidebar), the agent and its state; at
 // the right "Wide terminal", "Plan usage" (PlanUsage.jsx) and "More" (Refresh the page). Update is in the navigation rail there.
-// Phone: a 56px MD2 top app bar: the menu button (opens the task drawer), the task name over a status line (dot, device tag, session, state), "Wide
-// terminal", "Plan usage" (its bars without the numbers) and "More" (Refresh the page, Update with its red dot).
+// Phone: a 56px MD2 top app bar: the menu button (opens the task drawer), the task name over a status line (dot, device tag, session, state), "Plan
+// usage" (one 48px button: Claude's bars above Codex's, without the numbers) and "More" ("Wide terminal" while a terminal is shown, Refresh the page,
+// Update with its red dot), so the names get the rest of the bar (about 230px at 390px).
 // A shell notebook (`state.notebook`, "Session header" in docs/design/shell-notebook-page.md): the flask and the notebook's name over "task · path ·
 // Saved" (computer) or over its shell's state (phone), the shell's chip (computer), no "Wide terminal", and "Notebook menu" with the notebook's actions
 // before Refresh the page.
@@ -54,8 +55,11 @@ export function Header({ ui }) {
   const docked = wide && !state.sidebarCollapsed; // the permanent sidebar is shown, so the task name opens nothing
   const fold = state.sidebarCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar';
   const tag = state.tag;
+  // The tag's box never shrinks: DeviceTag does not shrink inside it (`flex: 0 0 auto`, its own 104px cap and ellipsis), so a box that could shrink
+  // (it once had `flex: 0 1 auto; min-width: 0`) got narrower than the tag, and the tag was drawn over the session name after it. The session name is
+  // the part that gives way (`min-width: 0`, ellipsis); the state text after it stays whole.
   const device = tag ? (
-    <Box id="h5-task-service" className="h5-task-service h5-task-device" component="span" sx={{ flex: '0 1 auto', minWidth: 0, display: 'inline-flex', maxWidth: '40%' }}>
+    <Box id="h5-task-service" className="h5-task-service h5-task-device" component="span" sx={{ flex: '0 0 auto', display: 'inline-flex' }}>
       <DeviceTag device={tag} />
     </Box>
   ) : state.sourceLabel ? (
@@ -117,9 +121,9 @@ export function Header({ ui }) {
             <Box sx={{ flex: '1 1 auto' }} />
           </>
         ) : null}
-        {state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
+        {wide && state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <PlanUsageButton ui={ui} phone={!wide} />
-        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} />
+        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} />
       </Toolbar>
     </AppBar>
   );
@@ -228,22 +232,38 @@ function StateWord({ ui }) {
 // "More" at the right end of the header: Refresh the page (`#h5-refresh`: the cache cleared and the page loaded again), and on a phone Update (the
 // rail's updater opens its dialog: `ui.actions.openUpdate`, registered by Update.jsx `UpdateButton`; the focus comes back to this button). The red dot of
 // a waiting update shows on the button too, so it is seen without opening the menu.
-function MoreMenu({ ui, phone, updateDot, notebook = false }) {
+// On a phone, while a terminal is shown (`width`, h5.js `state.terminalWidth`), the terminal width comes first (`#h5-term-width`, "Terminal width:
+// 160 columns" with a ›, its icon in the primary colour while Wide): it replaces this menu with the width choices (`WidthMenu` with its Back row, at the
+// same place), since the bar has no room for the computer's switch.
+function MoreMenu({ ui, phone, updateDot, notebook = false, width = null }) {
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
+  const [widthOpen, setWidthOpen] = useState(false);
   const label = t(notebook ? 'Notebook menu' : 'More');
   const dot = phone && updateDot;
+  const widthItem = phone && !notebook && width ? width : null;
+  const wideNow = Boolean(widthItem && widthItem.mode === 'wide');
+  useEffect(() => { if (!widthItem && widthOpen) setWidthOpen(false); }, [widthItem, widthOpen]); // the terminal went (a notebook, no session): the list goes too
   // A notebook action runs once the menu has gone, so the focus the menu gives back cannot leave the restart dialog's button.
   const chosen = useRef(null);
   const afterClose = () => { const name = chosen.current; chosen.current = null; if (name) ui.actions.notebookAction(name); };
   return (
     <>
-      <IconButton id="h5-header-more" ref={anchor} {...named(label)} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? 'h5-header-more-menu' : undefined}
+      <IconButton id="h5-header-more" ref={anchor} {...named(label)} aria-haspopup="menu" aria-expanded={open || (widthOpen && Boolean(widthItem))}
+        aria-controls={open ? 'h5-header-more-menu' : widthOpen && widthItem ? 'h5-term-width-menu' : undefined}
         data-attention={dot ? 'true' : undefined} onClick={() => setOpen(true)} sx={{ color: 'text.secondary' }}>
         <Badge variant="dot" color="error" invisible={!dot} overlap="circular"><Icon name="taskMore" size={22} /></Badge>
       </IconButton>
       <Menu id="h5-header-more-menu" anchorEl={anchor.current} open={open} onClose={() => setOpen(false)} slotProps={{ list: { 'aria-label': label, dense: !phone }, transition: { onExited: afterClose } }}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        {widthItem ? (
+          <MenuItem id="h5-term-width" aria-haspopup="menu" data-mode={widthItem.mode} data-cols={wideNow ? widthItem.cols : undefined}
+            onClick={() => { setOpen(false); setWidthOpen(true); }} sx={{ minHeight: 44 }}>
+            <ListItemIcon sx={wideNow ? { color: 'primary.light' } : undefined}><Icon name="columnWidth" size={20} /></ListItemIcon>
+            <ListItemText>{widthLabel(widthItem)}</ListItemText>
+            <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.secondary', ml: 2 }}><Icon name="treeChevron" size={16} /></Box>
+          </MenuItem>
+        ) : null}
         {notebook ? NOTEBOOK_ITEMS.map(([name, text, iconName]) => (
           <MenuItem key={name} className="h5-notebook-action" data-action={name} onClick={() => { chosen.current = name; setOpen(false); }} sx={{ minHeight: 44 }}>
             <ListItemIcon><Icon name={iconName} size={20} /></ListItemIcon>
@@ -263,13 +283,47 @@ function MoreMenu({ ui, phone, updateDot, notebook = false }) {
           </MenuItem>
         ) : null}
       </Menu>
+      {widthItem ? (
+        <WidthMenu anchorEl={anchor.current} open={widthOpen} width={widthItem} ui={ui} onClose={() => setWidthOpen(false)} onBack={() => { setWidthOpen(false); setOpen(true); }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }} transformOrigin={{ vertical: 'top', horizontal: 'right' }} />
+      ) : null}
     </>
   );
 }
 
-// The terminal width switch (h5.js `setTerminalWidth`, "Terminal width" in docs/design/page-terminal-and-bottom-bar.md). A tap switches Fit <-> Wide (the PTY gets the chosen column
-// count and the screen moves sideways). A long press (500 ms) or a right click opens a small menu: Fit to screen, 120, 160 or 200 columns.
-const WIDE_CHOICES = [120, 160, 200];
+const WIDE_CHOICES = [200, 500, 1000, 2000]; // public/js/terminal-gestures.js `WIDE_CHOICES`
+// The current width in words: the phone's menu item and the computer's switch say it ("Terminal width: 160 columns").
+const widthLabel = width => (width.mode === 'wide' ? t(`Terminal width: ${width.cols} columns`) : t('Terminal width: Fit to screen'));
+// The width choices (`#h5-term-width-menu`): Fit to screen, 200, 500, 1000 or 2000 columns, radio items with the current one ticked (and selected). From the
+// phone's More menu it starts with a Back row (`#h5-term-width-back`, `onBack`) that shows the More menu again.
+function WidthMenu({ anchorEl, open, width, ui, onClose, onBack = null, ...position }) {
+  const wide = width.mode === 'wide';
+  const pick = choice => { onClose(); ui.actions.setTerminalWidth(choice === 'fit' ? { mode: 'fit' } : { mode: 'wide', cols: choice }); };
+  const choice = (key, current, text, cols) => (
+    <MenuItem key={key} role="menuitemradio" aria-checked={current} selected={current} data-cols={cols} onClick={() => pick(cols || 'fit')} sx={{ minHeight: 44 }}>
+      <ListItemIcon>{current ? <Icon name="check" size={20} /> : null}</ListItemIcon>
+      <ListItemText>{text}</ListItemText>
+    </MenuItem>
+  );
+  return (
+    <Menu id="h5-term-width-menu" anchorEl={anchorEl} open={open} onClose={onClose} slotProps={{ list: { 'aria-label': t('Wide terminal') } }} {...position}>
+      {onBack ? (
+        <MenuItem id="h5-term-width-back" onClick={onBack} sx={{ minHeight: 44 }}>
+          <ListItemIcon><Icon name="back" size={20} /></ListItemIcon>
+          <ListItemText>{t('Back')}</ListItemText>
+        </MenuItem>
+      ) : null}
+      {onBack ? <Divider /> : null}
+      {choice('fit', !wide, t('Fit to screen'))}
+      {WIDE_CHOICES.map(cols => choice(cols, wide && width.cols === cols, t(`${cols} columns, scroll sideways`), cols))}
+    </Menu>
+  );
+}
+
+// The terminal width switch of the computer's header (h5.js `setTerminalWidth`, "Terminal width" in docs/design/page-terminal-and-bottom-bar.md; the
+// phone has it in More). Its name (`aria-label` = `title`) is the current width ("Terminal width: 160 columns"). A tap switches Fit <-> Wide (the PTY
+// gets the chosen column count and the screen moves sideways). A long press (500 ms) or a right click opens `WidthMenu`: Fit to screen, 200, 500, 1000 or
+// 2000 columns, the current one ticked.
 const LONG_PRESS_MS = 500;
 const LIFT_OPEN_MS = 400; // a long press without a following click (some browsers send none) opens the menu this long after the lift
 export function WidthButton({ width, ui }) {
@@ -280,9 +334,8 @@ export function WidthButton({ width, ui }) {
   const press = useRef({ timer: 0, long: false, touch: false, lift: 0 });
   const [open, setOpen] = useState(false);
   const wide = width.mode === 'wide';
-  const label = t('Wide terminal');
+  const label = widthLabel(width); // its name says the current width, so it is seen without opening the menu
   const stop = () => { clearTimeout(press.current.timer); press.current.timer = 0; };
-  const pick = choice => { setOpen(false); ui.actions.setTerminalWidth(choice === 'fit' ? { mode: 'fit' } : { mode: 'wide', cols: choice }); };
   return (
     <>
       <IconButton
@@ -303,12 +356,7 @@ export function WidthButton({ width, ui }) {
       >
         <Icon name="columnWidth" size={22} />
       </IconButton>
-      <Menu id="h5-term-width-menu" anchorEl={anchor.current} open={open} onClose={() => setOpen(false)} MenuListProps={{ 'aria-label': label }}>
-        <MenuItem selected={!wide} onClick={() => pick('fit')} sx={{ minHeight: 44 }}>{t('Fit to screen')}</MenuItem>
-        {WIDE_CHOICES.map(cols => (
-          <MenuItem key={cols} selected={wide && width.cols === cols} data-cols={cols} onClick={() => pick(cols)} sx={{ minHeight: 44 }}>{t(`${cols} columns, scroll sideways`)}</MenuItem>
-        ))}
-      </Menu>
+      <WidthMenu anchorEl={anchor.current} open={open} width={width} ui={ui} onClose={() => setOpen(false)} />
     </>
   );
 }

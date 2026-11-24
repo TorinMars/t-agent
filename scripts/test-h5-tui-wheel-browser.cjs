@@ -3,7 +3,7 @@
 // (1000, 1002, 1003 any motion, 1006 SGR) and shows on its screen the last wheel report it read (button;column;row) and how many motion reports came.
 // See "Wheel strip" and "Terminal width (Fit / Wide)" in docs/design/page-terminal-and-bottom-bar.md.
 // - Computer, Fit (1440 x 900, mouse): a wheel on the left, in the middle and on the last column reaches the program with the column under the pointer.
-// - Computer, Wide (160 columns): after Shift+wheel moved the screen to its right end, mouse moves (motion reports) and wheels over the right-most
+// - Computer, Wide (200 columns, the default): after Shift+wheel moved the screen to its right end, mouse moves (motion reports) and wheels over the right-most
 //   columns leave the view where it is (before, every mouse report counted as typing and pulled the view back to the program's cursor on the left), and
 //   each wheel names the column under the pointer; a typed key still brings the cursor back into view.
 // - Touch screen with a mouse (1280 x 800, touch input mode, the wheel strip drawn): a wheel over the strip reaches the terminal under it (before, the
@@ -159,7 +159,7 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
 
       // ── Computer, Wide: the screen moved to its right end stays there under the mouse ──
       await page.locator('#h5-term-width').click();
-      await page.waitForFunction(() => { const term = window.__testTerms.at(-1); return term.cols === 160 && window.__screenLine(0).startsWith('TUI ready 160x'); }, null, { timeout: 15000 });
+      await page.waitForFunction(() => { const term = window.__testTerms.at(-1); return term.cols === 200 && window.__screenLine(0).startsWith('TUI ready 200x'); }, null, { timeout: 15000 });
       st = await status(page);
       assert.equal(st.offset, 0, 'Wide starts at the left end, with the cursor in view');
       const middle = { x: st.box.left + st.box.width / 2, y: st.box.top + st.box.height / 2 };
@@ -173,11 +173,11 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
       assert.ok(end > 100, `Shift+wheel moved the wide screen to its right end (${end}px)`);
       // Motion reports: the mouse moves over the right part (opencode asks for any-motion reports, so every move is one).
       const moves = st.moves;
-      for (const col of [150, 154, 158]) { const point = cellPoint(st, col, row); await page.mouse.move(point.x, point.y); }
+      for (const col of [190, 194, 198]) { const point = cellPoint(st, col, row); await page.mouse.move(point.x, point.y); }
       await page.waitForFunction(n => Number((/^moves (\d+)/.exec(window.__screenLine(2)) || [])[1] || 0) > n, moves);
       assert.equal((await status(page)).offset, end, 'mouse moves (motion reports) do not pull the wide view back to the cursor');
       // Wheels over the right-most columns: each one names the cell under the pointer, and the view stays.
-      for (const col of [158, 150, 160]) {
+      for (const col of [198, 190, 200]) {
         const point = cellPoint(st, col, row);
         const now = await wheelAt(page, page, point.x, point.y);
         assert.deepEqual([now.col, now.row], [col, row], `Wide at the right end: a wheel over column ${col} reaches that cell`);
@@ -188,7 +188,7 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
       await page.keyboard.press('x');
       await page.waitForFunction(() => { const el = document.querySelector('.h5-xterm:not([hidden])'); return el.getBoundingClientRect().left - el.querySelector('.xterm-screen').getBoundingClientRect().left < 1; });
       await page.locator('#h5-term-width').click(); // back to Fit
-      await page.waitForFunction(() => window.__testTerms.at(-1).cols < 160);
+      await page.waitForFunction(() => window.__testTerms.at(-1).cols < 200);
       await context.close();
     }
 

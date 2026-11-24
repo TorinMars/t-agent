@@ -200,6 +200,23 @@ test('proto=2: controls are binary frames, text that looks like a control messag
   terminal.controlSession(task.id, 'delete', added.terminal_id);
 });
 
+test('resize: up to 2000 columns (the widest Wide terminal choice) and 1000 rows; a larger size is ignored', async () => {
+  const added = terminal.createTerminal(task.id);
+  const ws = connect(added.terminal_id, 'owner', '');
+  const shell = shells.at(-1);
+  await ws.waitFor(1);
+  ws.emit('message', '{"type":"resize","cols":2000,"rows":40}');
+  assert.deepEqual(shell.size, [2000, 40]);
+  ws.emit('message', '{"type":"resize","cols":2001,"rows":40}');
+  assert.deepEqual(shell.size, [2000, 40], 'more than 2000 columns: ignored');
+  ws.emit('message', '{"type":"resize","cols":200,"rows":1001}');
+  assert.deepEqual(shell.size, [2000, 40], 'more than 1000 rows: ignored');
+  ws.emit('message', '{"type":"resize","cols":200,"rows":30}');
+  assert.deepEqual(shell.size, [200, 30]);
+  assert.deepEqual(shell.input, [], 'no resize reaches the shell as input');
+  terminal.controlSession(task.id, 'delete', added.terminal_id);
+});
+
 test('natural PTY exit drains final live bytes and snapshot before closing', async () => {
   const added = terminal.createTerminal(task.id);
   const ws = connect(added.terminal_id);

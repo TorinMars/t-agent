@@ -1152,7 +1152,7 @@ function handleWs(ws, req, sessionUser, requestedTaskId = null, requestedTermina
     if (data.type === 'presence') { presence.report(key, ws, data.foreground); return true; }
     if (data.type === 'open-link-result') { settleLinkOffer(data.id, ws, data.shown === true); return true; }
     if (data.type === 'resize') {
-      if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 1000 || data.rows > 1000) return true;
+      if (!Number.isInteger(data.cols) || !Number.isInteger(data.rows) || data.cols < 1 || data.rows < 1 || data.cols > 2000 || data.rows > 1000) return true; // 2000: the widest Wide terminal choice
       s.activity?.noteInput();
       s.pty.resize(data.cols, data.rows);
       s.snapshot.resize(data.cols, data.rows);

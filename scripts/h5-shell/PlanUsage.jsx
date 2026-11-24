@@ -16,7 +16,8 @@ import { useStore } from './use-store.mjs';
 
 // "Plan usage" in the session header ("Plan usage: the page" in docs/design/plan-usage-page.md): `#h5-usage`, before More, on every kind of session
 // and with none shown. Per agent (Claude, then Codex) its mark and four thin bars: 5h plan, 5h time, 7d plan, 7d time (20px high, 4px wide, 2px apart,
-// 6px between the windows, 8px between the agents). The plan fill is primary, the warning colour at 10% or less left (and on a computer its number
+// 6px between the windows, 8px between the agents; on a phone the agents stack, Claude's row above Codex's, in one 48px button: 14px high, 3px wide,
+// 2px apart, 3px between the windows, a 10px mark). The plan fill is primary, the warning colour at 10% or less left (and on a computer its number
 // beside the bars, "7d 8%", so it is not colour alone); the time fill is on-surface 45% over a 14% track. Not read yet: outlined bars without fill. An
 // agent that is not signed in or could not be read is left out (the details say why). An offline engine: its last reading, dimmed. A click opens the
 // details: a menu-like popover on a computer, a bottom sheet on a phone (a modal, so back.mjs closes it with the back gesture; Escape too).
@@ -49,8 +50,8 @@ function Mark({ agent, size }) {
   );
 }
 
-// One agent's four bars.
-function Bars({ view }) {
+// One agent's four bars (`small`: the phone's stacked rows).
+function Bars({ view, small = false }) {
   const bars = barsOf(view);
   return (
     <Box component="span" className="h5-usage-bars" sx={{ display: 'inline-flex', alignItems: 'flex-end' }}>
@@ -58,8 +59,8 @@ function Bars({ view }) {
         <Box key={`${bar.window}-${bar.kind}`} component="span" className={`h5-usage-bar ${bar.kind}`} data-window={bar.window} data-value={Math.round(bar.value * 100)}
           data-low={bar.low ? 'true' : undefined}
           sx={theme => ({
-            position: 'relative', overflow: 'hidden', display: 'inline-block', boxSizing: 'border-box', width: 4, height: 20, borderRadius: '2px',
-            ml: index === 0 ? 0 : index % 2 ? '2px' : '6px',
+            position: 'relative', overflow: 'hidden', display: 'inline-block', boxSizing: 'border-box', width: small ? 3 : 4, height: small ? 14 : 20, borderRadius: small ? '1.5px' : '2px',
+            ml: index === 0 ? 0 : index % 2 ? '2px' : small ? '3px' : '6px',
             ...(view.outlined ? { border: `1px solid ${theme.palette.text.disabled}`, bgcolor: 'transparent' } : { bgcolor: TRACK }),
           })}>
           {view.outlined ? null : (
@@ -85,7 +86,9 @@ export function PlanUsageButton({ ui, phone }) {
       <ButtonBase id="h5-usage" ref={anchor} aria-label={label} title={label} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? 'h5-usage-details' : undefined}
         data-offline={model.offline ? 'true' : undefined} data-engine={model.key} onClick={() => ui.actions.openPlanUsage()}
         sx={theme => ({
-          flex: '0 0 auto', height: phone ? 44 : 36, minWidth: 44, px: phone ? '6px' : 1, gap: 1, borderRadius: 1, display: 'inline-flex', alignItems: 'center',
+          // Phone: one 48px column, an agent per row (an agent left out leaves its row out, so one agent is one centred row).
+          flex: '0 0 auto', height: phone ? 44 : 36, minWidth: 44, ...(phone ? { width: 48, px: 0, flexDirection: 'column', justifyContent: 'center', gap: '3px' } : { px: 1, gap: 1 }),
+          borderRadius: 1, display: 'inline-flex', alignItems: 'center',
           bgcolor: phone ? 'transparent' : alpha('#fff', 0.06), opacity: model.offline ? 0.38 : 1,
           [TOUCH]: { minHeight: 44 },
           '@media (hover: hover)': { '&:hover': { bgcolor: alpha('#fff', phone ? 0.06 : 0.1) } },
@@ -94,8 +97,8 @@ export function PlanUsageButton({ ui, phone }) {
         {groups.map(view => (
           <Box key={view.agent} component="span" className="h5-usage-agent" data-agent={view.agent} data-state={view.state}
             sx={{ display: 'inline-flex', alignItems: 'center', gap: phone ? '3px' : '4px', opacity: view.marksOnly ? 0.6 : 1 }}>
-            <Mark agent={view.agent} size={phone ? 13 : 14} />
-            {view.marksOnly ? null : <Bars view={view} />}
+            <Mark agent={view.agent} size={phone ? 10 : 14} />
+            {view.marksOnly ? null : <Bars view={view} small={phone} />}
             {!phone && !view.marksOnly && view.lowText ? (
               <Typography className="h5-usage-low" component="span" sx={{ fontSize: 11, fontWeight: 500, lineHeight: 1, color: 'warning.light', whiteSpace: 'nowrap' }}>{view.lowText}</Typography>
             ) : null}

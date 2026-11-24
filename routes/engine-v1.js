@@ -44,6 +44,8 @@ router.use('/settings-sync', require('./settings-sync').createEngineSettingsSync
 // The English learning sync between linked services (routes/learn-sync.js), link tokens only; the rows travel sealed for the link.
 router.use('/learn-sync', require('./learn-sync').createEngineLearnSyncRouter());
 // The usage data sync between linked services (routes/ui-events-sync.js), link tokens only; the rows travel sealed for the link.
+// The usage time and memories sync (routes/usage-time-sync.js), mounted first: its paths are under /usage-sync too.
+router.use('/usage-sync/time', require('./usage-time-sync').createEngineUsageTimeSyncRouter());
 router.use('/usage-sync', require('./ui-events-sync').createEngineUsageSyncRouter());
 // Mind maps on every linked engine (routes/mindmap-sync.js), link tokens only; the maps travel sealed for the link.
 router.use('/mindmap-sync', require('./mindmap-sync').createEngineMindmapSyncRouter());
@@ -226,6 +228,9 @@ function infoHandler(req, res) {
       // usage:sync: GET|PUT /v1/usage-sync, POST /v1/usage-sync/pull and GET /v1/usage-sync/summary (routes/ui-events-sync.js), the usage data linked
       // services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or USAGE_SYNC_ENABLED=false.
       ...(require('../services/ui-events-sync').syncEnabled() ? [require('../services/ui-events-sync').CAPABILITY] : []),
+      // usage:time: this engine records usage time and memories (services/usage-time.js; the page's Time and Memories tabs), and, with usage:sync,
+      // GET|PUT /v1/usage-sync/time, POST /v1/usage-sync/time/pull and the company computer's reads (routes/usage-time-sync.js).
+      require('../services/usage-time-sync').CAPABILITY,
       // mindmaps:sync: GET|PUT /v1/mindmap-sync and POST /v1/mindmap-sync/pull (routes/mindmap-sync.js), the mind maps linked services keep a copy of
       // each (link tokens only). Off with SETTINGS_SYNC_ENABLED=false or MINDMAP_SYNC_ENABLED=false.
       ...(require('../services/mindmap-sync').syncEnabled() ? [require('../services/mindmap-sync').CAPABILITY] : []),

@@ -85,6 +85,7 @@ function createUpdatedNotice(options) {
     const previous = pending && newer(current, pending.previous_version) ? pending.previous_version : last;
     const notice = { version: current, previous_version: previous, updated_at: new Date(now()).toISOString() };
     writeState(db, noticeKey(name), notice);
+    require('../lib/usage-events').emitUsageEvent('update-applied', { version: current, previous: last }); // a memory (services/usage-memory-hooks.js)
     return notice;
   }
 

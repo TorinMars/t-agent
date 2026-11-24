@@ -592,6 +592,8 @@ function createLearnCoach({
     begin(owner);
     try {
       const [stored] = storeMessages(owner, [['practice', practiceLine(practice, title), { practice }]]);
+      // A memory (services/usage-memory-hooks.js): only the counts and the plan's title.
+      require('../lib/usage-events').emitUsageEvent('practice-finished', { right: practice.right, total: practice.total, done: practice.done, title });
       const result = await answer(owner, { ...modelMessage(stored), storedUid: stored.uid }, options);
       const [reply] = storeMessages(owner, [['assistant', result.text, result.meta]]);
       afterAnswer(owner);

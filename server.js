@@ -259,6 +259,31 @@ const uiEvents = require('./services/ui-events').createUiEvents({ db });
 require('./services/ui-events').startRetention(uiEvents);
 const usageSync = () => (config.usageSyncEnabled ? require('./services/ui-events-sync').getUsageSync({ service: uiEvents }) : null);
 app.use('/api/ui-events', require('./routes/ui-events').createUiEventsRouter({ service: uiEvents, sync: usageSync }));
+// Usage time and memories (services/usage-time.js, services/usage-memories.js, docs/design/usage-time.md): the page's time and the session clocks,
+// the memories' events, notes and weekly digest; one set with the linked normal engines (services/usage-time-sync.js, off with USAGE_SYNC_ENABLED=false).
+const usageTimeSync = () => (config.usageSyncEnabled ? require('./services/usage-time-sync').getUsageTimeSync({ usage: usageTime, memories }) : null);
+const usageTime = require('./services/usage-time').createUsageTime({ db, linked: () => { const current = usageTimeSync(); return current ? current.linked() : []; } });
+require('./services/usage-time').startRetention(usageTime);
+const memories = require('./services/usage-memories').createMemories({ db, usage: usageTime });
+const usageDigest = require('./services/usage-digest').createDigest({
+  db, memories,
+  converse: (...args) => require('./services/translator').createTranslator({ db, sessionSecret: config.sessionSecret }).converse(...args),
+  isCompany: () => { const current = usageTimeSync(); return Boolean(current && current.handsOver()); },
+});
+const usageTimeRouters = require('./routes/usage-time').createUsageTimeRouters({ usage: usageTime, memories, digest: usageDigest, sync: usageTimeSync });
+app.use('/api/usage-time', usageTimeRouters.time);
+app.use('/api/memories', usageTimeRouters.memories);
+// The session clocks: agent_working and waiting_you of this engine's terminals, from the same activity the task list shows (services/usage-time-clock.js).
+const usageMemoryHooks = { longTurn: () => {} };
+const usageClock = require('./services/usage-time-clock').createUsageClock({
+  feed: () => terminal.clockSnapshot(),
+  record: entry => usageTime.recordSession(entry),
+  instanceId: () => { try { return require('./services/engine-identity').getEngineIdentity().engine_id; } catch { return ''; } },
+  onLongTurn: turn => usageMemoryHooks.longTurn(turn),
+});
+terminal.onActivityChanged(() => usageClock.observe());
+terminal.onTerminalInput((taskId, terminalId) => usageClock.input(taskId, terminalId));
+terminal.onTerminalEnded(() => usageClock.ended());
 // English learning (services/learn.js, docs/design/learn-english.md): cards, spaced review and meanings of the person's own material, per owner.
 app.use('/api/learn', require('./routes/learn').createLearnRouter());
 app.use('/api/task-order', require('./routes/task-order').createTaskOrderRouter());
@@ -694,6 +719,15 @@ server.listen(config.port, config.host, () => {
   if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().start();
   // The usage data follows the links from here on (services/ui-events-sync.js).
   if (config.usageSyncEnabled) usageSync().start();
+  // The usage time and memories follow the links from here on (services/usage-time-sync.js); the session clocks, the memories' events and the
+  // weekly digest start now (before the "Updated to" notice below, whose update is an event).
+  if (config.usageSyncEnabled) usageTimeSync().start();
+  usageClock.start();
+  Object.assign(usageMemoryHooks, require('./services/usage-memory-hooks').startMemoryHooks({
+    memories, attention: attentionService, serviceLinks, taskTitle: task => usageTime.taskTitle(task),
+    instanceId: () => { try { return require('./services/engine-identity').getEngineIdentity().engine_id; } catch { return ''; } },
+  }));
+  usageDigest.start();
   // Mind maps follow the links from here on (services/mindmap-sync.js).
   if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().start();
   // The read copies of the linked engines' T-Attention items follow the links from here on (services/attention-copy.js); this engine's own items are
@@ -781,5 +815,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); require('./services/agent-usage').stopShared(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
+process.on('exit', () => { usageClock.stop(); const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); require('./services/agent-usage').stopShared(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.usageSyncEnabled) usageTimeSync().stop(); usageDigest.stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

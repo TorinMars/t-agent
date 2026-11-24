@@ -37,6 +37,8 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `browser_site_v1:<host>` | system_state | shared | settings sync, group browser-sites (merged per site) | `services/browser-sites.js` |
 | `browser_sites_tombstones_v1` | system_state | shared | settings sync, group browser-sites (the deleted sites) | `services/browser-sites.js` |
 | `ui_usage_v1` | system_state | shared | settings sync, group usage-record: the "Record button use" switch of the usage data | `services/ui-events.js` |
+| `usage_time_record_v1` | system_state | shared | settings sync, group usage-time-record: the "Record time" switch of the usage time | `services/usage-time.js` |
+| `usage_memories_digest_v1` | system_state | shared | settings sync, group usage-memories-digest: the "Write a weekly digest" switch of the memories | `services/usage-time.js` |
 | `page_state_v1:<owner>` | system_state | shared | the shared page state sync | `services/page-state.js` |
 | `task_order_v1` | system_state | shared | the shared task order sync, last writer wins | `services/task-order.js` |
 | `telegram_sender` | system_state | shared | the Telegram sender choice, sent to every linked device (`PUT /v1/attention/notify-relay/sender`), newest wins | `services/attention-relay.js` |
@@ -44,6 +46,8 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `learn_v1_sync:<owner>` | system_state | personal | the Learn sync: the version clock of the learning settings | `services/learn.js` |
 | `learn_level_v1:<owner>` | system_state | personal | the Learn sync: the estimated English level with its version clock (the newest estimate wins; a company computer keeps a read-only copy) | `services/learn.js` |
 | `ui_usage_clear_v1` | system_state | personal | the usage data sync (`services/ui-events-sync.js`): the last Clear of the merged usage data, which every engine applies | `services/ui-events.js` |
+| `usage_time_clear_v1` | system_state | personal | the usage time sync (`services/usage-time-sync.js`): the last Clear of the Time tab, which every engine applies | `services/usage-time.js` |
+| `usage_memories_clear_v1` | system_state | personal | the usage time sync (`services/usage-time-sync.js`): the last Clear of the Memories tab, which every engine applies | `services/usage-time.js` |
 | `attention_widget_settings_v1` | system_state | device | the desktop window of this Mac: its switch and window preferences; its `language` field alone is shared (settings sync, group widget-language) | `services/attention-widget.js` |
 | `task_list_hidden_devices_v1` | system_state | device | hidden devices named by page-relative keys (`local`, `remote:<row id>`) whose engine instance id is not known: they mean something only here | `routes/task-list-prefs.js` |
 | `attention-notify:<plugin>:<owner>` | system_state | device | a notifier plugin's own state, such as the Telegram session: one login per device (settings sync group telegram) | `services/attention-notify.js` |
@@ -79,6 +83,11 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `mindmap_home_v1` | system_state | runtime | on a company computer: the normal machine its mind maps were last handed to | `services/mindmap-sync.js` |
 | `ui_usage_seq_v1` | system_state | runtime | the newest change number of the usage data, kept when rows are deleted so the numbers never go back | `services/ui-events.js` |
 | `ui_usage_engines_v1` | system_state | runtime | the names of the engines whose button presses are in the usage data (a cache from the sync pages) | `services/ui-events.js` |
+| `usage_time_sync_peers_v1` | system_state | runtime | the usage time sync's change numbers and tiers per peer | `services/usage-time-sync.js` |
+| `usage_time_home_v1` | system_state | runtime | on a company computer: the normal machine its usage time and memories were last handed to | `services/usage-time-sync.js` |
+| `usage_time_seq_v1` | system_state | runtime | the newest change number of the usage time and memories, kept when rows are deleted so the numbers never go back | `services/usage-time.js` |
+| `usage_time_engines_v1` | system_state | runtime | the names of the engines whose rows are in the usage time and memories (a cache from the sync pages) | `services/usage-time.js` |
+| `usage_memories_digest_try_v1` | system_state | runtime | the week and time of the last automatic try of the weekly digest, so a failing provider is asked at most every 6 hours | `services/usage-digest.js` |
 | `attention_copy_peers_v1` | system_state | runtime | the T-Attention copies' change numbers and capability per peer | `services/attention-copy.js` |
 | `attention_copy_owners_v1` | system_state | runtime | the names, hosts and last-heard times of the engines whose T-Attention items are copied here (a cache from the sync pages) | `services/attention-copy.js` |
 | `attention_copy_clock_v1` | system_state | runtime | the T-Attention copies' version clock and newest change number, kept so neither goes back when rows are removed | `services/attention-copy.js` |

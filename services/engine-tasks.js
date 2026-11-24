@@ -84,6 +84,7 @@ function createTask(principalId, input = {}) {
     startWithoutDefaultTerminal(db, result.lastInsertRowid);
     return result.lastInsertRowid;
   })();
+  require('../lib/usage-events').emitUsageEvent('task-created', { task_id: Number(taskId), title }); // a memory (services/usage-memory-hooks.js)
   return publicTask(ownedTask(principalId, taskId));
 }
 

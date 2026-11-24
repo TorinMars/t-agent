@@ -541,3 +541,54 @@ CREATE TABLE IF NOT EXISTS learn_coach_summary (
   sync_seq   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_learn_coach_summary_seq ON learn_coach_summary (owner, sync_seq);
+
+-- Schema 26: usage time and memories ("Usage time and memories" in docs/design/usage-time.md; services/usage-time.js, services/usage-memories.js).
+-- usage_time: seconds, never text. One row per key (the UTC day and hour, surface, kind, task, session, client) of one origin engine; only the origin
+-- adds to it (rev goes up), a peer keeps the copy with the larger rev, so a sum over rows never counts a second twice. Kept 2 years.
+CREATE TABLE IF NOT EXISTS usage_time (
+  uid        TEXT    PRIMARY KEY,                -- a random id: the identity of the row on every engine
+  engine     TEXT    NOT NULL DEFAULT '',        -- the instance id of the origin engine; '' is this one
+  client     TEXT    NOT NULL DEFAULT '',        -- phone | computer | mac-app for the page's time; '' for the session clocks
+  day        TEXT    NOT NULL,                   -- YYYY-MM-DD, UTC
+  hour       INTEGER NOT NULL,                   -- 0..23, UTC
+  start      INTEGER NOT NULL,                   -- the start of that hour, milliseconds since 1970
+  surface    TEXT    NOT NULL DEFAULT '',        -- sessions | learn | mindmaps | attention | settings | other ('' for the session clocks)
+  kind       TEXT    NOT NULL DEFAULT '',        -- claude | codex | opencode | terminal | notebook, or ''
+  task       TEXT    NOT NULL DEFAULT '',        -- '<instance>|<task id>' or ''
+  session    TEXT    NOT NULL DEFAULT '',        -- '<instance>|<task id>|<terminal id>' or ''
+  page_s     INTEGER NOT NULL DEFAULT 0,         -- on the page (the page's beats)
+  working_s  INTEGER NOT NULL DEFAULT 0,         -- agent_working (the session clock)
+  waiting_s  INTEGER NOT NULL DEFAULT 0,         -- waiting_you (the session clock)
+  waits      TEXT    NOT NULL DEFAULT '',        -- the finished waits by length (a JSON array of counts, services/usage-time.js WAIT_EDGES), or ''
+  rev        INTEGER NOT NULL DEFAULT 1,         -- the origin's revision of the row
+  updated_at INTEGER NOT NULL,                   -- the origin's time of the last change
+  sync_seq   INTEGER NOT NULL DEFAULT 0          -- its change number on this database
+);
+CREATE INDEX IF NOT EXISTS idx_usage_time_start ON usage_time (start);
+CREATE INDEX IF NOT EXISTS idx_usage_time_seq ON usage_time (sync_seq);
+CREATE INDEX IF NOT EXISTS idx_usage_time_key ON usage_time (day, hour, engine, client, surface, kind, task, session);
+CREATE INDEX IF NOT EXISTS idx_usage_time_task ON usage_time (task, start);
+-- memories: events (one English line the server made), the person's notes and the weekly digests. A union by uid; the newer updated_at wins and a
+-- tombstone (deleted 1, text '') wins a tie. Kept until deleted.
+CREATE TABLE IF NOT EXISTS memories (
+  uid        TEXT    PRIMARY KEY,
+  at         INTEGER NOT NULL,                   -- when it happened or was written, milliseconds since 1970
+  kind       TEXT    NOT NULL,                   -- event | note | digest
+  event      TEXT    NOT NULL DEFAULT '',        -- an event's code (attention-confirm, task-created, engine-down, ...)
+  ref        TEXT    NOT NULL DEFAULT '',        -- what an event is about (attention:<id>, a task or session id, engine:<instance id>), for the de-duplication
+  text       TEXT    NOT NULL DEFAULT '',        -- the event line, the note (at most 500 characters) or the digest (at most 1,200)
+  task       TEXT    NOT NULL DEFAULT '',
+  session    TEXT    NOT NULL DEFAULT '',
+  source     TEXT    NOT NULL DEFAULT '',        -- auto (an event) | person (a note) | model (a digest)
+  week       TEXT    NOT NULL DEFAULT '',        -- a digest's ISO week, YYYY-Www
+  sources    TEXT    NOT NULL DEFAULT '',        -- a digest's inputs, JSON { events, notes, items }
+  private    INTEGER NOT NULL DEFAULT 0,         -- 1: a note that is never given to the digest
+  engine     TEXT    NOT NULL DEFAULT '',        -- the engine that wrote it first ('' is this one)
+  deleted    INTEGER NOT NULL DEFAULT 0,         -- 1: a tombstone
+  updated_at INTEGER NOT NULL,
+  by         TEXT    NOT NULL DEFAULT '',        -- the engine of the last change ('' is this one)
+  sync_seq   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_memories_at ON memories (at);
+CREATE INDEX IF NOT EXISTS idx_memories_seq ON memories (sync_seq);
+CREATE INDEX IF NOT EXISTS idx_memories_event ON memories (event, ref, at);

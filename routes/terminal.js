@@ -907,6 +907,9 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     agentRenames.poke(taskId); // a rename that waits for a permission question to be answered
     if (s.activity) turnEnd(s.activity.state()); // the plan usage bars read the agent's plan after its turn (services/agent-usage.js)
   });
+  // Every input to this terminal is also heard by onTerminalInput (the usage time's session clocks: a wait for the person ends with it).
+  const noteInput = s.activity.noteInput;
+  s.activity.noteInput = () => { noteInput(); terminalInputHeard(ownerTaskId, id); };
 
   pty.onExit(() => {
     // The parser queue also owns live delivery. Drain its last bytes before
@@ -1344,11 +1347,55 @@ function updateIdleTerminals() {
 
 // Pushed activity (lib/terminal-activity-stream.js): GET /api/tasks/terminal-activity/stream and Engine /v1/terminal-activity/stream.
 // The sub-agent counts of all live Claude terminals are read once per refresh, whatever the number of open streams.
-const activityStream = createActivityStream({
+const pushedActivity = createActivityStream({
   activity: activitySnapshot,
   waitingKinds: waitingKindSnapshot,
   subagents: () => subagentSnapshot(null),
 });
+// Every change of the activity (a tracker's state, a terminal that ends, a notebook cell) is also told to the listeners of onActivityChanged (the
+// session clocks of the usage time, services/usage-time-clock.js), also while no stream is open.
+const activityListeners = new Set();
+const activityStream = {
+  ...pushedActivity,
+  notify() {
+    pushedActivity.notify();
+    for (const listener of activityListeners) { try { listener(); } catch { /* a listener's own problem */ } }
+  },
+};
+function onActivityChanged(listener) {
+  if (typeof listener !== 'function') return () => {};
+  activityListeners.add(listener);
+  return () => activityListeners.delete(listener);
+}
+// Input to a terminal (keys, a paste, a prompt sent by T-Agent): told to the listeners of onTerminalInput with (task id, terminal id). Called on every
+// key, so a listener must be cheap (the session clocks end a wait for the person with it).
+const inputListeners = new Set();
+function onTerminalInput(listener) {
+  if (typeof listener !== 'function') return () => {};
+  inputListeners.add(listener);
+  return () => inputListeners.delete(listener);
+}
+function terminalInputHeard(taskId, terminalId) {
+  for (const listener of inputListeners) { try { listener(Number(taskId), terminalId); } catch { /* a listener's own problem */ } }
+}
+// The terminals that run or wait for the person now, for the session clocks: [{ task_id, terminal_id, state: 'running' | 'waiting', agent }].
+// Only listed terminals count (as in liveTerminalActivity); a notebook that runs a cell is a running 'notebook'.
+function clockSnapshot() {
+  const out = [];
+  for (const s of sessions.values()) {
+    if (!s.pty || s.startupError || s.exiting || !s.activity) continue;
+    const state = s.activity.state();
+    const waiting = state === 'done' && s.activity.awaitingAnswer();
+    if (state !== 'running' && !waiting) continue;
+    const row = listedTerminal(s.taskId, s.terminalId);
+    if (!row) continue;
+    out.push({ task_id: s.taskId, terminal_id: s.terminalId, state: waiting ? 'waiting' : 'running', agent: row.agent || null });
+  }
+  for (const item of notebookKernels ? notebookKernels.running() : []) {
+    if (listedTerminal(item.task_id, item.terminal_id)) out.push({ task_id: Number(item.task_id), terminal_id: item.terminal_id, state: 'running', agent: 'notebook' });
+  }
+  return out;
+}
 // The notebook kernels tell the feeds when a cell starts or ends (services/notebook-kernels.js).
 function notifyActivity() { activityStream.notify(); }
 function serveActivityStream(req, res, taskIds, options) {
@@ -1673,4 +1720,4 @@ function shutdownTerminals() {
   try { if (notebookKernels) notebookKernels.shutdown(); } catch {}
 }
 
-module.exports = { terminalLaunch, terminalShell, onAgentTurnEnd, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };
+module.exports = { terminalLaunch, terminalShell, onAgentTurnEnd, onActivityChanged, onTerminalInput, clockSnapshot, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

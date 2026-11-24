@@ -202,6 +202,16 @@ async function toTerminal(page) {
       assert.equal(await page.locator('#h5-learn-slow').count(), 1, 'Slowly');
       assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-copy-input');
       assert.equal(await page.locator('#h5-learn-keys').count(), 1, 'the page keyboard types the copy');
+      // The tag sits inside the card's top right corner (not a row of its own), and the "Copy it once" field is whole above the pinned actions.
+      await page.waitForTimeout(300);
+      const tag = await page.locator('#h5-learn-slipping').boundingBox();
+      const promptBox = await page.locator('.h5-learn-prompt').boundingBox();
+      assert.ok(tag.y >= promptBox.y && tag.y + tag.height <= promptBox.y + 48, 'the tag in the top of the card');
+      assert.ok(tag.x + tag.width >= promptBox.x + promptBox.width - 16, 'the tag at the right corner');
+      const copyField = await page.locator('#h5-learn-copy-input').evaluate(el => { const r = el.closest('.MuiFormControl-root').getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
+      const pinned = await page.locator('.h5-learn-footer').boundingBox();
+      const scrollTop = await page.locator('#h5-learn-mode .h5-learn-scroll').boundingBox();
+      assert.ok(copyField.bottom <= pinned.y + 1 && copyField.top >= scrollTop.y, `the copy field is not cut by the actions (${copyField.top}-${copyField.bottom} / ${pinned.y})`);
       assert.equal(await page.locator('#h5-learn-next').isDisabled(), true);
       await tapKeys(page, 'tempor');
       assert.equal(await page.locator('#h5-learn-next').isDisabled(), true, 'not before the copy matches');

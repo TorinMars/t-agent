@@ -195,7 +195,9 @@ async function openSettings(page, touch) {
       assert.equal(await text(page, '#h5-learn-from-translation'), 'your translation');
       assert.equal(await text(page, '#h5-learn-sentence'), 'The session cookie after thirty minutes, so please log in again.');
       assert.equal(await page.locator('#h5-learn-sentence').getAttribute('translate'), 'no');
-      assert.equal(await color(page, '#h5-learn-sentence', 'fontSize'), '20px', 'the sentence in the h6 size');
+      // The letter keyboard is open on a phone: the sentence a step smaller (subtitle1, not h6) and the translation kept to two lines.
+      assert.equal(await color(page, '#h5-learn-sentence', 'fontSize'), '16px', 'the sentence in the subtitle1 size while the keyboard is open');
+      assert.equal(await color(page, '#h5-learn-sentence-zh', 'webkitLineClamp'), '2', 'the translation clamped to two lines');
       const gap = await page.locator('#h5-learn-gap').boundingBox();
       assert.ok(gap.width >= 60 && gap.width <= 110, `the gap is about as wide as the word (${gap.width})`);
       // The gap shows how many letters the word has: one underline per letter, on one line.
@@ -219,16 +221,16 @@ async function openSettings(page, touch) {
       assert.equal(await page.locator('#h5-learn-mode .h5-learn-prompt', { hasText: 'Used in' }).count(), 0);
       assert.equal(await page.locator('.h5-learn-letter').count(), 7, 'the letter slots of the word as written in the sentence');
       // The audio of a word asked in its sentence is the whole sentence (the default settings: words play at the start, twice): at the start and
-      // on Hear it, whose label stays "Hear it" and shows "Playing 1 of 2" while the sentence plays.
+      // on Hear it, an icon (a phone) whose name stays "Hear it" and shows "Playing 1 of 2" while the sentence plays.
       await heard(page, SENTENCE, 'the sentence plays when the card appears');
       assert.ok((await spoken(page)).every(said => said === SENTENCE), `only the sentence is read, never the word alone (${await spoken(page)})`);
       await waitFor(async () => (await spoken(page)).length === 2 && !(await page.locator('#h5-learn-hear[data-playing]').count()), 'the two readings end');
-      assert.equal(await text(page, '#h5-learn-hear'), 'Hear it');
+      assert.equal(await page.locator('#h5-learn-hear').getAttribute('aria-label'), 'Hear it');
       await clearSpoken(page);
       await page.locator('#h5-learn-hear').tap();
       await heard(page, SENTENCE, 'Hear it reads the sentence');
       await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
-      assert.equal(await text(page, '#h5-learn-hear'), 'Playing 1 of 2');
+      assert.equal(await page.locator('#h5-learn-hear').getAttribute('aria-label'), 'Playing 1 of 2');
       assert.deepEqual(await spoken(page), [SENTENCE]);
       await page.locator('#h5-learn-stop').tap();
       await page.locator('#h5-learn-hear:not([data-playing])').waitFor();

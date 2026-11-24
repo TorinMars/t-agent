@@ -376,7 +376,8 @@ test('a chain A-B-C: a map made on A reaches C through B, and C\'s edit comes ba
   // D has no mindmaps:sync: one /v1/info and nothing else, and the page lists D's own maps from D (older).
   A.requests.length = 0;
   await A.sync.syncPeer(A.peers.find(peer => peer.name === 'D'));
-  assert.deepEqual(A.requests, ['GET D /v1/info']);
+  // A's own timer may still be talking to B in the background: only what went to D counts.
+  assert.deepEqual(A.requests.filter(line => / D /.test(line)), ['GET D /v1/info']);
   assert.deepEqual((await A.page('GET')).body.sync.older, [D.instanceId]);
   assert.equal((await D.maps.list()).length, 0);
 });

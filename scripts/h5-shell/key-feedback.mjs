@@ -1,11 +1,18 @@
-// The feel of the page's own keyboard (Osk.jsx `Keyboard`: the terminal's and the Learn page's): a short haptic tick on every key press and, while a
-// character key is held, a bubble above it with the character drawn larger, like a phone keyboard. A small chunk of its own, loaded the first time a
-// key is pressed (Osk.jsx `feel`), so the first screen only carries the call. See "The page's own keyboard" in docs/design/learn-english-page.md.
-// - Haptic (`tick`): navigator.vibrate(8) where it exists (Android); iOS Safari has no Vibration API, so on iOS 17.4+ a visually hidden
-//   <input type="checkbox" switch> is toggled through its <label> (the switch plays the system haptic). Feature-detected, never throws, keeps the
-//   focus where it was and never scrolls. Osk.jsx calls it on pointerdown only, so a held Backspace ticks once, not on each repeat.
+// The feel of the page's own keys (Osk.jsx `Keyboard`: the terminal's and the Learn page's; and the key row of the bottom bar, Terminal.jsx `KeyBar`):
+// a haptic tick on every key press and, while a character key of a keyboard is held, a bubble above it with the character drawn larger, like a phone
+// keyboard. A small chunk of its own, loaded the first time a key is pressed (Osk.jsx `feel` / `keyTick`), so the first screen only carries the call.
+// See "The page's own keyboard" in docs/design/learn-english-page.md and "Vibration on key taps" in docs/design/key-haptics.md.
+// - Haptic (`tick`): as strong as Settings → Keyboard says for this device (key-haptics.mjs: Off, Light 8 ms, Medium 15 ms, Strong 28 ms; Light by
+//   default). navigator.vibrate(ms) where the device can vary it (Android); iOS Safari has no Vibration API, so on iOS 17.4+ a visually hidden
+//   <input type="checkbox" switch> is toggled through its <label> (the switch plays the system haptic), only while the setting is not Off.
+//   A computer plays nothing (key-haptics.mjs `hapticKind`). Feature-detected, never throws, keeps the focus where it was and never scrolls.
+//   The keys call it on pointerdown only, so a held Backspace ticks once, not on each repeat.
 // - Bubble: one element for the whole page, fixed in the viewport and appended to <body>, so no keyboard box or scrolling page can clip it and the
 //   layout never moves; `aria-hidden`, no pointer events. Only keys with a character (`data-char`): never Shift, Backspace, Space, Enter, 123, Hide.
+// Like the screen chunks, this chunk names the modules of the first screen (shell-core.mjs), so local-keys.mjs, which key-haptics.mjs reads the
+// setting through, stays in the one shared chunk of the first screen instead of a small chunk of its own (test/page-bundles.test.js).
+import './shell-core.mjs';
+import { durationOf, hapticKind, readStrength } from './key-haptics.mjs';
 
 let iosSwitch = null;
 function hapticSwitch() {
@@ -29,9 +36,17 @@ function hapticSwitch() {
   return iosSwitch;
 }
 
-export function tick() {
+let kind = null; // what this device can play, found once (key-haptics.mjs `hapticKind`)
+
+// One tick of `strength` (the stored choice of this device when not given: Settings passes the one just chosen). Answers how it was played:
+// 'vibrate', 'switch', or null (Off, or nothing to play it with).
+export function tick(strength = readStrength()) {
   try {
-    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') { navigator.vibrate(8); return 'vibrate'; }
+    const ms = durationOf(strength);
+    if (!ms) return null;
+    if (kind === null) kind = hapticKind();
+    if (kind === 'vibrate') { navigator.vibrate(ms); return 'vibrate'; }
+    if (kind !== 'switch') return null;
     const label = hapticSwitch();
     if (!label) return null;
     const had = document.activeElement;

@@ -16,7 +16,7 @@ import { Pill, named, t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { commandsFor } from './commands.mjs';
 import { orderCommands, recordUse, usedLabel, usesFor } from './command-recency.mjs';
-import { TerminalKeyboard } from './Osk.jsx';
+import { TerminalKeyboard, keyTick } from './Osk.jsx';
 import { TOUCH } from './theme.mjs';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
@@ -697,12 +697,15 @@ const KEY = {
 
 // Row 1: the function keys. A tap keeps the focus where it is (mouse down is stopped), so it neither opens nor closes the on-screen keyboard. They stay visible while the on-screen keyboard is open.
 // The row is 44px: 44px targets with the 36px keys drawn in them, 8px apart.
+// Each key ticks on its press (pointerdown, once per press; the keys of this row do not repeat) as strongly as Settings → Keyboard says for this
+// device, like the keys of the page's own keyboard (Osk.jsx `keyTick`; "Vibration on key taps" in docs/design/key-haptics.md).
+const tickKey = event => { if (event.button <= 0 && event.target.closest && event.target.closest('button')) keyTick(); };
 export function KeyBar({ state, ui }) {
   const fade = useEdgeFade();
   return (
     <Box
       ref={fade} className="h5-keys" id="h5-keys" role="toolbar" aria-label={t('Terminal keys')}
-      onMouseDown={event => event.preventDefault()}
+      onMouseDown={event => event.preventDefault()} onPointerDown={tickKey}
       sx={{ display: 'flex', gap: 1, px: 1, py: 0, overflowX: 'auto', overscrollBehaviorX: 'contain', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, ...EDGE_FADE }}
     >
       {KEYS.map(item => {

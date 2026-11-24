@@ -32,9 +32,17 @@ const DOUBLE_TAP_MS = 350; // a second Shift tap within this time turns on caps 
 const REPEAT_DELAY_MS = 400;
 const REPEAT_EVERY_MS = 60;
 // The haptic tick and the key bubble (key-feedback.mjs, a chunk loaded at the first press): on pointerdown (`d` true; not on a held key's repeats) and
-// on release.
+// on release. Once the chunk is loaded it is called at once, inside the press, so iOS still counts the tick as part of the person's tap.
 let fx;
-const feel = (key, d) => { (fx || (fx = import('./key-feedback.mjs'))).then(m => m.feel(key, d), () => {}); };
+let fxModule = null;
+const withFeel = use => {
+  if (fxModule) { try { use(fxModule); } catch { /* the key works without its feel */ } return; }
+  (fx || (fx = import('./key-feedback.mjs'))).then(m => { fxModule = m; use(m); }, () => {});
+};
+const feel = (key, d) => withFeel(m => m.feel(key, d));
+// Only the haptic tick, for the key row of the bottom bar (Terminal.jsx `KeyBar`) and Settings → Keyboard (`strength`: the one to play, else this
+// device's choice; "Vibration on key taps" in docs/design/key-haptics.md).
+export const keyTick = strength => withFeel(m => m.tick(strength));
 
 // `start`: the grid column of the first key (2 indents the row by half a key); without it the keys follow the ones before them.
 export const chars = (text, start) => Array.from(text).map((ch, index) => ({ ch, col: index === 0 ? start : undefined }));
@@ -50,9 +58,9 @@ export function rowsFor(layer, last = { send: 'Enter', icon: 'keyEnter', aria: '
   return [chars(one), chars(two), [{ ...SHIFT_SLOT[layer], span: 3, fn: true }, ...chars(three), BACKSPACE], bottom];
 }
 
-// The keys' look comes from the theme: the overlays of the dark palette (`action.selected` for a letter, `action.hover` for a function key, a stronger
+// The keys' look comes from the theme (also used by the "Try it" keys of Settings → Keyboard): the overlays of the dark palette (`action.selected` for a letter, `action.hover` for a function key, a stronger
 // white while pressed), the primary colour for Shift / caps lock while on, 6px corners and the MD2 type scale (h6 for a letter, body2 medium for a label).
-const KEY = {
+export const KEY = {
   height: 44, minWidth: 0, p: 0, m: 0, border: 0, borderRadius: 1.5, font: 'inherit', typography: 'h6', fontWeight: 400, lineHeight: 1, color: 'text.primary',
   bgcolor: 'action.selected', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: 1,
   WebkitTapHighlightColor: 'transparent', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none',

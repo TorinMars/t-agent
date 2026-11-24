@@ -27,6 +27,9 @@ export const PARTS = {
   'browser-sites': ['tasks-files', 'shared'],
   voice: ['voice-translate', 'shared'], // its "Enable voice input" checkbox is this browser's, labelled so, and stays with the part
   translate: ['voice-translate', 'shared'],
+  // Vibration on key taps (KeyboardSettings.jsx): kept in this browser, so it is drawn in every device tab as this device's own (its label stays
+  // "This device only"), never in Shared.
+  'key-haptics': ['keyboard', 'device'],
   'settings-sync': ['devices', 'shared'], // the status line of the shared settings, with "Sync now"
   'task-list-devices': ['devices', 'shared'], // "Show in task list"
   'engine-name': ['devices', 'device'], // the device list, where each row renames its own device

@@ -18,8 +18,8 @@ const SHOTS = process.env.H5_SHOT_DIR || '';
 const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '').replace(/<link\b[^>]*>/g, '');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
-const GROUPS = ['Tasks and files', 'Voice and translation', 'Devices', 'T-Attention', 'Account and access', 'Usage data'];
-const ZH_GROUPS = ['\u4efb\u52a1\u548c\u6587\u4ef6', '\u8bed\u97f3\u548c\u7ffb\u8bd1', '\u8bbe\u5907', 'T-Attention', '\u8d26\u53f7\u548c\u8bbf\u95ee', '\u4f7f\u7528\u6570\u636e'];
+const GROUPS = ['Tasks and files', 'Voice and translation', 'Keyboard', 'Devices', 'T-Attention', 'Account and access', 'Usage data'];
+const ZH_GROUPS = ['\u4efb\u52a1\u548c\u6587\u4ef6', '\u8bed\u97f3\u548c\u7ffb\u8bd1', '\u952e\u76d8', '\u8bbe\u5907', 'T-Attention', '\u8d26\u53f7\u548c\u8bbf\u95ee', '\u4f7f\u7528\u6570\u636e'];
 
 // The fetch of the page: enough for every group to draw its parts. A linked service and one plain remote engine make the device list a real one.
 function mockServer() {
@@ -255,7 +255,7 @@ async function testWide(browser) {
   // The group list is a vertical tab list; the first group is shown and its tab has the focus.
   assert.equal(await page.getAttribute('#h5-settings-groups', 'role'), 'tablist');
   assert.equal(await page.getAttribute('#h5-settings-groups', 'aria-orientation'), 'vertical');
-  assert.deepEqual(await listedGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account', 'usage-data']);
+  assert.deepEqual(await listedGroups(page), ['tasks-files', 'voice-translate', 'keyboard', 'devices', 'attention', 'account', 'usage-data']);
   assert.equal(await shownGroup(page), 'tasks-files', 'a computer always shows a group');
   assert.equal(await page.getAttribute('#h5-settings-group-tasks-files', 'aria-selected'), 'true');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-tasks-files', 'the focus moves into the page');
@@ -264,7 +264,7 @@ async function testWide(browser) {
   // Arrow keys move the focus through the list; Enter chooses, and the chosen group's title takes the focus.
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowDown');
-  assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-devices');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-keyboard');
   assert.equal(await shownGroup(page), 'tasks-files', 'moving the focus does not change the group yet');
   await page.keyboard.press('End');
   assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-settings-group-usage-data');
@@ -281,6 +281,7 @@ async function testWide(browser) {
   const expected = {
     'tasks-files': ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library'],
     'voice-translate': ['Voice input', 'Translation'],
+    keyboard: ['Vibration on key taps'],
     devices: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'],
     account: ['Access mode', 'Authenticator'],
     'usage-data': ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'],
@@ -323,6 +324,7 @@ async function testAliases(browser, wide) {
     ['engines', 'devices', ''], ['service-links', 'devices', 'link'], ['rule-sync', 'devices', 'rule-sync'], ['peer-fs', 'devices', 'peer-fs'],
     ['remote', 'devices', 'remote'], ['advanced', 'devices', 'advanced'], ['access', 'account', 'access'], ['attention', 'attention', ''],
     ['devices', 'devices', ''], ['account', 'account', ''], ['agent-skills', 'tasks-files', 'agent-skills'], ['attention-skill', 'tasks-files', 'agent-skills'], ['browser-ext', 'tasks-files', 'browser-ext'],
+    ['keyboard', 'keyboard', ''], ['key-haptics', 'keyboard', 'key-haptics'],
   ];
   const label = wide ? 'wide' : 'phone';
   let seq = 0;

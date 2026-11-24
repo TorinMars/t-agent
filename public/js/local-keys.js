@@ -38,6 +38,7 @@
     ['h5-attention-sound', 'local', 'device-setting', 'the T-Attention sound: Settings offers it as "Reminders on this device"', false],
     ['voice-enabled', 'local', 'hardware', 'voice input on this device: its microphone and permission', false],
     ['voice-keep-mic', 'local', 'hardware', 'keeping the microphone of this device ready', false],
+    ['h5-key-haptics', 'local', 'hardware', 'how strongly the page\'s own keys vibrate on this device (Settings → Keyboard): what its vibration motor can play', false],
     ['t-agent.settings-tab', 'local', 'browser', 'the device whose settings the open form edits, chosen where it is edited', false],
     ['t-agent.settings-device', 'local', 'browser', 'the same choice as kept before the Settings tabs: read once, then removed', false],
     ['h5-mindmap-draft:*', 'local', 'browser', 'the unsaved edits of a map in this browser (the saved map is on its service)', false],

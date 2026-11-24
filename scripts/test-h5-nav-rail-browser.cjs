@@ -5,7 +5,7 @@
 //   Settings; the layout right of it (task list 304px, then the 48px header); `aria-current` following the view (single view, Settings, the columns
 //   view and its Mind maps tab, back); Attention toggling the T-Attention panel with its badge; Settings closed by another destination; arrow keys,
 //   Home and End; the header's "More" menu (Refresh the page only) and no Update or columns switch in the header; the folded sidebar.
-// - 390x844 (touch): no rail; the 56px app bar with the menu button, "More" with Refresh the page and Update (which opens the update dialog); the drawer
+// - 390x844 (touch): no rail; the 56px app bar with the menu button, "More" with the terminal width, Refresh the page and Update (which opens the update dialog); the drawer
 //   from the left at min(320px, 100vw - 56px) over a scrim, the page not moved, and no destination rows below the list (they are in the bottom navigation).
 // H5_SHOT_DIR=<dir> saves the wide page and the open drawer.
 const { chromium } = require('playwright');
@@ -262,11 +262,13 @@ async function openTerminal(page, task, terminal, how = 'click') {
       await page.waitForFunction(() => document.querySelector('.h5-header .h5-header-state')?.textContent === '\u00b7 needs acceptance', null, { timeout: 5000 });
       await pushRunning(page);
       await page.locator('.h5-header .h5-header-dot[data-state="running"]').waitFor({ timeout: 5000 });
-      // More: Refresh the page and Update (with the red dot of a waiting update, also on the button).
+      // More: the terminal width (a terminal is shown), Refresh the page and Update (with the red dot of a waiting update, also on the button).
+      assert.equal(await page.locator('.h5-header #h5-term-width').count(), 0, 'no width switch in the phone app bar');
       await page.locator('#h5-header-more[data-attention="true"]').waitFor({ timeout: 5000 });
       await page.locator('#h5-header-more').tap();
       await page.locator('#h5-header-more-menu [role="menu"]').waitFor();
-      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-refresh', 'h5-header-update']);
+      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-refresh', 'h5-header-update']);
+      assert.equal(await page.locator('#h5-term-width').textContent(), 'Terminal width: Fit to screen');
       assert.equal(await page.locator('#h5-header-update').getAttribute('data-attention'), 'true');
       await page.waitForTimeout(400); // the menu's grow animation
       for (const item of await page.locator('#h5-header-more-menu [role="menuitem"]').all()) assert.ok((await item.evaluate(el => el.offsetHeight)) >= 44, 'menu items are 44px touch targets');

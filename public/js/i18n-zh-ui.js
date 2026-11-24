@@ -4,6 +4,8 @@ I18n.add({
   "Wide terminal": "宽终端",
   "{1} columns, scroll sideways": "{1} 列，左右滑动查看",
   "Lines are wrapped at {1} columns": "行在 {1} 列处折行",
+  "Terminal width: Fit to screen": "终端宽度：适应屏幕",
+  "Terminal width: {1} columns": "终端宽度：{1} 列",
   "Widen terminal": "加宽终端",
   "The new width applies to new output. Text that is already wrapped stays as it is; full-screen programs redraw.": "新宽度只作用于新的输出。已经折好的行保持原样；全屏程序会重新绘制。",
   "Translate to English": "翻译成英文",

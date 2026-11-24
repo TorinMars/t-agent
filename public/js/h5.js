@@ -3080,7 +3080,7 @@
 
   // ── Sideways: the wide terminal (public/js/terminal-gestures.js; "Terminal width" in docs/design/page-terminal-and-bottom-bar.md) ──
   // Terminal width, one setting for this device (localStorage): 'fit' gives the PTY the columns that fit the screen; 'wide' gives it `cols`
-  // (120 / 160 / 200, never fewer than fit), so programs that wrap their own output (Claude Code, Codex) keep whole sentences, and the screen,
+  // (200 / 500 / 1000 / 2000, never fewer than fit), so programs that wrap their own output (Claude Code, Codex) keep whole sentences, and the screen,
   // wider than the view, moves sideways. Only the shown terminal sizes its PTY (sendResize), and the server lets one client own a terminal.
   const widthPref = { mode: store.get('terminal-width') === 'wide' ? 'wide' : 'fit', cols: TerminalGestures.wideCols(store.get('terminal-wide-cols')) };
   const wideMin = () => (widthPref.mode === 'wide' ? widthPref.cols : 0);

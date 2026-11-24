@@ -14,13 +14,15 @@ test('the axis is decided after 10px of travel and by the larger component', () 
 });
 
 test('wide columns: the chosen count, never fewer than what fits; fit mode keeps the fitted count', () => {
-  assert.equal(G.columnsFor(52, 'fit', 160), 52);
-  assert.equal(G.columnsFor(52, 'wide', 160), 160);
-  assert.equal(G.columnsFor(52, 'wide', 120), 120);
+  assert.equal(G.columnsFor(52, 'fit', 500), 52);
+  assert.equal(G.columnsFor(52, 'wide', 500), 500);
+  assert.equal(G.columnsFor(52, 'wide', 2000), 2000);
   assert.equal(G.columnsFor(230, 'wide', 200), 230, 'a wide screen keeps its own columns');
-  assert.equal(G.wideCols('200'), 200);
-  assert.equal(G.wideCols('999'), 160, 'an unknown choice falls back to 160');
-  assert.equal(G.wideCols(null), 160);
+  for (const cols of [200, 500, 1000, 2000]) assert.equal(G.wideCols(String(cols)), cols, `${cols} is a choice`);
+  assert.equal(G.wideCols('120'), 200, 'a choice of an older page (120) falls back to 200');
+  assert.equal(G.wideCols('160'), 200, 'a choice of an older page (160) falls back to 200');
+  assert.equal(G.wideCols('999'), 200, 'an unknown choice falls back to 200');
+  assert.equal(G.wideCols(null), 200);
 });
 
 test('the offset stays inside the content', () => {

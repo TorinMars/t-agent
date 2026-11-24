@@ -250,3 +250,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.164.0 Compact phone layouts: practice page, coach chat, draft box and session header
 > v2.164.1 Learn opens straight in the English coach
 > v2.164.2 Learn practice: the original letter keyboard is back
+> v2.165.0 Learn is only the coach; the phone session page hides its bottom navigation behind a pull handle

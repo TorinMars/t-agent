@@ -19,7 +19,7 @@ import { Icon } from './Icons.jsx';
 import { TOUCH } from './theme.mjs';
 import { useStore } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
-import { MEMORY_KINDS, digestHeading, memoryDate, memoryLook, memoryTarget, memoryWhere, openTarget, titleLookup } from './usage-time-model.mjs';
+import { MEMORY_KINDS, digestHeading, isoWeekOf, memoryDate, memoryLook, memoryTarget, memoryWhere, openTarget, titleLookup } from './usage-time-model.mjs';
 
 // The Memories tab of Settings > Usage data ("Memories tab" in docs/design/usage-time-page.md; the design's frame 2): a search and the kind chips,
 // the switch "Write a weekly digest" with what it sends, the newest digest as a card ("Open the N tasks", "Write it again"), then the timeline, newest
@@ -115,9 +115,12 @@ export function UsageMemories({ ui, opened, shown }) {
     } catch (error) { say(failure(error), true); setDigestOn(!on); }
     finally { setBusy(false); }
   };
+  // "Write it again" (the card's week), or, while the switch is on and no digest exists yet, the first one of this week (else the first digest would
+  // wait for Sunday 21:00).
   const writeAgain = async () => {
     setWriting(true);
-    try { await api('POST', '/api/memories/digest', digest && digest.week ? { week: digest.week } : {}); await load(); say('Digest written again'); }
+    const first = !(digest && digest.week);
+    try { await api('POST', '/api/memories/digest', { week: first ? isoWeekOf(Date.now()) : digest.week }); await load(); say(first ? 'Digest written' : 'Digest written again'); }
     catch (error) { say(failure(error), true); }
     finally { setWriting(false); }
   };
@@ -266,6 +269,11 @@ export function UsageMemories({ ui, opened, shown }) {
           secondary={t('The digest is written by your translation service from event lines, your notes and task titles and results. No terminal text or code is sent.')}
           aside={<ScopeLabel id="usage-digest" scope="shared" />}
         />
+        {digestOn && !digest && items !== null ? (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mx: -1 }}>
+            <Button id="h5-memories-digest-now" disabled={writing} onClick={() => void writeAgain()}>{t(writing ? 'Writing…' : "Write this week's digest now")}</Button>
+          </Box>
+        ) : null}
         <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="body2" color="text.secondary" sx={{ flex: '1 1 16rem', minWidth: 0 }}>{t('Memories are kept until you delete them, on your own machines.')}</Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, ml: 'auto' }}>

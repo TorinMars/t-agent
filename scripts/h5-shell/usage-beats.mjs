@@ -44,16 +44,16 @@ export function shownOf(s) {
   return { target: (s && s.shownTarget) || null, agent: s && s.notebook ? 'notebook' : (s && s.terminalAgent) || null };
 }
 
-// Engine-neutral ids: `<instance id>:<task id>` for a task (the shared task order's form) and `<instance id>:<task id>:<terminal id>` for a
-// session. A device whose instance id is not known (an older engine, the list not read yet) gives null: the beat then names no task.
+// Engine-neutral ids: `<instance id>|<task id>` for a task and `<instance id>|<task id>|<terminal id>` for a session (the shared page state's
+// form, which the server checks: services/usage-time.js TASK and SESSION). A device whose instance id is not known (an older engine, the list not read yet) gives null: the beat then names no task.
 export function neutralIds(target, sources) {
   if (!target || target.taskId === undefined || target.taskId === null) return { task: null, session: null };
   const from = (Array.isArray(sources) ? sources : []).find(item => item && item.key === target.sourceKey);
   const instance = from && typeof from.instanceId === 'string' && from.instanceId ? from.instanceId : null;
   if (!instance) return { task: null, session: null };
-  const task = `${instance}:${target.taskId}`;
+  const task = `${instance}|${target.taskId}`;
   const terminal = target.terminalId === undefined || target.terminalId === null || target.terminalId === '' ? null : String(target.terminalId);
-  return { task, session: terminal ? `${task}:${terminal}` : null };
+  return { task, session: terminal ? `${task}|${terminal}` : null };
 }
 
 // One beat at `now` from the store's state `s` (its `sources` name the devices): { at, surface, kind, task, session, seconds }. Task, session and

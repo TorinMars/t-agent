@@ -48,6 +48,9 @@ const segments = bar => {
   return parts.map((part, index) => ({ ...part, px: Math.max(1, Math.round((part.seconds / bar.total) * total)), top: index === parts.length - 1 }));
 };
 const STATE = state => ({ sources: state.sources, taskList: state.taskList });
+// The person's time zone (IANA), sent with every read so "today", "this week" and the days are the person's, not the server's.
+const zone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } };
+const tzParam = () => (zone() ? `&tz=${encodeURIComponent(zone())}` : '');
 
 function Tile({ tile }) {
   return (
@@ -115,7 +118,7 @@ export function UsageTime({ ui, opened, shown }) {
     try {
       const [setting, data] = await Promise.all([
         api('GET', '/api/usage-time/settings'),
-        api('GET', `/api/usage-time/summary?range=${encodeURIComponent(nextRange)}&device=${encodeURIComponent(nextDevice)}`),
+        api('GET', `/api/usage-time/summary?range=${encodeURIComponent(nextRange)}&device=${encodeURIComponent(nextDevice)}${tzParam()}`),
       ]);
       if (mine !== seq.current) return;
       setRecord(Boolean(setting && setting.usage_time_record));
@@ -141,7 +144,7 @@ export function UsageTime({ ui, opened, shown }) {
     if (openTask && openTask.task === task) { setOpenTask(null); return; }
     setOpenTask({ task, rows: null });
     try {
-      const answer = await api('GET', `/api/usage-time/task?task=${encodeURIComponent(task)}&range=${encodeURIComponent(range)}&device=${encodeURIComponent(device)}`);
+      const answer = await api('GET', `/api/usage-time/task?task=${encodeURIComponent(task)}&range=${encodeURIComponent(range)}&device=${encodeURIComponent(device)}${tzParam()}`);
       setOpenTask(current => (current && current.task === task ? { task, rows: sessionsOf(answer) } : current));
     } catch (error) { setOpenTask(null); say(failure(error), true); }
   };
@@ -149,7 +152,7 @@ export function UsageTime({ ui, opened, shown }) {
     if (openDay && openDay.day === day) { setOpenDay(null); return; }
     setOpenDay({ day, rows: null });
     try {
-      const answer = await api('GET', `/api/usage-time/day?day=${encodeURIComponent(day)}&device=${encodeURIComponent(device)}`);
+      const answer = await api('GET', `/api/usage-time/day?day=${encodeURIComponent(day)}&device=${encodeURIComponent(device)}${tzParam()}`);
       setOpenDay(current => (current && current.day === day ? { day, rows: sessionsOf(answer) } : current));
     } catch (error) { setOpenDay(null); say(failure(error), true); }
   };

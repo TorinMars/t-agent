@@ -514,6 +514,8 @@ I18n.add({
   "Clear memories?": "清空记忆？",
   "Every event, note and digest is deleted, here and on the linked machines that keep the same data. This cannot be undone.": "所有事件、笔记和周报都会被删除，包括这里和保存同一份数据的已链接机器，无法恢复。",
   "Digest written again": "周报已重新写好",
+  "Write this week's digest now": "现在写本周周报",
+  "Digest written": "周报已写好",
   "Memories cleared": "记忆已清空",
   "Saves a note with the time and this task and session. The terminal text is not saved.": "保存一条笔记，带上时间以及这个任务和会话。不会保存终端文字。",
   "Saved to Memories": "已保存到记忆",

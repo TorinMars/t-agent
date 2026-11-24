@@ -37,7 +37,9 @@ export function startSender(ui, { doc = document, win = window, url = '/api/usag
   const visible = () => doc.visibilityState === 'visible';
   const client = clientOf(win.navigator && win.navigator.userAgent);
   let queue = [];
-  const body = batch => JSON.stringify({ client, beats: batch });
+  // `sent` is the page's clock at sending: the server moves the beats' times by the difference to its own clock, so a device whose clock is off
+  // still counts its time in the right hour (and its beats are not dropped as too far ahead or too old).
+  const body = batch => JSON.stringify({ client, sent: now(), beats: batch });
   const off = () => { queue = []; };
   const refused = answer => answer && (answer.ok === false || answer.enabled === false);
   const send = () => {

@@ -39,7 +39,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 }
 
 // schema.sql creates missing tables on every start; schema 9 added the T-Attention tables (attention_items, attention_events, attention_tokens) this way,
-// schema 12 the usage data tables and schema 13 the English learning tables (learn_cards, learn_reviews); schema 25 the tables usage_time and
+// schema 12 the usage data tables and schema 13 the English learning tables (learn_cards, learn_reviews); schema 26 the tables usage_time and
 // memories (services/usage-time.js, "Usage time and memories" in docs/design/usage-time.md), new tables only, so nothing else is needed for them.
 // Schema 14: the sync columns of learn_cards and learn_reviews and the table learn_card_moves. They are added to a schema 13 database before
 // schema.sql runs, because schema.sql makes indexes on them (services/learn-sync-store.js; a database without learn_cards gets it all from schema.sql).
@@ -49,6 +49,7 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 // Schema 21: the tables learn_convos and learn_convo_messages (the English chats), the same way.
 // Schema 22: learn_cards.fsrs_stability and fsrs_difficulty (FSRS-6), the same way, and every card's review state replayed from its answers once.
 // Schema 23: learn_cards.parts and tip (the parts and the spelling tip of a word that keeps slipping), the same way.
+// Schema 25: learn_cards.context_zh and context_source (an example sentence of a word's own), the same way.
 const fsrsReplay = require('../services/learn-sync-store').ensureSyncSchema(db);
 if (fsrsReplay && fsrsReplay.replayed) {
   console.log(`Database: the review state of ${fsrsReplay.replayed} learning cards was replayed with FSRS-6 (${fsrsReplay.earlier} due earlier, ${fsrsReplay.later} later, ${fsrsReplay.skipped} kept)`);

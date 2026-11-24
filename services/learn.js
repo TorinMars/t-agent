@@ -231,9 +231,10 @@ const checkId = value => {
   return id;
 };
 const iso = ms => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
-// SQL on a learn_cards row: a word asked inside one of the owner's translated sentences (its context is the English of a translation sentence card).
-const FROM_TRANSLATION = `(learn_cards.kind = 'word' AND learn_cards.context <> '' AND EXISTS (SELECT 1 FROM learn_cards s WHERE s.owner = learn_cards.owner
-  AND s.kind = 'sentence' AND s.source = 'translation' AND s.en = learn_cards.context))`;
+// SQL on a learn_cards row: a word asked inside one of the owner's translated sentences (its context is the English of a translation sentence card),
+// or a word picked from one that has an example sentence of its own instead, or none ("A sentence for every word" in docs/design/learn-english.md).
+const FROM_TRANSLATION = `(learn_cards.kind = 'word' AND (learn_cards.context_source IN ('generated', 'none') OR (learn_cards.context <> '' AND EXISTS (SELECT 1
+  FROM learn_cards s WHERE s.owner = learn_cards.owner AND s.kind = 'sentence' AND s.source = 'translation' AND s.en = learn_cards.context))))`;
 
 // The detail kept with an answer: for a wrong one what was asked for (the page sends the gap word of Fill the gap; else the card's text), the first tag
 // of the page's checker (a tag this version does not know is kept as none) and whether help was used; for a right one none.
@@ -264,12 +265,15 @@ function reportJson(row, { full = true } = {}) {
 }
 
 // The JSON of a card for the page. Times are ISO 8601 strings. `contexts`: the Chinese of the sentence cards by their English (contextZh below), so a
-// word asked inside one of the person's sentences carries that sentence's Chinese as `context_zh` ('' for every other card). `retrievability`: the
+// word asked inside one of the person's sentences carries that sentence's Chinese as `context_zh` ('' for every other card); a word with an example
+// sentence of its own (schema 25, services/learn-sentences.js) carries the Chinese stored with it, and `context_source` says which ('' the person's
+// own text, 'generated', 'none'). `retrievability`: the
 // probability of recall at `at` from the FSRS state (0..1), null for a card without one (a new card).
 function cardJson(row, contexts = null, at = Date.now()) {
   return {
     id: row.id, kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context,
-    context_zh: row.kind === 'word' && row.context && contexts ? contexts.get(row.context) || '' : '',
+    context_zh: row.kind !== 'word' || !row.context ? '' : row.context_source === 'generated' ? row.context_zh || '' : contexts ? contexts.get(row.context) || '' : '',
+    context_source: row.kind === 'word' ? row.context_source || '' : '',
     due_at: iso(row.due_at), interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: iso(row.last_at), suspended: Boolean(row.suspended), created_at: iso(row.created_at),
     retrievability: review.retrievability(row, at),
@@ -384,7 +388,7 @@ function createLearn({
   // The Chinese of the sentence cards whose English is the context of one of these word cards: Map en -> zh (a join at read time, so a meaning edited
   // on the sentence shows at once and nothing more is stored or synced).
   function contextZh(owner, rows) {
-    const wanted = [...new Set(rows.filter(row => row.kind === 'word' && row.context).map(row => row.context))];
+    const wanted = [...new Set(rows.filter(row => row.kind === 'word' && row.context && row.context_source !== 'generated').map(row => row.context))];
     if (!wanted.length) return new Map();
     const found = db.prepare("SELECT en, zh FROM learn_cards WHERE owner = ? AND kind = 'sentence' AND en IN (SELECT value FROM json_each(?))").all(owner, JSON.stringify(wanted));
     return new Map(found.map(row => [row.en, row.zh]));
@@ -441,7 +445,8 @@ function createLearn({
   function updateCard(owner, id, body) {
     const row = mustCard(owner, id);
     if (!isPlainObject(body) || Object.keys(body).some(key => !['zh', 'en', 'suspended'].includes(key))) throw bad('Invalid card change');
-    const next = { zh: row.zh, en: row.en, norm: row.norm, suspended: row.suspended, phonetic: row.phonetic || '', parts: row.parts || '', tip: row.tip || '' };
+    const next = { zh: row.zh, en: row.en, norm: row.norm, suspended: row.suspended, phonetic: row.phonetic || '', parts: row.parts || '', tip: row.tip || '',
+      context: row.context, context_zh: row.context_zh || '', context_source: row.context_source || '' };
     if (body.zh !== undefined) next.zh = checkMeaning(body.zh);
     if (body.en !== undefined) {
       next.en = checkEnglish(row.kind, body.en);
@@ -451,6 +456,8 @@ function createLearn({
       if (next.norm !== row.norm) {
         next.phonetic = row.kind === 'word' ? lookupPhonetic(next.en) : ''; // another word: its own transcription
         Object.assign(next, { parts: '', tip: '' }); // and its own parts and tip, asked again when it keeps slipping
+        // An example sentence written for the old word does not hold the new one: the word is asked on its own.
+        if (next.context_source === 'generated') Object.assign(next, { context: '', context_zh: '', context_source: 'none' });
       }
     }
     // A sentence with another text is picked again (its words were those of the old text).
@@ -461,8 +468,8 @@ function createLearn({
     }
     const at = stamp();
     db.transaction(() => {
-      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, phonetic = @phonetic, parts = @parts, tip = @tip, content_at = @at, content_by = '', sync_seq = @seq
-        WHERE id = @id`).run({ ...next, at, seq: seq(), id: row.id });
+      db.prepare(`UPDATE learn_cards SET zh = @zh, en = @en, norm = @norm, suspended = @suspended, phonetic = @phonetic, parts = @parts, tip = @tip, context = @context,
+        context_zh = @context_zh, context_source = @context_source, content_at = @at, content_by = '', sync_seq = @seq WHERE id = @id`).run({ ...next, at, seq: seq(), id: row.id });
       if (repick) db.prepare("UPDATE learn_cards SET picked_level = '', picked_skipped = 0, picked_at = ? WHERE id = ?").run(at, row.id);
       if (next.norm !== row.norm) {
         // The card leaves its old text: a move record tells the linked devices that still have it there (services/learn-sync.js).

@@ -391,6 +391,12 @@ CREATE TABLE IF NOT EXISTS learn_cards (
   -- never replaced by '' in the sync. services/learn-sync-store.js adds them.
   parts           TEXT NOT NULL DEFAULT '',
   tip             TEXT NOT NULL DEFAULT '',
+  -- Schema 25, a sentence for every word ("A sentence for every word" in docs/design/learn-english.md; services/learn-sentences.js): how the
+  -- context of a word card came to be ('' the person's own text, 'generated' an example sentence written by the model for this word, 'none' the
+  -- model gave no good one, so the word is asked on its own) and the Chinese of a generated sentence ('' otherwise; a sentence of the person's has
+  -- its Chinese on its sentence card). Part of the content like context. services/learn-sync-store.js adds them.
+  context_zh      TEXT NOT NULL DEFAULT '',
+  context_source  TEXT NOT NULL DEFAULT '',
   UNIQUE (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);
@@ -536,7 +542,7 @@ CREATE TABLE IF NOT EXISTS learn_coach_summary (
 );
 CREATE INDEX IF NOT EXISTS idx_learn_coach_summary_seq ON learn_coach_summary (owner, sync_seq);
 
--- Schema 25: usage time and memories ("Usage time and memories" in docs/design/usage-time.md; services/usage-time.js, services/usage-memories.js).
+-- Schema 26: usage time and memories ("Usage time and memories" in docs/design/usage-time.md; services/usage-time.js, services/usage-memories.js).
 -- usage_time: seconds, never text. One row per key (the UTC day and hour, surface, kind, task, session, client) of one origin engine; only the origin
 -- adds to it (rev goes up), a peer keeps the copy with the larger rev, so a sum over rows never counts a second twice. Kept 2 years.
 CREATE TABLE IF NOT EXISTS usage_time (

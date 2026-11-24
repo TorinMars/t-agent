@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { readState, writeState, isPlainObject, settingChanged } = require('./settings-sync-store');
 
 // Usage time ("Usage time and memories" in docs/design/usage-time.md): how long the person used the page and how long the agents of their sessions
-// worked or waited for them, in seconds, never text. Two writers, one table (usage_time, schema 25):
+// worked or waited for them, in seconds, never text. Two writers, one table (usage_time, schema 26):
 // - the page's beats (POST /api/usage-time/beats): 15-second steps while the page is visible and the person did something in the last 2 minutes;
 // - the session clocks of this engine (services/usage-time-clock.js): agent_working and waiting_you per terminal, flushed every 60 s.
 // A row is one key (UTC day and hour, surface, kind, task, session, client) of one origin engine, identified by a random uid. Only its origin adds

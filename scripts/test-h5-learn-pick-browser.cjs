@@ -2,17 +2,18 @@
 // contract of "Words from your translations" in docs/design/learn-english.md (GET /level, POST /level/check, GET /cards?source=translation, the
 // `context_zh` of a card, `pick_words` of the settings). No model is ever called. See "Spell the word" and "Learn settings" in
 // docs/design/learn-english-page.md.
-// - 390x844 (touch): Spell asks a word with `context_zh` inside its sentence (the "your translation" chip, the sentence with a primary gap about as
-//   wide as the word, the Chinese of the sentence, a divider, "The word: <meaning>", Hear it, Show first letter, the letter slots and the page's
-//   keyboard); the last letter checks by itself and the word fills the gap in the success colour, the word with its transcription and meaning under
+// - 390x844 (touch): Spell asks a word with `context_zh` inside its sentence (the "your translation" chip, the sentence with a primary gap of one
+//   underline per letter, the Chinese of the sentence, a divider, "The word: <meaning>" with the transcription, Hear it, Show first letter, the
+//   letter slots and the page's keyboard); the last letter checks by itself and the word fills the gap in the success colour, the word with its transcription and meaning under
 //   the divider, "Correct" under the letters, the grades in the pinned actions; a word without a meaning looked up and given up (the error colour);
 //   a starter word and a word not found in its sentence keep the meaning layout with "Used in". Learn settings: MY LEVEL (level, label, reason, the
 //   caption), Check again (busy, the new level, a 409 shown like the other failed changes, "waiting"), the switch saved, Picked so far and View
 //   (Your material on source=translation and kind=word, the chip that clears it, back to the settings), the privacy caption, no sideways scroll.
 //   No level yet ("Not estimated yet", Check now); no translator (the notice, no button); a 503 from Check; an engine without the route (said in the
 //   card, the rest of the settings work).
-// - 1440x900 (mouse): the same sentence layout in the pane, a wrong answer typed with the keys, the grades under the result; Review uses it for a
-//   picked word; MY LEVEL and View in the pane.
+// - 1440x900 (mouse): the same sentence layout in the pane, a wrong answer typed with the keys, the grades under the result; a second word of the
+//   same sentence of the person's asked inside an example sentence of its own (the "example sentence" chip, its own gap count and transcription);
+//   Review uses it for a picked word (with the transcription); MY LEVEL and View in the pane.
 // H5_SHOT_DIR=<dir> saves learn-pick-spell.png, learn-pick-checked.png, learn-pick-settings.png (390 px, frames 1, 2 and 4 of the design) and
 // learn-pick-desktop.png.
 const { chromium } = require('playwright');
@@ -42,6 +43,11 @@ const PICKED = card(31, 'expires', ZH_EXPIRE, 'translation', { context: SENTENCE
 const NO_MEANING = card(32, 'merge', '', 'translation', { context: 'Run the tests again before you merge.', context_zh: ZH_TESTS });
 const STARTER = card(33, 'latency', ZH_LATENCY, 'starter', { context: 'Network latency is the time a packet takes', phonetic: '/\u02c8le\u026at\u0259nsi/' });
 const NOT_IN_IT = card(34, 'expire', ZH_EXPIRE, 'translation', { context: 'It expired yesterday.', context_zh: ZH_SENTENCE });
+// Another word of the same sentence of the person's: asked inside an example sentence written for it ("A sentence for every word" in
+// docs/design/learn-english.md).
+const EXAMPLE = 'Clear the cookie and sign in again before the demo.';
+const ZH_EXAMPLE = '\u6f14\u793a\u524d\u6e05\u9664 cookie \u5e76\u91cd\u65b0\u767b\u5f55\u3002';
+const GENERATED = card(35, 'cookie', '\u5c0f\u7f51\u7edc\u6587\u4ef6', 'translation', { context: EXAMPLE, context_zh: ZH_EXAMPLE, context_source: 'generated', phonetic: '/\u02c8k\u028aki/' });
 const SENTENCE_CARD = { ...card(40, SENTENCE, ZH_SENTENCE, 'translation'), kind: 'sentence' };
 // Taipei time (the browser context runs in Asia/Taipei): updated 11-21 09:00, the report of 11-16.
 const LEVEL = { level: 'B1', label: 'intermediate', reason: 'Sure of everyday words; slips on spelling of longer technical words and on tense endings.', answers: 155, mistakes: 43, report_at: '2026-11-16T10:00:00+08:00', updated_at: '2026-11-21T09:00:00+08:00' };
@@ -191,16 +197,25 @@ async function openSettings(page, touch) {
       assert.equal(await page.locator('#h5-learn-sentence').getAttribute('translate'), 'no');
       assert.equal(await color(page, '#h5-learn-sentence', 'fontSize'), '20px', 'the sentence in the h6 size');
       const gap = await page.locator('#h5-learn-gap').boundingBox();
-      assert.ok(gap.width >= 60 && gap.width <= 100, `the gap is about as wide as the word (${gap.width})`);
-      assert.equal(await page.locator('#h5-learn-gap').getAttribute('aria-label'), 'blank');
-      assert.equal(await color(page, '#h5-learn-gap', 'borderBottomColor'), await page.locator('#h5-learn-from-translation').evaluate(el => getComputedStyle(el).color), 'the gap and the chip in the primary colour');
+      assert.ok(gap.width >= 60 && gap.width <= 110, `the gap is about as wide as the word (${gap.width})`);
+      // The gap shows how many letters the word has: one underline per letter, on one line.
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-letters'), '7');
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-letter').count(), 7);
+      const segments = await page.locator('#h5-learn-gap .h5-learn-gap-letter').evaluateAll(list => list.map(el => { const box = el.getBoundingClientRect(); return { x: box.x, y: box.y, w: box.width }; }));
+      assert.ok(segments.every(item => item.y === segments[0].y && item.w >= 6), 'the underlines on one line');
+      assert.ok(segments.every((item, at) => at === 0 || item.x > segments[at - 1].x + segments[at - 1].w), 'a space between the underlines');
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('aria-label'), 'blank, 7 letters');
+      assert.equal(await color(page, '#h5-learn-gap .h5-learn-gap-letter', 'borderBottomColor'), await page.locator('#h5-learn-from-translation').evaluate(el => getComputedStyle(el).color), 'the gap and the chip in the primary colour');
       assert.equal(await text(page, '#h5-learn-sentence-zh'), ZH_SENTENCE);
       assert.equal(await page.locator('#h5-learn-sentence-zh').getAttribute('lang'), 'zh');
       assert.equal(await page.locator('#h5-learn-mode .h5-learn-prompt hr').count(), 1, 'a divider');
-      assert.equal(await text(page, '#h5-learn-word-meaning'), `The word: ${ZH_EXPIRE}`);
       assert.equal(await page.locator('#h5-learn-hear').count(), 1);
       assert.equal(await page.locator('#h5-learn-first').count(), 1);
-      assert.equal(await page.locator('#h5-learn-phonetic').count(), 0, 'the transcription waits for the answer (frame 1)');
+      // The transcription next to the meaning, as in the meaning layout (the sentence is offered aloud already).
+      assert.equal(await text(page, '#h5-learn-phonetic'), '/\u026ak\u02c8spa\u026a\u0259rz/');
+      assert.equal(await page.locator('#h5-learn-phonetic').getAttribute('lang'), 'en-US-fonipa');
+      assert.equal(await text(page, '#h5-learn-word-meaning'), `The word: ${ZH_EXPIRE} /\u026ak\u02c8spa\u026a\u0259rz/`);
+      assert.equal(await page.locator('#h5-learn-example-sentence').count(), 0, 'the person\'s own sentence');
       assert.equal(await page.locator('#h5-learn-mode .h5-learn-prompt', { hasText: 'Used in' }).count(), 0);
       assert.equal(await page.locator('.h5-learn-letter').count(), 7, 'the letter slots of the word as written in the sentence');
       // The audio of a word asked in its sentence is the whole sentence (the default settings: words play at the start, twice): at the start and
@@ -253,7 +268,7 @@ async function openSettings(page, touch) {
 
       // A picked word without a meaning yet: looked up, then "The word: ..."; given up: the right word in the error colour.
       await page.locator('#h5-learn-word-meaning').waitFor();
-      assert.equal(await text(page, '#h5-learn-word-meaning'), `The word: ${ZH_MERGE}`);
+      assert.equal(await text(page, '#h5-learn-word-meaning'), `The word: ${ZH_MERGE} /m\u025dd\u0292/`, 'the meaning and the transcription looked up');
       assert.equal(mock.posts(/\/meaning$/).at(-1).body.word, 'merge');
       assert.equal(await text(page, '#h5-learn-sentence'), 'Run the tests again before you .', 'the full stop stays outside the gap');
       await clearSpoken(page);
@@ -435,6 +450,7 @@ async function openSettings(page, touch) {
     // \u2500\u2500 1440x900 (mouse): the sentence layout in the pane, typed with the keys; Review; MY LEVEL and View \u2500\u2500
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 1440, height: 900 } });
+      mock.spell = [PICKED, GENERATED];
       await page.locator('#h5-nav-learn').click();
       await page.locator('#h5-learn-mode-spell').click();
       await page.locator('#h5-learn-sentence').waitFor();
@@ -460,10 +476,27 @@ async function openSettings(page, touch) {
       assert.equal(lastAnswer(mock).grade, 'hard');
       assert.equal(lastAnswer(mock).correct, false, 'still a wrong answer');
       assert.equal(lastAnswer(mock).tag !== undefined, true, 'a wrong answer keeps its tag');
+      // The second word of the same sentence: inside a sentence of its own, never the first one again.
+      await page.locator('#h5-learn-example-sentence').waitFor();
+      assert.equal(await text(page, '#h5-learn-example-sentence'), 'example sentence');
+      assert.equal(await page.locator('#h5-learn-from-translation').count(), 0);
+      assert.equal(await text(page, '#h5-learn-sentence'), 'Clear the and sign in again before the demo.');
+      assert.equal(await text(page, '#h5-learn-sentence-zh'), ZH_EXAMPLE);
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-letters'), '6');
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-letter').count(), 6);
+      assert.equal(await text(page, '#h5-learn-phonetic'), '/\u02c8k\u028aki/');
+      await page.keyboard.type('cookie');
+      await page.locator('#h5-learn-sentence-word').waitFor();
+      assert.equal(await text(page, '#h5-learn-sentence'), EXAMPLE);
+      assert.equal(await text(page, '#h5-learn-feedback-phonetic'), '/\u02c8k\u028aki/', 'the transcription in the result');
+      await page.locator('#h5-learn-grade-good').click();
+      await waitFor(() => lastAnswer(mock) && lastAnswer(mock).id === '35', 'the second word answered');
       // Review asks a picked word the same way.
       await page.locator('#h5-learn-start').click();
       await page.locator('#h5-learn-sentence').waitFor();
       assert.equal(await text(page, '#h5-learn-view-title'), 'Daily review');
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-letters'), '7');
+      assert.equal(await text(page, '#h5-learn-phonetic'), '/\u026ak\u02c8spa\u026a\u0259rz/', 'Review shows the transcription in the sentence layout too');
       // MY LEVEL and View in the pane.
       await openSettings(page, false);
       await page.locator('#h5-learn-level').waitFor();

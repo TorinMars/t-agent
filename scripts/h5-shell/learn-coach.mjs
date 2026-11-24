@@ -202,10 +202,12 @@ export function rememberedLine(note, day = iso => iso) {
   const text = String((note && note.text) || '');
   return note && note.until ? ['Remembered: {1} (until {2})', text, day(note.until)] : ['Remembered: {1}', text];
 }
-// The second line of a note in the notes list: "11-24" or "11-24 · until 31 Mar" as [template, ...values].
+// The second line of a note in the notes list: "11-24" or "11-24 · until 31 Mar", as { made, until: [template, value] | null }. The two parts are
+// translated apart and joined with " · " by the caller: a template such as "{1} · until {2}" would swallow longer lines of other places that
+// contain it ("Every day at 09:00 · until 2027-01-31 · ends after 5 times") and leave their last part untranslated.
 export function noteLine(note, { short = iso => iso, day = iso => iso } = {}) {
   const made = short(note && (note.created_at || note.updated_at));
-  return note && note.until ? ['{1} · until {2}', made, day(note.until)] : [made];
+  return { made, until: note && note.until ? ['until {1}', day(note.until)] : null };
 }
 // A note as the person types it: one line, at most NOTE_MAX characters.
 export const cleanNote = text => String(text || '').replace(/\s+/g, ' ').trim().slice(0, NOTE_MAX);

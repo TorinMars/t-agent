@@ -20,7 +20,8 @@ const listeners = new Set();
 // the tables `learn_convos` and `learn_convo_messages` (the English chats), and schema 22 the FSRS state of a card (`fsrs_stability`,
 // `fsrs_difficulty`; NULL: not computed), filled in once by replaying every card's answers (services/learn-schedule.js migrate; "Replay, sync and
 // migration" in docs/design/learn-review-fsrs.md), schema 23 the parts and the tip of a word card (`parts`, `tip`; '' until known; "Keeps
-// slipping" there), and schema 24 the tables `learn_coach_notes` and `learn_coach_summary` (the English coach). Returns the counts of that replay when it ran now, else null.
+// slipping" there), schema 24 the tables `learn_coach_notes` and `learn_coach_summary` (the English coach), and schema 25 the context of a word
+// card of its own (`context_zh`, `context_source`; '' for the person's own text; "A sentence for every word" in docs/design/learn-english.md). Returns the counts of that replay when it ran now, else null.
 function ensureSyncSchema(db) {
   const columns = table => db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
   const cards = columns('learn_cards');
@@ -33,7 +34,9 @@ function ensureSyncSchema(db) {
     // Schema 22: the FSRS memory state of a card (derived from its answers; NULL until computed).
     ['fsrs_stability', 'REAL'], ['fsrs_difficulty', 'REAL'],
     // Schema 23: the parts (syllables, joined with a middle dot) and the spelling tip of a word that keeps slipping ('' until the model gave them).
-    ['parts', "TEXT NOT NULL DEFAULT ''"], ['tip', "TEXT NOT NULL DEFAULT ''"]]) {
+    ['parts', "TEXT NOT NULL DEFAULT ''"], ['tip', "TEXT NOT NULL DEFAULT ''"],
+    // Schema 25: the Chinese and the origin of a word card's context (an example sentence of its own; '' for the person's own text).
+    ['context_zh', "TEXT NOT NULL DEFAULT ''"], ['context_source', "TEXT NOT NULL DEFAULT ''"]]) {
     if (!cards.includes(name)) addCard.push(`ALTER TABLE learn_cards ADD COLUMN ${name} ${type}`);
   }
   const reviews = columns('learn_reviews');

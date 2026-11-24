@@ -198,8 +198,8 @@ test('the practice divider, the suggestions, the Remembered line and the notes r
   assert.deepEqual(rememberedLine({ text: 'job interview in March', until: '2027-03-31' }, () => '31 Mar'), ['Remembered: {1} (until {2})', 'job interview in March', '31 Mar']);
   assert.deepEqual(rememberedLine({ text: 'likes short answers' }), ['Remembered: {1}', 'likes short answers']);
   assert.deepEqual(rememberedOf({ meta: { remembered: { uid: 'n', text: 'x' } } }), [{ uid: 'n', text: 'x' }]);
-  assert.deepEqual(noteLine({ created_at: 'c', until: 'u' }, { short: () => '11-24', day: () => '31 Mar' }), ['{1} · until {2}', '11-24', '31 Mar']);
-  assert.deepEqual(noteLine({ created_at: 'c' }, { short: () => '11-24' }), ['11-24']);
+  assert.deepEqual(noteLine({ created_at: 'c', until: 'u' }, { short: () => '11-24', day: () => '31 Mar' }), { made: '11-24', until: ['until {1}', '31 Mar'] });
+  assert.deepEqual(noteLine({ created_at: 'c' }, { short: () => '11-24' }), { made: '11-24', until: null });
   assert.equal(cleanNote('  two\nlines  '), 'two lines');
   assert.equal(cleanNote('x'.repeat(300)).length, NOTE_MAX);
 });

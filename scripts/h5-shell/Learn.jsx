@@ -29,7 +29,7 @@ import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
 import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss, normWord, partsOf, spellCheck, spellingNote, spellingPattern, suggestedGrade, typedInFull } from './learn-grade.mjs';
-import { BUILD_HIDDEN, SENTENCE_EXERCISE, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
+import { BUILD_HIDDEN, SENTENCE_EXERCISE, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, gapLayout, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
@@ -1380,6 +1380,9 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   // A word asked inside its sentence (the sentence layout below) is heard in that whole sentence, at the start, after Check and on Hear it; any
   // other word card plays the word. See "Spell the word" in docs/design/learn-english-page.md.
   const cloze = sentenceGap(card);
+  // An example sentence written for this word (another word of the person's sentence keeps that one): "example sentence" instead of "your
+  // translation". See "A sentence for every word" in docs/design/learn-english.md.
+  const generated = Boolean(cloze) && card.context_source === 'generated';
   const spoken = cloze ? `${cloze.before}${cloze.word}${cloze.after}` : word;
   useCardAudio(audio, exercise, spoken, result);
   useAutoCheck({ register, ready: typedInFull(value, word), value, result });
@@ -1475,7 +1478,8 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
   return (
     <ViewFrame {...frame} footer={phone ? actions : null} keyboard={kb.node}>
       {cloze ? (
-        <Prompt label={t('Fill in the word')} badge={<Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? ask.row : helpers}>
+        <Prompt label={t('Fill in the word')} badge={generated ? <Chip size="small" id="h5-learn-example-sentence" label={t('example sentence')} sx={CHIP_SX} />
+          : <Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? ask.row : helpers}>
           <SentenceWithGap cloze={cloze} result={result} />
           <Typography variant="body2" color="text.secondary" component="p" lang="zh" translate="no" id="h5-learn-sentence-zh" sx={{ mt: 1, overflowWrap: 'break-word' }}>{cloze.zh}</Typography>
           <Divider sx={{ my: 1.5 }} />
@@ -1486,8 +1490,10 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
           ) : meaning.zh ? (
             <Typography variant="body2" color="text.secondary" component="p" id="h5-learn-word-meaning" sx={{ overflowWrap: 'break-word' }}>
               {t('The word:')}{' '}<Box component="span" lang="zh" translate="no" id="h5-learn-meaning" sx={{ typography: 'body1', color: 'text.primary' }}>{meaning.zh}</Box>
+              {/* The transcription next to the meaning, as in the meaning layout: the sentence is offered aloud already, so it gives nothing more away. */}
+              {tts && meaning.phonetic ? <>{' '}<Phonetic text={meaning.phonetic} id="h5-learn-phonetic" sx={{ ml: 0.5 }} /></> : null}
             </Typography>
-          ) : null}
+          ) : tts && meaning.phonetic ? <Box sx={{ mt: 0.5 }}><Phonetic text={meaning.phonetic} id="h5-learn-phonetic" /></Box> : null}
           {result ? null : meaningState}
         </Prompt>
       ) : (
@@ -1688,9 +1694,17 @@ function PartsExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
 
 // The small "your translation" chip of the sentence layout: the primary colour on its 12% tint (MD2 chip, caption type).
 const CHIP_SX = theme => ({ height: 20, typography: 'caption', fontWeight: 'fontWeightMedium', color: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.12), '& .MuiChip-label': { px: 1 } });
-// The gap is about as wide as the word (its letters are counted in the slots anyway).
-const gapWidth = word => `${Math.min(12, Math.max(2.5, [...word].length * 0.55)).toFixed(2)}em`;
-// The sentence of Spell's sentence layout, in the h6 size: a primary underline where the word goes; after Check the word in it (the success colour
+// The gap where the word goes: one primary underline per letter (gapLayout), on one line; read out as "blank, N letters".
+function SentenceGap({ word }) {
+  const { count, segment, space } = gapLayout(word);
+  return (
+    <Box component="span" id="h5-learn-gap" role="img" data-letters={count} aria-label={tf('blank, {1} letters', count)}
+      sx={{ display: 'inline-flex', columnGap: `${space}em`, mx: 0.25, verticalAlign: '-0.15em', whiteSpace: 'nowrap' }}>
+      {Array.from({ length: count }, (_, at) => <Box key={at} component="span" className="h5-learn-gap-letter" sx={{ display: 'inline-block', width: `${segment}em`, height: 0, borderBottom: 2, borderColor: 'primary.main' }} />)}
+    </Box>
+  );
+}
+// The sentence of Spell's sentence layout, in the h6 size: a primary underline per letter where the word goes; after Check the word in it (the success colour
 // when right, the error colour when wrong: the right word either way).
 function SentenceWithGap({ cloze, result }) {
   const tone = result && result.correct ? 'success.light' : 'error.light';
@@ -1698,7 +1712,7 @@ function SentenceWithGap({ cloze, result }) {
     <Typography variant="h6" component="p" lang="en" translate="no" id="h5-learn-sentence" sx={{ mt: 1, fontWeight: 'fontWeightRegular', lineHeight: 1.6, overflowWrap: 'break-word' }}>
       {cloze.before}
       {result ? <Box component="span" id="h5-learn-sentence-word" data-correct={result.correct ? 'true' : 'false'} sx={{ color: tone, fontWeight: 'fontWeightMedium', borderBottom: 2, borderColor: tone }}>{cloze.word}</Box>
-        : <Box component="span" id="h5-learn-gap" role="img" aria-label={t('blank')} sx={{ display: 'inline-block', width: gapWidth(cloze.word), height: 0, mx: 0.25, borderBottom: 2, borderColor: 'primary.main', verticalAlign: '-0.15em' }} />}
+        : <SentenceGap word={cloze.word} />}
       {cloze.after}
     </Typography>
   );

@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const time = require('./usage-time');
 
-// Memories ("Memories" in docs/design/usage-time.md): a timeline of what is worth coming back to, in the table memories (schema 25):
+// Memories ("Memories" in docs/design/usage-time.md): a timeline of what is worth coming back to, in the table memories (schema 26):
 // - events: one English line the server makes where it already knows something happened (services/usage-memory-hooks.js): a T-Attention task the
 //   person confirmed, sent back or handled, a task an agent finished or that failed, a task created or archived, an update applied, a practice
 //   finished, an engine that went offline or came back, an agent turn longer than 30 minutes. De-duplicated: the same code and reference within

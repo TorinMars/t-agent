@@ -75,18 +75,23 @@
     the phone and the computer.
     **Spell the word inside its sentence** (a word picked from the person's translations, "Words from your translations" in
     [learn-english.md](learn-english.md); Spell, Review and Mistakes alike, since all of them use `SpellExercise`): exactly when the card's
-    `context_zh` (the Chinese of the sentence card whose English is the card's `context`) is not empty and the word stands in `context` as a whole
+    `context_zh` (the Chinese of the sentence card whose English is the card's `context`, or of the example sentence written for this word) is not empty and the word stands in `context` as a whole
     word (`sentenceGap` / `findWholeWord` in `learn-model.mjs`: case-insensitive, a curly apostrophe or dash counts as the straight one, no letter,
     digit or joining apostrophe / hyphen next to it, the punctuation around it outside the gap; the first such place). The prompt card then shows
-    "Fill in the word" with a small chip "your translation" (`#h5-learn-from-translation`: caption type, the primary colour on its 12% tint), the
-    sentence in the h6 size at the regular weight (`#h5-learn-sentence`, `translate="no"`) with a gap where the word goes (`#h5-learn-gap`: a 2px
-    primary underline about as wide as the word, 0.55em a letter, 2.5em to 12em; `aria-label` "blank"), the Chinese under it (body2,
-    text.secondary, `lang="zh"`, `#h5-learn-sentence-zh`), a divider, "The word: <meaning>" (`#h5-learn-word-meaning`; or the lookup's states as in
-    the meaning layout), Hear it and Show first letter. The letter slots, the page's keyboard and the automatic check are the same. **Sound**: every
+    "Fill in the word" with a small chip "your translation" (`#h5-learn-from-translation`: caption type, the primary colour on its 12% tint; for
+    an example sentence written for this word, `context_source` `generated`, the same chip says "example sentence", `#h5-learn-example-sentence`;
+    "A sentence for every word" in [learn-english.md](learn-english.md)), the
+    sentence in the h6 size at the regular weight (`#h5-learn-sentence`, `translate="no"`) with a gap where the word goes (`#h5-learn-gap`: **one
+    2px primary underline per letter** of the word as written in the sentence, `.h5-learn-gap-letter`, 0.5em wide and 0.2em apart, narrowed for a
+    long word so the gap stays at most 12em, `gapLayout` in `learn-model.mjs`; never wraps; `data-letters` and `aria-label` "blank, N letters"),
+    the Chinese under it (body2, text.secondary, `lang="zh"`, `#h5-learn-sentence-zh`), a divider, "The word: <meaning>" (`#h5-learn-word-meaning`;
+    or the lookup's states as in the meaning layout) with, when the page can read aloud, the transcription after it on the same line
+    (`#h5-learn-phonetic`, as in the meaning layout: the sentence is offered aloud already, so it gives nothing more away; alone under the divider
+    while there is no meaning), Hear it and Show first letter. The letter slots, the page's keyboard and the automatic check are the same. **Sound**: every
     sound of this card is the whole English sentence (its `context`), not the word alone: the automatic play when it appears and once more after
     Check (as for any word: Play words automatically, the repeat, the pause, the speed and Stop when I start typing apply), and Hear it, which keeps
     its label and look ("Playing 1 of 2" with Stop while the sentence plays). Any other word card plays the word. The
-    transcription waits for the answer here (frame 1 of the design has none next to Hear it). After Check the word as written in the sentence fills
+    transcription is shown before the answer too (2026-11-24, the user's change; it waited for the answer before). After Check the word as written in the sentence fills
     the gap (`#h5-learn-sentence-word`, medium weight, underlined, success light when right, error light when wrong or given up: the right word
     either way), the helpers go, under the divider the word with its transcription and its meaning on one line (`WordLine` with the meaning as its
     child, `#h5-learn-feedback-phonetic`, `#h5-learn-meaning`), and under the letters, instead of the Feedback card, the result (`#h5-learn-feedback`,

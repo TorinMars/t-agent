@@ -811,21 +811,49 @@ test('a schema 23 database gets the coach tables learn_coach_notes and learn_coa
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
-test('a schema 24 database gets the tables usage_time and memories (schema 25), with a copy taken first; a second start changes nothing', t => {
+test('a schema 24 database gets the context_zh and context_source columns of a word card (schema 25), its cards kept, with a copy taken first; a second start changes nothing', t => {
   const root = temp(t);
   assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
-  // A database of the previous generation: no usage time tables, user_version 24, with a task and a press.
+  // A database of the previous generation: learn_cards without context_zh and context_source, user_version 24, a word asked inside a sentence.
   const file = path.join(root, 'db.sqlite');
   const old = new Database(file);
-  old.exec('DROP TABLE usage_time; DROP TABLE memories');
-  old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
-  old.prepare("INSERT INTO ui_events (at, page, key, surface, view, layout, input, device, uid, sync_seq) VALUES (1, 'abc123', 'h5-cycle', 'header', 'sessions', 'wide', 'pointer', 'local', 'u1', 1)").run();
+  old.exec('ALTER TABLE learn_cards DROP COLUMN context_zh; ALTER TABLE learn_cards DROP COLUMN context_source');
+  old.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, source, context, created_at, due_at, content_at, sync_seq)
+    VALUES ('owner', 'word', 'deploy', 'deploy', 'z', 'translation', 'We deploy the service on Friday.', 1, 2, 5, 3)`).run();
   old.pragma('user_version = 24');
   old.close();
 
   const result = openDb({ TAGENT_HOME: root });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, new RegExp(`schema 24 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.deepEqual(after.prepare('SELECT en, context, context_zh, context_source, content_at, sync_seq FROM learn_cards').get(),
+    { en: 'deploy', context: 'We deploy the service on Friday.', context_zh: '', context_source: '', content_at: 5, sync_seq: 3 }, 'kept, its context the person\'s own');
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-24-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
+test('a schema 25 database gets the tables usage_time and memories (schema 26), with a copy taken first; a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  // A database of the previous generation: no usage time tables, user_version 25, with a task and a press.
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE usage_time; DROP TABLE memories');
+  old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
+  old.prepare("INSERT INTO ui_events (at, page, key, surface, view, layout, input, device, uid, sync_seq) VALUES (1, 'abc123', 'h5-cycle', 'header', 'sessions', 'wide', 'pointer', 'local', 'u1', 1)").run();
+  old.pragma('user_version = 25');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 25 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
   const after = new Database(file);
   assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
   assert.equal(after.prepare('SELECT title FROM tasks').get().title, 'kept task');
@@ -838,7 +866,7 @@ test('a schema 24 database gets the tables usage_time and memories (schema 25), 
   after.close();
   const copies = fs.readdirSync(path.join(root, 'backups'));
   assert.equal(copies.length, 1);
-  assert.match(copies[0], new RegExp(`^db-schema-24-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  assert.match(copies[0], new RegExp(`^db-schema-25-before-${CODE_SCHEMA}-.+\\.sqlite$`));
   const again = openDb({ TAGENT_HOME: root });
   assert.equal(again.status, 0, again.stderr);
   assert.doesNotMatch(again.stdout, /is migrated/);

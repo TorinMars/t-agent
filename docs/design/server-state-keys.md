@@ -75,6 +75,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `linked_last_tasks_v1` | system_state | runtime | a cache of the task names last read from each linked engine, shown dimmed while it is offline | `services/linked-last-tasks.js` |
 | `page_state_peers_v1` | system_state | runtime | the shared page state sync's state per peer | `services/page-state.js` |
 | `learn_sync_peers_v1` | system_state | runtime | the Learn sync's change numbers per peer | `services/learn-sync.js` |
+| `learn_sentences_day_v1:<owner>` | system_state | runtime | the day and the count of the example sentences this engine asked the model for today (a budget per engine, at most 10 a day) | `services/learn-sentences.js` |
 | `learn_home_v1` | system_state | runtime | on a company computer: the last summary of the normal machine that keeps its learning data | `services/learn-sync.js` |
 | `ui_usage_sync_peers_v1` | system_state | runtime | the usage data sync's change numbers and tiers per peer | `services/ui-events-sync.js` |
 | `ui_usage_home_v1` | system_state | runtime | on a company computer: the normal machine its usage data was last handed to | `services/ui-events-sync.js` |

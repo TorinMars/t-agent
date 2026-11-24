@@ -506,18 +506,18 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(active.form.bottom <= active.keys.top + 1 && active.form.top < active.keys.top, 'the draft box is above the function keys');
       assert.ok(active.keys.top - active.form.bottom <= 12, 'right above the keys, not floating away');
       assert.ok(active.root.bottom <= active.keys.top + 1 && active.keys.bottom <= active.voice.top + 1, 'the box is above the function keys, and the action row below them');
-      // The two send actions are in the draft box, under the text, right-aligned ("Bottom bar"): "Send as is" (outlined) then the primary "Send".
+      // ONE row ("Draft box"): the text field on the left, then the two send actions on its bottom line: "Send as is" (an icon button) and the primary "Send".
       // The tool row keeps all seven tools while the box is shown: no button appears or disappears.
-      assert.ok(active.send.top >= active.root.bottom - 1 && active.send.bottom <= active.keys.top + 1, 'the send actions sit under the text, inside the draft box');
+      assert.ok(Math.abs(active.send.bottom - active.root.bottom) <= 1 && active.send.left >= active.root.right - 1 && active.send.bottom <= active.keys.top + 1, 'the send actions sit at the right of the text, on its row, inside the draft box');
       assert.ok(Math.abs(active.send.top - active.translate.top) <= 1 && active.send.right <= active.translate.left + 1, '"Send as is" is left of "Send" on one line');
-      assert.ok(active.translate.right <= 390 && active.translate.right >= 390 - 16 && active.send.height >= 40 && active.translate.height >= 40, 'right-aligned, fit the screen and finger-sized');
+      assert.ok(active.translate.right <= 390 && active.translate.right >= 390 - 16 && active.send.height >= 44 && active.translate.height >= 44 && active.send.width >= 44, 'right-aligned, fit the screen and finger-sized');
       assert.equal(await page.evaluate(() => { const a = document.getElementById('h5-translate-send'), b = document.getElementById('h5-translate-button'); return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING); }), true, 'DOM and tab order: send as is before translate-and-send');
       const looks = await page.evaluate(() => { const pick = id => { const el = document.getElementById(id); return { text: el.textContent.trim(), classes: el.className, label: el.getAttribute('aria-label'), form: el.closest('form') && el.closest('form').id, type: el.type }; }; return { send: pick('h5-translate-send'), translate: pick('h5-translate-button'), aa: document.querySelectorAll('.h5-aa').length }; });
-      assert.deepEqual([looks.send.text, looks.send.label, looks.send.type, looks.send.form], ['Send as is', null, 'submit', 'h5-translate'], '"Send as is" is the form\'s submit, named by its text');
-      assert.ok(/MuiButton-outlined/.test(looks.send.classes) && /MuiButton-contained/.test(looks.translate.classes) && /MuiButton-colorPrimary/.test(looks.translate.classes), 'a secondary outlined action and one primary contained "Send"');
+      assert.deepEqual([looks.send.text, looks.send.label, looks.send.type, looks.send.form], ['', 'Send as is', 'submit', 'h5-translate'], '"Send as is" is the form\'s submit, an icon button named "Send as is"');
+      assert.ok(/MuiIconButton-root/.test(looks.send.classes) && /MuiButton-contained/.test(looks.translate.classes) && /MuiButton-colorPrimary/.test(looks.translate.classes), 'a secondary icon action and one primary contained "Send"');
       assert.deepEqual([looks.translate.text, looks.translate.label, looks.aa], ['Send', 'Translate and send', 0], 'the primary button says "Send" and is named "Translate and send"; no "Aa" mark any more');
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('#h5-actions > button, #h5-actions > label')].filter(el => el.getBoundingClientRect().width > 0).length), 7, 'the tool row keeps its seven tools while the draft box is shown');
-      assert.ok(active.root.width > 250 && active.root.left >= 0 && active.root.right <= 390, 'the box takes the full width');
+      assert.ok(active.root.width > 200 && active.root.left >= 0 && active.root.right <= active.send.left, 'the field takes the free width left of the buttons');
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-translate-input')).borderTopLeftRadius), '8px', 'the text field has the theme\'s 8px corners');
       // The terminal is moved, not resized: same box, same element height, same rows, no resize message; it only moves up.
       assert.equal(active.term, rest.term, 'the terminal box keeps its height');
@@ -646,8 +646,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.equal(resizesAfter, resizesBefore, 'opening and closing the menu sends no resize');
     }
 
-    // Translate box height: one line when empty, then it grows with the text and shows ALL of it (1, 2, 5, 12 lines) without inner scroll, up to a cap of half the
-    // visible viewport; beyond the cap it scrolls inside. It shrinks back when lines are deleted, and a send gives one line again.
+    // Translate box height on a phone: one line when empty, then it grows with the text and shows ALL of it (1, 2, 4 lines) without inner scroll, up to a cap of four
+    // lines ("Draft box"); beyond the cap it scrolls inside. It shrinks back when lines are deleted, and a send gives one line again. (A computer keeps the cap of half the
+    // visible viewport.)
     {
       const input = page.locator('#h5-translate-input');
       const box = async () => { await barSettled(); return page.evaluate(() => {
@@ -667,7 +668,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(Math.abs(one.height - (one.line + one.pad)) <= 2, `one line when empty (${one.height}px)`);
       await input.focus(); await input.fill('short');
       assert.ok(Math.abs((await box()).height - one.height) <= 1, 'short text stays on one line');
-      await input.focus(); await input.fill('a long sentence that does not fit on a single line of the narrow phone box, so it wraps');
+      await input.focus(); await input.fill('a sentence that wraps onto two lines');
       const two = await box();
       assert.ok(Math.abs(two.height - (2 * two.line + two.pad)) <= 2, `two lines for text that needs two (${two.height}px)`);
       assert.ok(Math.abs(two.bottom - one.bottom) <= 1, 'the box grows upward, its bottom stays');
@@ -677,7 +678,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.ok(noInnerScroll(two), 'two lines: everything is shown, no inner scroll');
       const lines = n => Array.from({ length: n }, (_, i) => `row ${i + 1}`).join('\n');
       let previous = two;
-      for (const n of [5, 12]) {
+      for (const n of [3, 4]) {
         await input.focus(); await input.fill(lines(n));
         const grownBox = await box();
         assert.ok(Math.abs(grownBox.height - (n * grownBox.line + grownBox.pad)) <= 3, `${n} lines are all shown (${grownBox.height}px)`);
@@ -693,10 +694,10 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const shrunk = await box();
       assert.ok(Math.abs(shrunk.height - (2 * shrunk.line + shrunk.pad)) <= 3 && noInnerScroll(shrunk), `shrinks back after deleting lines (${shrunk.height}px)`);
       assert.ok(shrunk.screenBottom <= shrunk.areaTop + 1, 'the last terminal row stays above the bar after shrinking');
-      // Beyond the cap (half of the visible viewport) the box stops growing and scrolls inside.
+      // Beyond the cap (four lines on a phone) the box stops growing and scrolls inside.
       await input.focus(); await input.fill(lines(80));
       const many = await box();
-      assert.ok(many.height <= many.viewport * 0.5 + 1 && many.height >= many.viewport * 0.5 - many.line - 2, `the cap is about half of the viewport (${many.height}px of ${many.viewport}px)`);
+      assert.ok(Math.abs(many.height - (4 * many.line + many.pad)) <= 3, `the cap is four lines (${many.height}px)`);
       assert.equal(many.overflowY, 'auto', 'beyond the cap the text scrolls inside the box');
       assert.ok(many.scrollHeight > many.clientHeight + 10, 'beyond the cap there is more text than is shown');
       assert.equal(many.termHeight, one.termHeight, 'at the cap the terminal box keeps its height');
@@ -717,7 +718,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // Keyboard dismissed: the box goes back to ONE line and the bar to the resting pill, the text is kept, no resize message; focusing again shows everything.
     {
       const input = page.locator('#h5-translate-input');
-      const text = 'a long sentence that does not fit on a single line of the narrow phone box, so it wraps';
+      const text = 'a sentence that wraps onto two lines';
       const state = async () => { await barSettled(); return page.evaluate(() => {
         const el = document.getElementById('h5-translate-input');
         const style = getComputedStyle(el);
@@ -906,7 +907,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       await page.keyboard.type('four');
       await barSettled();
       const many = await input.evaluate(el => ({ height: el.getBoundingClientRect().height, overflowY: getComputedStyle(el).overflowY }));
-      assert.ok(many.height > grown.height + 15 && many.overflowY !== 'auto', 'five lines from Enter are all shown, no inner scroll');
+      assert.ok(many.height > grown.height + 15 && many.overflowY === 'auto', 'five lines from Enter: four are shown, then the box scrolls inside');
       assert.equal(translateRequests.length, requests, 'Enter sends no translate request');
       assert.equal((await sent()).length, inputs, 'Enter writes nothing to the terminal');
       // Enter that confirms an IME composition neither sends nor adds a line.
@@ -970,7 +971,8 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       const input = page.locator('#h5-translate-input');
       const returns = () => page.evaluate(() => window.sockets[0].sent.filter(item => item === '\r').length);
       assert.match(await page.locator('#h5-translate-button').getAttribute('title'), /\((↩|Enter)\)$/, 'the translate tooltip names its shortcut');
-      assert.match(await page.locator('#h5-translate-send').getAttribute('title'), /\((⌥↩|Alt\+Enter)\)$/, 'the send tooltip names its shortcut');
+      // The touch "Send as is" is an icon button: its title is its name (the computer's menu item still names the shortcut).
+      assert.equal(await page.locator('#h5-translate-send').getAttribute('title'), 'Send as is', 'the touch send-as-is title is its name');
       for (const combo of ['Enter']) {
         const requests = translateRequests.length;
         const before = await returns();

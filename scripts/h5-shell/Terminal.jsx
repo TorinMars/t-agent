@@ -157,6 +157,8 @@ const CLIPBOARD_CANCEL = { color: 'notice.contrastText', px: 1.5, '&:hover': { b
 // When the draft box grows over the terminal h5.js sets `--h5-bar-extra` on this box and moves the terminal; the terminal is never resized for it.
 // What the bottom area draws (its rows read it from here): T-Attention and the file sheet only as the counts and flags the buttons show.
 // The touch layout while the draft box types with the phone's keyboard: rows 1 and 2 are not shown (see `typing` in BottomArea).
+// While the system keyboard is up (`state.softKeyboard`) the area keeps no bottom safe-area inset: the keyboard covers the home indicator, so the
+// draft row sits flush on the keyboard and the freed height goes to the terminal ("Draft box" in docs/design/page-terminal-and-bottom-bar.md).
 const TYPING_HIDES_ROWS = { '&[data-typing] #h5-keys, &[data-typing] #h5-actions': { display: 'none' } };
 const BOTTOM = state => ({
   input: state.input, terminalAgent: state.terminalAgent, translating: state.translating, osk: state.osk, mods: state.mods, keyboard: state.keyboard,
@@ -229,7 +231,7 @@ export function BottomArea({ ui }) {
   return (
     <Paper
       square elevation={1} className="h5-bottom" id="h5-bottom" data-single={pointer ? '' : undefined} data-focused={pointer ? '' : undefined} data-typing={typing ? '' : undefined}
-      sx={pointer ? { ...BAR_SURFACE, ...SINGLE_ROW } : { ...BAR_SURFACE, marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: 'env(safe-area-inset-bottom)', ...DRAFT_ON, ...TYPING_HIDES_ROWS }}
+      sx={pointer ? { ...BAR_SURFACE, ...SINGLE_ROW } : { ...BAR_SURFACE, marginTop: 'calc(var(--h5-bar-extra, 0px) * -1)', pb: state.softKeyboard ? 0 : 'env(safe-area-inset-bottom)', ...DRAFT_ON, ...TYPING_HIDES_ROWS }}
     >
       {list}
       <TranslateBar state={state} pointer={pointer} single={pointer} ui={ui} />
@@ -567,14 +569,16 @@ function DraftNote({ ui, row }) {
 // show all its text); Material UI draws around it.
 // Touch: the box is hidden by default: it has no height at all (`COLLAPSED`) and sits ABOVE the two rows. The "Draft keyboard" key focuses the textarea;
 // while the textarea has focus (`:focus-within`), a button is being pressed (`data-hold`, set by h5.js), voice is recording (`:has(.listening)`) or a
-// translation is running (class `translating`), the box is shown with its two send actions under the text (`DRAFT_ON`, a `:has()` rule on `#h5-bottom`):
-// Send as is (`#h5-translate-send`, outlined: the text as typed) and Send (`#h5-translate-button`, contained primary: translate, then send). Losing the
-// focus hides it again at once (CSS only, no timer); the text stays in the textarea. Only the CSS changes, so the textarea is never remounted.
+// translation is running (class `translating`), the box is shown (`DRAFT_ON`, a `:has()` rule on `#h5-bottom`) as ONE row: the text field takes the
+// free width and its two send actions sit at its right, on the row's bottom line: Send as is (`#h5-translate-send`, a 44px icon button: the text as
+// typed) and Send (`#h5-translate-button`, contained primary: translate, then send; icon only on a screen narrower than 360px). The field is one line
+// when empty and grows with its text up to PHONE_MAX_LINES in h5.js `autosize`, then scrolls inside. Losing the focus hides it again at once (CSS
+// only, no timer); the text stays in the textarea. Only the CSS changes, so the textarea is never remounted.
 // The box reserves nothing in the page layout there: all of its height is `--h5-bar-extra`, set by h5.js on `#h5-bottom`, pulled back by a negative top
 // margin, so it grows upward OVER the terminal and the terminal box never changes size (no fit, no PTY resize); h5.js moves the terminal instead.
 // Computer (`single`) and a column (`compact`): the box is always shown in the row and grows upward out of it (`COMPACT_BOX`).
 const COLLAPSED = { maxHeight: 0, overflow: 'hidden', m: 0, p: 0, border: 0 };
-const SHOWN = { maxHeight: 'none', overflow: 'visible', px: 1, pt: 1 };
+const SHOWN = { maxHeight: 'none', overflow: 'visible', px: 1, py: 1 };
 const DRAFT_ON = {
   '&:has(#h5-translate:focus-within), &:has(#h5-translate[data-hold]), &:has(#h5-translate.translating), &:has(.h5-voice.listening)': {
     '& #h5-translate': SHOWN, '& .h5-draft-actions': { display: 'flex' },
@@ -584,6 +588,14 @@ const DRAFT_ON = {
 // The keyboard settings are the platform defaults (Enter is a new line), so the user's own keyboard, IME, autocorrect and dictation work as usual.
 export function TranslateBar({ state, pointer = false, compact = false, single = false, ui = null }) {
   const row = compact || single;
+  const input = (
+    <OutlinedInput
+      id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea"
+      placeholder={t('Chinese → English, then send')}
+      inputProps={{ rows: 1, enterKeyHint: 'enter', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
+      sx={single ? SINGLE_INPUT : compact ? COMPACT_INPUT : PHONE_INPUT}
+    />
+  );
   return (
     <Box
       component="form" className={`h5-translate${state.translating ? ' translating' : ''}`} id="h5-translate" autoComplete="off"
@@ -593,36 +605,43 @@ export function TranslateBar({ state, pointer = false, compact = false, single =
       sx={single ? SINGLE_BOX : compact ? COMPACT_BOX : { position: 'relative', ...COLLAPSED }}
     >
       {ui ? <DraftNote ui={ui} row={row} /> : null}
-      <OutlinedInput
-        id="h5-translate-input" className={`h5-translate-input${state.translating ? ' translating' : ''}`} fullWidth size="small" inputComponent="textarea"
-        placeholder={t('Chinese → English, then send')}
-        inputProps={{ rows: 1, enterKeyHint: 'enter', 'aria-label': t('Chinese input, translated to English and sent to the terminal'), style: { resize: 'none' } }}
-        sx={single ? SINGLE_INPUT : compact ? COMPACT_INPUT : PHONE_INPUT}
-      />
+      <DraftRow state={state} input={input} row={row} />
       {compact && ui ? <DraftPeek ui={ui} /> : null}
-      {row ? null : <DraftActions state={state} />}
     </Box>
   );
 }
-// The two send actions of the touch draft box: a secondary "Send as is" (outlined; the form's submit, as Option/Alt+Enter) and the primary "Send"
-// (translate, then send; Enter from a hardware keyboard). Hidden with the box (`display: none` until `DRAFT_ON`, so they are never tabbed to while hidden).
-function DraftActions({ state }) {
+// The touch draft box's one row: the text field on the left, taking the free width, and the two send actions at its right, on its bottom line, so a
+// field of several lines grows upward and the buttons do not move: a secondary "Send as is" (a 44px icon button; the form's submit, as Option/Alt+Enter)
+// and the primary "Send" (translate, then send; Enter from a hardware keyboard). The actions are hidden with the box (`display: none` until `DRAFT_ON`,
+// so they are never tabbed to while hidden).
+// A row of its own (`row`: a computer, a column) has its send actions elsewhere; the wrapper is still there (`display: contents`), so a change of the
+// input mode never remounts the textarea that h5.js and voice-input.js hold.
+function DraftRow({ state, input, row }) {
   return (
-    <Box className="h5-draft-actions" sx={{ display: 'none', justifyContent: 'flex-end', alignItems: 'center', gap: 1, pt: 1 }}>
-      <Button
-        type="submit" id="h5-translate-send" className="h5-translate-send" variant="outlined" disabled={state.translating} title={t('Send as typed, without translating') + SEND_KEYS}
-        sx={{ px: 2 }}
-      >{t('Send as is')}</Button>
-      <Button
-        id="h5-translate-button" type="button" variant="contained" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
-        startIcon={<Icon name="send" size={18} />} sx={{ px: 2.5 }}
-      >{t('Send')}</Button>
+    <Box className="h5-draft-row" sx={row ? { display: 'contents' } : { display: 'flex', alignItems: 'flex-end', gap: 1 }}>
+      {input}
+      {row ? null : <Box className="h5-draft-actions" sx={{ display: 'none', flex: '0 0 auto', alignItems: 'center', gap: 1 }}>
+        <IconButton type="submit" id="h5-translate-send" className="h5-translate-send" disabled={state.translating} {...named(t('Send as is'))} sx={{ width: 44, height: 44 }}>
+          <Icon name="keyEnter" size={22} />
+        </IconButton>
+        <Button
+          id="h5-translate-button" type="button" variant="contained" disabled={state.translating} title={t('Translate to English and send') + TRANSLATE_KEYS} aria-label={t('Translate and send')}
+          startIcon={<Icon name="send" size={18} />} sx={PHONE_SEND}
+        ><span className="h5-send-label">{t('Send')}</span></Button>
+      </Box>}
     </Box>
   );
 }
-// The touch draft box's text field: a filled surface with 8px corners and the primary outline while it has the focus; 16px text (iOS zooms smaller).
+// The primary Send of the touch row: 44px high, icon and label; on a screen narrower than 360px the icon alone in a 44px square.
+const PHONE_SEND = {
+  height: 44, minWidth: 0, px: 2,
+  '@media (max-width: 359.98px)': { width: 44, px: 0, '& .MuiButton-startIcon': { m: 0 }, '& .h5-send-label': { display: 'none' } },
+};
+// The touch draft box's text field: a filled surface with 8px corners and the primary outline while it has the focus; 16px text (iOS zooms smaller)
+// on 24px lines, so one line is a 44px target, as tall as the buttons beside it.
 const PHONE_INPUT = {
-  alignItems: 'flex-end', py: 0.25, typography: 'body1', bgcolor: 'action.hover', borderRadius: 2,
+  flex: '1 1 auto', minWidth: 0, width: 'auto', alignItems: 'flex-end', p: 0, typography: 'body1', bgcolor: 'action.hover', borderRadius: 2,
+  '& textarea': { px: 1.5, py: '10px', lineHeight: '24px' },
   '&:not(.Mui-focused) fieldset': { borderColor: 'transparent' },
 };
 // The draft box of a column (CompactBottom): a 36px pill (44px in touch input mode) that takes the free width of the row; a 2px primary ring while

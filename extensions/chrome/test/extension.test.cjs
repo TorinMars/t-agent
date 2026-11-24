@@ -44,6 +44,17 @@ test('unpacked extension contract in local headless Chromium', {
       }));
       return;
     }
+    // A page that opens a popup window, and the popup, which fetches at once ("A recording follows the windows the page opens").
+    if (req.url === '/opener') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<!doctype html><title>Opener</title><button id="pop" onclick="window.open(\'/popup\', \'pay\', \'popup,width=400,height=400\')">Pay</button>');
+      return;
+    }
+    if (req.url === '/popup') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<!doctype html><title>Popup</title><h1>Popup</h1><script>fetch("/xhr?from=popup-load"); setTimeout(() => fetch("/xhr?from=popup-later"), 800)</script>');
+      return;
+    }
     if (req.url === '/next') {
       res.setHeader('Content-Type', 'text/html');
       res.end('<!doctype html><title>Next</title><h1>Next page</h1><button id="after">After navigation</button>');
@@ -502,6 +513,84 @@ test('unpacked extension contract in local headless Chromium', {
     });
     await ok('tabs.close', {
       tab_id: kept.tab_id
+    });
+  });
+  await t.test('open with record and window: its own window in front; the popup the page opens joins the recording', async () => {
+    const shared = (await ok('tabs.open', {
+      url: `${base}/next`
+    })).tab;
+    const opened = await ok('tabs.open', {
+      url: `${base}/opener`,
+      record: {},
+      window: 'front'
+    });
+    const id = opened.tab.tab_id;
+    assert.equal(opened.window.own, true);
+    assert.equal(opened.window.focused, true);
+    assert.equal(opened.window.window_id, opened.tab.window_id);
+    assert.notEqual(opened.tab.window_id, shared.window_id, 'not T-Agent\'s shared window');
+    const w = await setup.evaluate(async x => {
+      const w = await chrome.windows.get(x, {
+        populate: true
+      });
+      return {
+        type: w.type,
+        state: w.state,
+        tabs: w.tabs.length
+      };
+    }, opened.tab.window_id);
+    assert.deepEqual(w, {
+      type: 'normal',
+      state: 'normal',
+      tabs: 1
+    }, 'a normal window, not minimized, just for the recording');
+    const later = (await ok('tabs.open', {
+      url: `${base}/next`
+    })).tab;
+    assert.equal(later.window_id, shared.window_id, 'a later open goes to the shared window');
+    await ok('page.wait', {
+      tab_id: id,
+      selector: '#pop'
+    });
+    await ok('input.click', {
+      tab_id: id,
+      target: {
+        selector: '#pop'
+      }
+    });
+    let popupId;
+    for (let n = 0; n < 60 && !popupId; n++) {
+      await delay(100);
+      popupId = events.find(e => e.event === 'tab.opened' && e.data.recording_id === opened.recording_id)?.data.tab_id;
+    }
+    assert(Number.isInteger(popupId), 'the popup joined the recording');
+    await delay(1500);
+    const listed = (await ok('tabs.list')).tabs.find(x => x.tab_id === popupId);
+    assert.equal(listed.recording_id, opened.recording_id, 'the popup is a T-Agent tab of the recording');
+    assert.equal(await setup.evaluate(async x => (await chrome.windows.get((await chrome.tabs.get(x)).windowId)).type, popupId), 'popup', 'it stays in the popup window Chrome made');
+    await ok('record.stop', {
+      recording_id: opened.recording_id
+    });
+    const items = events.filter(e => e.event === 'record.items' && e.data.recording_id === opened.recording_id).flatMap(e => e.data.items);
+    const first = items.find(x => x.tab === popupId);
+    assert.deepEqual([first.kind, first.action, first.opener], ['tab', 'opened', id], 'the popup\'s first item names its opener');
+    const fetched = items.filter(x => x.kind === 'request' && x.tab === popupId).map(x => x.url);
+    assert(fetched.some(u => u.endsWith('/xhr?from=popup-later')), `the popup's fetch is recorded: ${JSON.stringify(fetched)}`);
+    // Its first load came before the debugger could attach: chrome.webRequest recorded it, once, without bodies.
+    const early = items.filter(x => x.tab === popupId && x.via === 'webRequest');
+    for (const u of ['/popup', '/xhr?from=popup-load']) {
+      assert.equal(fetched.filter(x => x === `${base}${u}`).length, 1, `the popup's first load is recorded once: ${u} in ${JSON.stringify(fetched)}`);
+    }
+    const doc = early.find(x => x.kind === 'response' && x.url === `${base}/popup`);
+    assert.equal(doc?.status, 200, 'the early document has its response');
+    assert.equal(doc.type, 'Document');
+    assert.equal(doc.body_omitted, 'early');
+    assert(items.some(x => x.kind === 'request' && x.tab === id && x.url === `${base}/opener`), 'the opener\'s own requests are there too');
+    const after = (await ok('tabs.list')).tabs;
+    for (const x of [id, popupId]) assert.equal(after.find(y => y.tab_id === x).capturing, false, `the debugger left tab ${x}`);
+    for (const x of [popupId, id, later.tab_id, shared.tab_id]) await ok('tabs.close', {
+      tab_id: x,
+      auto: true
     });
   });
   await t.test('unpair close halts automatic reconnect', async () => {

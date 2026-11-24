@@ -1,6 +1,6 @@
 # T-Agent Browser
 
-A local Manifest V3 bridge from your own T-Agent sessions to tabs in your own Chrome browser. It implements all 25 v1 command methods, plus `tabs.reveal` (1.0.3: brings the tab of a T-Agent page with a given origin to the front, for the desktop window's Open session; it reads no page and needs no handed tab). 1.0.4 adds recording options (see "Recordings (1.0.4)" below) and lists them as `features` in its hello. 1.0.5 keeps the person's focus and closes T-Agent's tabs (see "Focus and closing (1.0.5)"). Plain JavaScript ES modules, no build step, no remote code, no static content scripts. Requires Chrome 116 or newer (WebSocket activity keeps the service worker alive).
+A local Manifest V3 bridge from your own T-Agent sessions to tabs in your own Chrome browser. It implements all 25 v1 command methods, plus `tabs.reveal` (1.0.3: brings the tab of a T-Agent page with a given origin to the front, for the desktop window's Open session; it reads no page and needs no handed tab). 1.0.4 adds recording options (see "Recordings (1.0.4)" below) and lists them as `features` in its hello. 1.0.5 keeps the person's focus and closes T-Agent's tabs (see "Focus and closing (1.0.5)"). 1.0.6 gives a recording opened with `tabs.open` its own window and lets a recording follow the tabs its page opens (see "Recording windows (1.0.6)"; it adds the `webNavigation` and `webRequest` permissions). Plain JavaScript ES modules, no build step, no remote code, no static content scripts. Requires Chrome 116 or newer (WebSocket activity keeps the service worker alive).
 
 ## Load and pair
 
@@ -58,13 +58,20 @@ The whole rule is "Focus and closing" in `docs/design/browser-extension.md`. In 
 - When you activate a T-Agent tab in a window you are in, or click or type in it, it is yours: it leaves the group and T-Agent no longer uses or closes it (a recorded tab stays T-Agent's, but is kept open). `tabs.open` with `keep` marks a tab that T-Agent never closes by itself; `tabs.close` with `auto` (T-Agent's own closing when an agent's turn ended) closes only an owned tab that is not kept.
 - The bridge's `{ type: 'reload' }` makes the extension read its folder's `manifest.json` and, when it is newer than the running version (and not tried for that version in the last 10 minutes), reload itself once no command or recording runs. The tabs it owns come back after the reload.
 
+## Recording windows (1.0.6)
+
+The whole rule is "The recording's own window" and "A recording follows the windows the page opens" in `docs/design/browser-extension.md`. In short:
+
+- `tabs.open` with `record` and `window: 'front'` (`tcli browser open --record`) opens a new focused, normal window just for that recording; `window: 'back'` (`--background`) opens it unfocused. It is never the shared T-Agent window, and no later open reuses it. The answer has `window { window_id, focused, own: true }`.
+- A tab a recorded tab opens (popup window, `target="_blank"`, `window.open`; `chrome.tabs.onCreated` with `openerTabId` and `chrome.webNavigation.onCreatedNavigationTarget`) joins the same recording, at most 10 tabs: it is owned, stays where Chrome put it, gets the debugger and the page recorder, and its items carry `tab` (the first is `{ kind: 'tab', action: 'opened', tab, opener, url }`). Until its debugger is attached, `chrome.webRequest` records its first requests (`via: 'webRequest'`, no bodies); those listeners exist only while a recording runs. Stopping the recording detaches from all its tabs; the extension sends `tab.opened` so T-Agent closes the tab by the usual rules.
+
 ## Tests
 
 From the repository root, using the repository's existing Playwright/Chromium and `ws` dependencies:
 
 ```sh
 node --test extensions/chrome/test/redact.test.cjs extensions/chrome/test/page.test.cjs extensions/chrome/test/worker.test.cjs
-node --test extensions/chrome/test/focus.test.cjs
+node --test extensions/chrome/test/focus.test.cjs extensions/chrome/test/record-window.test.cjs
 node --test extensions/chrome/test/extension.test.cjs extensions/chrome/test/reload.test.cjs
 ```
 

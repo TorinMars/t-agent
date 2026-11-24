@@ -95,7 +95,7 @@
 
 | File | What is in it | Size |
 | --- | --- | --- |
-| [browser-extension.md](docs/design/browser-extension.md) | The Chrome extension driven by `tcli browser`: its parts, the shared contract, `tabs.reveal`, the bridge diagram, recordings (from the first load with `open --record`, type and body size filters, `source` agent / user, click target context, what appeared in DOM changes, `features` for older extensions), focus and closing (T-Agent's own background window, no focus taken, screenshots of inactive tabs, page dialogs, the person's tabs, `--keep`, tabs closed after the agent's turn, the extension reloading itself). | 19 KB |
+| [browser-extension.md](docs/design/browser-extension.md) | The Chrome extension driven by `tcli browser`: its parts, the shared contract, `tabs.reveal`, the bridge diagram, recordings (from the first load with `open --record` in its own window in front, following the tabs and popups the page opens, type and body size filters, `source` agent / user, click target context, what appeared in DOM changes, `features` for older extensions), focus and closing (T-Agent's own background window, no focus taken, screenshots of inactive tabs, page dialogs, the person's tabs, `--keep`, tabs closed after the agent's turn, the extension reloading itself). | 24 KB |
 | [site-library.md](docs/design/site-library.md) | What agents learn about each website (`tcli site`): entry shape, storage, sync. | 6 KB |
 | [upload-oss.md](docs/design/upload-oss.md) | Image and file upload to OSS: configuration, policies, limits. | 6 KB |
 | [machine-tools.md](docs/design/machine-tools.md) | Tools whose pages were removed in 2.88.0 but whose routes stay (frp, SSH tunnel, PM2, apps, file sync and more). | 1 KB |

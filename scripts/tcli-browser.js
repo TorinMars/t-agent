@@ -30,7 +30,14 @@ over with the extension button)
                          turn (tell the person)
     --record             record from the first
                          load (takes the record
-                         start options)
+                         start options), in a
+                         new window in front, for
+                         the person to use; the
+                         tabs the page opens
+                         join the recording
+    --background         with --record: its own
+                         window behind (you
+                         drive the page)
   close [tab]            close (a handed tab is
                          released, never closed)
   go [tab] <url>         navigate (--no-wait)
@@ -118,6 +125,7 @@ your commands have source "agent", the person's
                          network kinds)
     --type XHR,Fetch     resource type
     --source agent|user  who did it
+    --tab T              one tab of it
     --url U | /regex/    --status 4xx,500
     --limit N --offset N
   record requests <id>   request + response as
@@ -126,6 +134,9 @@ your commands have source "agent", the person's
                          Image, Font, Media
     --all | --type T     keep them / only T
     --url U --status S --limit N --offset N
+    --tab T              one tab (a tab column
+                         shows when the lines
+                         come from several tabs)
     --json | -o file     JSON lines with headers
                          and bodies
   record rm <id> --yes
@@ -422,6 +433,7 @@ function createBrowserGroup(h) {
       `  stopped   ${summary.stopped_at ? `${summary.stopped_at}${summary.stop_reason ? ` (${summary.stop_reason})` : ''}` : 'still recording'}`,
       `  items     ${summary.items}${summary.truncated ? ` (+${summary.dropped_items} dropped at the size limit)` : ''} · ${humanSize(summary.bytes)}`,
       `  tab       ${summary.tab_id === null || summary.tab_id === undefined ? '-' : summary.tab_id}`,
+      ...(summary.tabs && Object.keys(summary.tabs).length > 1 ? [`  tabs      ${Object.entries(summary.tabs).map(([tab, count]) => `${tab} (${count} items)`).join(', ')}`] : []),
       `  origins   ${(summary.origins || []).join(' ') || '-'}`,
     ];
     const kinds = Object.entries(summary.kinds || {}).map(([kind, count]) => `${kind} ${count}`).join(', ');
@@ -467,15 +479,21 @@ function createBrowserGroup(h) {
       return [' tab  [how] title  url  (* = active)', ...tabs.map(tabLine)].join('\n');
     }),
     open: {
-      values: RECORD_VALUES, bools: ['active', 'keep', 'record', ...RECORD_BOOLS],
+      values: RECORD_VALUES, bools: ['active', 'keep', 'record', 'background', ...RECORD_BOOLS],
       async run(ctx, flags, positional) {
-        if (positional.length !== 1) throw usage('Usage: tcli browser open <url> [--active] [--keep] [--record [--types T] [--max-body N] ...]');
+        if (positional.length !== 1) throw usage('Usage: tcli browser open <url> [--active] [--keep] [--record [--background] [--types T] [--max-body N] ...]');
         const record = recordParams(flags);
         if (!flags.record && Object.keys(record).length) throw usage('The record options of open need --record');
-        const answer = await cmd(ctx, 'tabs.open', prune({ browser_id: flags.browser, url: positional[0], active: flags.active ? true : undefined, keep: flags.keep ? true : undefined, record: flags.record ? record : undefined }), { timeoutMs: timeoutOf(flags) });
+        if (flags.background && !flags.record) throw usage('--background needs --record (a plain open is always behind the person\'s window)');
+        // A recording gets its own window: in front for the person to use, or behind with --background ("Recording from the first load" in
+        // docs/design/browser-extension.md).
+        const window = flags.record ? (flags.background ? 'back' : 'front') : undefined;
+        const answer = await cmd(ctx, 'tabs.open', prune({ browser_id: flags.browser, url: positional[0], active: flags.active ? true : undefined, keep: flags.keep ? true : undefined, record: flags.record ? record : undefined, window }), { timeoutMs: timeoutOf(flags) });
         return print(ctx, flags, answer, result => {
           const opened = result && result.tab ? `Opened tab ${result.tab.tab_id}: ${result.tab.url || positional[0]}` : 'Opened';
           const lines = [opened];
+          if (window === 'front') lines.push('Opened a new window in front for the recording: the person can use the page while it records.');
+          if (window === 'back') lines.push('Opened its own window in the background for the recording.');
           if (flags.keep) lines.push('It stays open after your turn: tell the person it is there (the "T-Agent" group in T-Agent\'s window).');
           if (result && result.recording_id) lines.push(`Recording ${result.recording_id} from the first load. Use the page, then: tcli browser record stop`);
           return lines.join('\n');

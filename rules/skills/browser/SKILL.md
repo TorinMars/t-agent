@@ -50,7 +50,7 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser click e12         # click an element
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser type css:#search "invoices" --submit
 ```
 
-To discover the **requests and APIs** a page uses, capture the network or record the whole interaction. To see the first load too, open the page with `--record` instead of reloading it after `record start`. `--types` and `--max-body` keep a recording small (scripts and styles are most of its size); in the items, your own actions have `source: "agent"` and the user's `source: "user"`, click targets have a `nearest` element with its name and text, and `dom` items list what `appeared` (dialogs, alerts, toasts, headings, buttons).
+To discover the **requests and APIs** a page uses, capture the network or record the whole interaction. To see the first load too, open the page with `--record` instead of reloading it after `record start`. `open --record` opens a new window in front for the user, who usually acts in the page while it records (tell them it is there); add `--background` when you record only your own actions. A recording follows the windows the page opens: popups (sign-in, payment), `target="_blank"` links and new tabs join the same recording, their items carry `tab`, and `--tab T` reads one of them. `--types` and `--max-body` keep a recording small (scripts and styles are most of its size); in the items, your own actions have `source: "agent"` and the user's `source: "user"`, click targets have a `nearest` element with its name and text, and `dom` items list what `appeared` (dialogs, alerts, toasts, headings, buttons).
 
 ```bash
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser net start

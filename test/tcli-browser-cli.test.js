@@ -65,7 +65,7 @@ test.before(async () => {
   env = await bridgeServer({ app, db, bridgeOptions: { recordings } });
   holder.bridge = env.bridge;
   const { token } = env.bridge.pair({ code: env.bridge.createPairCode().code, name: 'Work Chrome' });
-  ext = await fakeExtension(env.wsUrl, token, { handler, features: FEATURES });
+  ext = await fakeExtension(env.wsUrl, token, { handler, features: [...FEATURES, 'open.window', 'record.tabs'] });
 });
 test.after(async () => {
   ext.close();
@@ -230,10 +230,10 @@ test('open --record and the record filters: params, checks, output, the filters 
   behaviour['tabs.open'] = params => ({ tab: { tab_id: 14, url: params.url, title: '' }, ...(params.record ? { recording_id: 'rec_kzo_abcd' } : {}) });
   const opened = await run(['open', 'https://shop.test/new', '--record', '--types', 'xhr,FETCH', '--max-body', '1000']);
   assert.equal(opened.code, 0, opened.err);
-  assert.match(opened.out, /^Opened tab 14: https:\/\/shop\.test\/new\nRecording rec_kzo_abcd from the first load/);
-  assert.deepEqual(last().params, { url: 'https://shop.test/new', record: { types: ['XHR', 'Fetch'], max_body_bytes: 1000 } });
+  assert.match(opened.out, /^Opened tab 14: https:\/\/shop\.test\/new\nOpened a new window in front for the recording: .*\nRecording rec_kzo_abcd from the first load/);
+  assert.deepEqual(last().params, { url: 'https://shop.test/new', record: { types: ['XHR', 'Fetch'], max_body_bytes: 1000 }, window: 'front' });
   await run(['open', 'https://shop.test/plain', '--record']);
-  assert.deepEqual(last().params, { url: 'https://shop.test/plain', record: {} });
+  assert.deepEqual(last().params, { url: 'https://shop.test/plain', record: {}, window: 'front' });
   const count = ext.commands.length;
   const without = await run(['open', 'https://shop.test/new', '--types', 'XHR']);
   assert.equal(without.code, 1);
@@ -251,6 +251,56 @@ test('open --record and the record filters: params, checks, output, the filters 
   assert.equal((await run(['record', 'start', '--max-body', '-5'])).code, 1);
   assert.equal(ext.commands.length, count + 2, 'refused options never reach the browser');
   assert.match((await run(['record', 'show', 'rec_kzf_abcd'])).out, /filters {3}only document,xhr · bodies cut at /);
+});
+
+test('open --record opens its own window, in front or with --background behind', async () => {
+  assert.match((await run(['help'])).out, /--background/);
+  behaviour['tabs.open'] = params => ({ tab: { tab_id: 15, url: params.url, title: '' }, ...(params.record ? { recording_id: 'rec_kzw_abcd' } : {}), ...(params.window ? { window: { window_id: 7, focused: params.window === 'front', own: true } } : {}) });
+  const front = await run(['open', 'https://shop.test/act', '--record']);
+  assert.equal(front.code, 0, front.err);
+  assert.deepEqual(last().params, { url: 'https://shop.test/act', record: {}, window: 'front' });
+  assert.equal(front.out, 'Opened tab 15: https://shop.test/act\nOpened a new window in front for the recording: the person can use the page while it records.\nRecording rec_kzw_abcd from the first load. Use the page, then: tcli browser record stop\n');
+  const back = await run(['open', 'https://shop.test/drive', '--record', '--background', '--types', 'XHR']);
+  assert.equal(back.code, 0, back.err);
+  assert.deepEqual(last().params, { url: 'https://shop.test/drive', record: { types: ['XHR'] }, window: 'back' });
+  assert.match(back.out, /^Opened tab 15: .*\nOpened its own window in the background for the recording\.\nRecording rec_kzw_abcd/);
+  const json = JSON.parse((await run(['open', 'https://shop.test/drive', '--record', '--background', '--json'])).out);
+  assert.deepEqual(json.window, { window_id: 7, focused: false, own: true }, 'the JSON answer passes through');
+  await run(['open', 'https://shop.test/plain']);
+  assert.deepEqual(last().params, { url: 'https://shop.test/plain' }, 'a plain open sends no window');
+  const count = ext.commands.length;
+  const refused = await run(['open', 'https://shop.test/plain', '--background']);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /--background needs --record/);
+  assert.equal(ext.commands.length, count, 'the usage error never reaches the browser');
+});
+
+test('a recording of several tabs: record show lists them, --tab filters items and requests, the tab column', async () => {
+  ext.event('record.items', { recording_id: 'rec_mt_abcd', items: [
+    { seq: 1, at: 1000, kind: 'nav', tab: 11, tab_id: 11, url: 'https://shop.test/' },
+    { seq: 2, at: 1001, kind: 'request', tab: 11, tab_id: 11, req_id: 'r1', method: 'GET', url: 'https://shop.test/api/a', type: 'XHR', status: 0 },
+    { seq: 3, at: 1002, kind: 'tab', action: 'opened', tab: 16, tab_id: 16, opener: 11, url: 'https://pay.test/' },
+    { seq: 4, at: 1003, kind: 'request', tab: 16, tab_id: 16, req_id: 'r9', method: 'POST', url: 'https://pay.test/api/pay', type: 'Fetch', status: 0 },
+    { seq: 5, at: 1010, kind: 'response', tab: 16, tab_id: 16, req_id: 'r9', method: 'POST', url: 'https://pay.test/api/pay', type: 'Fetch', status: 200, response: {} },
+  ] });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.match((await run(['record', 'show', 'rec_mt_abcd'])).out, /tabs {6}11 \(2 items\), 16 \(3 items\)/);
+  const seqs = text => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).seq);
+  const reads = async () => ({
+    tab: seqs((await run(['record', 'items', 'rec_mt_abcd', '--tab', '16'])).out),
+    tabKind: seqs((await run(['record', 'items', 'rec_mt_abcd', '--tab', '16', '--kind', 'request'])).out),
+    requests: (await run(['record', 'requests', 'rec_mt_abcd', '--tab', '11', '--json'])).out.trim().split('\n').map(line => JSON.parse(line).req_id),
+    human: (await run(['record', 'requests', 'rec_mt_abcd'])).out.trim().split('\n'),
+    one: (await run(['record', 'requests', 'rec_mt_abcd', '--tab', '16'])).out.trim().split('\n'),
+  });
+  const now = await reads();
+  assert.deepEqual([now.tab, now.tabKind, now.requests], [[3, 4, 5], [4], ['r1']]);
+  assert.match(now.human[0], /^tab 11 +r1 +GET/);
+  assert.match(now.human[1], /^tab 16 +r9 +POST +200/);
+  assert.match(now.one[0], /^r9 +POST/, 'one tab: no tab column');
+  olderServer = true;
+  try { assert.deepEqual(await reads(), now, 'the same against a T-Agent before --tab'); } finally { olderServer = false; }
+  assert.equal((await run(['record', 'items', 'rec_mt_abcd', '--tab', 'x'])).code, 1);
 });
 
 test('record start / stop / list / show / items / rm', async () => {

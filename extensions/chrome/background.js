@@ -7,7 +7,9 @@ import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summ
 // 1.0.5 ("Focus and closing" in docs/design/browser-extension.md): tabs open in T-Agent's own background window, `tabs.open` with `keep`,
 // `tabs.close` with `auto` (closes only an owned tab that is not kept), a visible screenshot of a tab that is not active, page dialogs answered
 // while the debugger is attached, `tab.used` when the person uses a T-Agent tab, and the `reload` request of the bridge.
-export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload'];
+// 1.0.6: `tabs.open` with `window` ('front' / 'back': a recording's own window, "The recording's own window" in docs/design/browser-extension.md)
+// and recordings that follow the tabs and windows the recorded page opens (`tab.opened`, "A recording follows the windows the page opens").
+export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload', 'open.window', 'record.tabs'];
 export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal'];
 const recordings = new Map(),
   owned = new Set(),
@@ -15,6 +17,9 @@ const recordings = new Map(),
   grouping = new Set(),
   // Owned tabs opened with `keep` (tcli browser open --keep, or a recorded tab the person used): never closed automatically.
   kept = new Set(),
+  // Owned tabs that a recorded tab opened (a popup, a target=_blank link, window.open): tab id -> the tab that opened it. They joined that
+  // recording, stay where Chrome put them (maybe a popup window, outside any group) and are T-Agent tabs like the ones it opens itself.
+  joined = new Map(),
   // Tab id -> until when an activation of that tab is T-Agent's own (open, activate, a new window's first tab), not the person's.
   quietUntil = new Map(),
   // Tab id -> number of commands running on it, and until when its trusted input events are still the command's own (CDP input).
@@ -36,7 +41,7 @@ let lastTab,
   reloadWanted = false;
 const RELOAD_STATE_MS = 2 * 60000;
 const ready = (async () => {
-  const s = await chrome.storage.session.get(['handed', 'owned', 'kept', 'agent_window', 'blocked']);
+  const s = await chrome.storage.session.get(['handed', 'owned', 'kept', 'joined', 'agent_window', 'blocked']);
   // chrome.storage.session is cleared when the extension reloads itself (the bridge's `reload`): the state written just before it comes back.
   let saved = null;
   try {
@@ -47,6 +52,7 @@ const ready = (async () => {
   for (const id of [...(s.handed || []), ...(fresh.handed || [])]) handed.add(id);
   for (const id of [...(s.owned || []), ...(fresh.owned || [])]) owned.add(id);
   for (const id of [...(s.kept || []), ...(fresh.kept || [])]) kept.add(id);
+  for (const [id, opener] of [...(s.joined || []), ...(fresh.joined || [])]) if (owned.has(id)) joined.set(id, opener);
   agentWindowId = Number.isInteger(s.agent_window) ? s.agent_window : Number.isInteger(fresh.agent_window) ? fresh.agent_window : null;
   blocked = !!s.blocked;
 })();
@@ -54,6 +60,7 @@ const persist = () => chrome.storage.session.set({
   handed: [...handed],
   owned: [...owned],
   kept: [...kept],
+  joined: [...joined],
   agent_window: agentWindowId,
   blocked
 });
@@ -110,6 +117,7 @@ const scriptable = url => /^https?:\/\//i.test(url || '') && !/^https?:\/\/(chro
 async function allowed(t) {
   if (!scriptable(t.url || t.pendingUrl)) fail('TAB_NOT_SCRIPTABLE', 'This page cannot be controlled');
   if (handed.has(t.id)) return 'handed';
+  if (owned.has(t.id) && joined.has(t.id)) return 'group';
   if (owned.has(t.id) && t.groupId >= 0) {
     const g = await chrome.tabGroups.get(t.groupId);
     if (g.title === 'T-Agent') return 'group';
@@ -186,6 +194,11 @@ async function badge(id) {
     color: recordings.has(id) ? '#b3261e' : '#40566b'
   }).catch(() => {});
 }
+// The address a recorded tab shows now: r.url for the tab the recording started in, r.tabs for the tabs it opened.
+const urlOf = (r, id) => id === r.main ? r.url : r.tabs.get(id)?.url;
+function setUrl(r, id, url) {
+  if (id === r.main) r.url = url;else if (r.tabs.has(id)) r.tabs.get(id).url = url;
+}
 function item(id, kind, data) {
   const r = recordings.get(id);
   if (!r) return;
@@ -197,7 +210,9 @@ function item(id, kind, data) {
     at: Number.isFinite(safe.at) ? safe.at : Date.now(),
     kind,
     tab_id: id,
-    url: safe.url || r.url
+    // The tab of the item: a recording follows the tabs its page opens, so its items come from several tabs.
+    tab: id,
+    url: safe.url || urlOf(r, id)
   });
   if (r.queue.length >= 200) flush(r);
 }
@@ -280,12 +295,8 @@ setPageListener((id, event, url) => {
   if (event === 'commit' && !scriptable(url)) return;
   void install(id, true).catch(() => {});
 });
-async function stopRecord(id, reason) {
-  const r = recordings.get(id);
-  if (!r) return null;
-  recordings.delete(id);
-  clearInterval(r.timer);
-  flush(r);
+// One tab leaves its recording: its page recorder stops and the debugger detaches (unless `net start` runs there).
+async function untrack(id) {
   try {
     await chrome.scripting.executeScript({
       target: {
@@ -296,6 +307,32 @@ async function stopRecord(id, reason) {
   } catch {/* Navigated or closed. */}
   if (!captures.get(id)?.manual) await detach(id);
   await badge(id);
+}
+// Stops the recording that tab `id` is in. A tab the recorded page opened only leaves the recording (it closed, went to a page that
+// cannot be recorded, the debugger left it): the recording goes on in its other tabs. `all: true` (record.stop) stops it in every tab.
+async function stopRecord(id, reason, {
+  all = false
+} = {}) {
+  const r = recordings.get(id);
+  if (!r) return null;
+  if (id !== r.main && !all) {
+    if (reason === 'tab closed') item(id, 'tab', {
+      action: 'closed',
+      tab: id,
+      opener: r.tabs.get(id)?.opener ?? null
+    });
+    recordings.delete(id);
+    r.tabs.delete(id);
+    await untrack(id);
+    return null;
+  }
+  const ids = [r.main, ...r.tabs.keys()];
+  for (const tab of ids) recordings.delete(tab);
+  r.tabs.clear();
+  clearInterval(r.timer);
+  flush(r);
+  for (const tab of ids) await untrack(tab);
+  watchEarly();
   if (reason) event('record.stopped', {
     recording_id: r.id,
     reason
@@ -312,6 +349,7 @@ async function release(id) {
   await detach(id);
   handed.delete(id);
   owned.delete(id);
+  joined.delete(id);
   kept.delete(id);
   await persist();
   await badge(id);
@@ -383,6 +421,11 @@ async function startRecording(id, p, url, {
     count: 0,
     queue: [],
     url,
+    // The tab the recording started in, and the tabs it opened that joined it (tab id -> { url, opener }); `opened` counts every tab that
+    // joined, for the limit of MAX_RECORDING_TABS.
+    main: id,
+    tabs: new Map(),
+    opened: 0,
     dom: o.dom,
     network: o.network,
     types: o.types,
@@ -398,6 +441,7 @@ async function startRecording(id, p, url, {
     }
   };
   recordings.set(id, r);
+  watchEarly();
   r.timer = setInterval(() => flush(r), 1000);
   if (inject) try {
     await install(id);
@@ -408,6 +452,184 @@ async function startRecording(id, p, url, {
   await badge(id);
   return r;
 }
+// A recording follows the tabs and windows its page opens ("A recording follows the windows the page opens" in
+// docs/design/browser-extension.md): a tab whose opener is a recorded tab joins the same recording at once (chrome.tabs.onCreated with
+// openerTabId, chrome.webNavigation.onCreatedNavigationTarget for popup windows, which Chrome reports without an opener tab), with the
+// debugger attached before its first document commits where Chrome allows it. It stays where Chrome put it, is owned (closed by the same
+// rules, kept when the person uses it) and its items carry its `tab`. At most MAX_RECORDING_TABS tabs per recording, popups of popups included.
+const MAX_RECORDING_TABS = 10;
+const joinable = url => !url || url === 'about:blank' || scriptable(url);
+function join(sourceId, id, url) {
+  const r = recordings.get(sourceId);
+  if (!r || !Number.isInteger(id) || recordings.has(id) || owned.has(id) || handed.has(id) || !joinable(url)) return;
+  if (r.opened >= MAX_RECORDING_TABS - 1) {
+    if (!r.capped) item(sourceId, 'tab', {
+      action: 'opened',
+      tab: id,
+      opener: sourceId,
+      url: url || 'about:blank',
+      recorded: false,
+      reason: `at most ${MAX_RECORDING_TABS} tabs per recording`
+    });
+    r.capped = true;
+    return;
+  }
+  // Synchronous up to here, so the two events of the same new tab join it once.
+  r.opened++;
+  recordings.set(id, r);
+  r.tabs.set(id, {
+    url: url || 'about:blank',
+    opener: sourceId,
+    // Until the debugger is attached, chrome.webRequest records the tab's requests (earlyRequest).
+    gap: true
+  });
+  owned.add(id);
+  joined.set(id, sourceId);
+  // A popup window takes the focus by itself: that activation is the page's, not the person's.
+  quiet(id, 3000);
+  item(id, 'tab', {
+    action: 'opened',
+    tab: id,
+    opener: sourceId,
+    url: url || 'about:blank'
+  });
+  event('tab.opened', {
+    tab_id: id,
+    opener_tab_id: sourceId,
+    recording_id: r.id,
+    url: url || 'about:blank'
+  });
+  for (const [kind, d] of early.get(id) || []) earlyRequest(kind, d);
+  early.delete(id);
+  void (async () => {
+    await persist();
+    try {
+      await attach(id, {
+        bodies: r.options.bodies,
+        ...(!captures.has(id) ? {
+          body_types: r.types ? [...r.types] : null,
+          ...(r.maxBody !== null ? {
+            max_body_bytes: r.maxBody
+          } : {})
+        } : {})
+      });
+    } catch {/* DevTools on that tab, or it closed: its page recorder still records it. */}
+    const state = r.tabs.get(id);
+    if (state && captures.has(id)) state.gap = false;
+    if (recordings.get(id) !== r) {
+      if (!captures.get(id)?.manual) await detach(id);
+      return;
+    }
+    await badge(id);
+    // The document may have committed before the debugger was there: the recorder goes in now (a no-op when it already runs).
+    const t = await chrome.tabs.get(id).catch(() => null);
+    if (t && scriptable(t.url)) await install(id, true).catch(() => {});
+  })().catch(() => {});
+}
+// The first requests of an opened tab: Chrome often starts its first document (and the fetches of that page) before the debugger can attach,
+// and no CDP command of the opener reaches a popup (Target.setAutoAttach on the opener reports frames and workers, not new windows). Until
+// the debugger is attached, chrome.webRequest records them: a request and a response item with `via: 'webRequest'`, headers redacted as
+// always, no bodies (`body_omitted: 'early'`). Events of tabs no recording knows yet wait EARLY_MS (they can come before tabs.onCreated).
+// The listeners exist only while a recording runs (watchEarly), so the worker is never woken for the requests of the browser.
+const EARLY_MS = 3000;
+const early = new Map(),
+  earlyIds = new Map();
+const WR_TYPES = {
+  main_frame: 'Document',
+  sub_frame: 'Document',
+  stylesheet: 'Stylesheet',
+  script: 'Script',
+  image: 'Image',
+  font: 'Font',
+  xmlhttprequest: 'Fetch',
+  ping: 'Ping',
+  media: 'Media',
+  websocket: 'WebSocket'
+};
+const headerObject = list => Object.fromEntries((list || []).filter(h => h?.name).map(h => [h.name, h.value ?? '']));
+function earlyRequest(kind, d) {
+  const r = recordings.get(d.tabId),
+    state = r?.tabs.get(d.tabId);
+  if (!state) {
+    if (recordings.has(d.tabId)) return;
+    if (recordings.size && Number.isInteger(d.tabId) && d.tabId >= 0 && kind === 'request' || early.has(d.tabId)) {
+      const list = early.get(d.tabId) || [];
+      if (!list.length) setTimeout(() => early.delete(d.tabId), EARLY_MS);
+      if (list.length < 50 && early.size < 20) list.push([kind, d]);
+      if (list.length) early.set(d.tabId, list);
+    }
+    return;
+  }
+  const reqId = `wr-${d.requestId}`;
+  // A request that started in the gap is finished here too; one that started after the debugger came is the debugger's.
+  if (kind === 'request' ? !state.gap : earlyIds.get(reqId) !== d.tabId) return;
+  if (!r.network) return;
+  const base = {
+    req_id: reqId,
+    method: d.method,
+    url: d.url,
+    type: d.type === 'xmlhttprequest' && r.types?.has('xhr') && !r.types.has('fetch') ? 'XHR' : WR_TYPES[d.type] || 'Other',
+    via: 'webRequest'
+  };
+  let data;
+  if (kind === 'request') {
+    earlyIds.set(reqId, d.tabId);
+    data = {
+      ...base,
+      at: Math.round(d.timeStamp || Date.now()),
+      status: 0
+    };
+  } else {
+    earlyIds.delete(reqId);
+    data = {
+      ...base,
+      status: d.statusCode || 0,
+      request: {
+        headers: {}
+      },
+      response: {
+        headers: headerObject(d.responseHeaders),
+        mime: String(headerObject(d.responseHeaders)['content-type'] || headerObject(d.responseHeaders)['Content-Type'] || '').split(';')[0]
+      },
+      from_cache: !!d.fromCache,
+      body_omitted: 'early',
+      ...(kind === 'failed' ? {
+        failed: String(d.error || 'failed')
+      } : {})
+    };
+  }
+  data = shapeNetwork(r, kind === 'request' ? 'request' : 'response', data);
+  if (data) item(d.tabId, kind === 'request' ? 'request' : 'response', data);
+}
+const onEarlyRequest = d => earlyRequest('request', d),
+  onEarlyDone = d => earlyRequest('response', d),
+  onEarlyFailed = d => earlyRequest('failed', d);
+let earlyOn = false;
+function watchEarly() {
+  const wr = chrome.webRequest;
+  if (!wr || earlyOn === recordings.size > 0) return;
+  earlyOn = recordings.size > 0;
+  const filter = {
+    urls: ['<all_urls>']
+  };
+  if (earlyOn) {
+    wr.onBeforeRequest.addListener(onEarlyRequest, filter);
+    wr.onCompleted.addListener(onEarlyDone, filter, ['responseHeaders']);
+    wr.onErrorOccurred.addListener(onEarlyFailed, filter);
+  } else {
+    wr.onBeforeRequest.removeListener(onEarlyRequest);
+    wr.onCompleted.removeListener(onEarlyDone);
+    wr.onErrorOccurred.removeListener(onEarlyFailed);
+    early.clear();
+    earlyIds.clear();
+  }
+}
+chrome.tabs.onCreated?.addListener(tab => {
+  if (Number.isInteger(tab?.openerTabId) && recordings.has(tab.openerTabId)) join(tab.openerTabId, tab.id, tab.pendingUrl || tab.url);
+});
+chrome.webNavigation?.onCreatedNavigationTarget?.addListener(d => {
+  if (recordings.has(d.sourceTabId)) join(d.sourceTabId, d.tabId, d.url);
+});
 // Actions of tcli commands in a recording ("Recording" in docs/design/browser-extension.md): one item per command, source 'agent',
 // emitted before the action so the requests it causes come after it. The page recorder leaves out the events the command causes:
 // agentWindow marks the tab's isolated world for `ms` milliseconds (page.js installRecorder reads __tagentAgentUntil).
@@ -547,11 +769,24 @@ async function reusableWindow() {
   return null;
 }
 // A new tab of T-Agent in that window (owned at once, so a second open waiting on the lock reuses the window). Never active, never focused.
-function agentTab(url) {
+// `own` ('front' or 'back', tabs.open with `window`): a new window just for this tab, a recording's own window ("The recording's own
+// window" in docs/design/browser-extension.md), focused for 'front'. It is never T-Agent's shared window, so no later open reuses it, and
+// Chrome closes it with its last tab.
+function agentTab(url, own = null) {
   const run = async () => {
-    const windowId = await reusableWindow();
+    const windowId = own ? null : await reusableWindow();
     let t;
-    if (windowId !== null) t = await chrome.tabs.create({
+    if (own) {
+      const w = await chrome.windows.create({
+        url,
+        focused: own === 'front',
+        state: 'normal'
+      });
+      t = w.tabs?.[0] || (await chrome.tabs.query({
+        windowId: w.id
+      }))[0];
+      if (!t) fail('INTERNAL', 'The new window has no tab');
+    } else if (windowId !== null) t = await chrome.tabs.create({
       windowId,
       url,
       active: false
@@ -605,6 +840,7 @@ export async function userUsed(id, how) {
     return true;
   }
   owned.delete(id);
+  joined.delete(id);
   kept.delete(id);
   await persist();
   await detach(id);
@@ -704,6 +940,7 @@ async function maybeReload() {
       handed: [...handed],
       owned: [...owned],
       kept: [...kept],
+      joined: [...joined],
       agent_window: agentWindowId
     }
   });
@@ -767,10 +1004,20 @@ async function run(method, p, meta) {
     if (p.record !== undefined && (!p.record || typeof p.record !== 'object' || Array.isArray(p.record))) fail('BAD_PARAMS', 'record must be an object');
     if (p.record) recordOptions(p.record);
     for (const key of ['active', 'keep']) if (p[key] !== undefined && typeof p[key] !== 'boolean') fail('BAD_PARAMS', `${key} must be true or false`);
+    if (p.window !== undefined && !['front', 'back'].includes(p.window)) fail('BAD_PARAMS', 'window must be front or back');
+    if (p.window !== undefined && !p.record) fail('BAD_PARAMS', 'window is for a recording: it needs record');
     // With `record`, the tab starts on about:blank, the debugger and the recording attach there, and only then does the tab load the
     // address: the first load's requests are recorded once, with no reload ("Recording from the first load" in docs/design/browser-extension.md).
-    // The tab goes into T-Agent's own window, in the background ("Focus and closing"); `active` brings it to the front afterwards.
-    const t = await agentTab(p.record ? 'about:blank' : p.url);
+    // The tab goes into T-Agent's own window, in the background ("Focus and closing"); `active` brings it to the front afterwards. With
+    // `window` it gets a new window of its own instead, in front ('front', tcli browser open --record) or behind ('back', --background).
+    const t = await agentTab(p.record ? 'about:blank' : p.url, p.window || null);
+    const ownWindow = p.window ? {
+      window: {
+        window_id: t.windowId,
+        focused: p.window === 'front',
+        own: true
+      }
+    } : {};
     if (p.keep) kept.add(t.id);
     grouping.add(t.id);
     using(meta, t);
@@ -817,7 +1064,7 @@ async function run(method, p, meta) {
         url: p.url
       });
       const now = await waitCommitted(t.id);
-      r.url = now.url || p.url;
+      setUrl(r, t.id, now.url || p.url);
       r.openingUntil = Date.now() + 3000;
       let tab;
       try {
@@ -837,11 +1084,13 @@ async function run(method, p, meta) {
       return {
         tab,
         recording_id: r.id,
-        options: r.options
+        options: r.options,
+        ...ownWindow
       };
     } catch (e) {
       if (recordings.has(t.id)) await stopRecord(t.id);
       owned.delete(t.id);
+      joined.delete(t.id);
       kept.delete(t.id);
       await persist();
       await chrome.tabs.remove(t.id).catch(() => {});
@@ -892,11 +1141,11 @@ async function run(method, p, meta) {
     };
   }
   if (method === 'record.stop' && p.recording_id) {
-    const r = [...recordings].find(([, v]) => v.id === p.recording_id);
+    const r = [...recordings.values()].find(v => v.id === p.recording_id);
     if (!r) fail('NOT_CAPTURING', 'Recording not found');
     p = {
       ...p,
-      tab_id: r[0]
+      tab_id: r.main
     };
   }
   const before = lastTab;
@@ -1116,7 +1365,10 @@ async function run(method, p, meta) {
     };
   }
   if (method === 'record.stop') {
-    const r = await stopRecord(id, 'stopped');
+    // In any tab of the recording (one the recorded page opened too) it stops the whole recording.
+    const r = await stopRecord(id, 'stopped', {
+      all: true
+    });
     if (!r) fail('NOT_CAPTURING', 'Recording not running');
     return r;
   }
@@ -1575,6 +1827,7 @@ chrome.tabs.onRemoved.addListener((id, info) => {
     await stopRecord(id, 'tab closed');
     await detach(id);
     owned.delete(id);
+    joined.delete(id);
     handed.delete(id);
     kept.delete(id);
     quietUntil.delete(id);
@@ -1597,6 +1850,7 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
       await stopRecord(id, 'tab released');
       await detach(id);
       owned.delete(id);
+      joined.delete(id);
       kept.delete(id);
       await persist();
       event('tab.used', {
@@ -1607,13 +1861,15 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
     if (change.url) {
       const r = recordings.get(id);
       // tabs.open with `record`: Chrome may still report the about:blank the tab started on.
-      if (r && change.url === 'about:blank' && Date.now() < (r.openingUntil || 0)) return;
+      // A tab the recorded page opened may start on about:blank too (window.open() and then a new address).
+      if (r && change.url === 'about:blank' && (id !== r.main || Date.now() < (r.openingUntil || 0))) return;
       if (r) {
         // Inside a tcli go / back / forward: the item has source 'agent'. Other address changes (a followed link, a redirect, the
         // person typing an address) have no source: they are what happened, not an action.
         const agent = r.agentNav && Date.now() < r.agentNav.until ? r.agentNav : null;
-        if (!agent?.quiet) item(id, 'nav', {
-          from: r.url,
+        // An opened tab's first address is in its `tab` item already.
+        if (!agent?.quiet && !(id !== r.main && change.url === urlOf(r, id))) item(id, 'nav', {
+          from: urlOf(r, id),
           to: change.url,
           transition: change.status === 'loading' ? 'navigation' : 'history',
           ...(agent ? {
@@ -1622,7 +1878,7 @@ chrome.tabs.onUpdated.addListener((id, change, tab) => {
           } : {})
         });
         if (agent) agent.seen = true;
-        r.url = change.url;
+        setUrl(r, id, change.url);
       }
       if (!scriptable(change.url)) {
         await stopRecord(id, 'page not scriptable');
@@ -1660,10 +1916,10 @@ chrome.tabs.onActivated?.addListener(({
     if (w.focused) await userUsed(tabId, 'activated');
   })().catch(() => {});
 });
-chrome.debugger.onDetach.addListener(source => {
+chrome.debugger.onDetach.addListener((source, reason) => {
   const s = captures.get(source.tabId);
   captures.delete(source.tabId);
-  if (s) void stopRecord(source.tabId, 'debugger detached');
+  if (s) void stopRecord(source.tabId, reason === 'target_closed' ? 'tab closed' : 'debugger detached');
 });
 void connect();
 chrome.tabGroups.onUpdated.addListener(group => {
@@ -1674,6 +1930,7 @@ chrome.tabGroups.onUpdated.addListener(group => {
       await stopRecord(t.id, 'tab released');
       await detach(t.id);
       owned.delete(t.id);
+      joined.delete(t.id);
       kept.delete(t.id);
       event('tab.used', {
         tab_id: t.id,

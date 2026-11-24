@@ -20,14 +20,16 @@ import { countRender, useStore } from './use-store.mjs';
 // destinations other than Sessions are pages over the terminal page that end above the bar (h5.css `html[data-bnav]`, h5.js `bottomNavSpace`); one is
 // open at a time, choosing another closes it, Sessions closes them all, and the back button closes the open one (back.mjs: each is a layer), which is
 // Sessions again. The arrow keys move between the items (`railKey`).
-// The bar steps aside while it would be in the way: while the terminal's own keyboard (Osk) or the Learn page's (`state.learnKeys`) is shown, while the draft box has the focus and while the
+// The bar steps aside while it would be in the way: while the terminal's own keyboard (Osk) or the Learn page's (`state.learnKeys`) is shown, while the
+// English coach chat is open (`state.learnCoach`: its input sits at the bottom, the header's back arrow returns), while the draft box has the focus and while the
 // system keyboard is up (`state.softKeyboard`, h5.js `fitViewport`); it comes back RETURN_MS after. While the task drawer is open it lies under the
 // drawer's scrim and is inert. `html[data-bnav]`
 // is set while it is shown: the page (`.h5-app`) keeps its room free at the bottom, so the terminal refits when it comes or goes.
 // See "Bottom navigation" in docs/design/page-navigation.md.
 const BNAV = state => ({
   pane: Boolean(state.pane), narrow: !state.wide, pointer: state.input === 'pointer',
-  osk: Boolean(state.osk || state.learnKeys), typing: state.keyboard === 'draft' || Boolean(state.softKeyboard), soft: Boolean(state.softKeyboard),
+  // The coach chat takes the bar's room like a keyboard does (no `data-bnav-room`): the page ends at the bottom of the window.
+  osk: Boolean(state.osk || state.learnKeys || state.learnCoach), typing: state.keyboard === 'draft' || Boolean(state.softKeyboard), soft: Boolean(state.softKeyboard),
   under: Boolean(state.tasksOpen),
   view: phoneView({ settingsOpen: state.settingsOpen, attentionOpen: Boolean(state.attention && state.attention.open), learnOpen: Boolean(state.learnOpen), mindmapOpen: Boolean(state.mindmapOpen) }),
   needs: Number(state.attention && state.attention.needs) || 0,

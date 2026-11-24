@@ -3,10 +3,10 @@
 // with `before`, `has_more`, `tools_ok`), POST /coach/send and /coach/practice-result (NDJSON: `status`, `delta`, `proposals`, `remembered`, `done`
 // with the stored messages, `tools` and `usage`), /coach/proposals/:id/run|cancel, /coach/undo, /coach/plans/start, /coach/notes, /coach/summary/reset;
 // answers go to the existing POST /cards/:id/answer. No model is ever called; one answer is fed piece by piece through a fetch stand-in.
-// - 390x844 (touch): the home entry; the conversation with older pages read when scrolled to the top; a streamed answer with the status line, the
-//   plan card and the usage line; Start runs the series (Spell; a miss comes back at the end) and returns with the result and her reply; the
+// - 390x844 (touch): the home entry; the chat without the bottom navigation and with a message list of at least 55% of the window; the conversation with older pages read when scrolled to the top; a streamed answer with the status line, the
+//   plan card in one row and the usage line (one line, opened by a tap); Start runs the series (Spell; a miss comes back at the end) and returns with the result and her reply; the
 //   mistakes series (Spell, Fill the gap, Dictation left out without speech output, the retest) with its header; leaving early; the settings,
-//   cards and reminder cards (Cancel, run, Undo); the Remembered line and its Undo; suggestions; "tools: false"; the menu; Coach settings (switches,
+//   cards and reminder cards (Cancel, run, Undo); the Remembered line and its Undo; suggestions as a strip of chips above the input; "tools: false"; the menu; Coach settings (switches,
 //   the notes edited and deleted with Undo, Save tokens, Reset the summary); Earlier chats read-only.
 // - 1440x900 (mouse): the coach in the right pane, the series in the same pane and back, Escape leaves a series early, Earlier chats read-only.
 // - An engine without the coach (GET /coach answers 404): the old English chat, unchanged.
@@ -276,6 +276,16 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       await page.locator('#h5-learn-coach[data-layout="phone"]').waitFor();
       await waitFor(async () => (await page.locator('#h5-learn-coach .h5-learn-chat-msg').count()) === 50, 'the newest page of 50 messages');
       assert.equal(await text(page, '#h5-learn-view-title'), 'English chat');
+      // The chat takes the whole window on a phone: no bottom navigation, the input at the bottom, the message list at least 55% of the height.
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-bnav'));
+      assert.equal(await page.locator('#h5-bnav').isVisible(), false, 'no bottom navigation in the coach chat');
+      const room = await page.evaluate(() => {
+        const list = document.getElementById('h5-learn-coach-scroll').getBoundingClientRect();
+        const form = document.getElementById('h5-learn-coach-input').closest('form').getBoundingClientRect();
+        return { list: list.height, bottom: form.bottom, height: window.innerHeight };
+      });
+      assert.ok(room.list >= room.height * 0.55, `the message list is ${room.list}px of ${room.height}px`);
+      assert.ok(room.height - room.bottom <= 1, `the input sits at the bottom (${room.bottom} of ${room.height})`);
       assert.equal(await page.locator('#h5-learn-chat-new, #h5-learn-chats, #h5-learn-chat-history').count(), 0, 'no New chat, no chats list');
       assert.equal(await page.locator('#h5-learn-coach-input').getAttribute('placeholder'), 'Reply or write more');
       const more = await page.locator('#h5-learn-coach-more').boundingBox();
@@ -309,7 +319,20 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       await planCard.waitFor();
       assert.equal(await text(page, '.h5-learn-coach-card[data-id="p-spell"] .h5-learn-coach-plan-title'), "Today's spelling");
       assert.equal(await text(page, '.h5-learn-coach-card[data-id="p-spell"] .h5-learn-coach-plan-caption'), '3 words · about 1 minute');
+      // The plan card is one row: the icon, the title and its caption, Start at the right.
+      const row = await planCard.evaluate(card => {
+        const box = el => card.querySelector(el).getBoundingClientRect();
+        return { card: card.getBoundingClientRect().height, start: box('.h5-learn-coach-start'), title: box('.h5-learn-coach-plan-title') };
+      });
+      assert.ok(row.card <= 72, `a compact card (${row.card}px)`);
+      assert.ok(row.start.left > row.title.right && row.start.height >= 44, 'Start at the right of the title, 44px high');
+      // The usage caption: one line of its first part; a tap shows all of it.
+      const usage = page.locator('.h5-learn-coach-answer:last-of-type .h5-learn-coach-usage');
+      assert.equal(await text(page, '.h5-learn-coach-answer:last-of-type .h5-learn-coach-usage'), 'Looked at your data 2 times');
+      assert.equal(await usage.getAttribute('aria-expanded'), 'false');
+      await usage.tap();
       assert.equal(await text(page, '.h5-learn-coach-answer:last-of-type .h5-learn-coach-usage'), 'Looked at your data 2 times · 3 calls · 18,400 tokens');
+      assert.equal(await usage.getAttribute('aria-expanded'), 'true');
       assert.equal(await page.locator('.h5-learn-coach-start').count(), 1, 'one Start button');
       // The question the stream did not send back stays as the page's own copy, before the answer.
       const lastRoles = await page.locator('#h5-learn-coach .h5-learn-chat-msg').evaluateAll(list => list.slice(-2).map(el => [el.dataset.role, el.textContent]));
@@ -341,6 +364,19 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       assert.deepEqual(mock.of('POST', /\/answer$/).map(one => [one.path.split('/')[4], one.body.mode, one.body.correct]), [['1', 'spell', true], ['2', 'spell', false], ['3', 'spell', true], ['2', 'spell', true]]);
       await page.locator('.h5-learn-chat-msg[data-role="assistant"]', { hasText: 'Nice work: 2 of 3 right.' }).waitFor();
       assert.deepEqual(await texts(page, '.h5-learn-coach-suggestion'), ['Practise the 1 I missed', '5 more new words', "That's enough for today"]);
+      // "What next?": one line of 44px chips right above the input, outside the message list, scrolling sideways; the first in the primary colour.
+      const strip = await page.evaluate(() => {
+        const next = document.getElementById('h5-learn-coach-next');
+        const chips = [...next.querySelectorAll('.h5-learn-coach-suggestion')].map(el => el.getBoundingClientRect());
+        const form = document.getElementById('h5-learn-coach-input').closest('form').getBoundingClientRect();
+        return {
+          inList: Boolean(next.closest('#h5-learn-coach-scroll')), tops: [...new Set(chips.map(one => Math.round(one.top)))], heights: chips.map(one => one.height),
+          above: next.getBoundingClientRect().bottom <= form.top + 1, overflow: getComputedStyle(next).overflowX, label: next.getAttribute('aria-label'),
+          primary: next.querySelector('.h5-learn-coach-suggestion').classList.contains('MuiChip-colorPrimary'),
+        };
+      });
+      assert.deepEqual([strip.inList, strip.tops.length, strip.above, strip.overflow, strip.label, strip.primary], [false, 1, true, 'auto', 'What next?', true], JSON.stringify(strip));
+      assert.ok(strip.heights.every(one => one >= 44), `44px chips (${strip.heights})`);
       await shot(page, 'learn-coach-result.png');
       // A suggestion sends its text.
       await page.locator('.h5-learn-coach-suggestion').nth(2).tap();
@@ -475,6 +511,11 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       await page.locator('#h5-learn-chats .h5-learn-chat-row').first().waitFor();
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-coach').waitFor();
+      // The back arrow of the coach returns to the Learn home, where the bottom navigation is back.
+      await page.locator('#h5-learn-back').tap();
+      await page.locator('#h5-learn-mode-chat').waitFor();
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+      assert.equal(await page.locator('#h5-bnav').isVisible(), true, 'the bottom navigation is back on the Learn home');
       await context.close();
     }
 

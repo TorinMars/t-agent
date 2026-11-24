@@ -325,6 +325,9 @@ async function phoneRun(browser, server, fake) {
   assert.match(await lastAnswer(page).locator('.h5-learn-chat-msg').last().textContent(), new RegExp(`${queue.length} words`));
   assert.ok(!(await lastAnswer(page).locator('.h5-learn-chat-msg').last().textContent()).includes(META), 'the meta line never shows');
   assert.deepEqual(await texts(page, '.h5-learn-coach-suggestion'), ['Start now', 'Later']);
+  // The usage caption: its first part in one line, all of it after a tap.
+  assert.equal(await text(page, '.h5-learn-coach-answer:last-of-type .h5-learn-coach-usage'), 'Looked at your data once');
+  await press(page, lastAnswer(page).locator('.h5-learn-coach-usage'), touch);
   assert.equal(await text(page, '.h5-learn-coach-answer:last-of-type .h5-learn-coach-usage'), 'Looked at your data once · 2 calls · 2,100 tokens');
   await press(page, planCard.locator('.h5-learn-coach-start'), touch);
   await page.locator('#h5-learn-series').waitFor(WAIT);
@@ -618,8 +621,10 @@ async function wideRun(browser, server, fake) {
   const before = await answers(page).count();
   await page.keyboard.press('Enter');
   await settle(page, before);
-  const card = lastAnswer(page).locator('.h5-learn-coach-card[data-type="plan"]');
-  await card.waitFor(WAIT);
+  await lastAnswer(page).locator('.h5-learn-coach-card[data-type="plan"]').waitFor(WAIT);
+  // The card of this answer by its uid: her reply to the practice result may come after it.
+  const planUid = await lastAnswer(page).getAttribute('data-uid');
+  const card = page.locator(`#h5-learn-coach .h5-learn-coach-answer[data-uid="${planUid}"] .h5-learn-coach-card[data-type="plan"]`);
   assert.equal(await card.locator('.h5-learn-coach-plan-caption').evaluate(el => el.textContent.trim()), '3 words · about 1 minute');
   assert.equal(await newLeft(), leftBefore, 'the allowance is not raised before Start');
   await card.locator('.h5-learn-coach-start').click();

@@ -61,6 +61,12 @@ export const PARTS = {
   'usage-top': ['usage-data', 'all'],
   'usage-unused': ['usage-data', 'all'],
   'usage-store': ['usage-data', 'all'],
+  // The Time and Memories tabs (UsageTime.jsx, UsageMemories.jsx): one set of data for the linked engines, the same in every tab; their switches
+  // ("Record time", "Write a weekly digest") are one choice for every linked engine, drawn in the same place in every tab with the Shared label.
+  'usage-time': ['usage-data', 'all'],
+  'usage-time-record': ['usage-data', 'all'],
+  'usage-memories': ['usage-data', 'all'],
+  'usage-digest': ['usage-data', 'all'],
 };
 
 // Whether the tabs are drawn, and whether one of them is Shared. `loaded`: the device list was read; `linked`: what the settings sync said (true: it

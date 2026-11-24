@@ -122,6 +122,7 @@
 | Mind maps destination (navigation rail) | apartment | 5756280 | `mindmap`, 24px, the same icon as the mind map entry |
 | Hide / show the map list (Mind maps tab, the map's bar) | outdent / indent | 4767051 / 4767050 | `sidebarFold` / `sidebarUnfold`, the same icons as the page's sidebar fold |
 | Search mind maps (Mind maps tab, in the search field; decorative) | search | 6598347 | `search` in `Icons.jsx`, 16px |
+| Remember this (the session header's More menu) | star (Ant Design StarOutlined) | @ant-design/icons-svg 4.4.2 `outlined/star` | `star` in `Icons.jsx`, 20px |
 | Learn destination (navigation rail `#h5-nav-learn`, bottom navigation `#h5-bnav-learn`) | read | 4766888 | `learn` in `Icons.jsx`, 24px: an open book |
 | Hear it, Play (the Learn page) | sound | 4766907 | `learnSound` in `learn-icons.mjs`, 20px in a text button, 22px as the icon-only "Hear it" of a phone |
 | Spell the word / Build the sentence / Dictation / Fill the gap / Mistakes (the Learn page's modes) | font-size / align-left / customerservice / border / close-circle | 4767081 / 4767064 / 4766762 / 4766265 / 4765725 | `learnSpell` / `learnBuild` / `learnDictation` / `learnFill` / `learnMistakes` in `learn-icons.mjs`, 22px in a 40px tinted tile |

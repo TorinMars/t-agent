@@ -1,6 +1,25 @@
 // Chinese translations for sentences that JavaScript assembles from several pieces (so the text in the page is a whole
 // sentence rather than one literal in the source), plus the verb forms used by the start / stop / save status lines.
 I18n.add({
+  // ---- Settings → Usage data → Time and Memories (usage-time-model.mjs, UsageTime.jsx, UsageMemories.jsx) ----
+  'Same as yesterday': '和昨天一样',
+  'Same as last week': '和上周一样',
+  'Same as the 30 days before': '和之前 30 天一样',
+  '+{1} vs yesterday': '比昨天多 {1}',
+  '+{1} vs last week': '比上周多 {1}',
+  '+{1} vs the 30 days before': '比之前 30 天多 {1}',
+  '\u2212{1} vs yesterday': '比昨天少 {1}',
+  '\u2212{1} vs last week': '比上周少 {1}',
+  '\u2212{1} vs the 30 days before': '比之前 30 天少 {1}',
+  'while you were away: {1}': '你不在时：{1}',
+  'median wait {1}': '等待中位数 {1}',
+  '{1} of {2} days': '{2} 天中有 {1} 天',
+  'waited {1}': '等了 {1}',
+  'Kinds of session: {1}.': '会话类型：{1}。',
+  'written {1}': '写于 {1}',
+  'Open the {1} tasks': '打开这 {1} 个任务',
+  'Written from {1} events, {2} notes and {3} tasks.': '根据 {1} 个事件、{2} 条笔记和 {3} 个任务写成。',
+
   // ---- T-Attention timeline (the Claude listener's note while sub-agents run) ----
   '{1}: Waiting for 1 sub-agent': '{1}：正在等待 1 个子智能体',
   '{1}: Waiting for {2} sub-agents': '{1}：正在等待 {2} 个子智能体',

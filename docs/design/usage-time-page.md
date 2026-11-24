@@ -1,0 +1,49 @@
+# Usage time and memories: the page
+
+> Part of the T-Agent design document. The index of all parts is [DESIGN.md](../../DESIGN.md).
+
+## Usage time and memories: the page
+
+The page half of "Usage time and memories" (the server half, its tables, sync and API: [usage-time.md](usage-time.md)). The Settings group "Usage data" ([usage-data.md](usage-data.md)) has three MD2 fixed tabs: **Buttons** (the button-use parts, unchanged), **Time** and **Memories**; a beat sender measures time on the page; "Remember this" in the session and task menus saves a note. Same privacy rules as button use: only time and ids are sent, never text; everything is kept on the person's own machines.
+
+- **Files**: `scripts/h5-shell/usage-beats.mjs` (the pure rules of page time), `usage-time.mjs` (first screen, about 0.9 KB: reads the switch, a pane's activity message) and `usage-time-sender.mjs` (the beat sender, a chunk of its own `usage-time-sender-<hash>.js`, loaded only while "Record time" is on), `usage-time-model.mjs` (words and numbers of the two tabs, pure), `UsageTime.jsx` and `UsageMemories.jsx` (Settings chunk, drawn by `UsageData.jsx`), `RememberDialog` in `TaskDialogs.jsx` (task dialogs chunk), `askRemember` / `rememberShown` / `rememberSave` in `public/js/h5.js`, "Remember this" in `Header.jsx` (`MoreMenu`).
+- **Tests**: `test/h5-usage-beats.test.js` (idle cutoff, steps, surfaces, engine-neutral ids, batching, the owner tab, the sender with a fake clock: hidden tab, the switch, a refused batch, a pane, an embed), `test/h5-usage-time-model.test.js` (durations, deltas, tiles, bars, tasks, kinds line, device choices, memories), `scripts/test-h5-usage-time-browser.cjs` (1440x900 and 390x844 touch on Playwright's clock with a stubbed server that follows the contract).
+
+### Page time
+
+`startUsageTime(ui)` (entry.jsx) reads the switch and, once it is on, loads the sender (`startSender`, with the time of the last activity seen so far). A beat is 15 seconds of the person on the page: every 15 s (`STEP_MS`) a beat is queued when the page is visible AND there was a `keydown`, `pointerdown`, `pointermove`, `touchstart` or `wheel` in the last 2 minutes (`IDLE_MS`); the first beat after an idle gap counts 15 s like the others. A tab that becomes visible again counts that as activity.
+
+- **Beat**: `{ at, surface, kind, task, session, seconds: 15 }` (`beatOf`). `surface` from the store (`surfaceOf`): `settings` (Settings open), `learn` (the Learn page: practice, the coach chat, Progress), `attention` (the T-Attention panel open), `mindmaps` (the mind map view or the Mind maps tab of the columns), `sessions` (a session or notebook shown, or the columns view), else `other`. Only a `sessions` beat names a session: `kind` (`claude` | `codex` | `opencode` | `notebook` | `terminal`), `task` = `<instance id>:<task id>` and `session` = `<instance id>:<task id>:<terminal id>` (`neutralIds`: the engine's instance id from `state.sources`, as the shared task order and page state name them; null when the device's instance id is not known). In the columns view the session is the focused column's (`columns.titles[focus].target` and `agent`).
+- **Sending**: `POST /api/usage-time/beats { client, beats }`, `client` = `phone` | `computer` | `mac-app` (`clientOf`, the User-Agent rule of button use). A batch goes 2 minutes after its first beat or at 40 beats (`BATCH_MAX`, `takeBatch`), with `fetch(..., { keepalive: true })`; on `visibilitychange` to hidden and on `pagehide` what is queued goes with `navigator.sendBeacon` (in pieces of 40). A hidden tab never queues a beat.
+- **Several tabs**: a `BroadcastChannel` (`t-agent-usage-time`) carries each tab's last activity; only the tab with the newest activity beats (`isOwner`, a tie to the smaller id). No browser storage key is used.
+- **Panes and frames**: a column of the multi-column view sends nothing; it posts `{ type: 't-agent-activity' }` to its top page (same origin, at most every 5 s), which counts it as activity and beats for the focused column. Any other framed page measures nothing.
+- **The switch**: `state.usageTimeRecording` (null until read), read from `GET /api/usage-time/settings` (`usage_time_record`) 1.5 s after the start and again when the page comes back after 10 minutes; the Time tab sets it; a batch answered 403 / 409 or `{ ok: false }` / `{ enabled: false }` turns it off. While it is off nothing is queued or sent.
+
+### Time tab
+
+`UsageTime.jsx`, the design's frame 1. It reads `GET /api/usage-time/settings` and `GET /api/usage-time/summary?range=&device=` each time the tab is shown in an opened group and when a chip changes.
+
+- Range chips This week (default), Today, 30 days (`aria-pressed`), and the device chip (All devices, the summary's `devices`, then each linked device whose engine said what it can do without `usage:time`, disabled with "needs an update first"; the same line under the tiles, `#h5-usage-time-old`).
+- Four tiles (two columns on a phone): On the page, Agents working ("while you were away: …"), Waiting for you ("median wait …"), Learn English ("N of 7 days"), each with the change from the previous period in words ("+2 h 10 min vs last week", "−5 min vs yesterday", "Same as last week"; the sign is in the text, the green of an increase is not the only sign).
+- "Each day · time on the page": stacked bars in pixels (Sessions at the bottom in primary, Learn in `success.light`, Other in `warning.light`, the colours of the design, parted by a 1px gap), a legend, the values of a day on hover and focus (a Tooltip and the bar's `aria-label`: "Sat 11-21: Sessions 5 h 06 min, Learn 30 min, Other 36 min"), and a Chart / Table toggle; the table has a row per day. A bar or a table row opens that day's sessions in place (`GET /api/usage-time/day?day=&device=`).
+- "Tasks · you looked at it / agent worked": a bar of the time looked at (relative to the task looked at most) and "12 h 20 min / 28 h". A click shows its sessions in place (`GET /api/usage-time/task?task=&range=&device=`); a session opens through `ui.actions.openTerminalLink` (Settings closes). The hint ends with the kinds line ("Kinds of session: Claude 62%, …").
+- "Record time" (switch, Shared label `usage-time-record`), "Kept per day for 2 years", Clear (error colour, confirmation dialog; `DELETE /api/usage-time?table=time`), Export CSV and Export JSON (`/api/usage-time/export?table=time&format=…`).
+
+### Memories tab
+
+`UsageMemories.jsx`, the design's frame 2. `GET /api/memories?q=&kind=&limit=50` (and `before=<at of the last entry>` for more), plus `kind=digest&limit=1` for the card.
+
+- Search (300 ms after typing stops) and the kind chips All, Events, Notes, Digests.
+- The digest card (only when a digest exists): "This week, in short" (or "Week of 11-16"), "written Sun 21:00", the text, "Written from N events, N notes and N tasks.", "Open the N tasks" (`sources.items`; opens T-Attention) and "Write it again" (`POST /api/memories/digest { week }`; an error is shown, nothing changes). The digest is not repeated in the list under All.
+- The list, newest first: the date (MM-DD), a dot by kind (note orange, task event green, failure or engine down red, Learn and digest blue) with the kind also in words in the line under the text ("Task Acme merger · event", "Acme merger · Night build · your note", "Learn · event", "Engines · event"; titles from the server's `task_title` / `session_title` or the page's task list, never translated). A click opens its session or task. A note has Edit (in place, `PATCH /api/memories/:uid`) and Delete: the row goes at once with a notice "Note deleted" and Undo; `DELETE` is sent after 6 s, or at `pagehide`. More entries load when the end of the list comes into view (IntersectionObserver; "Show older" as the button).
+- "Write a weekly digest" (switch, off by default, Shared label `usage-digest`; `PUT /api/usage-time/settings { usage_memories_digest }`, its state from `digest_on`) with "The digest is written by your translation service from event lines, your notes and task titles and results. No terminal text or code is sent."; Clear (`DELETE /api/usage-time?table=memories`) and Export CSV / JSON.
+
+### Remember this
+
+"Remember this" (with `MENU_ACTIONS` of usage-track.mjs) in the session row's "⋯" (both layouts; after Rename), the "⋯" of a session of another task, the task "⋯" (after Rename, task only), and the session header's More while a terminal is shown (`#h5-header-remember`, star icon). It opens the task dialog `{ kind: 'remember', task, session, sessionTitle }` (h5.js `askRemember`): title "Remember this", the caption "Saves a note with the time and this task and session. The terminal text is not saved.", the task · session names, a multiline field (at most 500 characters, a counter), Cancel / Save (contained, disabled while empty). Save posts `POST /api/memories { text, task?, session? }` to this page's server; "Saved to Memories", or the error in the dialog.
+
+### Known limits
+
+- A finished Learn session is not reported by the page yet (`POST /api/memories/event`); the coach's practice result is written by the server.
+- `/api/usage-time/settings` (`GET` → `{ usage_time_record, usage_memories_digest }`, `PUT` with either field) is the page's way to the two settings; the contract names the settings, not the route.
+- In the 30-day view the bars are narrow; on a touch screen the table view is the way to a day.

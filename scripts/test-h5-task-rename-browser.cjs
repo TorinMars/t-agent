@@ -131,7 +131,7 @@ async function run(browser, wide) {
   await press(row('Beta').locator('.h5-task-more'));
   await menuItems.first().waitFor();
   const items = await menuItems.allTextContents();
-  assert.equal(items.indexOf('Rename') + 1, items.indexOf('Edit working directory'), `${label}: Rename comes before Edit working directory ${JSON.stringify(items)}`);
+  assert.deepEqual(items.slice(items.indexOf('Rename'), items.indexOf('Edit working directory')), ['Rename', 'Remember this'], `${label}: Rename (then Remember this) comes before Edit working directory ${JSON.stringify(items)}`);
   await page.keyboard.press('Escape');
   await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached' });
 

@@ -20,3 +20,4 @@ import './recent-sessions.mjs';
 import './Columns.jsx';
 import './lazy-screens.jsx';
 import './usage-track.mjs';
+import './usage-time.mjs';

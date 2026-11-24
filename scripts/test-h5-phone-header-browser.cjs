@@ -159,7 +159,7 @@ function checkLine(g, label) {
       // More: the terminal width first; it shows the width choices with a Back row; a choice sizes the PTY and the screen.
       await press(page.locator('#h5-header-more'));
       await page.locator('#h5-header-more-menu [role="menu"]').waitFor();
-      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-refresh', 'h5-header-update']);
+      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-header-remember', 'h5-refresh', 'h5-header-update']);
       const item = page.locator('#h5-term-width');
       assert.equal(await item.textContent(), 'Terminal width: Fit to screen');
       assert.equal(await item.locator('svg').count(), 2, 'its icon and the ›');
@@ -253,7 +253,7 @@ function checkLine(g, label) {
       assert.ok(g.tag.right <= g.task.left + 0.5 && g.tagCut <= 0, `the tag is whole and before the task name (${JSON.stringify([g.tag, g.task])})`);
       await page.locator('#h5-header-more').click();
       await page.locator('#h5-header-more-menu [role="menu"]').waitFor();
-      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-refresh'], 'More: Refresh only');
+      assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-header-remember', 'h5-refresh'], 'More: Remember this (a session is shown) and Refresh');
       await page.keyboard.press('Escape');
       await page.locator('#h5-header-more-menu').waitFor({ state: 'detached' });
       // The bar's switch still works: a click to Wide, a right click for the choices.

@@ -92,6 +92,35 @@ function RenameTaskDialog({ dialog, ui, service, close }) {
   );
 }
 
+// "Remember this" (h5.js `askRemember`; "Remember this" in docs/design/usage-time-page.md, the design's frame 3): a note of up to 500 characters,
+// saved with the time and this task and session (`ui.actions.rememberSave`: POST /api/memories). Cancel / Save of the one dialog pattern; the task
+// and session it belongs to are named under the caption (user content: never translated).
+const NOTE_MAX = 500;
+function RememberDialog({ dialog, ui, close }) {
+  const [text, setText] = useState('');
+  const where = [dialog.title, dialog.sessionTitle].filter(Boolean).join(' \u00B7 ');
+  return (
+    <Dialog id="h5-task-dialog" className="h5-remember-dialog" open onClose={close} fullWidth maxWidth="xs" aria-labelledby="h5-task-dialog-title" aria-describedby="h5-remember-caption">
+      <Box component="form" autoComplete="off" onSubmit={event => { event.preventDefault(); void ui.actions.rememberSave(text); }}>
+        <DialogTitle id="h5-task-dialog-title">{t('Remember this')}</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="h5-remember-caption" variant="body2">{t('Saves a note with the time and this task and session. The terminal text is not saved.')}</DialogContentText>
+          {where ? <Typography id="h5-remember-where" variant="caption" component="p" color="text.secondary" translate="no" sx={{ mt: 0.5, overflowWrap: 'anywhere' }}>{dialog.service ? `${where} \u00B7 ${dialog.service}` : where}</Typography> : null}
+          <TextField
+            id="h5-remember-text" autoFocus fullWidth multiline minRows={3} label={t('Note')} value={text} onChange={event => setText(event.target.value.slice(0, NOTE_MAX))}
+            helperText={`${text.length} / ${NOTE_MAX}`} sx={{ mt: 2 }} slotProps={{ htmlInput: { maxLength: NOTE_MAX } }}
+          />
+          {dialog.error ? <DialogError id="h5-task-dialog-error">{dialog.error}</DialogError> : null}
+        </DialogContent>
+        <DialogActions>
+          <Button id="h5-task-dialog-cancel" onClick={close} disabled={dialog.busy}>{t('Cancel')}</Button>
+          <Button id="h5-task-dialog-ok" type="submit" variant="contained" disabled={dialog.busy || !text.trim()}>{t('Save')}</Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  );
+}
+
 // The dialogs of the task "⋯" menu (h5.js `ui.actions.taskMore`): the delete confirmation, with "Also delete the directory" (off by default;
 // the server refuses a protected or shared directory), the working directory of an existing task (the saved path is shown), and which linked machines can see a task.
 export function TaskDialog({ state, ui }) {
@@ -105,6 +134,7 @@ export function TaskDialog({ state, ui }) {
   const close = () => ui.actions.taskDialogClose();
   const open = Boolean(dialog);
   if (dialog && dialog.kind === 'move') return <MoveTaskDialog key={key} dialog={dialog} ui={ui} close={close} />;
+  if (dialog && dialog.kind === 'remember') return <RememberDialog key={key} dialog={dialog} ui={ui} close={close} />;
   if (dialog && dialog.kind === 'rename') return <RenameTaskDialog key={key} dialog={dialog} ui={ui} service={service} close={close} />;
   if (dialog && dialog.kind === 'workdir') {
     return (

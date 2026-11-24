@@ -11,6 +11,7 @@
 // - in a combined script each part is a script of its own: a part that throws or does not parse stops nothing after it, top-level names are shared
 //   as with separate tags, 'use strict' stays in its file, and an error names the file it came from.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -188,7 +189,7 @@ async function waitFor(condition, what) {
       // The mind map.
       page = await open('/h5');
       if (await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
-      await page.locator('#h5-bnav-maps').tap(); // Mind maps in the bottom navigation
+      await bnavTap(page, '#h5-bnav-maps'); // Mind maps in the bottom navigation
       await page.locator('#mm-new').waitFor();
       await page.close();
       // The document preview: marked, the Markdown view and its style sheet, and mermaid for the diagram.
@@ -203,7 +204,7 @@ async function waitFor(condition, what) {
       await page.evaluate(() => window.H5UI.actions.openSettings());
       await page.locator('#h5-settings .h5-settings-group-item').first().waitFor();
       await page.evaluate(() => window.H5UI.actions.closeSettings());
-      await page.locator('#h5-attention').tap();
+      await bnavTap(page, '#h5-attention');
       await page.locator('#h5-attention-sheet').waitFor();
       await page.close();
     };

@@ -15,6 +15,7 @@
 // - An engine without the coach (GET /coach answers 404): the old English chat, unchanged.
 // H5_SHOT_DIR=<dir> saves learn-coach-*.png.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -242,7 +243,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 
 // Send a text through the input.
@@ -276,7 +277,7 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       const touch = true;
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       // Learn is only the coach: no home under her, no card or button of the old home anywhere.
       await page.locator('#h5-learn[data-coach="only"] #h5-learn-coach[data-layout="phone"]').waitFor();
       assert.equal(await page.locator('.h5-learn-home, #h5-learn-mode-chat, #h5-learn-today, #h5-learn-settings, #h5-learn-how, #h5-learn-material').count(), 0, 'no Learn home');
@@ -564,7 +565,7 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       assert.equal(await page.locator('#h5-bnav').isVisible(), true, 'the bottom navigation is back');
       assert.equal(await page.locator('.h5-learn-home').count(), 0);
       // The bottom navigation opens her again.
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn[data-coach="only"] #h5-learn-coach').waitFor();
       await context.close();
     }

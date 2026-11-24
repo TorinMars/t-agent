@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 process.env.T_AGENT_DATA_DIR = process.env.T_AGENT_DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'tagent-learn-ask-browser-'));
 
 const { activityStreamMock } = require('./h5-activity-stream-mock.cjs');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -176,7 +177,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 async function tapKeys(page, keys) {
   for (const key of keys) await page.locator(`#h5-learn-keys button[data-char="${key}"]`).tap();
@@ -189,7 +190,7 @@ async function tapKeys(page, keys) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator(COACH).waitFor();
       await openScreen(page, 'spell');
       await page.locator('#h5-learn-sentence').waitFor();
@@ -342,7 +343,7 @@ async function tapKeys(page, keys) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       mock.translator = false;
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator(COACH).waitFor();
       await openScreen(page, 'review');
       await page.locator('#h5-learn-gap-input').waitFor();

@@ -31,7 +31,8 @@ test('the first screen loads the shell and a few chunks, much less than the old 
   assert.ok(eager.length <= 4, `the shell and at most three chunks: ${eager}`);
   const bytes = eager.reduce((sum, url) => sum + fs.statSync(path.join(PUBLIC, url)).size, 0);
   // The single bundle was 1,067 KB (2026-11-18); the split moved Settings, T-Attention, the design and file sheets into chunks of their own.
-  assert.ok(bytes < 760 * 1024, `the first screen is ${bytes} bytes`);
+  // 764 KB since the pull handle of the phone's bottom navigation (2026-11-25, about 3 KB in BottomNav.jsx, which the first screen draws).
+  assert.ok(bytes < 764 * 1024, `the first screen is ${bytes} bytes`);
   const text = eager.map(read).join('\n');
   for (const [marker, screen] of [['h5-usage-layout', 'the Usage data group'], ['.MuiSwitch-switchBase,.MuiCheckbox-root', 'the usage data recorder'], ['h5-settings-tabs', 'Settings'], ['h5-attention-reject', 'the T-Attention panel'], ['h5-design-outline', 'the design sheet'], ['h5-files-tree', 'the file tree'], ['registerAttentionSettings needs', 'the T-Attention settings slots'], ['h5-learn-pool', 'the Learn page'], ['h5-update-auto-switch', 'the Update dialog'], ['h5-copy-wrap-hint', 'the copy view and the other terminal dialogs']]) {
     assert.ok(!text.includes(marker), `${screen} is not in the first download`);

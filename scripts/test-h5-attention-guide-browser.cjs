@@ -10,6 +10,7 @@
 //   a failed notifier test shows its message and does not finish step 3, a working one does.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -111,7 +112,7 @@ const overflow = page => page.evaluate(() => [...document.querySelectorAll('#h5-
 // Waits until the sheet's slide-in has ended (no transform left), so sizes and positions are final.
 async function openPanel(page, how) {
   if (how === 'click' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click(); // a computer: T-Attention is in More tools
-  await page.locator('#h5-attention')[how]();
+  await bnavTap(page, '#h5-attention', how);
   await page.locator('#h5-more-menu .MuiBackdrop-root').waitFor({ state: 'hidden' }); // the closing menu no longer takes the pointer
   await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
   await page.waitForFunction(() => { const node = document.querySelector('#h5-attention-sheet .h5-attention-panel'); return node && ['none', 'matrix(1, 0, 0, 1, 0, 0)'].includes(getComputedStyle(node).transform); }, null, { timeout: 3000 });

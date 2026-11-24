@@ -19,6 +19,7 @@
 //   is online, and a 503 of the Learn settings shown in the panel with the switch put back.
 // H5_SHOT_DIR=<dir> saves the screenshots (computer: home, Review's Fill the gap after Check, Spell; phone: Spell with the letters, Fill the gap, Dictation with the full keyboard).
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -226,7 +227,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 
 (async () => {
@@ -557,7 +558,7 @@ async function toTerminal(page) {
       const device = { company_computer: true, cache_only: true, home_name: 'T01', home_online: false, waiting: 3, offline_copy_at: AT };
       mock.summary = { ...SUMMARY, device };
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn-home-away').waitFor();
       assert.equal(await text(page, '#h5-learn-home-away'), "T01 can't be reached. Your answers are kept on this computer for now and moved to T01 when it is back.");
       assert.equal(await page.locator('#h5-learn-home-away').evaluate(el => el.classList.contains('MuiAlert-colorInfo')), true, 'an info alert');
@@ -582,7 +583,7 @@ async function toTerminal(page) {
       const online = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       online.mock.summary = { ...SUMMARY, device: { ...device, home_online: true, offline_copy_at: null } };
       await toTerminal(online.page);
-      await online.page.locator('#h5-bnav-learn').tap();
+      await bnavTap(online.page, '#h5-bnav-learn');
       await online.page.locator('#h5-learn-due').waitFor();
       assert.equal(await online.page.locator('#h5-learn-home-away').count(), 0);
       assert.equal(await online.page.locator('#h5-learn-offline-counts').count(), 0);
@@ -599,10 +600,10 @@ async function toTerminal(page) {
       if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
       await row.tap();
       await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
       const item = page.locator('#h5-bnav-learn');
       assert.equal(await item.getAttribute('aria-label'), 'Learn');
-      await item.tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn .h5-learn-home').waitFor({ state: 'visible' });
       assert.equal(await item.getAttribute('aria-current'), 'page');
       const paper = await rect(page, '#h5-learn .MuiDialog-paper');
@@ -772,9 +773,9 @@ async function toTerminal(page) {
       await waitFor(async () => !(await ui(page, 'learnOpen')), 'back closes Learn');
       assert.equal(await page.locator('#h5-bnav-sessions').getAttribute('aria-current'), 'page');
       // Another destination leaves Learn.
-      await item.tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn .h5-learn-home').waitFor({ state: 'visible' });
-      await page.locator('#h5-bnav-settings').tap();
+      await bnavTap(page, '#h5-bnav-settings');
       await waitFor(async () => (await ui(page, 'settingsOpen')) && !(await ui(page, 'learnOpen')), 'Settings replaces Learn');
       await context.close();
     }
@@ -785,7 +786,7 @@ async function toTerminal(page) {
       mock.translator = true;
       mock.settings = { ...mock.settings, audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 1, audio_speed: 'normal', audio_stop_on_typing: true };
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn-due').waitFor();
       const spell = '#h5-learn-spell-input';
       const spokenOf = word => page.evaluate(w => window.spokenAt.filter(item => item.text === w), word);
@@ -1000,7 +1001,7 @@ async function toTerminal(page) {
       mock.translator = true;
       await toTerminal(page);
       await page.evaluate(() => { window.refuseSpeech = true; });
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-tap-play').waitFor({ timeout: 4000 });
       assert.equal(await page.locator('#h5-learn-hear').count(), 0);

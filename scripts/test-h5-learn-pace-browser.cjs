@@ -12,6 +12,7 @@
 // H5_SHOT_DIR=<dir> saves pace-almost.png, pace-parts-copy.png, pace-parts-recall.png, pace-round-done.png, pace-done-today.png,
 // pace-settings.png and pace-almost-desktop.png.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -155,7 +156,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 
 // A screen of Learn opened the way the coach opens it (her buttons, the links /h5?learn=<name>).
@@ -168,7 +169,7 @@ const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.ope
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
 
       // One letter off: Almost in the warning colour, Hard offered, the pattern named.

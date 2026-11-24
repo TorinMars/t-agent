@@ -13,6 +13,7 @@
 //   'english' on the focus, no switch between the answer and the row, 'restore' on blur and when Learn closes, and no notice in the app.
 // H5_SHOT_DIR=<dir> saves learn-practice-phone.png, learn-practice-wrong-key.png, learn-practice-desktop.png and learn-practice-ime.png.
 const { chromium } = require('playwright');
+const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -147,7 +148,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
 }
 // The row is there with the focus and empty slots.
 async function rowReady(page, word) {
@@ -181,7 +182,7 @@ const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.ope
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true, spell: [NECESSARY, INCIDENT, EXPIRES, LOOK_UP] });
       await toTerminal(page);
-      await page.locator('#h5-bnav-learn').tap();
+      await bnavTap(page, '#h5-bnav-learn');
       await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       await openScreen(page, 'spell');
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });

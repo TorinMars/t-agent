@@ -71,7 +71,7 @@ function createEngineLearnSyncRouter(options = {}) {
   router.post('/chat-update', handle(req => service().engineHome(req.serviceLink, 'chat-update', req.body)));
   router.post('/chat-delete', handle(req => service().engineHome(req.serviceLink, 'chat-delete', req.body)));
   // The English coach (docs/design/learn-english-coach.md): GET /coach?before=&limit= and POST /coach-<action> with the page's body.
-  router.get('/coach', handle(req => service().engineHome(req.serviceLink, 'coach', { before: req.query.before, limit: req.query.limit })));
+  router.get('/coach', handle(req => service().engineHome(req.serviceLink, 'coach', { before: req.query.before, limit: req.query.limit, claude: req.query.claude })));
   for (const action of ['send', 'practice', 'run', 'cancel', 'undo', 'plan-start', 'notes', 'note-update', 'note-delete', 'summary-reset']) {
     router.post(`/coach-${action}`, handle(req => service().engineHome(req.serviceLink, `coach-${action}`, req.body)));
   }

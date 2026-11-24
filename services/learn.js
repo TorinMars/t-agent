@@ -83,6 +83,9 @@ const COACH_SETTINGS = {
   coach_memory: { default: true, check: value => typeof value === 'boolean' },
   // Fewer tokens: a shorter window of the newest messages, fewer tool rounds and less read data per answer (off by default).
   coach_economy: { default: false, check: value => typeof value === 'boolean' },
+  // Who writes the answers ("The Claude engine" in docs/design/learn-english-coach.md): the translation service (the default, so nothing changes until the
+  // person chooses) or Claude with the person's own Claude sign-in on the computer that keeps the coach.
+  coach_engine: { default: 'translator', check: value => value === 'translator' || value === 'claude' },
 };
 // The fields checked by a rule (REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS and COACH_SETTINGS), read, saved and merged the same way.
 const CHECKED_SETTINGS = { ...REPORT_SETTINGS, ...PICK_SETTINGS, ...SCHEDULE_SETTINGS, ...PACE_SETTINGS, ...COACH_SETTINGS };

@@ -240,3 +240,23 @@ test('the screens a coach answer opens: each once, at most 3, only those this br
   // The same names as the server's allow-list.
   assert.deepEqual(Object.keys(COACH_SCREENS), require('../services/learn-merge').COACH_SCREENS);
 });
+
+test('the Claude engine on the page: the notice line, "Answered by Claude" in the caption, the engine of the settings and the state line under it', async () => {
+  const { coachLine, usageParts, engineOf, claudeState } = await coach();
+  assert.deepEqual(coachLine({ type: 'notice', text: 'Claude could not answer. The translation service answered this time.' }), { kind: 'notice', text: 'Claude could not answer. The translation service answered this time.' });
+  assert.equal(coachLine({ type: 'notice' }), null);
+  assert.deepEqual(usageParts({ calls: 2, tool_rounds: 1, prompt_tokens: 100, completion_tokens: 20, engine: 'claude' }, String),
+    [['Looked at your data once'], ['{1} calls', 2], ['{1} tokens', '120'], ['Answered by Claude']]);
+  assert.deepEqual(usageParts({ engine: 'claude' }, String), [['Answered by Claude']]);
+  assert.equal(engineOf({ coach_engine: 'claude' }), 'claude');
+  assert.equal(engineOf({}), 'translator');
+  assert.equal(engineOf({ coach_engine: 'other' }), 'translator');
+  assert.equal(claudeState(null).state, 'checking');
+  assert.deepEqual(claudeState({ claude_ready: true, claude_reason: '' }), { state: 'ready', text: 'Claude is ready on the computer that keeps your coach' });
+  assert.deepEqual(claudeState({ claude_ready: false, claude_reason: 'signed_out' }), { state: 'signed_out', text: 'Claude is not signed in on this computer' });
+  assert.equal(claudeState({ claude_ready: false, claude_reason: 'quota' }).state, 'quota');
+  assert.equal(claudeState({ claude_ready: false, claude_reason: 'nonsense' }).state, 'failed');
+  assert.equal(claudeState({ claude_ready: null, claude_reason: 'checking' }).state, 'checking');
+  assert.equal(claudeState({ offline: true }).state, 'away');
+  assert.equal(claudeState({ claude_ready: null, claude_reason: 'away' }).state, 'away');
+});

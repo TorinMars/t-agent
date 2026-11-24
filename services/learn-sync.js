@@ -679,7 +679,7 @@ function createLearnSync(options) {
     if (action.startsWith('coach')) {
       if (!coach) throw fault('NOT_FOUND', 404);
       const given = isPlainObject(body) ? body : {};
-      if (action === 'coach') return coach.view(name, { before: given.before, limit: given.limit });
+      if (action === 'coach') return typeof coach.look === 'function' ? coach.look(name, { before: given.before, limit: given.limit, claude: given.claude }) : coach.view(name, { before: given.before, limit: given.limit });
       if (action === 'coach-send') return coach.send(name, { text: given.text });
       if (action === 'coach-practice') return coach.practiceResult(name, given);
       if (action === 'coach-run') return coach.runProposal(name, given.id, { message_uid: given.message_uid });

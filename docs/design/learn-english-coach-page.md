@@ -55,12 +55,14 @@ The English chat becomes ONE continuous conversation with a coach. The approved 
 
 `POST /api/learn/coach/send { text }` and `POST /api/learn/coach/practice-result` are read the same way (`streamCoach`, `coachLine`): `{ delta }`
 grows her bubble (`data-streaming`); `{ type: 'status' }` shows "Looking at your answers…" (`#h5-learn-coach-status`) until the first delta;
-`{ type: 'proposals' }` shows the cards (disabled until `done`); `{ type: 'remembered', note }` adds the Remembered line with Undo; `{ type: 'done' }`
+`{ type: 'proposals' }` shows the cards (disabled until `done`); `{ type: 'remembered', note }` adds the Remembered line with Undo; `{ type: 'notice', text }`
+(Claude chosen but the translation service answered) shows the sentence as a caption above her answer (`.h5-learn-coach-notice`, also from the stored
+`meta.notice`); an answer by Claude ends its usage caption with "Answered by Claude" (`usage.engine`); `{ type: 'done' }`
 (or `done: true`) carries `messages`, or `message` with `user` / `practice`, `tools` and `usage`. A question or result that `done` does not send
 back stays as the page's own copy just before the answer; proposals, remembered notes and usage that came on the way are kept on the answer when
 its meta lacks them. `tools: false` shows "This service cannot look up your data; she answers from a short summary." above the input. An error
 line or a JSON error keeps the question (or the result divider) with an error Alert and Try again; 503 "Translation service not configured yet"
-shows the translator notice. A plain JSON body (a company computer) is taken as `done`.
+shows the translator notice (on load only when `can_answer` is false: with Claude chosen and usable no translator is needed). A plain JSON body (a company computer) is taken as `done`.
 
 ## The cards
 
@@ -112,18 +114,24 @@ computer the 260px list and the conversation in the pane ("Pick a chat to read i
 
 ## Coach settings
 
-A group "Coach" in Learn settings, shown when the learning settings have `coach_memory` (a server with the coach): "Remember things about me"
+A group "Coach" in Learn settings, shown when the learning settings have `coach_memory` (a server with the coach): first "Model" (`#h5-learn-coach-engine`,
+radio buttons saved at once, `coach_engine`): "Translation service (DeepSeek / GLM)" ("Fast. Uses the translation service set up in Settings.") and "Claude
+(your Claude account)" ("Slower, and uses your Claude plan's quota. Works only on a computer where Claude Code is signed in; no API key needed. When Claude
+cannot answer, the translation service answers if it is set up."), with a caption line under them (`#h5-learn-coach-claude-state`, `data-state`) from
+`GET /coach?limit=1&claude=1` (`claudeState` in `learn-coach.mjs`): "Claude is ready on the computer that keeps your coach", "Checking Claude …", "Claude is
+not signed in on this computer", "Claude Code is not installed on this computer", "Your Claude plan has reached its usage limit for now", or the home is
+away; read again when the choice changes. Then "Remember things about me"
 (`coach_memory`) and the notes (`GET /coach/notes`): tap a line to edit in place (Enter or leaving saves `PATCH { text }`, one line, at most 200
 characters; Escape cancels), × deletes with Undo ("Note deleted · Undo" in its place; the `DELETE` goes after 10 s or when the settings close), "N of
 40 notes. …"; "Let the coach read my learning answers" (`coach_read_answers`), "Let the coach read my journal and chats" (`coach_read_text`), "Save
 tokens" (`coach_economy`, off by default: "A shorter memory of the conversation and at most 3 lookups per answer"), "Reset the summary"; under the
-card "What she reads is sent to your translation service to write the answer." The switches save through `PUT /api/learn/settings` like the other
+card "What she reads is sent to your translation service to write the answer." (with Claude: "What she reads is sent to Claude (Anthropic) with your Claude account to write the answer."). The switches save through `PUT /api/learn/settings` like the other
 learning settings (shared, synced); the first three are on unless false.
 
 ## Tests
 
 `test/h5-learn-coach.test.js` (the series: exercises, steps, the retest, misses at the end, leaving, the result; the stream lines, merging, the
-cards, the divider, suggestions, Remembered, notes, usage) and `scripts/test-h5-learn-coach-browser.cjs` (390x844 touch, with the checks of the compact layout: no bottom navigation, the message list at
+cards, the divider, suggestions, Remembered, notes, usage) and `scripts/test-h5-learn-coach-browser.cjs` (390x844 touch; the Model choice, its 44px target, the Claude caption read with `claude=1` and again after choosing Claude, the privacy line, the notice line and "Answered by Claude"; with the checks of the compact layout: no bottom navigation, the message list at
 least 55% of the window, the plan card in one row, the usage line opened by a tap, the chips in one line above the input; and 1440x900 against a
 stub of the contract; Learn as only the coach (no home on either size, her back closes Learn, the coach filling the page at 1440x900); the
 buttons of `open_screen` and the screens they open, whose back returns to her; the link `/h5?learn=progress`; the menu's Learn settings also while

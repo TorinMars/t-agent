@@ -21,7 +21,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { activityStreamMock } = require('./h5-activity-stream-mock.cjs');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const root = path.resolve(__dirname, '..');
 const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
@@ -161,7 +160,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
 
 async function checkCharts(page) {
@@ -316,7 +315,7 @@ async function checkCharts(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await page.locator(COACH).waitFor();
       await openScreen(page, 'progress');
       await page.locator('#h5-learn-mode #h5-learn-chart-daily-svg').waitFor();
@@ -393,7 +392,7 @@ async function checkCharts(page) {
       delete mock.settings.desired_retention;
       await page.evaluate(() => history.back());
       await page.locator('#h5-learn').waitFor({ state: 'detached' });
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await page.locator(COACH).waitFor();
       await openScreen(page, 'settings');
       await page.locator('#h5-learn-settings-card').waitFor();
@@ -405,7 +404,7 @@ async function checkCharts(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 320, height: 640 }, touch: true });
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       mock.queue = [{ ...QUEUE[0], next: { again: 600000, hard: 20 * DAY, good: 400 * DAY } }];
       await page.locator(COACH).waitFor();
       await openScreen(page, 'review');

@@ -16,7 +16,6 @@
 //   Enter sends; Escape closes the chat.
 // H5_SHOT_DIR=<dir> saves learn-chat-*.png.
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -222,7 +221,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
 async function openMenu(page) {
   await page.locator('#h5-learn-chat-more').tap();
@@ -238,7 +237,7 @@ const menuGone = page => page.waitForFunction(() => !document.querySelector('#h5
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       // Frame 1: after Mistakes, the overline "Ask" and the English chat card with its count (read from GET /chats: the summary has none).
       const entry = page.locator('#h5-learn-mode-chat');
       await entry.waitFor();

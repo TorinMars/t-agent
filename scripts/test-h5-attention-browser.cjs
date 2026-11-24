@@ -25,7 +25,6 @@
 //   back to the control that opened it; one at a time with the Docs sheet; the edit view is a normal dialog.
 // H5_SHOT_DIR=<dir> saves screenshots (phones at 3x).
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const { openGroup } = require('./settings-test-helper.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -330,7 +329,7 @@ const editLayout = page => page.evaluate(() => {
 
       // Open: the Home view (an older server: no parent_id): Needs you (waiting_user, then review), Working, To do, then "Done: N" folded; the
       // order inside a section.
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       const sheet = page.locator('#h5-attention-sheet .h5-attention-panel');
       await sheet.waitFor({ state: 'visible' });
       await settled(page, '#h5-attention-sheet .h5-attention-panel');
@@ -487,7 +486,7 @@ const editLayout = page => page.evaluate(() => {
       // Escape closes the sheet (one layer).
       await page.keyboard.press('Escape');
       await sheet.waitFor({ state: 'hidden' });
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
       await page.waitForFunction(() => (history.state && history.state.h5Layer) === 1);
       await page.goBack();
@@ -495,7 +494,7 @@ const editLayout = page => page.evaluate(() => {
       assert.equal(await layerDepth(page), 0);
 
       // Context recall: the card of a task that needs the user.
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
       await row(page, 1).locator('.h5-attention-details').tap();
       await edit.waitFor({ state: 'visible' });
@@ -533,7 +532,7 @@ const editLayout = page => page.evaluate(() => {
       await sheet.waitFor({ state: 'hidden' });
       await page.waitForFunction(() => window.sockets.some(socket => socket.url.includes('t2')) && document.getElementById('h5-session-name').textContent === 'Claude 1');
       // A file of the context opens in the file sheet (inside the folder of task 1).
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
       await row(page, 1).locator('.h5-attention-details').tap();
       await page.locator('.h5-attention-file[data-path="src/login.js"] button').tap();
@@ -544,7 +543,7 @@ const editLayout = page => page.evaluate(() => {
       await page.locator('#h5-design-close').tap();
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
       // A file outside every task folder opens the same way.
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
       await row(page, 1).locator('.h5-attention-details').tap();
       await page.locator('.h5-attention-file[data-path="/etc/hosts"] button').tap();
@@ -554,7 +553,7 @@ const editLayout = page => page.evaluate(() => {
       await page.locator('#h5-design-close').tap();
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
       // Copy resume command: a task whose T-Agent task is not in this list.
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
       if (await page.locator('#h5-attention-closed-toggle').getAttribute('aria-expanded') === 'false') await page.locator('#h5-attention-closed-toggle').tap();
       await row(page, 7).locator('.h5-attention-open').tap();
@@ -797,7 +796,7 @@ const editLayout = page => page.evaluate(() => {
           context: { pending: { kind: 'question', text: 'Which one? See https://example.test/a or https://example.test/b.' }, last_reply: 'Opened https://example.test/pr/9 for it.', summary: { text: 'Doing: https://example.test/doc', at: AT } } },
       ];
       const { context, page, errors, calls } = await openPage(browser, { viewport: { width: 390, height: 844 }, items: LINKED });
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
       await settled(page, '#h5-attention-sheet .h5-attention-panel');
       // The row link: a real link with the label (or "Open link") as its name.
@@ -907,7 +906,7 @@ const editLayout = page => page.evaluate(() => {
       const edit = page.locator('#h5-attention-edit .MuiDialog-paper');
       const shownName = () => page.locator('#h5-session-name').textContent();
       const patches = () => calls.filter(call => call.method === 'PATCH').length;
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await sheet.waitFor({ state: 'visible' });
       await settled(page, '#h5-attention-sheet .h5-attention-panel');
       // The chip: the terminal glyph, the session's name in the task list and its live state (t2 finished: Needs you; t1 idle).
@@ -1026,15 +1025,14 @@ const editLayout = page => page.evaluate(() => {
       const buttons = await row2(page);
       assert.equal(buttons.length, 7, `seven buttons at 320px: ${buttons.map(b => b.id)}`);
       assert.ok(buttons.some(b => b.id === 'h5-design'), 'Docs fits at 320px');
-      assert.equal(await page.locator('#h5-bnav #h5-attention').count(), 1, 'T-Attention in the bottom navigation');
-      assert.equal(await page.locator('#h5-bnav-handle').isVisible(), true, 'which is behind its pull handle on the session page');
+      assert.equal(await page.locator('#h5-bnav #h5-attention').isVisible(), true, 'T-Attention in the bottom navigation');
       assert.ok(buttons.every((b, i) => b.width >= 43.99 && b.height >= 43.99 && b.right <= 320.01 && (i === 0 || buttons[i - 1].right <= b.left + 0.01)), `44px buttons: ${JSON.stringify(buttons.map(b => [b.left, b.right, b.height]))}`);
       if (SHOTS) await page.locator('#h5-actions').screenshot({ path: path.join(SHOTS, 'h5-attention-row2-320.png') });
       await page.locator('#h5-design').tap();
       await page.locator('#h5-design-body h1', { hasText: 'Design of Fix login' }).waitFor();
       await page.locator('#h5-design-close').tap();
       await page.locator('#h5-design-sheet .h5-design-panel').waitFor({ state: 'hidden' });
-      await bnavTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await settled(page, '#h5-attention-sheet .h5-attention-panel');
       const small = await page.evaluate(() => [...document.querySelectorAll('#h5-attention-sheet button')].map(node => node.getBoundingClientRect()).filter(r => r.width && (r.width < 44 || r.height < 44)).length);
       assert.equal(small, 0);
@@ -1090,7 +1088,7 @@ const editLayout = page => page.evaluate(() => {
       assert.deepEqual(buttons.map(b => b.id), ['h5-image', 'h5-voice', 'h5-commands', 'h5-design', 'h5-cycle', 'h5-more', 'h5-translate-button']);
       assert.equal(await page.locator('#h5-more-menu #h5-attention[role="menuitem"]').count(), 1, 'T-Attention is in More tools');
       // (It waits until the menu has gone: its invisible backdrop takes presses until its exit transition ends.)
-      const attention = async () => { await page.locator('#h5-more').click(); await bnavTap(page, '#h5-attention', 'click'); await page.locator('#h5-more-menu').waitFor({ state: 'hidden' }); };
+      const attention = async () => { await page.locator('#h5-more').click(); await page.locator('#h5-attention').click(); await page.locator('#h5-more-menu').waitFor({ state: 'hidden' }); };
       const layoutBefore = await layout();
       const resizesBefore = await resizes();
       assert.ok(await page.locator('#h5-design').isVisible(), 'the wide row has its Docs button');
@@ -1250,7 +1248,7 @@ const editLayout = page => page.evaluate(() => {
       const { context, page, errors, calls } = await openPage(browser, { viewport: { width: 1440, height: 900 }, touch: false, items: SESSION_ITEMS(), activity: { 1: { t2: 'done' } } });
       const panel = page.locator('#h5-attention-sheet .h5-attention-panel');
       await page.locator('#h5-more').click();
-      await bnavTap(page, '#h5-attention', 'click');
+      await page.locator('#h5-attention').click();
       await panel.waitFor({ state: 'visible' });
       await row(page, 1).locator('.h5-attention-session').waitFor();
       const shown = () => page.evaluate(() => [...document.querySelectorAll('#h5-attention-sheet .h5-attention-row[data-shown="true"]')].map(node => Number(node.dataset.id)));

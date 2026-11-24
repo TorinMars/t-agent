@@ -18,7 +18,6 @@
 // H5_SHOT_DIR=<dir> saves learn-pick-spell.png, learn-pick-checked.png, learn-pick-settings.png (390 px, frames 1, 2 and 4 of the design) and
 // learn-pick-desktop.png.
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -175,7 +174,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
 // Opens a screen of Learn the way the coach's button or a link does (ui.actions.openLearn).
 const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.openLearn(view), name);
@@ -191,7 +190,7 @@ async function openSettings(page) {
     {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       await openScreen(page, 'spell');
       await page.locator('#h5-learn-sentence').waitFor();
@@ -403,7 +402,7 @@ async function openSettings(page) {
       mock.level = { level: null, picking: { ...PICKING, picked: 0, skipped: 0, pending: 91 }, translator: true };
       mock.check = () => ({ level: { ...LEVEL, level: 'A2', label: 'elementary', report_at: null }, picking: { ...PICKING, picked: 0, skipped: 0, pending: 91, running: true }, translator: true });
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await openSettings(page, true);
       await page.locator('#h5-learn-level-none').waitFor();
       assert.equal(await text(page, '#h5-learn-level-none'), 'Not estimated yet');
@@ -421,7 +420,7 @@ async function openSettings(page) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       mock.level = { level: { ...LEVEL }, picking: { ...PICKING }, translator: false };
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await openSettings(page, true);
       await page.locator('#h5-learn-level-no-translator').waitFor();
       assert.equal(await page.locator('#h5-learn-level-check').count(), 0);
@@ -444,7 +443,7 @@ async function openSettings(page) {
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       mock.level = null;
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await openSettings(page, true);
       await page.locator('#h5-learn-level-error').waitFor();
       assert.equal(await text(page, '#h5-learn-level-error'), 'Not found');

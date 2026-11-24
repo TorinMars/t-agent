@@ -11,7 +11,6 @@
 // - K01 hidden in the task list takes its copies away, shown again brings them back;
 // - phone 390 (touch; screenshots attention-copy-*.png with H5_SHOT_DIR) and computer 1440 (mouse), Chinese.
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -168,7 +167,7 @@ async function openPage(browser, world, { viewport, touch = true, zh = false }) 
 
 async function openSheet(page, how) {
   if (how === 'click' && await page.locator('#h5-more').isVisible()) await page.locator('#h5-more').click();
-  await bnavTap(page, '#h5-attention', how);
+  await page.locator('#h5-attention')[how]();
   await page.locator('#h5-more-menu .MuiBackdrop-root').waitFor({ state: 'hidden' });
   await page.locator(`${SHEET} .h5-attention-panel`).waitFor({ state: 'visible' });
   await page.locator(`${SHEET} .h5-attention-row`).first().waitFor();

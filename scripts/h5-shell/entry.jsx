@@ -129,8 +129,6 @@ const back = paneId ? null : createBackLayers({
     if (s.wide && s.learnOpen) layers.push({ close: () => ui.actions.closeLearn() });
     // The session switcher (Switcher.jsx) is not a modal either; it lies over the terminal.
     if (s.switcher) layers.push({ close: () => ui.actions.closeSwitcher() });
-    // The phone's bottom navigation shown from its pull handle over the session page (BottomNav.jsx).
-    if (s.navPeek) layers.push({ close: () => ui.set({ navPeek: false }) });
     return layers;
   },
 });

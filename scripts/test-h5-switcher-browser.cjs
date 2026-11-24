@@ -170,10 +170,10 @@ async function touchSwipe(page, cdp, from, to, steps = 12) {
       assert.equal(await cycle.getAttribute('aria-expanded'), 'true', 'the button shows the pressed look');
       const place = await page.evaluate(() => {
         const box = document.getElementById('h5-switcher').getBoundingClientRect();
-        return { top: box.top, bottom: box.bottom, actions: document.getElementById('h5-actions').getBoundingClientRect().top, nav: (document.getElementById('h5-bnav-handle') || document.getElementById('h5-bnav')).getBoundingClientRect().height, header: document.querySelector('.h5-header').getBoundingClientRect().top };
+        return { top: box.top, bottom: box.bottom, actions: document.getElementById('h5-actions').getBoundingClientRect().top, nav: document.getElementById('h5-bnav').getBoundingClientRect().height, header: document.querySelector('.h5-header').getBoundingClientRect().top };
       });
       assert.ok(place.top <= place.header + 0.5 && Math.abs(place.bottom - place.actions) <= 1, `it covers the header, the terminal and the key row, down to the tool row: ${JSON.stringify(place)}`);
-      assert.ok(place.nav > 0, 'the pull handle of the bottom navigation stays');
+      assert.ok(place.nav > 0, 'the bottom navigation stays');
       let list = await cards(page);
       assert.deepEqual(list.map(card => card.key), ['local|1|c1', 'remote:7|5|k1', 'local|2|d1', 'local|1|default'], 'most recently shown first, the other engine among them');
       assert.equal(list[0].current, true);

@@ -3,7 +3,6 @@
 // chosen by content, from text with its live count, from the clipboard, and a file dropped on the list), and topics copied to and pasted from other
 // apps (plain text, an HTML list and the exact topics together). The /api/mindmaps endpoints are mocked here. Also the phone's bottom sheets.
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -86,7 +85,7 @@ async function openPage(browser, { touch }) {
 async function openView(page, touch) {
   if (touch) {
     if (await page.locator('#h5-tasks').isVisible().catch(() => false)) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
-    await bnavTap(page, '#h5-bnav-maps');
+    await page.locator('#h5-bnav-maps').tap();
   } else {
     await page.evaluate(() => window.H5UI.actions.openMindmaps());
   }

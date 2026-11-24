@@ -37,7 +37,7 @@ const NAMES = {
   'h5-term-width': 'Wide terminal', 'h5-header-more': 'More (header)', 'h5-refresh': 'Refresh the page', 'h5-header-update': 'Update', 'h5-update': 'Update',
   'h5-sidebar-toggle': 'Fold the task list', 'h5-open-tasks': 'Tasks',
   'h5-nav-sessions': 'Sessions', 'h5-nav-columns': 'Columns', 'h5-nav-attention': 'Attention', 'h5-nav-maps': 'Mind maps', 'h5-nav-settings': 'Settings',
-  'h5-bnav-sessions': 'Sessions', 'h5-bnav-attention': 'Attention', 'h5-bnav-maps': 'Mind maps', 'h5-bnav-settings': 'Settings', 'h5-bnav-handle': 'Show navigation',
+  'h5-bnav-sessions': 'Sessions', 'h5-bnav-attention': 'Attention', 'h5-bnav-maps': 'Mind maps', 'h5-bnav-settings': 'Settings',
   'h5-task-item': 'Open a task', 'h5-terminal-main': 'Open a session', 'h5-task-more': 'Task actions', 'h5-terminal-more': 'Session actions', 'h5-task-add': 'New session',
   'h5-add-task': 'New task', 'h5-task-list-more': 'List options', 'h5-expand-all': 'Expand all', 'h5-collapse-all': 'Collapse all', 'h5-task-tag': 'Device tag',
   'h5-tasks-settings': 'Settings', 'h5-tasks-mindmap': 'Mind maps', 'h5-close-tasks': 'Close the task list', 'h5-menu-action': 'Menu action', 'h5-term-menu-cancel': 'Cancel',

@@ -11,7 +11,6 @@
 // - 390x844 (touch): the Mistakes page and a report fit the width (no sideways scroll), chips wrap.
 // H5_SHOT_DIR=<dir> saves mistakes-desktop.png, mistakes-phone.png, mistakes-report-phone.png, mistakes-no-model-phone.png.
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -156,7 +155,7 @@ async function toTerminal(page) {
   if (!(await row.count())) await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
   await row.tap();
   await page.waitForFunction(() => !document.body.classList.contains('h5-tasks-open'));
-  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav-handle')); // the bar is behind its pull handle on the session page
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
 }
 
 // Opens a screen of Learn the way the coach's button or a link does (ui.actions.openLearn).
@@ -267,7 +266,7 @@ const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.ope
       const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
       mock.summary = { ...SUMMARY, new_report: null };
       await toTerminal(page);
-      await bnavTap(page, '#h5-bnav-learn');
+      await page.locator('#h5-bnav-learn').tap();
       await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       await openScreen(page, 'mistakes');
       await page.locator('#h5-learn-mistakes').waitFor();

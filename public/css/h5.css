@@ -123,12 +123,6 @@ html[data-bnav] .h5-app, html[data-bnav-room] .h5-app { padding-bottom: var(--h5
 html[data-bnav] #h5-bottom, html[data-bnav-room] #h5-bottom { padding-bottom: 0 !important; }
 html[data-bnav] #h5-attention-sheet, html[data-bnav] #h5-settings, html[data-bnav] #h5-settings-page { bottom: var(--h5-bnav-space) !important; transform: translateZ(0); }
 html[data-bnav] #h5-attention-sheet > .MuiDrawer-paper { max-height: 100%; padding-bottom: 0 !important; }
-/* Sessions with a terminal on a phone (BottomNav.jsx, `html[data-bnav-handle]`): the bar is hidden behind its pull handle (#h5-bnav-handle), a 16px
-   strip above the safe-area inset, and the page keeps only that room, also while a destination page lies over the terminal (those pages still end at
-   the bar, `--h5-bnav-space`), so going there and back does not resize the terminal. The bar shown from the handle lies over the page and takes no room.
-   See "Pull handle on the session page" in docs/design/page-navigation.md. */
-html[data-bnav-handle] .h5-app { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
-html[data-bnav-handle] #h5-bottom { padding-bottom: 0 !important; }
 /* The task drawer of a phone lies over the page with its scrim (body.h5-tasks-open marks it open; App.jsx makes the page inert meanwhile): the page
    does not move. */
 

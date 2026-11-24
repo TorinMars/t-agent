@@ -1,9 +1,5 @@
 // The phone's bottom navigation (BottomNav.jsx, #h5-bnav), in real Chromium with every route mocked. See "Bottom navigation" in
 // docs/design/page-navigation.md.
-// - 390x844 (touch), Sessions with a terminal: the bar hidden by default behind its pull handle (#h5-bnav-handle, "Show navigation", 16px at the
-//   bottom, the page keeping only that room), the handle's error-colour dot for the Attention count; a tap (or a swipe up) showing the bar over the page
-//   without changing the terminal's box or its cols / rows; Escape, a tap outside, a swipe down, back and 6 seconds without a touch hiding it; choosing
-//   Attention from it hiding it and opening T-Attention, the terminal keeping its size there and back.
 // - 390x844 (touch): a "Views" landmark of 56px at the bottom with Sessions, Attention (#h5-attention, its red count in the name and the badge),
 //   Mind maps and Settings; `aria-current` following the destination; each other destination (T-Attention, the full-window mind map, Settings) filling
 //   the screen above the bar while the bar stays usable; a destination closing the one before, Sessions closing all; the back button returning to
@@ -95,27 +91,7 @@ async function openTerminal(page, task, terminal, how = 'click') {
 
 
 const barTop = page => page.locator('#h5-bnav').evaluate(el => Math.round(el.getBoundingClientRect().top));
-// The bar is on the screen (with its room kept on a destination page, or over the session page while peeking from the handle).
-const shown = page => page.evaluate(() => { const el = document.getElementById('h5-bnav'); return Boolean(el) && getComputedStyle(el).display !== 'none'; });
-const handleShown = page => page.evaluate(() => Boolean(document.getElementById('h5-bnav-handle')));
-// On the session page the bar is behind its pull handle: show it first, then tap the destination.
-async function reveal(page) {
-  if (!(await handleShown(page))) return;
-  await page.locator('#h5-bnav-handle').tap();
-  await page.waitForFunction(() => getComputedStyle(document.getElementById('h5-bnav')).display !== 'none');
-}
-const navTap = async (page, selector) => { await reveal(page); await page.locator(selector).tap(); };
-// A one-finger swipe on an element, as touch events (Playwright has no swipe).
-const swipe = (page, selector, dy) => page.locator(selector).evaluate((el, delta) => {
-  const r = el.getBoundingClientRect();
-  const x = r.left + r.width / 2;
-  const y = r.top + r.height / 2;
-  const touch = clientY => new Touch({ identifier: 1, target: el, clientX: x, clientY });
-  el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [touch(y)], changedTouches: [touch(y)] }));
-  el.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [touch(y + delta)], changedTouches: [touch(y + delta)] }));
-  el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], changedTouches: [touch(y + delta)] }));
-}, dy);
-const resizes = page => page.evaluate(() => window.sockets.filter(s => s.url.includes('/terminal/ws')).flatMap(s => s.sent).filter(item => /"type":"resize"/.test(item)).length);
+const shown = page => page.evaluate(() => { const el = document.getElementById('h5-bnav'); return Boolean(el) && getComputedStyle(el).display !== 'none' && document.documentElement.hasAttribute('data-bnav'); });
 // The terminal's rows: those of the last resize the page sent on the terminal socket.
 const rows = page => page.evaluate(() => { const sent = window.sockets.filter(s => s.url.includes('/terminal/ws')).flatMap(s => s.sent).map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item && item.type === 'resize'); return sent.length ? sent.at(-1).rows : 0; });
 const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-current="page"]')?.dataset.view || null);
@@ -135,78 +111,9 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       await page.evaluate(() => window.sockets.filter(s => s.url.includes('/terminal/ws')).at(-1).onmessage?.({ data: JSON.stringify({ type: 'history', data: 'ready $ ', cols: 40, rows: 20 }) }));
       await page.waitForTimeout(400);
 
-      // Sessions with a terminal: the bar is hidden behind its pull handle, and the page keeps only the handle's 16px.
+      // The bar: a landmark at the bottom, four destinations, Sessions current; no drawer rows below the task list any more.
       const nav = page.locator('#h5-bnav');
-      const handle = page.locator('#h5-bnav-handle');
-      assert.equal(await shown(page), false, 'the bar is hidden on the session page');
-      assert.equal(await page.evaluate(() => [document.documentElement.hasAttribute('data-bnav'), document.documentElement.hasAttribute('data-bnav-handle')].join()), 'false,true');
-      assert.equal(await handle.evaluate(el => [el.tagName, el.getAttribute('aria-label'), el.getAttribute('title')].join('|')), 'BUTTON|Show navigation|Show navigation');
-      assert.deepEqual(await rect(page, '#h5-bnav-handle'), { x: 0, y: 844 - 16, w: 390, h: 16, right: 390 }, 'a 16px strip at the bottom');
-      const grip = await rect(page, '#h5-bnav-handle .h5-bnav-grip');
-      assert.ok(grip.w === 40 && grip.h === 4 && Math.abs(grip.x + 20 - 195) <= 1, `a centred 4 x 40px bar (${JSON.stringify(grip)})`);
-      const bottomArea = await rect(page, '#h5-bottom');
-      assert.ok(Math.abs(bottomArea.y + bottomArea.h - (844 - 16)) <= 0.5, `the bottom area ends on the handle (${JSON.stringify(bottomArea)})`);
-      await page.waitForFunction(() => document.querySelector('#h5-bnav-handle .h5-bnav-handle-dot'), null, { timeout: 8000 });
-      assert.equal(await page.locator('#h5-bnav-handle .h5-bnav-handle-dot').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(244, 67, 54)', 'the Attention count shows as a red dot');
-      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'bnav-handle.png') }); }
-      // A tap shows the bar over the page: the terminal keeps its box, its rows and columns (no resize is sent).
-      const term = await rect(page, '#h5-terminal');
-      const sentBefore = await resizes(page);
-      await handle.tap();
-      await page.waitForFunction(() => getComputedStyle(document.getElementById('h5-bnav')).display !== 'none');
-      assert.equal(await handleShown(page), false, 'the handle gives way to the bar');
-      assert.deepEqual(await rect(page, '#h5-bnav'), { x: 0, y: 844 - 56, w: 390, h: 56, right: 390 }, 'the bar over the bottom of the page');
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-bnav')), false, 'no room taken');
-      await page.waitForTimeout(400);
-      assert.deepEqual(await rect(page, '#h5-terminal'), term, 'the terminal box does not change');
-      assert.equal(await resizes(page), sentBefore, 'no resize is sent');
-      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'bnav-peek.png') });
-      // Escape hides it.
-      await page.keyboard.press('Escape');
-      await page.waitForFunction(() => getComputedStyle(document.getElementById('h5-bnav')).display === 'none' && document.getElementById('h5-bnav-handle'));
-      // A swipe up on the handle shows it; a swipe down on the bar hides it.
-      await swipe(page, '#h5-bnav-handle', -40);
-      await page.waitForFunction(() => window.H5UI.get().navPeek === true);
-      await swipe(page, '#h5-bnav', 40);
-      await page.waitForFunction(() => window.H5UI.get().navPeek === false);
-      // A tap outside it hides it.
-      await reveal(page);
-      await page.touchscreen.tap(195, 300);
-      await page.waitForFunction(() => window.H5UI.get().navPeek === false);
-      // The back button hides it, and the page is not left.
-      await reveal(page);
-      await page.waitForTimeout(300); // the layer's history entry is pushed
-      await page.evaluate(() => history.back());
-      await page.waitForFunction(() => window.H5UI.get().navPeek === false);
-      await page.waitForTimeout(300);
-      assert.equal(page.url(), `${ORIGIN}/h5`, 'back only hid the bar');
-      // Six seconds without a touch hide it.
-      await reveal(page);
-      await page.waitForTimeout(5000);
-      assert.equal(await ui(page, 'navPeek'), true, 'still shown after 5 seconds');
-      await page.waitForFunction(() => window.H5UI.get().navPeek === false, null, { timeout: 3000 });
-      assert.equal(await resizes(page), sentBefore, 'still no resize');
-      // The keyboard: Enter on the handle shows the bar and puts the focus on the current destination; Escape gives it back to the handle.
-      await handle.focus();
-      await page.keyboard.press('Enter');
-      await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'h5-bnav-sessions');
-      await page.keyboard.press('Escape');
-      await page.waitForFunction(() => window.H5UI.get().navPeek === false && document.activeElement && document.activeElement.id === 'h5-bnav-handle');
-      // Choosing Attention hides the bar and opens T-Attention; the terminal keeps its size there and back.
-      await navTap(page, '#h5-attention');
-      await page.waitForFunction(() => window.H5UI.get().attention.open && !window.H5UI.get().navPeek);
-      await page.locator('#h5-attention-sheet .h5-attention-panel').waitFor({ state: 'visible' });
-      assert.equal(await shown(page), true, 'the bar is shown, with its room, over T-Attention');
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-bnav')), true);
-      await page.waitForTimeout(400);
-      await page.locator('#h5-attention-close').tap();
-      await page.waitForFunction(() => !window.H5UI.get().attention.open && document.getElementById('h5-bnav-handle'));
-      await page.waitForTimeout(400);
-      assert.deepEqual(await rect(page, '#h5-terminal'), term, 'the same terminal box after T-Attention');
-      assert.equal(await resizes(page), sentBefore, 'no resize for going to T-Attention and back');
-
-      // The bar (shown from the handle): a landmark at the bottom, five destinations, Sessions current; no drawer rows below the task list any more.
-      await reveal(page);
+      assert.equal(await shown(page), true, 'the bar is shown on a phone');
       assert.equal(await nav.evaluate(el => [el.tagName, el.getAttribute('aria-label')].join('|')), 'NAV|Views');
       assert.deepEqual(await rect(page, '#h5-bnav'), { x: 0, y: 844 - 56, w: 390, h: 56, right: 390 }, '56px at the bottom, the whole width');
       assert.deepEqual(await nav.evaluate(el => [...el.querySelectorAll('.h5-bnav-item')].map(node => [node.id, node.querySelector('.h5-bnav-label').textContent])),
@@ -215,6 +122,7 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       assert.equal(await view(page), 'sessions');
       assert.equal(await page.locator('#h5-bnav-sessions .h5-bnav-label').evaluate(el => getComputedStyle(el).color), 'rgb(144, 202, 249)', 'the current one in the primary colour');
       assert.equal((await rect(page, '#h5-app')).h, 844);
+      assert.ok((await rect(page, '#h5-bottom')).y + (await rect(page, '#h5-bottom')).h <= 844 - 56 + 0.5, 'the bottom area ends above the bar');
       // Sessions: the key row (44px) and the seven tools (a 48px row, 44px targets), without T-Attention.
       assert.equal((await rect(page, '#h5-keys')).h, 44, 'the key row is 44px');
       const tools = await page.locator('#h5-actions > button, #h5-actions > label').evaluateAll(nodes => nodes.filter(el => getComputedStyle(el).display !== 'none').map(el => ({ id: el.id || el.dataset.action, h: el.getBoundingClientRect().height })));
@@ -226,7 +134,7 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       assert.equal(await page.locator('#h5-attention').getAttribute('aria-label'), 'Attention (1)');
       assert.equal(await page.locator('#h5-attention').getAttribute('title'), 'Attention (1)');
       assert.equal(await page.locator('#h5-attention .MuiBadge-badge').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(244, 67, 54)', 'red, like the rail');
-      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'bnav-terminal.png') });
+      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'bnav-terminal.png') }); }
       // Arrow keys move between the items.
       await page.locator('#h5-bnav-sessions').focus();
       await page.keyboard.press('ArrowRight');
@@ -286,7 +194,7 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       await page.evaluate(() => history.back());
       await page.waitForFunction(() => !window.H5UI.get().settingsOpen);
       assert.equal(await view(page), 'sessions', 'back from the group list returns to Sessions');
-      await navTap(page, '#h5-bnav-settings');
+      await page.locator('#h5-bnav-settings').tap();
       await page.waitForFunction(() => window.H5UI.get().settingsOpen);
       await page.waitForTimeout(400);
       // Sessions closes it.
@@ -295,7 +203,7 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       await page.locator('#h5-settings').waitFor({ state: 'hidden' });
       assert.equal(await view(page), 'sessions');
       // T-Attention's back arrow returns to Sessions.
-      await navTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await page.locator('#h5-attention-close').waitFor({ state: 'visible' });
       await page.waitForTimeout(400);
       await page.locator('#h5-attention-close').tap();
@@ -304,7 +212,7 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       await page.waitForTimeout(400);
       // Back on a destination returns to Sessions.
       for (const [id, isOpen] of [['#h5-attention', () => window.H5UI.get().attention.open], ['#h5-bnav-settings', () => window.H5UI.get().settingsOpen], ['#h5-bnav-maps', () => window.H5UI.get().mindmapOpen]]) {
-        await navTap(page, id);
+        await page.locator(id).tap();
         await page.waitForFunction(isOpen);
         await page.waitForTimeout(400); // the layer's history entry is pushed
         await page.evaluate(() => history.back());
@@ -319,28 +227,26 @@ const view = page => page.evaluate(() => document.querySelector('#h5-bnav [aria-
       assert.ok(before > 0, 'the terminal has rows');
       await page.locator('#h5-actions [data-action="draft"]').tap();
       await page.waitForFunction(() => window.H5UI.get().keyboard === 'draft');
-      await page.waitForFunction(() => !document.getElementById('h5-bnav-handle'));
+      await page.waitForFunction(() => !document.documentElement.hasAttribute('data-bnav'));
       assert.equal(await shown(page), false, 'hidden while the draft box has the focus');
-      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-bnav-handle')), true, 'the room of the handle is kept while typing');
       await page.evaluate(() => document.activeElement.blur());
-      await page.waitForFunction(() => document.getElementById('h5-bnav-handle'));
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
       await page.waitForTimeout(400);
       assert.equal(await rows(page), before, 'the terminal has its rows back with the bar');
       await page.locator('#h5-actions [data-action="keyboard"]').tap();
       await page.locator('#h5-osk').waitFor({ state: 'visible' });
       assert.equal(await shown(page), false, 'hidden while the terminal keyboard is shown');
-      assert.equal(await handleShown(page), false, 'and so is the handle');
       const oskBottom = await page.locator('#h5-osk').evaluate(el => Math.round(el.getBoundingClientRect().bottom));
       assert.ok(oskBottom >= 844 - 1, `the terminal keyboard reaches the bottom (${oskBottom})`);
       await page.locator('#h5-actions [data-action="keyboard"]').tap();
       await page.locator('#h5-osk').waitFor({ state: 'detached' });
-      await page.waitForFunction(() => document.getElementById('h5-bnav-handle'));
+      await page.waitForFunction(() => document.documentElement.hasAttribute('data-bnav'));
       await page.waitForTimeout(400);
       assert.equal(await rows(page), before, 'and after the terminal keyboard');
       // The system keyboard: a field that raises one has the focus and the visual viewport becomes much shorter.
       const growth = await page.evaluate(() => window.H5UI.get().softKeyboard);
       assert.equal(growth, false);
-      await navTap(page, '#h5-attention');
+      await page.locator('#h5-attention').tap();
       await page.locator('#h5-attention-sheet input').first().waitFor({ state: 'visible' });
       await page.locator('#h5-attention-sheet input').first().focus();
       await page.setViewportSize({ width: 390, height: 500 });

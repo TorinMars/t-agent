@@ -5,7 +5,6 @@
 // the update dialog and the design sheet. Inline text links (a link inside a sentence) are the one exception (WCAG 2.5.8 allows them).
 // H5_SHOT_DIR=<dir> saves screenshots of each state there.
 const { chromium } = require('playwright');
-const { bnavTap } = require('./h5-bottom-nav-tap.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -128,11 +127,6 @@ function measure(min) {
         assert.ok(rows.length > 0, `${state}: some controls were measured`);
         for (const row of rows) {
           if (row.inline) { report.push(`${viewport.width} ${state}: inline link "${row.name}" (exempt)`); continue; }
-          // The pull handle of the bottom navigation on the session page (#h5-bnav-handle, BottomNav.jsx): a strip along the bottom edge of the whole
-          // width, 16px above the safe-area inset by the user's approved design (it gives the terminal the bar's height back). It cannot be 44px high
-          // without covering row 2; its target is the whole width and a swipe up works too ("Pull handle on the session page" in
-          // docs/design/page-navigation.md). Exempt while it spans the screen and is at least 16px high.
-          if (row.name === 'Show navigation' && row.w >= viewport.width - 0.5 && row.h >= 16) { report.push(`${viewport.width} ${state}: the pull handle ${row.w}x${row.h} (exempt: a full-width edge strip)`); continue; }
           if (row.misses.length) failures.push(`${viewport.width}px ${state}: "${row.name}" ${row.w}x${row.h} misses ${row.misses.join(' ')}`);
         }
         return rows;
@@ -223,7 +217,7 @@ function measure(min) {
       await page.locator('#h5-new-task-dialog').waitFor({ state: 'detached' });
       // The settings sheet, from the bottom navigation.
       if (await page.locator('#h5-tasks').isVisible()) { await page.locator('#h5-close-tasks').tap(); await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); }
-      await bnavTap(page, '#h5-bnav-settings');
+      await page.locator('#h5-bnav-settings').tap();
       await page.locator('#h5-close-settings').waitFor();
       await check('settings');
       await context.close();

@@ -106,7 +106,6 @@ export const initialState = () => ({
   mods: {},
   osk: false, // the terminal on-screen keyboard (Osk.jsx) is shown; the "Terminal keyboard" button of row 2 toggles it (h5.js `toggleKeyboard`)
   learnKeys: false, // the Learn page's own keyboard (Learn.jsx `useLearnKeys`) is shown: the phone's bottom navigation steps aside
-  navPeek: false, // the phone's bottom navigation is shown over the session page from its pull handle (BottomNav.jsx); never stored
   learnCoach: false, // the English coach chat (LearnCoach.jsx `Coach`) is open on a phone: the bottom navigation steps aside, its back arrow returns
   softKeyboard: false, // touch input: the system keyboard is up (h5.js `fitViewport`: the visual viewport is much shorter); the phone's bottom navigation hides
   mindmapOpen: false, // the full-window mind map view is shown (h5.js `openMindmaps` / `closeMindmaps`): the Mind maps destination of the phone's bottom navigation

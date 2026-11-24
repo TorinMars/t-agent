@@ -391,6 +391,12 @@ CREATE TABLE IF NOT EXISTS learn_cards (
   -- never replaced by '' in the sync. services/learn-sync-store.js adds them.
   parts           TEXT NOT NULL DEFAULT '',
   tip             TEXT NOT NULL DEFAULT '',
+  -- Schema 25, a sentence for every word ("A sentence for every word" in docs/design/learn-english.md; services/learn-sentences.js): how the
+  -- context of a word card came to be ('' the person's own text, 'generated' an example sentence written by the model for this word, 'none' the
+  -- model gave no good one, so the word is asked on its own) and the Chinese of a generated sentence ('' otherwise; a sentence of the person's has
+  -- its Chinese on its sentence card). Part of the content like context. services/learn-sync-store.js adds them.
+  context_zh      TEXT NOT NULL DEFAULT '',
+  context_source  TEXT NOT NULL DEFAULT '',
   UNIQUE (owner, kind, norm)
 );
 CREATE INDEX IF NOT EXISTS idx_learn_cards_due ON learn_cards (owner, suspended, due_at);

@@ -180,6 +180,16 @@ export function sentenceGap(card) {
   return { before: context.slice(0, at), word: context.slice(at, at + word.length), after: context.slice(at + word.length), zh };
 }
 
+// The gap of Spell's sentence layout shows how many letters the word has: one short underline per character of the word as written in the sentence
+// ("Spell the word inside its sentence" in docs/design/learn-english-page.md). Returns { count, segment, space } (sizes in em of the sentence's
+// type): segments of 0.5em 0.2em apart, narrowed for a long word so the gap stays at most 12em (it never wraps, and fits a phone's line).
+export function gapLayout(word) {
+  const count = Math.max(1, [...String(word || '')].length);
+  const space = count > 12 ? 0.12 : 0.2;
+  const segment = Math.max(0.15, Math.min(0.5, (12 - space * (count - 1)) / count));
+  return { count, segment: Number(segment.toFixed(3)), space };
+}
+
 // "11-21 09:00" in the browser's time zone ('' for a missing or broken time).
 export function shortDateTime(iso) {
   const date = new Date(iso || '');

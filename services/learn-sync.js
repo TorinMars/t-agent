@@ -249,10 +249,10 @@ function createLearnSync(options) {
     // The cards whose review state or answers changed here: recomputed from their answers at the end (replayTouched).
     const touched = new Set();
     const writeCard = (id, card, currentSeq) => db.prepare(`UPDATE learn_cards SET created_at = @created_at, en = @en, zh = @zh, phonetic = @phonetic, parts = @parts, tip = @tip, source = @source,
-      context = @context, suspended = @suspended, content_at = @content_at, content_by = @content_by, due_at = @due_at, interval_days = @interval_days,
+      context = @context, context_zh = @context_zh, context_source = @context_source, suspended = @suspended, content_at = @content_at, content_by = @content_by, due_at = @due_at, interval_days = @interval_days,
       ease = @ease, reps = @reps, lapses = @lapses, last_result = @last_result, last_at = @last_at, last_correct = @last_correct,
       fsrs_stability = @fsrs_stability, fsrs_difficulty = @fsrs_difficulty, state_at = @state_at, state_by = @state_by, picked_level = @picked_level, picked_skipped = @picked_skipped, picked_at = @picked_at, sync_seq = @sync_seq WHERE id = @id`)
-      .run({ ...card, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: seqFor(currentSeq), id });
+      .run({ ...card, context_zh: card.context_zh || '', context_source: card.context_source || '', content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: seqFor(currentSeq), id });
 
     function applyCard(raw) {
       const card = merge.cardFromPeer(raw, sender);
@@ -277,11 +277,11 @@ function createLearnSync(options) {
       }
       if (!local) {
         if (follow) return; // the card it moved to is not here: nothing to merge into
-        db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, parts, tip, source, context, created_at, due_at, interval_days, ease, reps, lapses, last_result,
+        db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, parts, tip, source, context, context_zh, context_source, created_at, due_at, interval_days, ease, reps, lapses, last_result,
           last_at, last_correct, fsrs_stability, fsrs_difficulty, suspended, content_at, content_by, state_at, state_by, picked_level, picked_skipped, picked_at,
-          sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @phonetic, @parts, @tip, @source, @context, @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result,
+          sync_seq) VALUES (@owner, @kind, @en, @norm, @zh, @phonetic, @parts, @tip, @source, @context, @context_zh, @context_source, @created_at, @due_at, @interval_days, @ease, @reps, @lapses, @last_result,
           @last_at, @last_correct, @fsrs_stability, @fsrs_difficulty, @suspended, @content_at, @content_by, @state_at, @state_by, @picked_level, @picked_skipped,
-          @picked_at, @sync_seq)`).run({ ...card, owner: name, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
+          @picked_at, @sync_seq)`).run({ ...card, context_zh: card.context_zh || '', context_source: card.context_source || '', owner: name, content_by: own(card.content_by), state_by: own(card.state_by), sync_seq: bump ? syncStore.nextSeq(db) : 0 });
         applied += 1;
         return;
       }

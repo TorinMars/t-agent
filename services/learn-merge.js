@@ -9,7 +9,10 @@
 // (fsrs_stability, fsrs_difficulty) is part of the review state; a peer without it (older) sends none, which is kept as NULL (not computed), and
 // services/learn-sync.js then recomputes the card from its answers ("Replay, sync and migration" in docs/design/learn-review-fsrs.md). Schema 23: the
 // parts and the tip of a word (parts, tip) are content like phonetic: never replaced by empty ones, a moved card's never come over, and a peer without
-// them (older) sends none ("Keeps slipping" in docs/design/learn-review-fsrs.md).
+// them (older) sends none ("Keeps slipping" in docs/design/learn-review-fsrs.md). Schema 25: the Chinese and the origin of a word's context
+// (context_zh, context_source: an example sentence of its own) are content that goes with the context, under the same clock, so a sentence written
+// on one engine is the one of every engine and an older version never swaps it back. A peer without them (older) sends none: when it sends the same
+// context, the ones here are kept ("A sentence for every word" in docs/design/learn-english.md).
 const {
   normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED, LEVELS, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON,
   MAX_ZH: MAX_CARD_ZH, KEPT_SETTINGS, storedParts, checkTip, cleanExtraNew,
@@ -17,9 +20,11 @@ const {
 const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
 
-const CONTENT = ['en', 'zh', 'phonetic', 'parts', 'tip', 'source', 'context', 'suspended'];
+const CONTENT = ['en', 'zh', 'phonetic', 'parts', 'tip', 'source', 'context', 'context_zh', 'context_source', 'suspended'];
+// The origins of a word's context: the person's own text, an example sentence written for it, none (the model gave no good one).
+const CONTEXT_SOURCES = ['', 'generated', 'none'];
 // The content fields that are '' (not NULL) when a row or a peer has none.
-const TEXT_DEFAULT = new Set(['phonetic', 'parts', 'tip']);
+const TEXT_DEFAULT = new Set(['phonetic', 'parts', 'tip', 'context_zh', 'context_source']);
 const STATE = ['due_at', 'interval_days', 'ease', 'reps', 'lapses', 'last_result', 'last_at', 'last_correct', 'fsrs_stability', 'fsrs_difficulty'];
 const PICKED = ['picked_level', 'picked_skipped', 'picked_at'];
 const FIELDS = ['created_at', ...CONTENT, 'content_at', 'content_by', ...STATE, 'state_at', 'state_by', ...PICKED];
@@ -37,6 +42,8 @@ const later = (aAt, aBy, bAt, bBy) => (aAt !== bAt ? aAt > bAt : String(aBy || '
 // Returns { card, changed }: the merged fields, and whether they differ from the local card.
 function mergeCard(local, incoming, { follow = false } = {}) {
   if (!local) return { card: pick(incoming, FIELDS), changed: true };
+  // An older peer (no context_source) with the same context: the sentence's Chinese and origin here stay.
+  if (incoming.context_source === null && incoming.context === local.context) incoming = { ...incoming, context_zh: local.context_zh || '', context_source: local.context_source || '' };
   const contentFromPeer = !follow && later(incoming.content_at, incoming.content_by, local.content_at, local.content_by);
   const stateFromPeer = later(incoming.state_at, incoming.state_by, local.state_at, local.state_by);
   const content = contentFromPeer ? incoming : local;
@@ -71,7 +78,7 @@ const pickedOf = row => ({ picked_level: LEVELS.includes(row.picked_level) ? row
 
 function pick(row, fields) {
   const out = {};
-  for (const field of fields) out[field] = row[field] === undefined ? (TEXT_DEFAULT.has(field) ? '' : null) : row[field];
+  for (const field of fields) out[field] = row[field] === undefined || (row[field] === null && TEXT_DEFAULT.has(field)) ? (TEXT_DEFAULT.has(field) ? '' : null) : row[field];
   return out;
 }
 
@@ -100,6 +107,8 @@ function cardFromPeer(raw, sender) {
     kind: raw.kind, norm: normalize(en), en, zh, phonetic: raw.kind === 'word' ? cleanPhonetic(raw.phonetic) : '', source: raw.source, context, suspended: raw.suspended ? 1 : 0,
     // Schema 23: parts that do not give the word exactly, or a tip that is not one line of English, are not kept.
     parts: raw.kind === 'word' ? storedParts(en, raw.parts) : '', tip: raw.kind === 'word' ? checkTip(raw.tip) : '',
+    // Schema 25: the origin of the context (null: an older peer that sends none, see mergeCard) and the Chinese of a generated sentence.
+    ...contextOf(raw, context),
     created_at: raw.created_at, content_at: raw.content_at, content_by: by(raw.content_by),
     due_at: raw.due_at, interval_days: raw.interval_days, ease: raw.ease, reps: raw.reps, lapses: raw.lapses,
     last_result: raw.last_result, last_at: raw.last_at, last_correct: raw.last_correct === null ? null : (raw.last_correct ? 1 : 0),
@@ -110,10 +119,21 @@ function cardFromPeer(raw, sender) {
   };
 }
 
+// The origin and the Chinese of a word's context as a peer sent them: { context_zh, context_source }. An origin this version does not know, or a
+// generated sentence without its Chinese, counts as the person's own text; none sent (an older peer): context_source null (mergeCard keeps the local).
+function contextOf(raw, context) {
+  if (raw.context_source === undefined) return { context_zh: '', context_source: raw.kind === 'word' ? null : '' };
+  if (raw.kind !== 'word') return { context_zh: '', context_source: '' };
+  if (!context) return { context_zh: '', context_source: raw.context_source === 'none' ? 'none' : '' };
+  const zh = raw.context_source === 'generated' ? text(raw.context_zh, MAX_ZH) : '';
+  return zh ? { context_zh: zh, context_source: 'generated' } : { context_zh: '', context_source: '' };
+}
+
 // A card row of this device in the form a peer gets (`me`: this device's instance id, for the versions it made itself, stored as '').
 function cardToPeer(row, me) {
   return {
     kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', parts: row.parts || '', tip: row.tip || '', source: row.source, context: row.context,
+    context_zh: row.context_zh || '', context_source: row.context_source || '',
     suspended: Boolean(row.suspended), created_at: row.created_at, content_at: row.content_at, content_by: row.content_by || me,
     due_at: row.due_at, interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: row.last_at === null || row.last_at === undefined ? null : row.last_at,
@@ -586,5 +606,5 @@ module.exports = {
   MAX_CONVO_QUESTION, MAX_CONVO_ANSWER, MAX_CONVO_TITLE, MAX_META_CARDS, MAX_META_MISTAKES, MAX_MISTAKE_TAG,
   COACH_UID, PROPOSAL_KINDS, PROPOSAL_STATES, PLAN_KINDS, STEP_MODES, COACH_CHANGES, MAX_NOTE, MAX_SUMMARY, MAX_BATCH, cleanChanges, cleanPlan, cleanProposal, cleanPractice,
   cleanCoachMeta, mergeCoachMeta, looksSecret, noteUntil, noteText, noteFromPeer, noteToPeer, noteWins, summaryFromPeer, summaryToPeer, mergeSummary,
-  CONTENT, STATE, PICKED, FIELDS, KEPT_SETTINGS,
+  CONTENT, STATE, PICKED, FIELDS, KEPT_SETTINGS, CONTEXT_SOURCES,
 };

@@ -7,11 +7,14 @@ import ButtonBase from '@mui/material/ButtonBase';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import Divider from '@mui/material/Divider';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import InputBase from '@mui/material/InputBase';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import OutlinedInput from '@mui/material/OutlinedInput';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { alpha } from '@mui/material/styles';
@@ -27,7 +30,7 @@ import { createSeries } from './learn-series.mjs';
 import {
   COACH_PAGE, COACH_STARTERS, COACH_TEXT_MAX, NOTES_MAX, NOTE_MAX, NO_TOOLS, STATUS_TEXT, STEP_LABELS, UNDO_MS, cardSections, cardsAction, chipList, cleanNote,
   coachLine, mergeCoach, metaOf, noteLine, planCaption, planOf, practiceLine, practiceOf, proposalType, proposalsOf, rememberedLine, rememberedOf,
-  reminderLine, screenView, screensOf, settingRows, suggestionsOf, usageOf, usageParts, zoneLabel,
+  reminderLine, screenView, screensOf, settingRows, suggestionsOf, usageOf, usageParts, zoneLabel, claudeState, engineOf,
 } from './learn-coach.mjs';
 
 // The English coach ("Learn English: the coach, the page" in docs/design/learn-english-coach-page.md): ONE continuous conversation with the coach
@@ -166,7 +169,9 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
       setHasMore(page.has_more === true);
       setAway(page.home_older ? 'older' : page.offline ? 'offline' : '');
       // No translation model: the notice at once (not only after a send fails).
-      if (page.translator === false && !page.offline && !page.home_older) setTranslator(false);
+      // (With Claude chosen, `can_answer` says whether any engine can answer; an older server sends only `translator`.)
+      const answers = typeof page.can_answer === 'boolean' ? page.can_answer : page.translator !== false;
+      if (!answers && !page.offline && !page.home_older) setTranslator(false);
       setLoaded({ state: 'ok', error: '' });
     }, failure => { if (live) setLoaded({ state: 'error', error: errorText(failure) || t('Operation failed') }); });
     return () => { live = false; };
@@ -239,6 +244,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
           if (line.kind === 'delta') setPending(now => (now ? { ...now, text: now.text + line.text, status: '' } : now));
           else if (line.kind === 'status') setPending(now => (now ? { ...now, status: line.text || STATUS_TEXT } : now));
           else if (line.kind === 'proposals') { streamed.proposals = line.proposals; setPending(now => (now ? { ...now, proposals: line.proposals } : now)); }
+          else if (line.kind === 'notice') setPending(now => (now ? { ...now, notice: line.text } : now));
           else if (line.kind === 'remembered') {
             streamed.remembered.push(line.note);
             if (line.note.uid) {
@@ -433,6 +439,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
               const meta = metaOf(item);
               return (
                 <Box key={item.uid} className="h5-learn-coach-answer" data-uid={item.uid} sx={{ display: 'contents' }}>
+                  {meta.notice && meta.notice !== NO_TOOLS ? <NoticeLine text={meta.notice} /> : null}
                   {item.text ? <Bubble role="assistant" text={item.text} /> : null}
                   <UsageLine usage={usageOf(item)} />
                   <CardChips message={{ ...item, cards: meta.cards }} added={added} adding={adding} error={cardError && cardError.uid === item.uid ? cardError.message : ''} onAdd={addCard} />
@@ -447,6 +454,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
             {pending && pending.status && !pending.text ? (
               <Typography id="h5-learn-coach-status" role="status" variant="body2" color="text.secondary" sx={{ alignSelf: 'flex-start', fontStyle: 'italic' }}>{t(STATUS_TEXT)}</Typography>
             ) : null}
+            {pending && pending.notice ? <NoticeLine text={pending.notice} /> : null}
             {pending && (pending.text || !pending.status) ? <Bubble role="assistant" text={pending.text} streaming /> : null}
             {pending ? pending.proposals.filter(one => proposalType(one)).map(proposal => <ProposalCard key={proposal.id} proposal={{ ...proposal, state: 'open' }} {...cardProps({ uid: '' })} busy />) : null}
             {failed && failed.local.role === 'user' ? <Bubble role="user" text={failed.local.text} /> : null}
@@ -530,6 +538,11 @@ function PracticeDivider({ result }) {
       <Fmt template={template} values={values} />
     </Typography>
   );
+}
+
+// "Claude is not signed in on this computer. The translation service answered this time." above an answer the translation service wrote instead.
+function NoticeLine({ text }) {
+  return <Typography className="h5-learn-coach-notice" variant="caption" component="p" color="text.secondary" sx={{ alignSelf: 'flex-start', px: 0.5 }}>{t(text)}</Typography>;
 }
 
 // The caption of an answer that looked things up or whose tokens were counted: one line of small grey text ("Looked at your data 3 times", the
@@ -740,6 +753,45 @@ function NoteRow({ note, onSave, onDelete }) {
   );
 }
 
+// Whether Claude can answer on the computer that keeps the coach (GET /coach?limit=1&claude=1 starts Claude Code without a turn: no quota is spent).
+// Read again when Claude is chosen.
+function useClaudeState(engine) {
+  const [page, setPage] = useState(null);
+  useEffect(() => {
+    let live = true;
+    api('GET', `${COACH_URL}?limit=1&claude=1`).then(result => { if (live) setPage(result || {}); }, () => { if (live) setPage({ claude_ready: false, claude_reason: 'failed' }); });
+    return () => { live = false; };
+  }, [engine]);
+  return claudeState(page);
+}
+
+// The coach's model: the translation service or Claude (`coach_engine`, saved at once like the other choices of Learn settings).
+function EngineChoice({ current, busy, save }) {
+  const engine = engineOf(current);
+  const claude = useClaudeState(engine);
+  const option = (value, title, caption) => (
+    <FormControlLabel value={value} disabled={busy} sx={{ alignItems: 'flex-start', mx: 0, py: 0.5, minHeight: 44 }}
+      control={<Radio slotProps={{ input: { id: `h5-learn-coach-engine-${value}` } }} sx={{ mt: -0.75, ml: -1 }} />}
+      label={(
+        <Box component="span" sx={{ display: 'block', pt: 0.25 }}>
+          <Typography component="span" variant="body1" sx={{ display: 'block' }}>{t(title)}</Typography>
+          <Typography component="span" variant="body2" color="text.secondary" sx={{ display: 'block' }}>{t(caption)}</Typography>
+        </Box>
+      )} />
+  );
+  return (
+    <Box id="h5-learn-coach-engine" data-engine={engine} sx={{ py: 1 }}>
+      <Typography variant="body1" id="h5-learn-coach-engine-label" sx={{ mb: 0.5 }}>{t('Model')}</Typography>
+      <RadioGroup aria-labelledby="h5-learn-coach-engine-label" name="h5-learn-coach-engine" value={engine}
+        onChange={event => { if (event.target.value !== engine) save({ coach_engine: event.target.value }); }}>
+        {option('translator', 'Translation service (DeepSeek / GLM)', 'Fast. Uses the translation service set up in Settings.')}
+        {option('claude', 'Claude (your Claude account)', "Slower, and uses your Claude plan's quota. Works only on a computer where Claude Code is signed in; no API key needed. When Claude cannot answer, the translation service answers if it is set up.")}
+      </RadioGroup>
+      <Typography id="h5-learn-coach-claude-state" data-state={claude.state} variant="caption" component="p" color="text.secondary" sx={{ pl: 4 }}>{t(claude.text)}</Typography>
+    </Box>
+  );
+}
+
 export function CoachSettings({ current, busy, save, ui, focus = false }) {
   const { notes, setNotes, error } = useNotes();
   const [deleted, setDeleted] = useState([]); // notes waiting for their DELETE (Undo puts them back)
@@ -787,6 +839,8 @@ export function CoachSettings({ current, busy, save, ui, focus = false }) {
     <>
       <Typography ref={root} id="h5-learn-coach-settings-title" variant="overline" component="h3" color="text.secondary" sx={{ mt: 1, mb: -1, scrollMarginTop: 16 }}>{t('Coach')}</Typography>
       <Card id="h5-learn-coach-settings" sx={{ px: 2, py: 1 }}>
+        <EngineChoice current={current} busy={busy} save={save} />
+        <Divider sx={{ mx: -2 }} />
         <SwitchRow inputId="h5-learn-coach-memory" label={t('Remember things about me')} disabled={busy} checked={current.coach_memory !== false} onChange={on => save({ coach_memory: on })}
           secondary={t('Used in every answer; synced to your devices')} />
         <Box id="h5-learn-coach-notes" sx={{ mx: -2, px: 2 }}>
@@ -821,7 +875,9 @@ export function CoachSettings({ current, busy, save, ui, focus = false }) {
           <Button id="h5-learn-coach-reset-summary" sx={{ flexShrink: 0 }} onClick={resetSummary}>{t('Reset')}</Button>
         </Box>
       </Card>
-      <Typography variant="caption" component="p" color="text.secondary" id="h5-learn-coach-privacy" sx={{ mt: -1 }}>{t('What she reads is sent to your translation service to write the answer.')}</Typography>
+      <Typography variant="caption" component="p" color="text.secondary" id="h5-learn-coach-privacy" sx={{ mt: -1 }}>{t(engineOf(current) === 'claude'
+        ? 'What she reads is sent to Claude (Anthropic) with your Claude account to write the answer.'
+        : 'What she reads is sent to your translation service to write the answer.')}</Typography>
     </>
   );
 }

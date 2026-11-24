@@ -27,6 +27,8 @@ export function coachLine(line) {
   if (type === 'status') return { kind: 'status', text: String(line.text || '') };
   if (type === 'proposals') return { kind: 'proposals', proposals: Array.isArray(line.proposals) ? line.proposals.filter(isObject) : [] };
   if (type === 'remembered') return isObject(line.note) ? { kind: 'remembered', note: line.note } : null;
+  // Claude could not answer and the translation service did (services/learn-coach.js): one line above the answer.
+  if (type === 'notice') return line.text ? { kind: 'notice', text: String(line.text) } : null;
   if (type === 'done' || line.done === true) {
     const messages = [];
     if (Array.isArray(line.messages)) messages.push(...line.messages.filter(isObject));
@@ -264,6 +266,31 @@ export function usageParts(usage, number = n => String(n)) {
     if (calls) out.push(calls === 1 ? ['1 call'] : ['{1} calls', calls]);
     out.push(['{1} tokens', number(tokens)]);
   }
+  if (usage.engine === 'claude') out.push(['Answered by Claude']);
   return out;
 }
 export const usageOf = message => { const usage = metaOf(message).usage; return isObject(usage) ? usage : null; };
+
+// The coach's engines in Learn settings (`coach_engine`, "The Claude engine" in docs/design/learn-english-coach.md).
+export const ENGINES = Object.freeze(['translator', 'claude']);
+export const engineOf = settings => (isObject(settings) && settings.coach_engine === 'claude' ? 'claude' : 'translator');
+// The line under the Claude choice from GET /coach?claude=1 (`claude_ready`, `claude_reason`): an English dictionary key.
+const CLAUDE_STATES = {
+  checking: 'Checking Claude on the computer that keeps your coach…',
+  away: 'The computer that keeps your coach cannot be reached right now',
+  no_sdk: 'Claude Code is not installed on this computer',
+  signed_out: 'Claude is not signed in on this computer',
+  quota: 'Your Claude plan has reached its usage limit for now',
+  unsafe: 'Claude offered tools the coach does not allow',
+  failed: 'Claude could not answer',
+};
+export function claudeState(page) {
+  if (!isObject(page)) return { state: 'checking', text: CLAUDE_STATES.checking };
+  if (page.offline || page.home_older || page.claude_reason === 'away') return { state: 'away', text: CLAUDE_STATES.away };
+  if (page.claude_ready === true) return { state: 'ready', text: 'Claude is ready on the computer that keeps your coach' };
+  if (page.claude_ready === false) {
+    const reason = CLAUDE_STATES[page.claude_reason] && page.claude_reason !== 'checking' && page.claude_reason !== 'away' ? page.claude_reason : 'failed';
+    return { state: reason, text: CLAUDE_STATES[reason] };
+  }
+  return { state: 'checking', text: CLAUDE_STATES.checking };
+}

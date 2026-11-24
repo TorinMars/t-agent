@@ -380,7 +380,7 @@ test('the view: the newest page first with has_more, before, the settings and to
   const older = ctx.coach.view('me', { before: page.messages[0].at, limit: 4 });
   assert.deepEqual(older.messages.map(item => item.text), ['Q0', 'Hello there.']);
   assert.equal(older.has_more, false);
-  assert.deepEqual(page.settings, { memory: true, read_answers: true, read_text: true, economy: false });
+  assert.deepEqual(page.settings, { memory: true, read_answers: true, read_text: true, economy: false, engine: 'translator' });
   assert.equal(page.tools_ok, true);
   assert.throws(() => ctx.coach.view('me', { limit: 0 }), { statusCode: 400 });
 });
@@ -410,7 +410,11 @@ test('the routes: GET /coach, a send as NDJSON (status, deltas, proposals, done 
   });
   const http = await serve(t, ctx);
   const empty = await http('GET', '/coach');
-  assert.deepEqual(empty.body, { messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } });
+  assert.deepEqual(empty.body, {
+    messages: [], has_more: false, tools_ok: true, translator: true, settings: { memory: true, read_answers: true, read_text: true, economy: false, engine: 'translator' },
+    // No Claude engine handed in: Claude is not available here, and the translation service answers.
+    claude_ready: false, claude_reason: 'no_sdk', can_answer: true,
+  });
   const sent = await http('POST', '/coach/send', { text: 'Set my goal to 30' });
   assert.equal(sent.status, 200);
   assert.match(sent.type, /ndjson/);

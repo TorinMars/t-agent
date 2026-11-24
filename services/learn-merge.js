@@ -477,6 +477,7 @@ function cleanCoachMeta(raw, text, role = 'assistant') {
   if (value.usage && typeof value.usage === 'object') {
     const usage = {};
     for (const key of ['calls', 'tool_rounds', 'prompt_tokens', 'completion_tokens']) if (count(value.usage[key])) usage[key] = value.usage[key];
+    if (value.usage.engine === 'claude') usage.engine = 'claude'; // the answer came from Claude (services/learn-coach-claude.js)
     if (Object.keys(usage).length) out.usage = usage;
   }
   const notice = oneLine(value.notice, 200);

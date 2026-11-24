@@ -43,7 +43,8 @@ const express = require('express');
 //   PATCH /api/learn/chats/:uid { title?, journal? }  -> { chat };  DELETE /api/learn/chats/:uid -> { ok: true }
 // ("English chat" in docs/design/learn-english-chat.md; services/learn-chat.js.)
 //   GET   /api/learn/coach?before=&limit=50          -> { messages: [{ uid, role: 'user'|'assistant'|'practice', text, at, meta }], has_more, tools_ok,
-//                                                          translator, settings: { memory, read_answers, read_text, economy } }
+//                                                          translator, settings: { memory, read_answers, read_text, economy, engine }, claude_ready,
+//                                                          claude_reason, can_answer } (claude=1: Claude's sign-in is checked first, without a turn)
 //   POST  /api/learn/coach/send { text }, POST /api/learn/coach/practice-result { plan_id, message_uid, proposal_id?, steps, done, total, right,
 //         missed, seconds, stopped? } -> application/x-ndjson: {"type":"status","text"}, {"delta"} lines, {"type":"remembered","note"},
 //         {"type":"proposals","proposals"}, then {"done":true,"message","messages","tools","usage"} or {"error","status"}; refusals as JSON.
@@ -326,15 +327,16 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
   };
   const coachPost = (action, body, timeout) => homeCoach(`coach-${action}`, { method: 'POST', body, ...(timeout ? { timeout } : {}) });
   router.get('/coach', handle(async req => {
-    if (!cacheOnly()) return coacher().view(owner(req), req.query);
+    if (!cacheOnly()) { const service = coacher(); return typeof service.look === 'function' ? service.look(owner(req), req.query) : service.view(owner(req), req.query); }
     const query = new URLSearchParams();
-    for (const key of ['before', 'limit']) if (typeof req.query[key] === 'string') query.set(key, req.query[key]);
+    for (const key of ['before', 'limit', 'claude']) if (typeof req.query[key] === 'string') query.set(key, req.query[key]);
     try { return await learnSync().askHome(`coach?${query}`, { offline: COACH_OFFLINE }); } catch (error) {
       if (error.statusCode !== 503 && error.statusCode !== 404) throw error;
       const current = learn().settings(owner(req));
       return {
         messages: [], has_more: false, tools_ok: false, translator: false,
-        settings: { memory: current.coach_memory, read_answers: current.coach_read_answers, read_text: current.coach_read_text, economy: current.coach_economy },
+        settings: { memory: current.coach_memory, read_answers: current.coach_read_answers, read_text: current.coach_read_text, economy: current.coach_economy, engine: current.coach_engine },
+        claude_ready: null, claude_reason: 'away', can_answer: false,
         offline: error.statusCode === 503, home_older: error.statusCode === 404,
       };
     }

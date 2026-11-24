@@ -39,7 +39,9 @@ const MISTAKES = [word(4, 'occurred'), word(5, 'committee', { context: 'The comm
 const LONG = Array.from({ length: 25 }, (_, i) => word(100 + i, `word${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}x`));
 
 function coachMock({ coach = true, away = '' } = {}) {
-  const mock = { requests: [], clock: Date.parse('2026-11-24T10:00:00.000Z'), seq: 0, settings: { collect: true, daily_goal: 20, starter: null, new_per_day: 10, coach_memory: true, coach_read_answers: true, coach_read_text: true, coach_economy: false } };
+  const mock = { requests: [], clock: Date.parse('2026-11-24T10:00:00.000Z'), seq: 0, settings: { collect: true, daily_goal: 20, starter: null, new_per_day: 10, coach_memory: true, coach_read_answers: true, coach_read_text: true, coach_economy: false, coach_engine: 'translator' } };
+  // What GET /coach?claude=1 says about Claude on the computer that keeps the coach (services/learn-coach.js claudeFields).
+  mock.claude = { claude_ready: false, claude_reason: 'signed_out' };
   const at = () => { mock.clock += 1000; return new Date(mock.clock).toISOString(); };
   // 60 earlier messages: the first page has the newest 50.
   mock.messages = Array.from({ length: 60 }, (_, i) => ({ uid: `h${i}`, role: i % 2 ? 'assistant' : 'user', text: `Old message ${i}`, at: new Date(Date.parse('2026-11-20T00:00:00.000Z') + i * 60000).toISOString(), meta: {} }));
@@ -88,6 +90,12 @@ function coachMock({ coach = true, away = '' } = {}) {
     }
     if (/show my mistakes/i.test(text)) return { lines: [{ delta: 'Here are your mistakes and your progress.' }], answer: answerOf('Here are your mistakes and your progress.', { screens: ['mistakes', 'progress', 'dictation'] }) };
     if (/how does learning work/i.test(text)) return { lines: [{ delta: 'It is all explained here.' }], answer: answerOf('It is all explained here.', { screens: ['how'] }) };
+    // Claude was chosen but could not answer: the translation service did, with the notice line (services/learn-coach.js).
+    if (/claude fallback/i.test(text)) {
+      const notice = 'Claude is not signed in on this computer. The translation service answered this time.';
+      return { lines: [{ type: 'notice', text: notice }, { delta: 'Plain answer.' }], answer: answerOf('Plain answer.', { notice, usage: { calls: 1, prompt_tokens: 50, completion_tokens: 10 } }) };
+    }
+    if (/answered by claude/i.test(text)) return { lines: [{ delta: 'From Claude.' }], answer: answerOf('From Claude.', { usage: { calls: 2, tool_rounds: 1, prompt_tokens: 900, completion_tokens: 40, engine: 'claude' } }) };
     if (/tools off/i.test(text)) return { lines: [{ delta: 'From the summary: 12 due.' }], answer: answerOf('From the summary: 12 due.'), tools: false };
     return { lines: [{ delta: 'Sure.' }], answer: answerOf('Sure.') };
   };
@@ -113,7 +121,8 @@ function coachMock({ coach = true, away = '' } = {}) {
       const page = older.slice(-limit);
       // A company computer whose home is away: no messages, said as such (routes/learn.js GET /coach).
       if (away) return { messages: [], has_more: false, tools_ok: false, translator: false, settings: { memory: true, read_answers: true, read_text: true, economy: false }, offline: away === 'offline', home_older: away === 'older' };
-      return { messages: page, has_more: older.length > page.length, tools_ok: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
+      const claude = url.searchParams.get('claude') === '1' ? mock.claude : { claude_ready: null, claude_reason: 'checking' };
+      return { messages: page, has_more: older.length > page.length, tools_ok: true, translator: true, can_answer: true, settings: { memory: true, read_answers: true, read_text: true, economy: false, engine: mock.settings.coach_engine }, ...claude };
     }
     if (p === '/api/learn/coach/send') {
       const question = questionOf(body.text);
@@ -533,6 +542,26 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       await waitFor(() => mock.of('PUT', /\/api\/learn\/settings$/).some(one => one.body.coach_read_text === false), 'read_text off');
       await page.locator('#h5-learn-coach-economy').tap();
       await waitFor(() => mock.of('PUT', /\/api\/learn\/settings$/).some(one => one.body.coach_economy === true), 'Save tokens on');
+      // The model: the translation service by default; the line under Claude says what GET /coach?claude=1 found; Claude chosen, read again.
+      assert.equal(await text(page, '#h5-learn-coach-engine-label'), 'Model');
+      assert.equal(await page.locator('#h5-learn-coach-engine-translator').isChecked(), true);
+      assert.equal(await page.locator('#h5-learn-coach-engine-claude').isChecked(), false);
+      assert.deepEqual(await texts(page, '#h5-learn-coach-engine .MuiFormControlLabel-label .MuiTypography-body1'), ['Translation service (DeepSeek / GLM)', 'Claude (your Claude account)']);
+      assert.match(await text(page, '#h5-learn-coach-engine'), /uses your Claude plan's quota\. Works only on a computer where Claude Code is signed in; no API key needed\./);
+      await waitFor(async () => (await page.locator('#h5-learn-coach-claude-state').getAttribute('data-state')) === 'signed_out', 'the Claude check');
+      assert.equal(await text(page, '#h5-learn-coach-claude-state'), 'Claude is not signed in on this computer');
+      assert.ok(mock.of('GET', /^\/api\/learn\/coach$/).some(one => /claude=1/.test(one.search)), 'the settings ask for the Claude check');
+      const radio = await page.locator('#h5-learn-coach-engine .MuiFormControlLabel-root').nth(1).boundingBox();
+      assert.ok(radio.height >= 44, `the Claude choice is a 44px target (${radio.height})`);
+      mock.claude = { claude_ready: true, claude_reason: '' };
+      await page.locator('#h5-learn-coach-engine-claude').check();
+      await waitFor(() => mock.of('PUT', /\/api\/learn\/settings$/).some(one => one.body.coach_engine === 'claude'), 'Claude chosen');
+      await waitFor(async () => (await page.locator('#h5-learn-coach-claude-state').getAttribute('data-state')) === 'ready', 'Claude ready');
+      assert.equal(await text(page, '#h5-learn-coach-claude-state'), 'Claude is ready on the computer that keeps your coach');
+      await waitText(page, '#h5-learn-coach-privacy', 'What she reads is sent to Claude (Anthropic) with your Claude account to write the answer.');
+      await shot(page, 'learn-coach-settings-claude.png');
+      await page.locator('#h5-learn-coach-engine-translator').check();
+      await waitFor(() => mock.of('PUT', /\/api\/learn\/settings$/).some(one => one.body.coach_engine === 'translator'), 'the translation service again');
       await page.locator('.h5-learn-coach-note[data-uid="n2"] .h5-learn-coach-note-text').tap();
       await page.locator('.h5-learn-coach-note-input').fill('Prefers short answers, with examples');
       await page.locator('.h5-learn-coach-note-input').press('Enter');
@@ -552,6 +581,14 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-coach').waitFor();
       await waitFor(() => mock.of('DELETE', /coach\/notes\/n1$/).length === 1, 'the delete is sent');
+
+      // Claude could not answer: the notice line above the translation service's answer; an answer by Claude says so in its caption.
+      await say(page, 'Claude fallback', touch);
+      await waitText(page, '.h5-learn-coach-answer:last-child .h5-learn-coach-notice', 'Claude is not signed in on this computer. The translation service answered this time.');
+      await say(page, 'Answered by Claude', touch);
+      await waitFor(async () => /From Claude\./.test(await text(page, '#h5-learn-coach-log')), 'the Claude answer');
+      await page.locator('.h5-learn-coach-answer:last-child .h5-learn-coach-usage').tap();
+      await waitFor(async () => /Answered by Claude/.test(await text(page, '.h5-learn-coach-answer:last-child .h5-learn-coach-usage')), 'Answered by Claude in the caption');
 
       // Earlier chats: the old chats, read-only.
       await page.locator('#h5-learn-coach-more').tap();

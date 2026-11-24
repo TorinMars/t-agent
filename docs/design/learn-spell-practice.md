@@ -74,10 +74,7 @@ coach's series), so the card keeps room while the page's letter keyboard is open
 - **Sound**: one row of icon buttons (`.h5-learn-audio`): Hear it / Play (named "Playing 1 of 2" while it plays), Stop (disabled while nothing
   plays) and Play slowly, each a 44px target with aria-label and title, keeping the field's focus. **Show first letter** is a hint (bulb) icon
   button in the action row, next to "I don't know" (Spell) or at its start (Fill the gap). A computer keeps the text buttons.
-- **Letter keyboard**: 44px keys in three rows: `qwertyuiop` / `asdfghjkl'` (no half-key indent) / Shift `zxcvbnm` `-` Backspace (Shift and
-  Backspace one letter wide). Three extra keys and Hide do not fit three rows of ten letter widths, so Hide is an icon button
-  (`#h5-learn-keys-hide`, "Hide keyboard", the chevron `down`) at the start of the pinned actions right above the keyboard. The full keyboard of
-  sentences and the letter keyboard of a larger touch screen keep their Hide key.
+- **Letter keyboard**: the original four rows (`qwertyuiop` / `asdfghjkl` / Shift `zxcvbnm` Backspace / `'` `-` Hide), the same on a phone and a larger touch screen. A three-row variant with Hide in the actions was tried in v2.164.0 and taken back.
 - **Never cut by the actions**: the page scrolls, and the field with the focus is kept whole above the pinned actions (`revealInPage`): when a field
   gets the focus and whenever the page or its content changes size (the keyboard opens, a result appears), the page scrolls just enough for the
   whole answer box (the letter slots, the practice row, a text field with its label such as "Copy it once").

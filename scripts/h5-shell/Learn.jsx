@@ -1262,19 +1262,15 @@ function useAutoCheck({ register, ready, value, result }) {
 // when a card starts (not in Build, where the tiles come first: a tap on the answer opens it); Hide closes it, a tap on the field opens it again.
 // A key edits the field at its caret through the exercise's own `change` (the same handling as typing) and the field keeps the focus. While it is
 // open on a phone the bottom navigation steps aside (`state.learnKeys`, BottomNav.jsx) and the actions stay right above it.
-// On a phone the letters take three rows, not four ("Compact practice on a phone" in docs/design/learn-spell-practice.md): the apostrophe ends the
-// second row (no half-key indent), the hyphen sits between M and Backspace (Shift and Backspace one letter wide), and Hide is an icon button at the
-// start of the pinned actions right above the keyboard (`keysHide` of ViewFrame), so the page keeps one row of keys more.
 const hideKey = () => ({ send: 'Hide', label: t('Hide'), span: 5, fn: true, col: 16, click: true });
 const APOSTROPHE = { ch: "'", aria: 'Apostrophe', fn: true };
 const HYPHEN = { ch: '-', aria: 'Hyphen', fn: true };
 const LETTER_ROWS = () => [chars('qwertyuiop'), chars('asdfghjkl', 2), [SHIFT, ...chars('zxcvbnm'), BACKSPACE],
   [{ ...APOSTROPHE, span: 3 }, { ...HYPHEN, span: 3 }, hideKey()]];
-const PHONE_LETTER_ROWS = () => [chars('qwertyuiop'), [...chars('asdfghjkl'), APOSTROPHE], [{ ...SHIFT, span: 2 }, ...chars('zxcvbnm'), HYPHEN, { ...BACKSPACE, span: 2 }]];
 const FULL_ROWS = layer => rowsFor(layer, hideKey());
 
-function LearnKeys({ letters, phone, onKey }) {
-  const rows = letters ? (phone ? PHONE_LETTER_ROWS : LETTER_ROWS) : FULL_ROWS;
+function LearnKeys({ letters, onKey }) {
+  const rows = letters ? LETTER_ROWS : FULL_ROWS;
   return (
     <Box className="h5-learn-keys-bar" sx={{ flexShrink: 0, position: 'sticky', bottom: 0, zIndex: 1, bgcolor: 'background.paper', backgroundImage: overlay(1), borderTop: 1, borderColor: 'divider', pb: 'env(safe-area-inset-bottom)' }}>
       <Keyboard id="h5-learn-keys" aria-label={t('On-screen keyboard')} data-kind={letters ? 'letters' : 'full'} rows={rows} onKey={onKey} sx={{ pb: 1 }} />
@@ -1289,7 +1285,6 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
   const touch = !keys;
   const [open, setOpen] = useState(atStart);
   const shown = touch && open;
-  const phoneLetters = phone && letters;
   useEffect(() => {
     if (!shown) return undefined;
     ui.set({ learnKeys: true });
@@ -1326,19 +1321,14 @@ function useLearnKeys({ ui, keys, field, change, letters = false, atStart = true
     caret.current = start + 1;
     change(text.slice(0, start) + ch + text.slice(end));
   };
-  const node = shown ? <LearnKeys letters={letters} phone={phoneLetters} onKey={onKey} /> : null;
-  const keysHide = shown && phoneLetters ? (
-    <IconButton id="h5-learn-keys-hide" data-key="Hide" onMouseDown={event => event.preventDefault()} onClick={() => setOpen(false)} {...named(t('Hide keyboard'))} sx={{ ml: -1, flexShrink: 0 }}>
-      <Icon name="down" size={22} />
-    </IconButton>
-  ) : null;
+  const node = shown ? <LearnKeys letters={letters} onKey={onKey} /> : null;
   return {
     touch,
     show: () => { if (touch) setOpen(true); },
     inputProps: touch ? { inputMode: 'none' } : null,
     node,
     compact: Boolean(phone && shown),
-    frame: { keyboard: node, keysHide },
+    frame: { keyboard: node },
   };
 }
 

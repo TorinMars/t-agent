@@ -179,8 +179,8 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       assert.equal(await page.locator('.h5-learn-practice').count(), 0, 'no row before the answer');
-      // Compact practice on a phone with the letter keyboard open: the header on one line (56px), three rows of 44px keys, Hide in the actions, and
-      // the page's content area (above the pinned actions) at least 45% of the screen.
+      // Compact practice on a phone with the letter keyboard open: the header on one line (56px), the four rows of the letter keyboard with its Hide key, and
+      // the page's content area (above the pinned actions) at least 38% of the screen.
       const layout = await page.evaluate(() => {
         const scroll = document.querySelector('#h5-learn-mode .h5-learn-scroll');
         const footer = scroll.querySelector('.h5-learn-footer');
@@ -189,14 +189,13 @@ const weType = (page, selector, letter) => page.locator(selector).evaluate((el, 
           bar: document.querySelector('#h5-learn-mode header').getBoundingClientRect().height,
           rows: document.querySelectorAll('#h5-learn-keys .h5-osk-row').length,
           key: document.querySelector('#h5-learn-keys button[data-char="q"]').getBoundingClientRect().height,
-          hide: Boolean(footer && footer.querySelector('#h5-learn-keys-hide[aria-label="Hide keyboard"][title="Hide keyboard"]')),
+          hide: Boolean(document.querySelector('#h5-learn-keys [data-key="Hide"]')),
         };
       });
-      assert.ok(layout.area >= 0.45 * 844, `the content area is at least 45% of the screen (${layout.area}px)`);
+      assert.ok(layout.area >= 0.38 * 844, `the content area is at least 38% of the screen (${layout.area}px)`);
       assert.ok(layout.bar <= 57, `the header is one line (${layout.bar}px)`);
-      assert.equal(layout.rows, 3, 'three letter rows on a phone');
-      assert.equal(Math.round(layout.key), 44, 'keys 44px high');
-      assert.ok(layout.hide, 'Hide keyboard at the start of the pinned actions');
+      assert.equal(layout.rows, 4, 'the four letter rows');
+      assert.ok(layout.hide, 'the keyboard has its Hide key');
       await shot(page, 'learn-practice-compact.png');
       // A right answer (the meaning layout): the row under the result, the focus in it, the page keyboard still open, no system keyboard.
       await tapKeys(page, 'necessary');

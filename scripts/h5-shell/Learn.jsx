@@ -35,6 +35,8 @@ import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
+import { CoachSettings, CoachView, useCoachSupport } from './LearnCoach.jsx';
+import { createSeries, exerciseCard, seriesAnswer, seriesCurrent, seriesDone, seriesProgress, seriesResult } from './learn-series.mjs';
 import { ProgressView } from './LearnProgress.jsx';
 import { gradeIntervals } from './learn-progress.mjs';
 import { PRACTICE_FLASH_MS, PRACTICE_ROUND_MS, practiceChange, practiceClearFlash, practiceNewRound, practiceSlots, practiceStart, practiceText } from './learn-practice.mjs';
@@ -127,7 +129,8 @@ function Learn({ state, ui }) {
   const keys = state.input === 'pointer' || Boolean(state.hasKeyboard);
   const data = useLearnData();
   const speech = useSpeech();
-  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats' | 'progress', mode?, preset?, uid?, seq }
+  // 'chat': the coach (LearnCoach.jsx; the old English chat on an engine without it), 'chats' / 'oldchat': earlier chats, 'series': a practice series of the coach.
+  const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats' | 'oldchat' | 'series' | 'progress', mode?, preset?, uid?, seq }
   const viewRef = useRef(null);
   viewRef.current = view;
   const close = () => ui.actions.closeLearn();
@@ -135,7 +138,19 @@ function Learn({ state, ui }) {
   const open = next => setView({ ...next, seq: Date.now() });
   const openTranslator = () => { ui.actions.closeLearn(); ui.actions.openSettings('voice-translate'); };
   const modes = availableModes(speech);
-  const common = { ui, phone, keys, speech, openTranslator, data, open, back };
+  // Leaving a practice series (back arrow, back button, Escape) goes through the series, which posts what was answered and returns to the coach.
+  const seriesLeave = useRef(null);
+  // Back (the back button, Escape) from a view: a series ends, an earlier chat returns to its list (phone) or the coach, a view opened from the
+  // coach (its settings, its earlier chats) returns there; every other view goes to the home.
+  const leaveView = () => {
+    const now = viewRef.current;
+    if (!now) return;
+    if (now.kind === 'series' && seriesLeave.current) { seriesLeave.current(); return; }
+    if (now.kind === 'oldchat') { open(phone ? { kind: 'chats', readOnly: true, parent: now.parent || { kind: 'chat' } } : now.parent || { kind: 'chat' }); return; }
+    if (now.kind === 'chats' || (now.kind === 'settings' && now.parent && now.parent.kind === 'chat')) { open(now.parent || { kind: 'chat' }); return; }
+    back();
+  };
+  const common = { ui, phone, keys, speech, openTranslator, data, open, back, seriesLeave };
   const input = useLearnInputState();
 
   // Computer: Escape closes the open mode, then the page (unless something above takes it); the focus goes into the page and back to the opener.
@@ -148,7 +163,7 @@ function Learn({ state, ui }) {
     const onKey = event => {
       if (event.key !== 'Escape' || event.defaultPrevented || modalOpen()) return;
       event.preventDefault();
-      if (viewRef.current) back(); else close();
+      if (viewRef.current) leaveView(); else close();
     };
     document.addEventListener('keydown', onKey);
     return () => {
@@ -159,8 +174,9 @@ function Learn({ state, ui }) {
 
   const home = <Home {...common} modes={modes} current={view && view.kind === 'session' ? view.mode : view && view.kind} />;
   if (!phone) {
-    // English chat fills the pane (its chats list and the conversation, LearnChat.jsx); Earlier chats is a phone's screen, on a computer the list is there.
-    const chat = view && (view.kind === 'chat' || view.kind === 'chats');
+    // The coach fills the pane (LearnCoach.jsx; the old English chat with its chats list on an engine without it); Earlier chats is a phone's screen,
+    // on a computer the read-only chats list and conversation (`oldchat`) are there. A practice series opens in the pane like any mode.
+    const chat = view && (view.kind === 'chat' || view.kind === 'chats' || view.kind === 'oldchat');
     return (
       <LearnInput.Provider value={input}>
       <Box ref={root} id="h5-learn" role="region" aria-labelledby="h5-learn-title" data-layout="wide"
@@ -175,7 +191,9 @@ function Learn({ state, ui }) {
         {/* The Ask side panel (LearnAsk.jsx) lies at the right of the window; on a window wide enough the card makes room for it, else the panel covers its right part. */}
         {chat ? (
           <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex' }}>
-            <ChatView key={view.seq} view={view.kind === 'chats' ? (view.parent || { kind: 'chat' }) : view} {...common} />
+            {view.kind === 'oldchat' ? <ChatView key={view.seq} view={view} readOnly {...common} />
+              : view.kind === 'chats' ? <ChatView key={view.seq} view={view.parent || { kind: 'chat' }} {...common} />
+                : <CoachView key={view.seq} view={view} {...common} />}
           </Box>
         ) : (
           <Box className="h5-learn-pane" sx={{ flex: '1 1 auto', minWidth: 0, overflowY: 'auto', px: 4, py: 3, '@media (min-width: 1200px)': { '&:has(#h5-learn-ask[data-layout="side"])': { pr: `${ASK_WIDTH + 32}px` } } }}>
@@ -188,7 +206,7 @@ function Learn({ state, ui }) {
       </LearnInput.Provider>
     );
   }
-  return <LearnInput.Provider value={input}><PhoneLearn {...common} view={view} close={close} home={home} /></LearnInput.Provider>;
+  return <LearnInput.Provider value={input}><PhoneLearn {...common} view={view} close={close} home={home} leave={leaveView} /></LearnInput.Provider>;
 }
 
 // ── English input while spelling ("English input" in docs/design/learn-spell-practice.md) ──
@@ -280,11 +298,10 @@ function ImeNotice({ onOk, field }) {
   );
 }
 
-function PhoneLearn({ view, close, home, back, ...common }) {
+function PhoneLearn({ view, close, home, back, leave, ...common }) {
   const last = useRef(null);
   if (view) last.current = view;
-  // Back (and Escape) on Earlier chats returns to the chat it was opened from; every other view goes back to the home.
-  const leave = () => (view && view.kind === 'chats' ? common.open(view.parent || { kind: 'chat' }) : back());
+  // Back (and Escape) on Earlier chats returns to the chat it was opened from, a series to the coach (`leaveView` of Learn); others to the home.
   return (
     <>
       <Dialog id="h5-learn" open fullScreen onClose={close} aria-labelledby="h5-learn-title" sx={PHONE_ROOT} slotProps={{ paper: { className: 'h5-learn-page', sx: PAPER } }}>
@@ -304,7 +321,7 @@ function PhoneLearn({ view, close, home, back, ...common }) {
   );
 }
 
-function ViewBody({ view, phone, back, open, data, ...common }) {
+function ViewBody({ view, phone, back, open, data, seriesLeave, ...common }) {
   // A report opened from the Mistakes page (or the list of reports) goes back there (`parent`); every other view back to the home.
   const frame = title => ({ phone, title, onBack: view.parent ? () => open(view.parent) : back });
   if (view.kind === 'session') {
@@ -312,12 +329,18 @@ function ViewBody({ view, phone, back, open, data, ...common }) {
       onDone={data.reload} settings={data.settings} {...common} />;
   }
   if (view.kind === 'material') return <MaterialView frame={frame(t('Your material'))} ui={common.ui} source={view.source || ''} />;
-  if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} open={open} />;
+  if (view.kind === 'series') {
+    // The coach's practice series: back in the coach with the result when it ends or is left ("The practice series" in docs/design/learn-english-coach-page.md).
+    const toCoach = result => open(result ? { kind: 'chat', result, planKind: view.planKind || '' } : { kind: 'chat' });
+    return <SeriesSession series={view} phone={phone} leaveRef={seriesLeave} onEnd={toCoach} onDone={data.reload} settings={data.settings} {...common} />;
+  }
+  if (view.kind === 'settings') return <SettingsView frame={frame(t('Learn settings'))} ui={common.ui} data={data} openTranslator={common.openTranslator} open={open} focus={view.focus || ''} />;
   if (view.kind === 'mistakes') return <MistakesView frame={frame(t('Mistakes'))} ui={common.ui} open={open} openTranslator={common.openTranslator} />;
   if (view.kind === 'reports') return <ReportsView frame={frame(t('Mistake reports'))} ui={common.ui} open={open} />;
   if (view.kind === 'report') return <ReportView frame={frame(t('Mistake report'))} view={view} ui={common.ui} open={open} data={data} />;
-  if (view.kind === 'chat') return <ChatView view={view} phone={phone} back={back} open={open} {...common} />;
-  if (view.kind === 'chats') return <EarlierChats parent={view.parent} open={open} />;
+  if (view.kind === 'chat') return <CoachView view={view} phone={phone} back={back} open={open} data={data} {...common} />;
+  if (view.kind === 'oldchat') return <ChatView view={view} phone={phone} back={back} open={open} readOnly {...common} />;
+  if (view.kind === 'chats') return <EarlierChats parent={view.parent} open={open} readOnly={Boolean(view.readOnly)} />;
   if (view.kind === 'progress') return <ProgressView frame={frame(t('Progress'))} />;
   return <HowView frame={frame(t('How learning works'))} />;
 }
@@ -326,7 +349,8 @@ function ViewBody({ view, phone, back, open, data, ...common }) {
 // at its bottom; on a computer a title row with the counter, the progress bar and a close button, then the content.
 // `keyboard`: the page's own keyboard (useLearnKeys), under the page on a phone, at the bottom of the pane on a computer-sized touch screen.
 // `action`: a text button at the right of the bar (Table of the Progress view).
-export function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, action = null, children }) {
+// `lead`: a line above the content (the "Back to chat when done" chip of a practice series).
+export function ViewFrame({ phone, title, counter = '', source = '', progress = null, onBack = null, footer = null, keyboard = null, action = null, lead = null, children }) {
   if (phone) {
     const subtitle = [counter, source].filter(Boolean).join(' · ');
     return (
@@ -342,7 +366,7 @@ export function ViewFrame({ phone, title, counter = '', source = '', progress = 
           </Toolbar>
         </AppBar>
         <Box className="h5-learn-scroll" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>{children}</Box>
+          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>{lead}{children}</Box>
           {footer ? <Box className="h5-learn-footer" sx={{ mt: 'auto', position: 'sticky', bottom: 0, px: 2, py: 1.5, display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'background.default' }}>{footer}</Box> : null}
         </Box>
         {keyboard}
@@ -358,6 +382,7 @@ export function ViewFrame({ phone, title, counter = '', source = '', progress = 
         {progress !== null ? <LinearProgress className="h5-learn-progress" variant="determinate" value={Math.round(progress * 100)} aria-label={t('Progress')} sx={{ width: 160, height: 6, borderRadius: 3 }} /> : null}
         {onBack ? <IconButton id="h5-learn-back" size="small" onClick={onBack} {...named(t('Close'))}><Icon name="close" size={20} /></IconButton> : null}
       </Box>
+      {lead}
       {children}
       {keyboard}
     </Box>
@@ -384,6 +409,8 @@ function Home({ ui, phone, data, modes, current, open }) {
   const { summary, error, reload, settings, setSettings } = data;
   const [busy, setBusy] = useState(false);
   const chats = useChatCount(summary);
+  // With the coach there is one conversation: the card has no count of chats.
+  const coach = useCoachSupport();
   if (error && !summary) {
     return <Alert severity="error" id="h5-learn-error" action={<Button color="inherit" size="small" onClick={() => reload()}>{t('Retry')}</Button>}>{error}</Alert>;
   }
@@ -463,8 +490,9 @@ function Home({ ui, phone, data, modes, current, open }) {
       <ModeCard id="h5-learn-mode-mistakes" icon="learnMistakes" title={t('Mistakes')} note={t('Words and sentences you got wrong')}
         count={count(mistakes, 'card', 'cards')} selected={current === 'mistakes' || current === 'report' || current === 'reports'} onClick={() => open({ kind: 'mistakes' })} />
       <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Ask')}</Typography>
-      <ModeCard id="h5-learn-mode-chat" icon="learnAsk" title={t('English chat')} note={t('Ask anything about English: words, grammar, how to say something')}
-        count={chats === null ? '' : count(chats, 'chat', 'chats')} selected={current === 'chat' || current === 'chats'} onClick={() => open({ kind: 'chat' })} />
+      <ModeCard id="h5-learn-mode-chat" icon="learnAsk" title={t('English chat')}
+        note={coach ? t('Your coach: practice, your progress and any English question') : t('Ask anything about English: words, grammar, how to say something')}
+        count={coach || chats === null ? '' : count(chats, 'chat', 'chats')} selected={current === 'chat' || current === 'chats'} onClick={() => open({ kind: 'chat' })} />
       <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Your material')}</Typography>
       <Card sx={theme => (current === 'material' ? { bgcolor: alpha(theme.palette.primary.main, theme.palette.action.selectedOpacity) } : {})}>
         <CardActionArea id="h5-learn-material" onClick={() => open({ kind: 'material' })} sx={{ p: 2 }}>
@@ -562,6 +590,32 @@ const PACED = new Set(['spell', 'review', 'mixed']);
 // The break note of Round done: after this many minutes of study today.
 const BREAK_MINUTES = 20;
 
+// The keys of a computer (exerciseKey): Enter checks, Enter again takes the offered grade, 1 / 2 / 3 grade a checked answer.
+function useExerciseKeys(register) {
+  useEffect(() => {
+    const onKey = event => {
+      // A key an input method takes (Safari's Enter that commits a composition has keyCode 229 and no isComposing) is never a grade.
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || !register.current) return;
+      const target = event.target || document.body;
+      // Keys typed in "Ask about this question" are its own; while the phone's sheet is open the card's keys are off.
+      if ((target.closest && target.closest('.h5-learn-ask')) || document.querySelector('#h5-learn-ask[data-layout="sheet"]')) return;
+      const tag = target.tagName;
+      if (event.key === 'Enter' && (tag === 'BUTTON' || tag === 'A')) return; // the focused button answers Enter itself
+      if (event.key === 'Enter' && tag === 'TEXTAREA' && event.shiftKey) return;
+      if (target !== document.body && !(target.closest && target.closest('#h5-learn, #h5-learn-mode'))) return;
+      const inField = (tag === 'INPUT' || tag === 'TEXTAREA') && !target.readOnly;
+      // The "Type it yourself" row takes letters only: Enter and 1 / 2 / 3 still grade there.
+      const practice = Boolean(target.dataset && target.dataset.practice === 'true');
+      const action = exerciseKey({ key: event.key, checked: register.current.checked, inField, practice, modifiers: event.altKey || event.ctrlKey || event.metaKey });
+      if (!action) return;
+      event.preventDefault();
+      if (action.action === 'check') register.current.check(); else register.current.grade(action.grade);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+}
+
 function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, onRestart, onDone, openTranslator, settings }) {
   const audio = useAudio(settings, speech.tts);
   const [cards, setCards] = useState(preset || null);
@@ -595,29 +649,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
     if (!finished) return;
     Promise.resolve(onDone()).then(data => { if (data && typeof data === 'object') setSummary(data); }, () => {});
   }, [finished]); // eslint-disable-line react-hooks/exhaustive-deps -- once at the end
-  // The keys of a computer (exerciseKey): Enter checks, Enter again takes the offered grade, 1 / 2 / 3 grade a checked answer.
-  useEffect(() => {
-    const onKey = event => {
-      // A key an input method takes (Safari's Enter that commits a composition has keyCode 229 and no isComposing) is never a grade.
-      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || !register.current) return;
-      const target = event.target || document.body;
-      // Keys typed in "Ask about this question" are its own; while the phone's sheet is open the card's keys are off.
-      if ((target.closest && target.closest('.h5-learn-ask')) || document.querySelector('#h5-learn-ask[data-layout="sheet"]')) return;
-      const tag = target.tagName;
-      if (event.key === 'Enter' && (tag === 'BUTTON' || tag === 'A')) return; // the focused button answers Enter itself
-      if (event.key === 'Enter' && tag === 'TEXTAREA' && event.shiftKey) return;
-      if (target !== document.body && !(target.closest && target.closest('#h5-learn, #h5-learn-mode'))) return;
-      const inField = (tag === 'INPUT' || tag === 'TEXTAREA') && !target.readOnly;
-      // The "Type it yourself" row takes letters only: Enter and 1 / 2 / 3 still grade there.
-      const practice = Boolean(target.dataset && target.dataset.practice === 'true');
-      const action = exerciseKey({ key: event.key, checked: register.current.checked, inField, practice, modifiers: event.altKey || event.ctrlKey || event.metaKey });
-      if (!action) return;
-      event.preventDefault();
-      if (action.action === 'check') register.current.check(); else register.current.grade(action.grade);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
+  useExerciseKeys(register);
   const card = cards && cards[index];
   const exercise = card ? exerciseFor(card, mode, speech) : null;
   const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, near = false, detail = null }) => {
@@ -709,6 +741,77 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
   return (
     <Exercise key={`${card.id}-${index}-${loads}`} ui={ui} card={card} cards={cards} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
       onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={exercise} />
+  );
+}
+
+// ── A practice series of the coach ("The practice series" in docs/design/learn-english-coach-page.md) ──
+// The plan of POST /api/learn/coach/plans/start (`series.plan`) run step after step with the same exercises and the same answer endpoint as a session
+// (learn-series.mjs decides the exercise of each card, the progress and the misses that come back at the end). The header: the exercise's title and
+// "Step 2 of 4 · 7 / 9 · from your chat"; the back arrow leaves (the answers are kept) and the end returns by itself, both to the coach with the result.
+const SERIES_TITLES = { spell: 'Spell the word', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
+function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settings, leaveRef, onEnd, onDone }) {
+  const audio = useAudio(settings, speech.tts);
+  const [run, setRun] = useState(() => createSeries(series.plan, { tts: speech.tts }));
+  const runRef = useRef(run);
+  runRef.current = run;
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const register = useRef(null);
+  const ended = useRef(false);
+  useExerciseKeys(register);
+  const end = stopped => {
+    if (ended.current) return;
+    ended.current = true;
+    const now = runRef.current;
+    void onDone();
+    // Nothing answered: nothing to tell her.
+    onEnd(now.answers.length ? seriesResult(now, { messageUid: series.messageUid || '', stopped }) : null);
+  };
+  useEffect(() => {
+    leaveRef.current = () => end(!seriesDone(runRef.current));
+    return () => { leaveRef.current = null; };
+  });
+  const done = seriesDone(run);
+  useEffect(() => { if (done) end(false); }, [done]); // eslint-disable-line react-hooks/exhaustive-deps -- once at the end
+  const current = seriesCurrent(run);
+  const card = current ? exerciseCard(current.card, current.exercise) : null;
+  const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, detail = null }) => {
+    if (busyRef.current || !current) return;
+    busyRef.current = true;
+    setBusy(true);
+    const body = { mode: current.exercise, grade, correct: Boolean(correct), answer: String(text || '').slice(0, 500) };
+    if (!correct) {
+      body.expected = (detail && detail.expected) || card.en;
+      body.tag = (detail && detail.tag) || mistakeTag({ mode: current.exercise, expected: card.en, answer: text, gaveUp });
+      body.hinted = Boolean(helped && !gaveUp);
+    }
+    try {
+      await api('POST', `/api/learn/cards/${encodeURIComponent(current.card.id)}/answer`, body);
+      register.current = null;
+      setRun(now => seriesAnswer(now, { correct: Boolean(correct), answer: gaveUp ? '' : String(text || '') }));
+    } catch (failure) {
+      ui.notify(errorText(failure), 'error');
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+  const skip = () => { register.current = null; setRun(now => seriesAnswer(now, { skipped: true })); };
+  const progress = seriesProgress(run);
+  const where = progress.steps > 1 ? tf('Step {1} of {2} · {3} / {4}', progress.step, progress.steps, progress.at, progress.of) : `${progress.at} / ${progress.of}`;
+  const frame = {
+    phone, title: t(SERIES_TITLES[current ? current.mode : 'spell']), onBack: () => end(!seriesDone(runRef.current)), counter: `${where} · ${t('from your chat')}`, progress: progress.share,
+    lead: (
+      <Chip id="h5-learn-series-note" variant="outlined" color="primary" size="small" label={t('Back to chat when done')} sx={{ alignSelf: 'flex-start' }} />
+    ),
+  };
+  if (!current) return <ViewFrame {...frame}><Typography variant="body2" color="text.secondary" id="h5-learn-series-ending">{t('Back to the chat…')}</Typography></ViewFrame>;
+  const Exercise = EXERCISES[current.exercise];
+  return (
+    <Box id="h5-learn-series" data-step={current.mode} data-exercise={current.exercise} sx={{ display: 'contents' }}>
+      <Exercise key={`${current.step}-${current.at}`} ui={ui} card={card} cards={[card]} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
+        onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={current.exercise} />
+    </Box>
   );
 }
 
@@ -1802,7 +1905,8 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
 
 function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
   // `loose`: a sentence without a content word still gets a gap (its longest word); only one without any word shows "no word to fill in".
-  const gap = useMemo(() => gapFor(card, { loose: true }), [card]);
+  // A word of a coach's series asked inside its own sentence brings its gap (`card.gap`, learn-series.mjs exerciseCard).
+  const gap = useMemo(() => card.gap || gapFor(card, { loose: true }), [card]);
   const [value, setValue] = useState('');
   const [helped, setHelped] = useState(false);
   const field = useRef(null);
@@ -1971,7 +2075,7 @@ function MaterialView({ frame, ui, source: from = '' }) {
 
 // ── Learn settings ──
 
-function SettingsView({ frame, ui, data, openTranslator, open }) {
+function SettingsView({ frame, ui, data, openTranslator, open, focus = '' }) {
   const { settings, setSettings, reload } = data;
   const [goal, setGoal] = useState(String((settings && settings.daily_goal) || 20));
   useEffect(() => { if (settings && settings.daily_goal) setGoal(String(settings.daily_goal)); }, [settings && settings.daily_goal]); // eslint-disable-line react-hooks/exhaustive-deps -- the stored goal
@@ -2049,6 +2153,8 @@ function SettingsView({ frame, ui, data, openTranslator, open }) {
       {settings && typeof current.new_per_day === 'number' ? <NewWordsSettings current={current} busy={busy} save={save} /> : null}
       {settings && typeof current.desired_retention === 'number' ? <ScheduleSettings current={current} busy={busy} save={save} /> : null}
       {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}
+      {/* Coach: shown by a server whose learning settings have the coach's fields ("Coach settings" in docs/design/learn-english-coach-page.md). */}
+      {settings && typeof current.coach_memory === 'boolean' ? <CoachSettings current={current} busy={busy} save={save} ui={ui} focus={focus === 'coach'} /> : null}
       <Card sx={{ p: 2 }}>
         <Typography variant="body2" color="text.secondary">{t('Word meanings come from the translator in Settings → Voice and translation.')}</Typography>
         <Button id="h5-learn-translator-settings" sx={{ mt: 1, ml: -1 }} onClick={openTranslator}>{t('Open Settings')}</Button>

@@ -44,12 +44,12 @@ const ERROR_STOPPED = 'The answer stopped before it was complete.';
 const NO_TRANSLATOR = 'Translation service not configured yet';
 // A company computer whose home cannot answer (GET /chats says `offline` or `home_older`): the same lines as Ask.
 const AWAY = { offline: 'Questions are answered by your normal computer, which cannot be reached right now.', older: 'Your normal computer needs an update to answer questions.' };
-const HEADERS = { 'X-Requested-With': 'XMLHttpRequest' };
+export const HEADERS = { 'X-Requested-With': 'XMLHttpRequest' };
 // Unmarking a journal entry can make it one non-journal chat too many: the server prunes it at once and answers it as deleted.
 const PRUNED = 'This chat was removed: only the newest 50 chats are kept.';
 const chatUrl = uid => `/api/learn/chats/${encodeURIComponent(uid)}`;
 
-async function readJson(res) {
+export async function readJson(res) {
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { /* plain text */ }
@@ -98,7 +98,7 @@ function JournalTag() {
 
 // A message: the person's on the right (primary at 16%), the model's on the left (the 8dp surface); `lang` from its text; **bold**, line breaks and
 // the corrections of a journal entry (`[-x-]` struck through in the error colour, `{+y+}` underlined in the success colour), nothing else as markup.
-function Bubble({ role, text, streaming = false }) {
+export function Bubble({ role, text, streaming = false }) {
   const mine = role === 'user';
   const shown = mine ? String(text || '') : visibleAnswer(text, { streaming });
   return (
@@ -122,7 +122,7 @@ function Bubble({ role, text, streaming = false }) {
 }
 
 // "Add to my cards" under an answer: an outlined primary chip per expression, "+ <en>" until it is added, then "✓ <en>".
-function CardChips({ message, added, adding, error, onAdd }) {
+export function CardChips({ message, added, adding, error, onAdd }) {
   const cards = Array.isArray(message.cards) ? message.cards.filter(card => card && card.en) : [];
   if (!cards.length) return null;
   return (
@@ -189,25 +189,27 @@ function useChats() {
   return { ...state, set: setState, reload: () => setSeq(n => n + 1) };
 }
 
-// Earlier chats (a phone's own screen): back to the chat it was opened from, New chat, the rows and where they are kept.
-export function EarlierChats({ parent, open }) {
+// Earlier chats (a phone's own screen): back to the chat it was opened from, New chat, the rows and where they are kept. `readOnly` (opened from the
+// coach's menu, "Earlier chats" in docs/design/learn-english-coach-page.md): no New chat, and a row opens the chat to read (`{ kind: 'oldchat' }`).
+export function EarlierChats({ parent, open, readOnly = false }) {
   const list = useChats();
   const current = (parent && parent.uid) || null;
   const toChat = () => open(parent || { kind: 'chat' });
+  const pickRow = chat => open(readOnly ? { kind: 'oldchat', uid: chat.uid, parent: parent || { kind: 'chat' } } : { kind: 'chat', uid: chat.uid });
   return (
     <>
       <AppBar position="static" color="default" enableColorOnDark elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
         <Toolbar disableGutters sx={{ minHeight: 56, px: 0.5, gap: 0.5 }}>
           <IconButton id="h5-learn-back" onClick={toChat} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
           <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ flex: '1 1 auto', minWidth: 0, fontWeight: 500 }}>{t('Earlier chats')}</Typography>
-          <IconButton id="h5-learn-chat-new" onClick={() => open({ kind: 'chat' })} {...named(t('New chat'))}><Icon name="add" size={22} /></IconButton>
+          {readOnly ? null : <IconButton id="h5-learn-chat-new" onClick={() => open({ kind: 'chat' })} {...named(t('New chat'))}><Icon name="add" size={22} /></IconButton>}
         </Toolbar>
       </AppBar>
       <Box id="h5-learn-chats" sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', py: 1 }}>
         {list.error ? <Alert severity="error" id="h5-learn-chats-error" sx={{ mx: 2 }} action={<Button color="inherit" size="small" onClick={list.reload}>{t('Try again')}</Button>}>{list.error}</Alert> : null}
         {list.chats === null ? <Typography variant="body2" color="text.secondary" sx={{ px: 2 }}>{t('Loading…')}</Typography> : null}
         {list.chats && !list.chats.length && !list.error ? <Typography id="h5-learn-chats-empty" variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>{t('No chats yet')}</Typography> : null}
-        {list.chats && list.chats.length ? <ChatRows chats={list.chats} selected={current} onPick={chat => open({ kind: 'chat', uid: chat.uid })} /> : null}
+        {list.chats && list.chats.length ? <ChatRows chats={list.chats} selected={current} onPick={pickRow} /> : null}
         <Typography id="h5-learn-chats-note" variant="caption" component="p" color="text.secondary" sx={{ px: 2, pt: 1.5 }}>{t(KEPT)}</Typography>
       </Box>
     </>
@@ -215,7 +217,9 @@ export function EarlierChats({ parent, open }) {
 }
 
 // `view`: { kind: 'chat', uid?, draft? }; `keys`: a hardware keyboard or a mouse (Enter sends); `back`: to the Learn home.
-export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) {
+// `readOnly`: an earlier chat opened from the coach's menu (`{ kind: 'oldchat', uid?, parent }`): the messages only, no input, no New chat, no menu;
+// back goes to the list of earlier chats on a phone and to the coach on a computer.
+export function ChatView({ view, phone, keys, ui, open, back, openTranslator, readOnly = false }) {
   const list = useChats();
   const [uid, setUid] = useState(view.uid || null);
   const [messages, setMessages] = useState([]);
@@ -407,12 +411,12 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
     }, 0);
   };
 
-  const fresh = !uid && !messages.length && !pending && !(failed && !failed.full);
-  const full = Boolean(failed && failed.full) || messages.length >= CHAT_MESSAGES_MAX;
+  const fresh = !readOnly && !uid && !messages.length && !pending && !(failed && !failed.full);
+  const full = !readOnly && (Boolean(failed && failed.full) || messages.length >= CHAT_MESSAGES_MAX);
   const blocked = busy || !translator || Boolean(away);
   const title = (chat && chat.title) || t('New chat');
   const placeholder = messages.length ? t('Reply or write more') : t('Ask anything about English');
-  const moreButton = uid ? (
+  const moreButton = uid && !readOnly ? (
     <IconButton id="h5-learn-chat-more" aria-haspopup="menu" aria-expanded={menu ? 'true' : 'false'} aria-controls={menu ? 'h5-learn-chat-menu' : undefined}
       onClick={event => setMenu(event.currentTarget)} {...named(t('More'))}><Icon name="taskMore" size={22} /></IconButton>
   ) : null;
@@ -428,6 +432,7 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
           <Alert severity="error" id="h5-learn-chat-load-error" action={<Button color="inherit" size="small" onClick={() => setReloads(n => n + 1)}>{t('Try again')}</Button>}>{loaded.error}</Alert>
         ) : null}
         {loaded.state === 'loading' ? <Typography variant="body2" color="text.secondary" id="h5-learn-chat-loading">{t('Loading…')}</Typography> : null}
+        {readOnly && !uid ? <Typography variant="body2" color="text.secondary" id="h5-learn-chat-pick">{t('Pick a chat to read it. Earlier chats are kept as they are; new messages go to your coach.')}</Typography> : null}
         {fresh ? (
           <Box id="h5-learn-chat-start" sx={{ display: 'flex', flexDirection: 'column', gap: 1, pt: phone ? 4 : 6, maxWidth: 560, width: '100%', mx: 'auto' }}>
             <Box aria-hidden="true" sx={{ color: 'primary.main', display: 'flex', justifyContent: 'center' }}><Icon name="learnAsk" size={32} /></Box>
@@ -473,7 +478,7 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
           {t('Your questions and your level go to the translation model you set up. A short summary of your recent mistakes or your journal is added only when you ask about them.')}
         </Typography>
       ) : null}
-      <Box component="form" onSubmit={event => { event.preventDefault(); void send(draft, { typed: true }); }}
+      {readOnly ? null : <Box component="form" onSubmit={event => { event.preventDefault(); void send(draft, { typed: true }); }}
         sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'flex-end', gap: 1, px: phone ? 2 : 3, pt: 1, pb: phone ? 'calc(12px + env(safe-area-inset-bottom))' : 1.5, borderTop: 1, borderColor: 'divider' }}>
         <OutlinedInput inputRef={input} fullWidth size="small" multiline maxRows={6} value={draft} placeholder={placeholder} disabled={full && !(failed && failed.full) ? true : undefined}
           onChange={event => setDraft(event.target.value.slice(0, CHAT_QUESTION_MAX))}
@@ -483,7 +488,7 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
         <IconButton id="h5-learn-chat-send" type="submit" color="primary" onMouseDown={event => event.preventDefault()} disabled={blocked || full || !draft.trim()} {...named(t('Send'))}>
           <Icon name="send" size={22} />
         </IconButton>
-      </Box>
+      </Box>}
     </>
   );
 
@@ -528,16 +533,16 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
       <>
         <AppBar position="static" color="default" enableColorOnDark elevation={0} sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
           <Toolbar disableGutters sx={{ minHeight: 56, px: 0.5, gap: 0.5 }}>
-            <IconButton id="h5-learn-back" onClick={back} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
+            <IconButton id="h5-learn-back" onClick={readOnly ? () => open({ kind: 'chats', readOnly: true, parent: view.parent || { kind: 'chat' } }) : back} {...named(t('Back'))}><Icon name="back" size={22} /></IconButton>
             <Box sx={{ minWidth: 0, flex: '1 1 auto' }}>
-              <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ fontWeight: 500, lineHeight: 1.3 }}>{t('English chat')}</Typography>
+              <Typography id="h5-learn-view-title" variant="subtitle1" component="h2" noWrap sx={{ fontWeight: 500, lineHeight: 1.3 }}>{t(readOnly ? 'Earlier chats' : 'English chat')}</Typography>
               <Box className="h5-learn-subtitle" sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
                 {chat && chat.journal ? <JournalTag /> : null}
                 <Typography id="h5-learn-chat-title" variant="caption" component="p" color="text.secondary" noWrap translate="no" sx={{ minWidth: 0 }}>{title}</Typography>
               </Box>
             </Box>
-            <IconButton id="h5-learn-chat-history" onClick={() => open({ kind: 'chats', parent: { kind: 'chat', ...(uid ? { uid } : {}) } })} {...named(t('Earlier chats'))}><Icon name="learnHistory" size={22} /></IconButton>
-            <IconButton id="h5-learn-chat-new" onClick={() => newChat()} {...named(t('New chat'))}><Icon name="add" size={22} /></IconButton>
+            {readOnly ? null : <IconButton id="h5-learn-chat-history" onClick={() => open({ kind: 'chats', parent: { kind: 'chat', ...(uid ? { uid } : {}) } })} {...named(t('Earlier chats'))}><Icon name="learnHistory" size={22} /></IconButton>}
+            {readOnly ? null : <IconButton id="h5-learn-chat-new" onClick={() => newChat()} {...named(t('New chat'))}><Icon name="add" size={22} /></IconButton>}
             {moreButton}
           </Toolbar>
         </AppBar>
@@ -547,11 +552,11 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
     );
   }
   return (
-    <Box id="h5-learn-chat" data-layout="wide" sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', minHeight: 0, height: '100%' }}>
+    <Box id="h5-learn-chat" data-layout="wide" data-readonly={readOnly ? 'true' : undefined} sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', minHeight: 0, height: '100%' }}>
       <Box id="h5-learn-chats" sx={{ flex: '0 0 260px', width: 260, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', minHeight: 0, borderRight: 1, borderColor: 'divider' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 2, pr: 1, pt: 3, pb: 1, minHeight: 40 }}>
-          <Typography variant="subtitle2" component="h2" sx={{ flex: '1 1 auto' }}>{t('Chats')}</Typography>
-          <Button id="h5-learn-chat-new" size="small" startIcon={<Icon name="add" size={18} />} onClick={() => newChat()}>{t('New chat')}</Button>
+          <Typography variant="subtitle2" component="h2" sx={{ flex: '1 1 auto' }}>{t(readOnly ? 'Earlier chats' : 'Chats')}</Typography>
+          {readOnly ? null : <Button id="h5-learn-chat-new" size="small" startIcon={<Icon name="add" size={18} />} onClick={() => newChat()}>{t('New chat')}</Button>}
         </Box>
         <Box sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
           {list.error ? <Alert severity="error" id="h5-learn-chats-error" sx={{ mx: 2 }} action={<Button color="inherit" size="small" onClick={list.reload}>{t('Try again')}</Button>}>{list.error}</Alert> : null}
@@ -563,9 +568,9 @@ export function ChatView({ view, phone, keys, ui, open, back, openTranslator }) 
       <Box sx={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 3, pr: 2, pt: 3, pb: 1, minHeight: 40 }}>
           {chat && chat.journal ? <JournalTag /> : null}
-          <Typography id="h5-learn-view-title" variant="h6" component="h2" noWrap translate="no" sx={{ flex: '1 1 auto', minWidth: 0 }}>{title}</Typography>
+          <Typography id="h5-learn-view-title" variant="h6" component="h2" noWrap translate="no" sx={{ flex: '1 1 auto', minWidth: 0 }}>{readOnly && !chat ? t('Earlier chats') : title}</Typography>
           {moreButton}
-          <IconButton id="h5-learn-back" size="small" onClick={back} {...named(t('Close'))}><Icon name="close" size={20} /></IconButton>
+          <IconButton id="h5-learn-back" size="small" onClick={readOnly ? () => open(view.parent || { kind: 'chat' }) : back} {...named(t(readOnly ? 'Back to the coach' : 'Close'))}><Icon name="close" size={20} /></IconButton>
         </Box>
         {conversation}
       </Box>

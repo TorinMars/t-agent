@@ -95,7 +95,10 @@ test('reset texts: within a day "resets in 3 h 10 min · 18:30", later "resets F
   assert.equal(windowView(win5(10, at(0, 18, 30)), NOW).resetText, 'resets in 3 h 10 min · 18:30');
   assert.equal(windowView(win5(10, NOW + 45 * MIN), NOW).resetText, `resets in 45 min · 16:05`);
   assert.equal(windowView(win7(10, at(2, 9, 0)), NOW).resetText, 'resets Fri 09:00');
-  assert.equal(windowView({ id: '5h', label: '5h', usedPercent: 10, resetsAt: null }, NOW).resetText, '');
+  const fresh = windowView({ id: '5h', label: '5h', usedPercent: 0, resetsAt: null }, NOW);
+  assert.equal(fresh.resetText, 'Not started: the time starts with the next message');
+  assert.equal(fresh.time, 1, 'a window that has not started counting has all of its time left: a full time bar');
+  assert.equal(fresh.plan, 1);
   assert.equal(spanText(2 * DAY + 19 * HOUR), '2 d 19 h');
   assert.equal(spanText(3 * HOUR), '3 h');
   assert.equal(spanText(10 * 1000), '1 min');

@@ -33,10 +33,12 @@ export function windowMs(label) {
   return match ? Number(match[1]) * { m: 60000, h: 3600000, d: 86400000 }[match[2]] : 0;
 }
 
-// The two bars of a window, each as a fraction 0..1: what is left of the plan (usage) and what is left of the time before it resets (time; 0 when unknown).
+// The two bars of a window, each as a fraction 0..1: what is left of the plan (usage) and what is left of the time before it resets (time). A window
+// with no reset time has not started counting (its clock starts with the next message), so all of its time is left: full. A reset time with a window
+// length that is not known gives 0.
 export function limitBars(entry, now) {
   const length = windowMs(entry.label);
-  const time = entry.resetsAt && length ? Math.min(1, Math.max(0, (entry.resetsAt - now) / length)) : 0;
+  const time = !entry.resetsAt ? 1 : length ? Math.min(1, Math.max(0, (entry.resetsAt - now) / length)) : 0;
   return { usage: Math.min(1, Math.max(0, (100 - entry.usedPercent) / 100)), time };
 }
 

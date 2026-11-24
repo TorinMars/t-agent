@@ -761,7 +761,8 @@ test('the plan usage bars: usage left and time left of each window', async () =>
   assert.equal(windowMs('weekly'), 0);
   const now = 1000000000000;
   assert.deepEqual(limitBars({ label: '5h', usedPercent: 37.5, resetsAt: now + 2.5 * 3600000 }, now), { usage: 0.625, time: 0.5 });
-  assert.deepEqual(limitBars({ label: '7d', usedPercent: 120, resetsAt: null }, now), { usage: 0, time: 0 }, 'no reset time, or too much used, gives an empty bar');
+  assert.deepEqual(limitBars({ label: '7d', usedPercent: 120, resetsAt: null }, now), { usage: 0, time: 1 }, 'too much used gives an empty plan bar; no reset time (not started) a full time bar');
+  assert.equal(limitBars({ label: '30x', usedPercent: 10, resetsAt: now + 3600000 }, now).time, 0, 'a reset time with an unknown window length: empty');
   assert.equal(limitBars({ label: '5h', usedPercent: 0, resetsAt: now + 99 * 3600000 }, now).time, 1, 'never above full');
 });
 

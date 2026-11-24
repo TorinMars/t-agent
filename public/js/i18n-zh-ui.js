@@ -957,6 +957,7 @@ I18n.add({
   "Column": "栏",
   "Expand the sidebar": "展开侧边栏",
   "Plan usage": "套餐用量",
+  "Not started: the time starts with the next message": "还没开始计时：下一条消息开始算",
   "Usage": "用量",
   "Left bar: usage left. Right bar: time left.": "左条：剩余用量。右条：剩余时间。",
   "Refresh usage": "刷新用量",

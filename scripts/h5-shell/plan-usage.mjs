@@ -94,6 +94,7 @@ export function windowView(entry, now, readAt = now) {
   const left = Math.round(exact);
   let resetText = '';
   if (entry.resetsAt) resetText = entry.resetsAt - now < DAY ? `resets in ${spanText(entry.resetsAt - now)} · ${clock(entry.resetsAt)}` : `resets ${dayClock(entry.resetsAt)}`;
+  else resetText = 'Not started: the time starts with the next message'; // no reset time: the window's clock has not started, its time bar is full
   return { id, short: entry.label || id, label, left, plan: bars.usage, time: bars.time, low: exact <= LOW_LEFT, passed: false, resetText, pace: paceText(entry, readAt || now) };
 }
 

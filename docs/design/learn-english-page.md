@@ -164,8 +164,8 @@
   the system keyboard for its box. A computer (or a touch device where a hardware key was seen) has no page keyboard. Not tried on a real iPhone
   or Android phone.
 - **Key feel** (`key-feedback.mjs`, a chunk of its own loaded at the first key press by `Osk.jsx` `feel`, so the first screen carries about 130
-  bytes; the terminal's keyboard and the Learn keyboards alike): a haptic tick on each pointerdown (`navigator.vibrate(8)` on Android; on iOS 17.4+,
-  which has no Vibration API, a visually hidden `<input type="checkbox" switch>` toggled through its `<label>`, the focus put back; feature-detected,
+  bytes; the terminal's keyboard and the Learn keyboards alike): a haptic tick on each pointerdown, as strong as Settings → Keyboard says for this device ("Vibration on key taps" in [key-haptics.md](key-haptics.md): Off, Light 8 ms by default, Medium 15 ms, Strong 28 ms; `navigator.vibrate(ms)` on Android; on iOS 17.4+,
+  which has no Vibration API, a visually hidden `<input type="checkbox" switch>` toggled through its `<label>` unless the setting is Off, the focus put back; nothing on a computer; once the chunk is loaded it is called inside the press itself; feature-detected,
   never throws; a held Backspace ticks once), and while a character key is held a bubble above it with the character 1.5 times larger
   (`.h5-key-bubble`: one element fixed in the viewport and appended to `<body>`, so no box clips it and nothing moves; the key's colour one step
   lighter made opaque, 8px radius, elevation 4, at least 1.3 key widths, clamped to the keyboard's width; `aria-hidden`; not for Shift, Backspace,

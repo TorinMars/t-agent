@@ -155,6 +155,7 @@ const groupsReady = {
   attention: () => document.querySelector('#h5-plugins-listeners, #h5-plugins-notifiers') && document.querySelector('#h5-attention-widget-enabled, #h5-attention-widget-language'),
   account: () => document.getElementById('h5-access-title') || document.getElementById('h5-access-remote'),
   'usage-data': () => document.getElementById('h5-usage-enabled') || document.getElementById('h5-usage-data'),
+  keyboard: () => document.getElementById('h5-sec-key-haptics'),
 };
 async function partsOfTab(page) {
   const result = {};
@@ -177,6 +178,8 @@ const EXPECTED = {
   },
   local: {
     'tasks-files': { headings: ['Working directory', 'Agent skills', 'Browser extension'], marks: [] },
+    // Vibration on key taps is kept in this browser: drawn in every device tab as this device's own.
+    keyboard: { headings: ['Vibration on key taps'], marks: [] },
     devices: { headings: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
     attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
     account: { headings: ['Access mode', 'Authenticator'], marks: [] },
@@ -306,6 +309,7 @@ async function testOpenSettings(browser) {
 const ALL_LOCAL = {
   'tasks-files': { headings: ['Working directory', 'Image and file upload', 'Agent skills', 'Browser extension', 'Site library'], marks: [] },
   'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
+  keyboard: { headings: ['Vibration on key taps'], marks: [] },
   devices: { headings: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
   // The desktop window is one card again, with its switch and its language (as without tabs).
   attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
@@ -323,7 +327,7 @@ async function testSyncOff(browser) {
   assert.equal(await page.locator('#h5-settings-tab-hint').innerText(), 'Changes here are saved on this device');
   assert.equal(await page.getAttribute('#h5-settings-tab-local', 'title'), 'Changes here are saved on this device');
   // This device's tab draws every part (the shared ones are this device's own now); no status line of the sync and no pill.
-  assert.deepEqual(await shownGroups(page), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account', 'usage-data']);
+  assert.deepEqual(await shownGroups(page), ['tasks-files', 'voice-translate', 'keyboard', 'devices', 'attention', 'account', 'usage-data']);
   assert.deepEqual(await partsOfTab(page), ALL_LOCAL);
   assert.equal(await page.locator('#h5-sec-settings-sync').count(), 0, 'no "Settings sync" status line');
   assert.equal(await page.locator('.h5-scope').count(), 0, 'no pill says a change is copied');

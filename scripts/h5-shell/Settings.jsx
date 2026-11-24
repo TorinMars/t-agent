@@ -30,6 +30,7 @@ import { ScopeLabel, SyncNote, refreshSettingsSync, useSyncAfterSave } from './S
 import { InTab, LocalOnly, chooseTab, refreshDeviceTargets, useDeviceTarget, useSettingsTab } from './DeviceTarget.jsx';
 import { SettingsTabs } from './SettingsTabs.jsx';
 import { UsageDataGroup } from './UsageData.jsx';
+import { KeyboardGroup } from './KeyboardSettings.jsx';
 import { refreshEnvironment, useEnvironmentSummary } from './EnvironmentCompare.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
@@ -552,7 +553,7 @@ function GroupList({ groups, current, wide, onChoose }) {
 
 // The Settings page ("Settings page" in docs/design/page-files-and-settings.md). Opened by `state.settingsOpen` (`ui.actions.openSettings(id?)`,
 // `ui.actions.closeSettings()`); `state.settingsTarget` ({ id, seq }, settings-target.mjs) shows one group and brings one part of it into view, on the
-// device tab that holds that part. The groups: Tasks and files, Voice and translation, Devices (Engines.jsx), T-Attention, Account and access, Usage
+// device tab that holds that part. The groups: Tasks and files, Voice and translation, Keyboard (KeyboardSettings.jsx), Devices (Engines.jsx), T-Attention, Account and access, Usage
 // data (UsageData.jsx); a group with nothing in the chosen device tab is left out (settings-tabs.mjs). Every group stays mounted while the page is
 // open, so edits survive a change of group or device tab; each reads its data when it is shown.
 // - Computer (`state.wide`): the page fills the window to the right of the navigation rail (left NAV_WIDTH, no backdrop: the rail stays usable;
@@ -617,6 +618,7 @@ function SettingsPage({ state, ui }) {
       <GroupShown.Provider value={shown}>
         <TasksFilesGroup request={requestFor('tasks-files')} />
         <VoiceTranslateGroup request={requestFor('voice-translate')} />
+        <KeyboardGroup request={requestFor('keyboard')} />
         <DevicesGroup state={state} ui={ui} request={requestFor('devices')} />
         <AttentionSettings ui={ui} request={requestFor('attention')} />
         <AccountGroup request={requestFor('account')} />

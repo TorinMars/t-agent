@@ -97,6 +97,7 @@ Every localStorage and sessionStorage key of the page and its chunks (`public/js
 | `h5-terminal-width`, `h5-terminal-wide-cols` | local, pane | hardware | the screen's size (fit or a fixed width) |
 | `h5-terminal-width-noted` | local | hardware | a one-time hint about this device's gesture |
 | `voice-enabled`, `voice-keep-mic` | local | hardware | this device's microphone and its permission |
+| `h5-key-haptics` | local | hardware | how strongly the page's own keys vibrate (Settings → Keyboard, "This device only"): what this device's vibration motor can play; a phone and a tablet want their own |
 | `h5-attention-sound` | local | device-setting | Settings offers it as "Reminders on this device" (scope device): a phone in a meeting and a computer at home want different sounds |
 | `t-agent.settings-tab`, `t-agent.settings-device` | local | browser | the device whose settings the open form edits, chosen where it is edited, so a save never goes to a machine another device picked (the second is the old name, read once) |
 | `h5-mindmap-draft:<map>` | local | browser | this browser's unsaved edits of a map (a crash copy); the saved map is on its service |

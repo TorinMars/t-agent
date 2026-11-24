@@ -266,6 +266,31 @@ test('options newer than their method: refused for an older extension, passed on
   } finally { await close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('open in its own window needs open.window; tab.opened hands the opened tab to the tab care with its opener\'s terminal and is kept in the recent events', async () => {
+  const { bridge, wsUrl, close } = await bridgeServer();
+  try {
+    const { token } = pairOnce(bridge);
+    const handler = (method, params) => (method === 'tabs.open' ? { tab: { tab_id: 30, url: params.url, how: 'group' }, ...(params.window ? { window: { window_id: 4, focused: params.window === 'front', own: true } } : {}) } : {});
+    let ext = await fakeExtension(wsUrl, token, { handler, features: [...FEATURES, 'close.auto'], version: '1.0.9' });
+    await assert.rejects(bridge.command('tabs.open', { url: 'https://a.test/', record: {}, window: 'front' }), error => error.code === 'UNKNOWN_METHOD' && error.message.includes('open --record in its own window') && /reload it in chrome:\/\/extensions/.test(error.message));
+    assert.equal(ext.commands.length, 0, 'window never reaches an extension without open.window');
+    ext.close();
+    await waitFor(() => !bridge.connected());
+
+    ext = await fakeExtension(wsUrl, token, { handler, features: [...FEATURES, 'close.auto', 'open.window', 'record.tabs'], version: '1.1.0' });
+    const opened = await bridge.command('tabs.open', { url: 'https://a.test/', record: {}, window: 'back' }, { context: { task_id: 4, terminal_id: 'term-o' } });
+    assert.deepEqual([ext.commands.at(-1).params.window, opened.window], ['back', { window_id: 4, focused: false, own: true }]);
+    ext.event('tab.opened', { tab_id: 31, opener_tab_id: 30, recording_id: 'rec_kz3abc_aaaa', url: 'https://pay.test/?token=abc' });
+    ext.event('tab.opened', { tab_id: 32, opener_tab_id: 99, recording_id: 'rec_kz3abc_aaaa', url: 'https://pay.test/' });
+    await waitFor(() => bridge.tabCare().tabs.length === 3);
+    assert.deepEqual(bridge.tabCare().tabs.map(tab => [tab.tab_id, tab.terminal, tab.keep]), [[30, '4:term-o', false], [31, '4:term-o', false], [32, null, false]]);
+    const events = bridge.list().find(item => item.online).recent_events;
+    assert.deepEqual(events.map(event => [event.event, event.tab_id, event.opener_tab_id]), [['tab.opened', 31, 30], ['tab.opened', 32, 99]]);
+    assert.ok(!events[0].url.includes('abc'), 'the url is redacted');
+    ext.close();
+  } finally { await close(); }
+});
+
 test('net.get, net.list and page.fetch answers are redacted again unless raw: true; other answers are left alone', async () => {
   const { bridge, wsUrl, close } = await bridgeServer();
   try {

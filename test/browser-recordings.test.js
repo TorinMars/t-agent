@@ -44,6 +44,29 @@ test('append: items are redacted, counted by kind and origin; the summary has th
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('the summary counts the items per tab (tab, else tab_id), at most 20 tab ids; older summaries have none', () => {
+  const dir = tempDir();
+  try {
+    const recordings = createBrowserRecordings({ dir });
+    recordings.start('rec_tabs_0001', { tab_id: 4 });
+    assert.equal(recordings.get('rec_tabs_0001').tabs, undefined, 'no items yet');
+    recordings.append('rec_tabs_0001', [
+      { seq: 1, kind: 'nav', tab: 4, tab_id: 4, url: 'https://a.test/' },
+      { seq: 2, kind: 'tab', action: 'opened', tab: 8, tab_id: 8, opener: 4, url: 'https://pay.test/' },
+      { seq: 3, kind: 'click', tab_id: 8, url: 'https://pay.test/' },
+      { seq: 4, kind: 'console', text: 'no tab' },
+    ]);
+    const summary = recordings.get('rec_tabs_0001');
+    assert.deepEqual([summary.tab_id, summary.tabs, summary.kinds.tab], [4, { 4: 1, 8: 2 }, 1]);
+    recordings.append('rec_tabs_0001', Array.from({ length: 30 }, (_, index) => ({ seq: 10 + index, kind: 'nav', tab: 100 + index })));
+    recordings.append('rec_tabs_0001', [{ seq: 99, kind: 'nav', tab: 8 }]);
+    const tabs = recordings.get('rec_tabs_0001').tabs;
+    assert.equal(Object.keys(tabs).length, 20);
+    assert.equal(tabs['8'], 3, 'a tab already counted keeps counting');
+    assert.equal(createBrowserRecordings({ dir }).get('rec_tabs_0001').tabs['8'], 3, 'read back from disk');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('limits: items past the per-recording limit are dropped and counted; past the total, the oldest recordings go first', () => {
   const dir = tempDir();
   try {

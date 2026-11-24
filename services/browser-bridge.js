@@ -10,7 +10,8 @@
 //    (BROWSER_TIMEOUT) a little after the one we gave it; only the methods of METHODS are sent (METHOD_NOT_ALLOWED), to the browser
 //    named by params.browser_id or else to the one that connected last (BROWSER_NOT_CONNECTED when there is none); a method or a newer
 //    option (PARAM_FEATURES) the extension's hello does not list is refused with UNKNOWN_METHOD;
-//  - events: tab.handed / tab.released / tab.closed / tab.used (kept as the last few per browser for the status), record.items and
+//  - events: tab.handed / tab.released / tab.closed / tab.used / tab.opened (kept as the last few per browser for the status; tab.opened is a
+//    tab a recorded tab opened, handed to the tab care with its opener), record.items and
 //    record.stopped (services/browser-recordings.js, which redacts again before it writes);
 //  - the care of T-Agent's tabs (services/browser-tab-care.js): which terminal used which tab, closed when the agent's turn ended, the terminal
 //    closed or the tab sat idle ("Closing T-Agent's tabs" in docs/design/browser-extension.md); only for an extension that lists `close.auto`;
@@ -66,7 +67,7 @@ const METHODS = Object.freeze([
 // 1.0.4 sends no `features` and would ignore these params silently, so command() refuses them with UNKNOWN_METHOD and a message to reload
 // the extension ("Recording" in docs/design/browser-extension.md).
 const PARAM_FEATURES = Object.freeze({
-  'tabs.open': { record: ['open.record', 'open --record'] },
+  'tabs.open': { record: ['open.record', 'open --record'], window: ['open.window', 'open --record in its own window'] },
   'record.start': {
     types: ['record.types', 'record start --types'],
     drop_other_types: ['record.types', 'record start --drop-other-types'],
@@ -370,12 +371,14 @@ function createBrowserBridge({
         if (recordings) recordings.append(data.recording_id, Array.isArray(data.items) ? data.items : [], { browser_id: conn.browserId });
       } else if (name === 'record.stopped') {
         if (recordings) recordings.stop(data.recording_id, { reason: cleanText(data.reason, 200) || 'stopped' });
-      } else if (/^tab\.(handed|released|closed|used)$/.test(name)) {
+      } else if (/^tab\.(handed|released|closed|used|opened)$/.test(name)) {
         if (Number.isInteger(data.tab_id)) {
-          if (name === 'tab.used' && data.kept === true) care.keep(conn.browserId, data.tab_id);
+          if (name === 'tab.opened') { if (conn.features.has('close.auto')) care.opened(conn.browserId, data.tab_id, data.opener_tab_id); }
+          else if (name === 'tab.used' && data.kept === true) care.keep(conn.browserId, data.tab_id);
           else care.forget(conn.browserId, data.tab_id);
         }
         const entry = { at: new Date(now()).toISOString(), event: name, tab_id: Number.isInteger(data.tab_id) ? data.tab_id : null };
+        if (name === 'tab.opened' && Number.isInteger(data.opener_tab_id)) entry.opener_tab_id = data.opener_tab_id;
         if (typeof data.url === 'string') entry.url = redactUrl(data.url.slice(0, 2000));
         if (typeof data.title === 'string') entry.title = cleanText(data.title, 200);
         conn.recentEvents.push(entry);

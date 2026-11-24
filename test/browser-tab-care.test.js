@@ -126,6 +126,36 @@ test('keep, handed tabs and tabs the person used are never closed', async () => 
   assert.ok(!care.snapshot().tabs.some(tab => tab.tab_id === 2 || tab.tab_id === 3));
 });
 
+test('a tab a recorded tab opened gets the opener\'s terminal and closes on its turn end; without an opener entry only idle applies', async () => {
+  const { clock, closed, care } = careWith();
+  care.noteTab('br', 1, { context: A });
+  care.noteTab('br', 5, { context: A, keep: true });
+  care.noteTab('br', 6, { context: A, how: 'handed' }); // a handed opener has no entry
+  clock.advance(MIN);
+  care.opened('br', 2, 1);
+  care.opened('br', 3, 5);
+  care.opened('br', 4, 6);
+  care.opened('br', 7, null);
+  const entries = Object.fromEntries(care.snapshot().tabs.map(tab => [tab.tab_id, [tab.terminal, tab.keep]]));
+  assert.deepEqual([entries[2], entries[3], entries[4], entries[7]], [['7:default', false], ['7:default', false], [null, false], [null, false]], 'the opener\'s terminal, never its keep');
+  care.turnEnded(A);
+  clock.advance(TURN_END_IDLE_MS);
+  await flush();
+  assert.deepEqual(closed.sort(), ['br:1', 'br:2', 'br:3'], 'the opened tabs close with their opener\'s turn end; the kept opener stays');
+  clock.advance(IDLE_MS);
+  await flush();
+  assert.deepEqual(closed.sort(), ['br:1', 'br:2', 'br:3', 'br:4', 'br:7'], 'no opener entry: after 30 minutes idle');
+  // An opener whose turn already ended: the opened tab closes 2 minutes after it opened.
+  care.noteTab('br', 10, { context: B });
+  care.turnEnded(B);
+  clock.advance(MIN);
+  care.opened('br', 11, 10);
+  care.forget('br', 10); // the person used the opener
+  clock.advance(TURN_END_IDLE_MS);
+  await flush();
+  assert.ok(closed.includes('br:11') && !closed.includes('br:10'));
+});
+
 test('a close due while the browser is offline waits and is sent when it connects; owned tabs of the hello are adopted', async () => {
   let offline = true;
   const { clock, closed, care } = careWith({ fail: () => offline });

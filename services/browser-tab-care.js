@@ -7,6 +7,8 @@
 //  - in any case after IDLE_MS without a command on the tab.
 // Never: a tab opened with `keep` (tcli browser open --keep), a handed tab, a tab the person used (the extension's `tab.used`: it is forgotten,
 // or kept when it records). A close that is due while the browser is offline waits in a bounded list until the browser connects again.
+// A tab that a recorded tab opened (a popup, target=_blank, window.open: the extension's `tab.opened`) is owned too and closes by the same rules
+// as its opener: it gets the opener's terminal, or none (IDLE_MS only) when the opener has no entry, e.g. a handed tab.
 // Memory only: after a T-Agent restart the extension's hello lists the tabs it owns, and they are adopted without a terminal (IDLE_MS applies).
 const TURN_END_IDLE_MS = 2 * 60_000;
 const IDLE_MS = 30 * 60_000;
@@ -86,6 +88,23 @@ function createTabCare({
     arm(entry);
   }
 
+  // The extension's `tab.opened`: a tab the recorded tab `openerTabId` opened joined its recording and is owned by T-Agent. It belongs to the
+  // opener's terminal (never kept, even when the opener is) and its turn state (a turn that already ended closes it TURN_END_IDLE_MS after it
+  // opened), counted from now; without an opener entry only IDLE_MS applies.
+  function opened(browserId, tabId, openerTabId) {
+    if (typeof browserId !== 'string' || !Number.isInteger(tabId)) return;
+    const opener = Number.isInteger(openerTabId) ? tabs.get(keyOf(browserId, openerTabId)) : null;
+    const key = keyOf(browserId, tabId);
+    const old = tabs.get(key);
+    if (old) drop(old);
+    if (tabs.size >= MAX_TABS) drop(tabs.values().next().value); // the oldest is forgotten (not closed)
+    const entry = { browserId, tabId, terminal: opener ? opener.terminal : null, keep: false, lastCommandAt: now(), turnEnded: Boolean(opener && opener.turnEnded), timer: null };
+    tabs.set(key, entry);
+    const list = pending.get(browserId);
+    if (list && list.includes(tabId)) pending.set(browserId, list.filter(id => id !== tabId));
+    arm(entry);
+  }
+
   // The tab closed, was released or the person used it: never closed by T-Agent.
   function forget(browserId, tabId) {
     const entry = tabs.get(keyOf(browserId, tabId));
@@ -151,7 +170,7 @@ function createTabCare({
 
   function stop() { for (const entry of [...tabs.values()]) drop(entry); pending.clear(); }
 
-  return { noteTab, forget, keep, turnEnded, terminalEnded, connected, snapshot, stop };
+  return { noteTab, opened, forget, keep, turnEnded, terminalEnded, connected, snapshot, stop };
 }
 
 module.exports = { createTabCare, TURN_END_IDLE_MS, IDLE_MS, MAX_PENDING, MAX_TABS };

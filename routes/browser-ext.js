@@ -7,8 +7,8 @@
 //  - relay: /api/tcli/browser/* for `tcli browser` (scripts/tcli-browser.js): the terminal hook token in X-T-Agent-Task, X-T-Agent-Terminal and
 //           X-T-Agent-Token (lib/terminal-relay-auth.js) from this machine, mounted like the OSS relay before the body parsers and the gates.
 //           A request without those headers, or not from this machine, is passed on untouched (and meets the login gate).
-//           Recordings: GET /recordings, /recordings/:id, /recordings/:id/items[?kind&type&source&url&status&limit&offset] (JSON lines),
-//           /recordings/:id/requests[?type&all&url&status&limit&offset] (merged requests, JSON lines), DELETE /recordings/:id.
+//           Recordings: GET /recordings, /recordings/:id, /recordings/:id/items[?kind&type&source&url&status&tab&limit&offset] (JSON lines),
+//           /recordings/:id/requests[?type&all&url&status&tab&limit&offset] (merged requests, JSON lines), DELETE /recordings/:id.
 // Errors are JSON { error, message }. Answers are never cached and never logged.
 const fs = require('node:fs');
 const path = require('node:path');

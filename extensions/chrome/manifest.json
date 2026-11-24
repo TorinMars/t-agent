@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
   "name": "T-Agent Browser",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "permissions": [
     "tabs",
     "tabGroups",
     "scripting",
     "debugger",
     "storage",
-    "alarms"
+    "alarms",
+    "webNavigation",
+    "webRequest"
   ],
   "host_permissions": [
     "<all_urls>"

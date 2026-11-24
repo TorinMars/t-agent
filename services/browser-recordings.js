@@ -4,7 +4,9 @@
 //   <data dir>/browser-recordings/<recording_id>.json    the summary: { recording_id, tab_id, browser_id, started_at, stopped_at, stop_reason,
 //                                                         origins, items, bytes, kinds, dropped_items, truncated, task_id, terminal_id,
 //                                                         options? (the recording's filters: network, dom, bodies, types, drop_other_types,
-//                                                         max_body_bytes; from extension 1.0.4) }
+//                                                         max_body_bytes; from extension 1.0.4), tabs? (items per tab id, at most
+//                                                         MAX_TABS ids: a recording follows the tabs its page opens; older
+//                                                         recordings have none) }
 // Limits: 200 MiB per recording (items after that are dropped and counted, `truncated: true`), 2 GiB in all (the oldest recordings are removed
 // first), and 14 days (counted from the last item or the stop; checked at start, every 6 hours and after appends).
 // Reading: itemsStream (the file as it is), and filterItems / requests, which read it line by line through lib/browser-recording-query.js (the
@@ -19,6 +21,7 @@ const MiB = 1024 * 1024;
 const DEFAULTS = { maxRecordingBytes: 200 * MiB, maxTotalBytes: 2048 * MiB, keepMs: 14 * 24 * 3600 * 1000, cleanupEveryMs: 6 * 3600 * 1000 };
 const ID = /^rec_[A-Za-z0-9]{1,24}_[A-Za-z0-9]{1,16}$/;
 const MAX_ORIGINS = 20;
+const MAX_TABS = 20; // tab ids counted in the summary (the extension follows at most 10 per recording)
 const MAX_ITEMS_PER_BATCH = 5000;
 
 class RecordingError extends Error {
@@ -124,7 +127,13 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
       summary.kinds[kind] = (summary.kinds[kind] || 0) + 1;
       const origin = originOf(clean.url);
       if (origin && !summary.origins.includes(origin) && summary.origins.length < MAX_ORIGINS) summary.origins.push(origin);
-      if (summary.tab_id === null && Number.isInteger(clean.tab_id)) summary.tab_id = clean.tab_id;
+      const tab = Number.isInteger(clean.tab) ? clean.tab : Number.isInteger(clean.tab_id) ? clean.tab_id : null;
+      if (summary.tab_id === null && tab !== null) summary.tab_id = tab;
+      if (tab !== null) {
+        const tabs = summary.tabs || (summary.tabs = {});
+        const key = String(tab);
+        if (tabs[key] !== undefined || Object.keys(tabs).length < MAX_TABS) tabs[key] = (tabs[key] || 0) + 1;
+      }
     }
     summary.dropped_items += Math.max(0, items.length - MAX_ITEMS_PER_BATCH);
     if (lines.length) {

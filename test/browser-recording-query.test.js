@@ -35,6 +35,25 @@ test('item filters: kinds (net = request, response, ws), type ignoring case, sou
   assert.deepEqual(pick({ status: '0' }), [2, 6], '0: no response yet');
 });
 
+test('--tab: the items of one tab (`tab`, else the `tab_id` of older recordings), and the requests of one tab', async () => {
+  const items = [
+    { seq: 1, kind: 'nav', tab_id: 3, url: 'https://a.test/' },
+    { seq: 2, kind: 'tab', action: 'opened', tab: 9, tab_id: 9, opener: 3, url: 'https://pay.test/' },
+    { seq: 3, kind: 'request', tab: 9, tab_id: 9, req_id: 'r1', method: 'GET', url: 'https://pay.test/api', type: 'XHR', status: 0 },
+    { seq: 4, kind: 'request', tab: 3, req_id: 'r2', method: 'GET', url: 'https://a.test/api', type: 'XHR', status: 0 },
+    { seq: 5, kind: 'click', url: 'https://a.test/' },
+  ];
+  assert.deepEqual(pick({ tab: '9' }, items), [2, 3]);
+  assert.deepEqual(pick({ tab: '3' }, items), [1, 4], 'tab_id alone (an older recording) or tab alone');
+  assert.deepEqual(pick({ tab: '3', kind: 'request' }, items), [4]);
+  assert.notEqual(parseItemFilter({ tab: '0' }), null, 'tab 0 is a filter');
+  assert.throws(() => parseItemFilter({ tab: 'x' }), { code: 'BAD_FILTER' });
+  assert.throws(() => parseRequestOptions({ tab: '-1' }), { code: 'BAD_FILTER' });
+  const { requests } = await mergeRequests(lines(items), parseRequestOptions({ tab: '3' }));
+  assert.deepEqual(requests.map(entry => [entry.req_id, entry.tab_id]), [['r2', 3]], 'the merged request\'s tab_id comes from tab');
+  assert.deepEqual((await mergeRequests(lines(items))).requests.map(entry => entry.tab_id), [9, 3]);
+});
+
 test('item filters: refused values are QueryError BAD_FILTER (400)', () => {
   for (const query of [{ kind: 'no spaces' }, { source: 'robot' }, { status: '6xx' }, { status: 'ok' }, { status: '500-400' }, { url: '/(/' }, { url: '/a/g' },
     { limit: '0' }, { limit: '-1' }, { offset: 'x' }, { kind: '' }, { kind: { a: 1 } }, { url: 'x'.repeat(1001) }]) {

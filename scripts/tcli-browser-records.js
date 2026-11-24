@@ -1,7 +1,7 @@
 // `tcli browser record items` and `tcli browser record requests`: reading a recording ("Reading recordings" in docs/design/tcli.md). Both ask the
 // relay (routes/browser-ext.js) to filter or merge on the server, so a large recording is not sent whole; the filters and the merge are
 // lib/browser-recording-query.js, which tcli also runs itself when the T-Agent it talks to is older (no X-T-Agent-Filtered answer for items, or
-// UNKNOWN_ROUTE for requests), so the answer is the same either way. Loaded by scripts/tcli-browser.js with its helpers. Node built-ins only.
+// UNKNOWN_ROUTE for requests), so the answer is the same either way. --tab is applied here again, since a T-Agent from before it ignores it. Loaded by scripts/tcli-browser.js with its helpers. Node built-ins only.
 const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
@@ -63,17 +63,20 @@ function createRecordCommands({ send, readJson, failureOf, networkFailure, CliEr
     return fs.statSync(file).size;
   }
 
-  const ITEM_FILTERS = ['kind', 'type', 'source', 'url', 'status', 'limit', 'offset'];
+  const ITEM_FILTERS = ['kind', 'type', 'source', 'url', 'status', 'tab', 'limit', 'offset'];
   const items = {
     values: ['output', ...ITEM_FILTERS], bools: ['force'],
     async run(ctx, flags, positional) {
-      if (positional.length !== 1) throw usage('Usage: tcli browser record items <id> [--kind K] [--type T] [--source agent|user] [--url U] [--status S] [--limit N] [--offset N] [-o file.jsonl]');
+      if (positional.length !== 1) throw usage('Usage: tcli browser record items <id> [--kind K] [--type T] [--source agent|user] [--url U] [--status S] [--tab T] [--limit N] [--offset N] [-o file.jsonl]');
       const query = Object.fromEntries(ITEM_FILTERS.map(name => [name, flags[name]]));
       const filter = checked(() => parseItemFilter(query));
       const file = outputFile(ctx, flags);
       const response = await open(ctx, `/browser/recordings/${encodeURIComponent(positional[0])}/items${filter ? queryString(query) : ''}`);
-      // An older T-Agent sends every item: filter here.
-      const lines = filter && !response.headers['x-t-agent-filtered'] ? filterLines(linesOf(response), filter) : null;
+      // An older T-Agent sends every item: filter here. One that filtered but knows no --tab: only the tab is filtered here (the same lines
+      // again on a newer one).
+      let lines = null;
+      if (filter && !response.headers['x-t-agent-filtered']) lines = filterLines(linesOf(response), filter);
+      else if (filter && filter.tab !== null) lines = filterLines(linesOf(response), parseItemFilter({ tab: query.tab }));
       const copy = async target => {
         if (lines) { await writeLines(target, lines); return; }
         await new Promise((resolve, reject) => {
@@ -93,7 +96,8 @@ function createRecordCommands({ send, readJson, failureOf, networkFailure, CliEr
   };
 
   const pad = (value, width, end = false) => (end ? String(value).padStart(width) : String(value).padEnd(width));
-  function requestText(entry) {
+  // withTab: the recording's requests come from more than one tab, so each line starts with its tab.
+  function requestText(entry, { withTab = false } = {}) {
     const size = Number.isFinite(entry.size) ? humanSize(entry.size) : '-';
     const duration = Number.isFinite(entry.duration_ms) ? `${Math.round(entry.duration_ms)}ms` : '-';
     const status = entry.failed ? 'FAIL' : Number.isFinite(entry.status) && entry.status > 0 ? String(entry.status) : '...';
@@ -104,14 +108,15 @@ function createRecordCommands({ send, readJson, failureOf, networkFailure, CliEr
     if (entry.redirected_to) marks.push('redirect');
     if (Number.isFinite(entry.ws_frames)) marks.push(`${entry.ws_frames} frames`);
     const body = entry.request && typeof entry.request.post_data === 'string' ? ` body ${humanSize(Buffer.byteLength(entry.request.post_data))}` : '';
-    return `${pad(entry.req_id, 8)} ${pad(entry.method || '', 6)} ${pad(status, 4, true)} ${pad(entry.type || '', 9)} ${pad(size, 7, true)} ${pad(duration, 7, true)}${body}${marks.length ? ` (${marks.join(', ')})` : ''}  ${entry.url || ''}`;
+    const tab = withTab ? `${pad(Number.isInteger(entry.tab_id) ? `tab ${entry.tab_id}` : 'tab -', 9)} ` : '';
+    return `${tab}${pad(entry.req_id, 8)} ${pad(entry.method || '', 6)} ${pad(status, 4, true)} ${pad(entry.type || '', 9)} ${pad(size, 7, true)} ${pad(duration, 7, true)}${body}${marks.length ? ` (${marks.join(', ')})` : ''}  ${entry.url || ''}`;
   }
 
-  const REQUEST_FILTERS = ['type', 'url', 'status', 'limit', 'offset'];
+  const REQUEST_FILTERS = ['type', 'url', 'status', 'tab', 'limit', 'offset'];
   const requests = {
     values: ['output', ...REQUEST_FILTERS], bools: ['all', 'force'],
     async run(ctx, flags, positional) {
-      if (positional.length !== 1) throw usage('Usage: tcli browser record requests <id> [--all] [--type T] [--url U] [--status S] [--limit N] [--offset N] [-o file.jsonl] [--json]');
+      if (positional.length !== 1) throw usage('Usage: tcli browser record requests <id> [--all] [--type T] [--url U] [--status S] [--tab T] [--limit N] [--offset N] [-o file.jsonl] [--json]');
       const query = { ...Object.fromEntries(REQUEST_FILTERS.map(name => [name, flags[name]])), all: flags.all ? true : undefined };
       const options = checked(() => parseRequestOptions(query));
       const file = outputFile(ctx, flags);
@@ -127,6 +132,7 @@ function createRecordCommands({ send, readJson, failureOf, networkFailure, CliEr
         if (!(error instanceof CliError && error.body && error.body.error === 'UNKNOWN_ROUTE')) throw error instanceof CliError ? error : networkFailure(error);
         result = await mergeRequests(linesOf(await open(ctx, `/browser/recordings/${id}/items`)), options);
       }
+      if (options.tab !== null) result.requests = result.requests.filter(entry => entry.tab_id === options.tab); // a T-Agent before --tab
       const jsonLines = result.requests.map(entry => JSON.stringify(entry));
       if (file) {
         const size = await toFile(file, target => writeLines(target, jsonLines));
@@ -134,7 +140,8 @@ function createRecordCommands({ send, readJson, failureOf, networkFailure, CliEr
         return EXIT.ok;
       }
       if (flags.json) { await writeLines(ctx.stdout, jsonLines); return EXIT.ok; }
-      const lines = result.requests.length ? result.requests.map(requestText) : ['No requests match (the recording may have none: record start without --no-network)'];
+      const withTab = new Set(result.requests.map(entry => entry.tab_id)).size > 1;
+      const lines = result.requests.length ? result.requests.map(entry => requestText(entry, { withTab })) : ['No requests match (the recording may have none: record start without --no-network)'];
       if (result.left_out) lines.push(`(${result.left_out} static files left out: --all keeps them)`);
       if (result.requests.length) lines.push('Headers and bodies: --json or -o file.jsonl');
       ctx.out(lines.join('\n'));

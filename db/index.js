@@ -39,7 +39,8 @@ if (storedSchema > 0 && storedSchema < codeSchema) {
 }
 
 // schema.sql creates missing tables on every start; schema 9 added the T-Attention tables (attention_items, attention_events, attention_tokens) this way,
-// schema 12 the usage data tables and schema 13 the English learning tables (learn_cards, learn_reviews).
+// schema 12 the usage data tables and schema 13 the English learning tables (learn_cards, learn_reviews); schema 25 the tables usage_time and
+// memories (services/usage-time.js, "Usage time and memories" in docs/design/usage-time.md), new tables only, so nothing else is needed for them.
 // Schema 14: the sync columns of learn_cards and learn_reviews and the table learn_card_moves. They are added to a schema 13 database before
 // schema.sql runs, because schema.sql makes indexes on them (services/learn-sync-store.js; a database without learn_cards gets it all from schema.sql).
 // Schema 15: learn_cards.phonetic, added there too. Schema 17: learn_reviews.expected, tag and hinted, and the table learn_reports, the same way.

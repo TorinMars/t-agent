@@ -36,6 +36,7 @@ function archiveTask(database, owner, id) {
   if (!task.archived_at) {
     database.prepare('UPDATE tasks SET archived_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
       .run(new Date().toISOString(), task.id, owner);
+    require('../lib/usage-events').emitUsageEvent('task-archived', { task_id: Number(task.id), title: task.title }); // a memory (services/usage-memory-hooks.js)
   }
   require('../routes/terminal').closeTaskTerminals(task.id);
   require('./agent-chat').getAgentChat().stopTask(task.id);

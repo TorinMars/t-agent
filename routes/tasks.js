@@ -114,6 +114,7 @@ router.post('/', (req, res) => {
     return info.lastInsertRowid;
   })();
 
+  require('../lib/usage-events').emitUsageEvent('task-created', { task_id: Number(taskId), title }); // a memory (services/usage-memory-hooks.js)
   res.status(201).json(db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId));
 });
 

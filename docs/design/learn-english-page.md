@@ -310,7 +310,11 @@ A conversation with the translation model about the card on screen (the server s
 
 ## English chat
 
-The chat page (the list, a conversation, journal frames, the meta line, company computer) is in "English chat on the page" in [learn-english-chat.md](learn-english-chat.md).
+The home entry `#h5-learn-mode-chat` opens the English coach when the engine has it (its `GET /api/learn/coach` answers): one continuous
+conversation with proposal cards and practice series, its card reading "Your coach: practice, your progress and any English question" without a
+count of chats; see [learn-english-coach-page.md](learn-english-coach-page.md). On an engine without the coach (that GET answers 404) it opens the
+old chat page (the list, a conversation, journal frames, the meta line, company computer), "English chat on the page" in
+[learn-english-chat.md](learn-english-chat.md); with the coach that page is shown read-only under the coach's "Earlier chats".
 
 ## Grading
 

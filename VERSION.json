@@ -1,9 +1,9 @@
 {
-  "app_version": "2.160.0",
+  "app_version": "2.161.0",
   "api_version": 1,
   "schema_version": 23,
   "min_remote_api_version": 1,
   "max_remote_api_version": 1,
-  "published_at": "2026-11-24T02:20:06.429Z",
+  "published_at": "2026-11-24T03:14:50.986Z",
   "release_url": "https://github.com/TorinMars/t-agent/releases"
 }

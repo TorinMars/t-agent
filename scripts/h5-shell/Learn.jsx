@@ -151,6 +151,13 @@ function Learn({ state, ui }) {
     back();
   };
   const common = { ui, phone, keys, speech, openTranslator, data, open, back, seriesLeave };
+  // Opened with a view (ui.actions.openLearn('chat'): the coach's link /h5?learn=coach): that view, once.
+  const target = state.learnTarget;
+  useEffect(() => {
+    if (!target || target.view !== 'chat') return;
+    open({ kind: 'chat' });
+    ui.set({ learnTarget: null });
+  }, [target && target.seq]); // eslint-disable-line react-hooks/exhaustive-deps -- once per link
   const input = useLearnInputState();
 
   // Computer: Escape closes the open mode, then the page (unless something above takes it); the focus goes into the page and back to the opener.
@@ -748,7 +755,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
 // The plan of POST /api/learn/coach/plans/start (`series.plan`) run step after step with the same exercises and the same answer endpoint as a session
 // (learn-series.mjs decides the exercise of each card, the progress and the misses that come back at the end). The header: the exercise's title and
 // "Step 2 of 4 · 7 / 9 · from your chat"; the back arrow leaves (the answers are kept) and the end returns by itself, both to the coach with the result.
-const SERIES_TITLES = { spell: 'Spell the word', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
+const SERIES_TITLES = { spell: 'Spell the word', review: 'Daily review', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
 function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settings, leaveRef, onEnd, onDone }) {
   const audio = useAudio(settings, speech.tts);
   const [run, setRun] = useState(() => createSeries(series.plan, { tts: speech.tts }));
@@ -765,7 +772,7 @@ function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settin
     const now = runRef.current;
     void onDone();
     // Nothing answered: nothing to tell her.
-    onEnd(now.answers.length ? seriesResult(now, { messageUid: series.messageUid || '', stopped }) : null);
+    onEnd(now.answers.length ? seriesResult(now, { messageUid: series.messageUid || '', proposalId: series.proposalId || '', kind: series.planKind || '', stopped }) : null);
   };
   useEffect(() => {
     leaveRef.current = () => end(!seriesDone(runRef.current));

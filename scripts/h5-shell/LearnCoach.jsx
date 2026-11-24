@@ -121,6 +121,8 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   const [reloads, setReloads] = useState(0);
   const [tools, setTools] = useState(true);
   const [translator, setTranslator] = useState(true);
+  // A company computer whose home (the normal computer that keeps the coach) is away or older: said on the page ('offline' | 'older' | '').
+  const [away, setAway] = useState('');
   const [pending, setPending] = useState(null); // { question?, practice?, text, status, proposals }
   const [failed, setFailed] = useState(null); // { text, message, practice? }
   const [draft, setDraft] = useState('');
@@ -154,6 +156,9 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
       if (!live) return;
       setMessages(now => mergeCoach(now, page.messages));
       setHasMore(page.has_more === true);
+      setAway(page.home_older ? 'older' : page.offline ? 'offline' : '');
+      // No translation model: the notice at once (not only after a send fails).
+      if (page.translator === false && !page.offline && !page.home_older) setTranslator(false);
       setLoaded({ state: 'ok', error: '' });
     }, failure => { if (live) setLoaded({ state: 'error', error: errorText(failure) || t('Operation failed') }); });
     return () => { live = false; };
@@ -252,7 +257,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the view opens with a result
 
   const busy = Boolean(pending);
-  const blocked = busy || !translator;
+  const blocked = busy || !translator || Boolean(away);
 
   // ── the proposal cards ──
   const mark = (id, patch) => setWorking(now => ({ ...now, [id]: patch }));
@@ -312,7 +317,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
         setEmpty(now => ({ ...now, [id]: true }));
         return;
       }
-      open({ kind: 'series', plan, messageUid: message.uid, planKind: planOf(proposal).kind });
+      open({ kind: 'series', plan, messageUid: message.uid, proposalId: id, planKind: planOf(proposal).kind });
     } catch (failure) {
       setErrors(now => ({ ...now, [id]: errorText(failure) || t('Operation failed') }));
     } finally {
@@ -372,12 +377,17 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
         sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', px: phone ? 2 : 3, py: 2 }}>
         <Box sx={{ maxWidth: phone ? 'none' : 760, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {older ? <Typography id="h5-learn-coach-older" variant="caption" color="text.secondary" align="center" component="p">{t('Loading earlier messages…')}</Typography> : null}
-          {!translator ? <TranslatorNotice id="h5-learn-coach-no-translator" onOpen={openTranslator} text="English chat needs a translator. Set one up in Settings → Voice and translation." /> : null}
+          {away ? (
+            <Alert severity="info" id="h5-learn-coach-away" data-away={away}>
+              {t(away === 'older' ? 'The normal computer that keeps your learning data needs an update first' : 'Your English coach is on a normal computer, which cannot be reached right now')}
+            </Alert>
+          ) : null}
+          {!translator && !away ? <TranslatorNotice id="h5-learn-coach-no-translator" onOpen={openTranslator} text="English chat needs a translator. Set one up in Settings → Voice and translation." /> : null}
           {loaded.state === 'error' ? (
             <Alert severity="error" id="h5-learn-coach-load-error" action={<Button color="inherit" size="small" onClick={() => setReloads(n => n + 1)}>{t('Try again')}</Button>}>{loaded.error}</Alert>
           ) : null}
           {loaded.state === 'loading' ? <Typography variant="body2" color="text.secondary" id="h5-learn-coach-loading">{t('Loading…')}</Typography> : null}
-          {loaded.state === 'ok' && !messages.length && !pending && !failed ? (
+          {loaded.state === 'ok' && !away && !messages.length && !pending && !failed ? (
             <Box id="h5-learn-coach-start" sx={{ display: 'flex', flexDirection: 'column', gap: 1, pt: phone ? 4 : 6 }}>
               <Box aria-hidden="true" sx={{ color: 'primary.main', display: 'flex', justifyContent: 'center' }}><Icon name="learnAsk" size={32} /></Box>
               <Typography variant="h6" component="h3" align="center">{t('Your English coach')}</Typography>

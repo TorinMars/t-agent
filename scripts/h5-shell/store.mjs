@@ -78,6 +78,7 @@ export const initialState = () => ({
   settingsOpen: false,
   settingsTarget: null, // { id, seq }: the group (and part) of the settings sheet to open, from ui.actions.openSettings(id) (settings-target.mjs)
   learnOpen: false, // the Learn page (screen-learn.jsx) is open: ui.actions.openLearn() / closeLearn()
+  learnTarget: null, // { view: 'chat', seq }: the Learn view to open with it, ui.actions.openLearn('chat') (the coach's link /h5?learn=coach); Learn clears it
   taskName: '', // empty: "Choose a task"
   sessionName: '',
   terminalAgent: null, // 'claude' / 'codex' / 'opencode' / 'notebook' when the current session is that agent's, null for a plain shell: picks the presets of the saved commands list

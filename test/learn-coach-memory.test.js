@@ -163,6 +163,30 @@ test('the rolling summary: folded after the answer when the history outgrows its
   assert.ok(again.text && again.updated_at >= again.reset_at, 'folded again after the reset');
 });
 
+test('a long backlog is folded over several sends, each fold reading at most its input cap (nothing folded unread)', async t => {
+  const ctx = side(t);
+  // 80 older messages of about 900 characters (about 72,000): more than one fold's input (24,000).
+  const insert = ctx.db.prepare("INSERT INTO learn_convo_messages (owner, uid, convo_uid, role, text, at, meta, by, sync_seq) VALUES ('me', ?, 'coach', ?, ?, ?, ?, '', 0)");
+  for (let index = 0; index < 80; index += 1) {
+    const role = index % 2 ? 'assistant' : 'user';
+    insert.run(`old-message-${String(index).padStart(4, '0')}`, role, `${role === 'user' ? 'Question' : 'Answer'} ${index}: ${'the present perfect and phrasal verbs '.repeat(24)}`, NOW - (80 - index) * 60000, role === 'user' ? '' : '{}');
+  }
+  for (let round = 0; round < 6; round += 1) { ctx.clock.now += 1000; await ctx.coach.send('me', { text: `Next ${round}` }); await ctx.coach.settle(); }
+  assert.ok(ctx.folds.length >= 3, `several folds (${ctx.folds.length})`);
+  const input = fold => fold.messages[0].content.split('\n\nNew messages:\n')[1];
+  assert.ok(ctx.folds.every(fold => input(fold).length <= 26000), 'each fold within its input cap');
+  assert.match(input(ctx.folds[0]), /^Person: Question 0:/, 'the first fold starts at the oldest message');
+  // Every folded message was read: each fold starts right after the previous one ended.
+  for (let index = 1; index < ctx.folds.length; index += 1) {
+    const before = input(ctx.folds[index - 1]).split('\n').filter(line => /^(Person|Coach): (Question|Answer) \d+:/.test(line)).at(-1);
+    const next = input(ctx.folds[index]).split('\n')[0];
+    const number = line => Number(/(?:Question|Answer) (\d+):/.exec(line)?.[1]);
+    if (number(before) < 79 && Number.isFinite(number(next))) assert.equal(number(next), number(before) + 1, `fold ${index + 1} goes on from fold ${index}`);
+    assert.match(ctx.folds[index].messages[0].content, /^Summary so far:\nSummary \d+/, 'it builds on the summary');
+  }
+  for (const request of ctx.requests) assert.ok(request.messages.slice(0, -1).reduce((sum, item) => sum + item.content.length, 0) <= HISTORY, 'every request within the window');
+});
+
 const exchange = (from, to) => to.sync.applyPage(from.sync.exportPage(0, 1000), from.instanceId, { bump: true });
 const both = (A, B) => exchange(A, B) + exchange(B, A);
 

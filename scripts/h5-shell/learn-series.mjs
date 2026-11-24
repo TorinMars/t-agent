@@ -4,7 +4,8 @@
 // See "The practice series" in docs/design/learn-english-coach-page.md.
 import { findWholeWord, SENTENCE_EXERCISE } from './learn-model.mjs';
 
-export const SERIES_MODES = ['spell', 'fill', 'dictation', 'retest'];
+// `review` is the step of a Review plan (services/learn-plan.js): a word is spelled, a sentence gets the sentence exercise, as in a Review session.
+export const SERIES_MODES = ['spell', 'review', 'fill', 'dictation', 'retest'];
 
 // A word card asked inside its own sentence in a Fill the gap step: its `context` with the word as the gap ({ word, before, after }), or null when
 // the word is not in its context as a whole word.
@@ -18,15 +19,15 @@ export function contextGap(card) {
   return { word: context.slice(at, at + word.length), before: context.slice(0, at), after: context.slice(at + word.length) };
 }
 
-// The exercise a card gets in a step (null: the card is left out of this step): Spell and the retest spell a word and give a sentence the sentence
-// exercise; Fill the gap takes a sentence, or a word inside its own sentence (else the word is spelled); Dictation needs speech output (`tts`), else
+// The exercise a card gets in a step (null: the card is left out of this step): Spell, Review and the retest spell a word and give a sentence the
+// sentence exercise; Fill the gap takes a sentence, or a word inside its own sentence (else the word is spelled); Dictation needs speech output (`tts`), else
 // the whole step is left out.
 export function seriesExercise(card, mode, { tts = false } = {}) {
   if (!card) return null;
   const sentence = card.kind === 'sentence';
   if (mode === 'dictation') return tts ? 'dictation' : null;
   if (mode === 'fill') return sentence || contextGap(card) ? 'fill' : 'spell';
-  if (mode === 'spell' || mode === 'retest') return sentence ? SENTENCE_EXERCISE : 'spell';
+  if (mode === 'spell' || mode === 'review' || mode === 'retest') return sentence ? SENTENCE_EXERCISE : 'spell';
   return null;
 }
 
@@ -117,16 +118,21 @@ export function seriesAnswer(state, { correct = false, answer = '', skipped = fa
   return { ...state, steps, answers, ...skipEmpty({ steps, step: state.step, at: state.at + 1 }) };
 }
 
-// The result posted to POST /api/learn/coach/practice-result. `total`: the items the plan gave (not the misses that came back nor the retest);
-// `done` and `right`: of those, answered and right the first time; `missed`: each card answered wrong anywhere in the series, with what was typed
-// the first time; `steps`: per step { mode, total, done, right } (the retest too); `stopped`: left before the end.
-export function seriesResult(state, { messageUid = '', stopped = false, now = Date.now() } = {}) {
-  const planned = state.steps.filter(step => step.mode !== 'retest').reduce((sum, step) => sum + step.items.filter(one => !one.again).length, 0);
+// The result posted to POST /api/learn/coach/practice-result, counted in different cards (words), not in items: a word asked in two steps of a
+// mistakes series is one word. `total`: the cards of the items the plan gave (not the misses that came back nor the retest); `done`: of those, the
+// cards answered there; `right`: the cards answered there and never wrong there; `missed`: each card answered wrong anywhere in the series, with what
+// was typed the first time; `steps`: per step { mode, total, done, right } in items (the retest too); `stopped`: left before the end. `proposalId` and
+// `kind` name the plan card it came from (the server titles the result by it).
+export function seriesResult(state, { messageUid = '', proposalId = '', kind = '', stopped = false, now = Date.now() } = {}) {
+  const key = card => String(card && card.id);
+  const planned = new Set(state.steps.filter(step => step.mode !== 'retest').flatMap(step => step.items.filter(one => !one.again).map(one => key(one.card))));
   const first = state.answers.filter(one => one.mode !== 'retest' && !one.again);
+  const answered = new Set(first.map(one => key(one.card)));
+  const wrong = new Set(first.filter(one => !one.correct).map(one => key(one.card)));
   const missed = [];
   for (const one of state.answers) {
-    if (one.correct || one.skipped || missed.some(entry => entry.id === String(one.card.id))) continue;
-    missed.push({ id: String(one.card.id), en: String(one.card.en || ''), typed: one.answer.slice(0, 200) });
+    if (one.correct || one.skipped || missed.some(entry => entry.id === key(one.card))) continue;
+    missed.push({ id: key(one.card), en: String(one.card.en || ''), typed: one.answer.slice(0, 200) });
   }
   const steps = state.steps.map((step, index) => {
     const mine = state.answers.filter(one => one.step === index);
@@ -135,10 +141,12 @@ export function seriesResult(state, { messageUid = '', stopped = false, now = Da
   return {
     plan_id: state.planId,
     message_uid: messageUid,
+    ...(proposalId ? { proposal_id: String(proposalId) } : {}),
+    ...(kind ? { kind: String(kind) } : {}),
     steps,
-    done: first.length,
-    total: planned,
-    right: first.filter(one => one.correct).length,
+    done: answered.size,
+    total: planned.size,
+    right: [...answered].filter(id => !wrong.has(id)).length,
     missed: missed.map(({ en, typed }) => ({ en, typed })),
     seconds: Math.max(0, Math.round((now - state.startedAt) / 1000)),
     ...(stopped ? { stopped: true } : {}),

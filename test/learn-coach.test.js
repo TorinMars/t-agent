@@ -328,6 +328,10 @@ test('the practice result: stored first as a practice message (one short line), 
   assert.deepEqual(replied.message.meta.suggestions, ['Practise the 1 I missed']);
   const last = ctx.provider.requests.at(-1).messages.at(-1).content;
   assert.match(last, /\[Practice result, sent by the app, not typed by the person\] Today's spelling finished/);
+  // A page that does not send proposal_id: the only practice card of that answer names it.
+  const named = await ctx.coach.practiceResult('me', { plan_id: started.plan.id, message_uid: asked.message.uid, done: 1, total: 3, right: 1, seconds: 30, stopped: true });
+  assert.equal(named.messages[0].text, "Today's spelling: stopped after 1 of 3, 1 of 1 right, 1 min.");
+  assert.equal(named.messages[0].meta.practice.kind, 'today_spelling');
   const early = await ctx.coach.practiceResult('me', { done: 9, total: 25, right: 7, seconds: 200, stopped: true });
   assert.match(early.messages[0].text, /stopped after 9 of 25/);
 });

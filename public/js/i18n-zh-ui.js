@@ -2848,6 +2848,7 @@ I18n.add({
   "What next?": "接下来做什么？",
   "Removed from memory": "已从记忆中删除",
   "Spell each word": "逐个拼写单词",
+  "Review the cards that are due": "复习到期的卡片",
   "Fill the gap inside a sentence": "在句子中填空",
   "A final retest of the words you missed again": "最后再测一遍又答错的单词",
   "Nothing left of this practice": "这个练习已经没有剩下的内容了",

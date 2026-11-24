@@ -35,7 +35,7 @@ const SPELLING = [word(1, 'separate'), word(2, 'receive'), word(3, 'necessary')]
 const MISTAKES = [word(4, 'occurred'), word(5, 'committee', { context: 'The committee met on Monday.' })];
 const LONG = Array.from({ length: 25 }, (_, i) => word(100 + i, `word${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}x`));
 
-function coachMock({ coach = true } = {}) {
+function coachMock({ coach = true, away = '' } = {}) {
   const mock = { requests: [], clock: Date.parse('2026-11-24T10:00:00.000Z'), seq: 0, settings: { collect: true, daily_goal: 20, starter: null, new_per_day: 10, coach_memory: true, coach_read_answers: true, coach_read_text: true, coach_economy: false } };
   const at = () => { mock.clock += 1000; return new Date(mock.clock).toISOString(); };
   // 60 earlier messages: the first page has the newest 50.
@@ -100,6 +100,8 @@ function coachMock({ coach = true } = {}) {
       const limit = Number(url.searchParams.get('limit')) || 50;
       const older = mock.messages.filter(one => !before || Date.parse(one.at) < Date.parse(before));
       const page = older.slice(-limit);
+      // A company computer whose home is away: no messages, said as such (routes/learn.js GET /coach).
+      if (away) return { messages: [], has_more: false, tools_ok: false, translator: false, settings: { memory: true, read_answers: true, read_text: true, economy: false }, offline: away === 'offline', home_older: away === 'older' };
       return { messages: page, has_more: older.length > page.length, tools_ok: true, settings: { memory: true, read_answers: true, read_text: true, economy: false } };
     }
     if (p === '/api/learn/coach/send') {
@@ -154,10 +156,10 @@ function coachFeedMock() {
   };
 }
 
-async function openPage(browser, { viewport, touch = false, coach = true }) {
+async function openPage(browser, { viewport, touch = false, coach = true, away = '' }) {
   const context = await browser.newContext({ viewport, timezoneId: 'Asia/Taipei', ...(touch ? { isMobile: true, hasTouch: true } : {}), ...(SHOTS ? { deviceScaleFactor: 3 } : {}) });
   const page = await context.newPage();
-  const mock = coachMock({ coach });
+  const mock = coachMock({ coach, away });
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.addInitScript(() => {
     localStorage.setItem('h5-columns', JSON.stringify({ on: false }));
@@ -364,7 +366,7 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       await waitFor(async () => (await text(page, '#h5-learn-view-title')) === 'Final retest', 'the retest');
       assert.equal(await subtitle(page, true), 'Step 3 of 3 · 1 / 1 · from your chat');
       assert.equal(await answer(page, mock, 'occurred', touch), true);
-      await page.locator('.h5-learn-coach-divider', { hasText: 'Practice finished · 3 words · 1 min' }).waitFor();
+      await page.locator('.h5-learn-coach-divider', { hasText: 'Practice finished · 2 words · 1 min' }).waitFor();
       await settled(page);
       const series = mock.of('POST', /\/answer$/).slice(-4).map(one => [one.path.split('/')[4], one.body.mode]);
       assert.deepEqual(series, [['4', 'spell'], ['5', 'spell'], ['5', 'fill'], ['4', 'spell']]);
@@ -517,6 +519,18 @@ const subtitle = (page, phone) => text(page, phone ? '#h5-learn-mode .h5-learn-s
       assert.equal(await page.locator('#h5-learn-chat-input, #h5-learn-chat-new').count(), 0);
       await page.locator('#h5-learn-back').click();
       await page.locator('#h5-learn-coach').waitFor();
+      await context.close();
+    }
+
+    // ── A company computer whose home is away: the coach says so and takes no question ──
+    {
+      const { context, page } = await openPage(browser, { viewport: { width: 1440, height: 900 }, away: 'offline' });
+      await page.locator('#h5-nav-learn').click();
+      await page.locator('#h5-learn-mode-chat').click();
+      await waitText(page, '#h5-learn-coach-away', 'Your English coach is on a normal computer, which cannot be reached right now');
+      assert.equal(await page.locator('#h5-learn-coach-start, #h5-learn-coach-no-translator').count(), 0, 'no starters and no translator notice while away');
+      await page.locator('#h5-learn-coach-input').fill('Hello');
+      assert.equal(await page.locator('#h5-learn-coach-send').isDisabled(), true, 'nothing can be sent');
       await context.close();
     }
 

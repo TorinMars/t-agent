@@ -341,7 +341,7 @@ test('the prompt: the history as a transcript (data), the newest message with to
   const { systemPrompt } = require('../services/learn-coach');
   const rules = systemPrompt({ tools: true });
   assert.match(rules, /Never apologise and never explain your limits at length/);
-  assert.match(rules, /Small, low-risk requests .* you offer at once as the card, with one short sentence; ask first only before big changes/);
+  assert.match(rules, /Small changes are made at once: .*Undo button.*ask before a big change/);
 });
 
 test('scrubEnv and reasonOf', () => {

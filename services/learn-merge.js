@@ -404,6 +404,8 @@ function cleanPlan(raw) {
 function cleanProposal(raw) {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !PROPOSAL_ID.test(raw.id) || !PROPOSAL_KINDS.includes(raw.kind)) return null;
   const base = { id: raw.id, kind: raw.kind, state: PROPOSAL_STATES.includes(raw.state) ? raw.state : 'open', state_at: time(raw.state_at) ? raw.state_at : 0 };
+  // `auto`: a small change the page runs at once (with Undo) instead of waiting for a tap: a settings change, or cards added / changed without a removal.
+  if (raw.auto === true && (raw.kind === 'settings' || (raw.kind === 'cards' && !(Array.isArray(raw.remove) && raw.remove.length)))) base.auto = true;
   if (raw.kind === 'practice') {
     const plan = cleanPlan(raw.plan);
     return plan ? { ...base, plan } : null;

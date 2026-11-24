@@ -147,6 +147,8 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
   const input = useRef(null);
   const keep = useRef(null); // { height, top } before older messages are put in front
   const timers = useRef(new Set());
+  const autoRan = useRef(new Set()); // proposal ids already run at once
+  const actRef = useRef(null); // the latest `act` (a stream settles after the render that started it)
   const later = (fn, ms) => { const id = setTimeout(() => { timers.current.delete(id); fn(); }, ms); timers.current.add(id); };
   useEffect(() => () => { for (const id of timers.current) clearTimeout(id); if (abort.current) abort.current.abort(); }, []);
 
@@ -218,6 +220,10 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
     } else if (local && !list.some(one => one.role === local.role)) list.push(local);
     setMessages(now => mergeCoach(now, list));
     if (!done.tools) setTools(false);
+    // A small change of hers (`auto`: settings, cards added or changed) runs at once, once, with the same Undo as a tap.
+    if (answer) for (const proposal of proposalsOf(answer)) {
+      if (proposal.auto === true && (proposal.state || 'open') === 'open' && !autoRan.current.has(proposal.id)) { autoRan.current.add(proposal.id); void actRef.current(answer, proposal, 'run'); }
+    }
   };
   const run = async (url, body, local) => {
     if (abort.current) return;
@@ -305,6 +311,7 @@ function Coach({ view, phone, keys, ui, open, back, openTranslator, data, speech
       mark(id, false);
     }
   };
+  actRef.current = act;
   const undo = async proposal => {
     const id = proposal.id;
     const token = undos[id];

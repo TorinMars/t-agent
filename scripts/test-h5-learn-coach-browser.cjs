@@ -77,6 +77,10 @@ function coachMock({ coach = true, away = '' } = {}) {
       ];
       return { lines: [{ type: 'proposals', proposals }], answer: answerOf('Three things. Nothing changes until you tap each one:', { proposals }) };
     }
+    if (/switch to auto/i.test(text)) {
+      const proposals = [{ id: 'p-auto', kind: 'settings', changes: { new_per_day: 15 }, state: 'open', auto: true }];
+      return { lines: [{ type: 'proposals', proposals }], answer: answerOf('I set it to 15 new words a day.', { proposals }) };
+    }
     if (/interview/i.test(text)) {
       const note = { uid: 'n9', text: 'job interview in March', until: '2027-03-31', created_at: new Date(mock.clock).toISOString() };
       mock.notes.push(note);
@@ -132,8 +136,8 @@ function coachMock({ coach = true, away = '' } = {}) {
     const action = p.match(/^\/api\/learn\/coach\/proposals\/([^/]+)\/(run|cancel)$/);
     if (action) {
       if (action[2] === 'cancel') return { ok: true, proposal: { id: action[1], state: 'cancelled' } };
-      if (action[1] === 'p-set') mock.settings = { ...mock.settings, new_per_day: 15 };
-      return { ok: true, proposal: { id: action[1], state: 'done' }, ...(action[1] === 'p-set' ? { undo: { token: 'tok-set', expires_at: new Date(Date.now() + 10000).toISOString() } } : {}) };
+      if (action[1] === 'p-set' || action[1] === 'p-auto') mock.settings = { ...mock.settings, new_per_day: 15 };
+      return { ok: true, proposal: { id: action[1], state: 'done' }, ...(action[1] === 'p-set' || action[1] === 'p-auto' ? { undo: { token: 'tok-set', expires_at: new Date(Date.now() + 10000).toISOString() } } : {}) };
     }
     if (p === '/api/learn/coach/undo') { if (body.token === 'tok-set') mock.settings = { ...mock.settings, new_per_day: 10 }; return { ok: true }; }
     if (p === '/api/learn/coach/notes' && method === 'GET') return { notes: mock.notes };
@@ -462,6 +466,10 @@ const note = page => text(page, '#h5-learn-mode .h5-learn-subtitle-note');
       await page.locator('.h5-learn-coach-card[data-id="p-rem"][data-state="done"]').waitFor();
       assert.equal(await text(page, '.h5-learn-coach-card[data-id="p-rem"] .h5-learn-coach-state'), 'Reminder set', 'no Undo without a token');
 
+      // A small change of hers (`auto`) runs at once, once, and shows Changed · Undo with no tap.
+      await say(page, 'Please switch to auto changes.', touch);
+      await page.locator('.h5-learn-coach-card[data-id="p-auto"] .h5-learn-coach-undo').waitFor();
+      assert.equal(mock.of('POST', /proposals\/p-auto\/run$/).length, 1, 'run by the page, once');
       // Frame 3d: "Remembered: … · Undo".
       await say(page, 'I have a job interview in March, in English.', touch);
       const remembered = page.locator('.h5-learn-coach-remembered[data-state="undo"]');

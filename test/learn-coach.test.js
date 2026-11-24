@@ -237,10 +237,12 @@ test('proposals: settings, cards (a removal on its own card), a reminder; run, c
   assert.deepEqual([proposals[1].add.map(card => card.en), proposals[1].remove], [['reconcile'], []]);
   assert.deepEqual([proposals[2].add, proposals[2].remove], [[], [{ kind: 'word', en: 'deploy' }]]);
   assert.ok(proposals.every(item => item.state === 'open'));
+  // Small changes are marked for the page to run at once (settings, cards added or changed); a removal and a reminder wait for a tap.
+  assert.deepEqual(proposals.map(item => item.auto === true), [true, true, false, false]);
   const proposalLine = seen.events.find(line => line.type === 'proposals');
   assert.deepEqual(proposalLine.proposals, proposals);
   assert.ok(seen.events.indexOf(proposalLine) > seen.events.findIndex(line => line.type === 'status'));
-  assert.equal(ctx.learn.settings('me').new_per_day, 10, 'nothing changed before the tap');
+  assert.equal(ctx.learn.settings('me').new_per_day, 10, 'the server changes nothing itself: the page runs an auto proposal');
   const uid = result.message.uid;
 
   const ran = await ctx.coach.runProposal('me', proposals[0].id, { message_uid: uid });

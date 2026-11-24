@@ -428,10 +428,9 @@ async function phoneRun(browser, server, fake) {
   const setCard = lastAnswer(page).locator('.h5-learn-coach-card[data-type="settings"]');
   await setCard.waitFor(WAIT);
   assert.equal(await setCard.locator('.h5-learn-coach-setting').evaluate(el => el.textContent.trim()), `New words a day: ${was} → ${want}`);
-  assert.equal((await settingsNow(page)).new_per_day, was, 'nothing changes before the tap');
-  await press(page, setCard.locator('.h5-learn-coach-run'), touch);
+  // A settings change is small: the page runs it at once, with no tap, and shows Changed / Undo.
   await setCard.locator('.h5-learn-coach-undo').waitFor(WAIT);
-  assert.equal((await settingsNow(page)).new_per_day, want, 'Change changed the setting');
+  assert.equal((await settingsNow(page)).new_per_day, want, 'the setting changed with no tap');
   await press(page, setCard.locator('.h5-learn-coach-undo'), touch);
   await page.locator('.h5-learn-coach-answer:last-of-type .h5-learn-coach-card[data-type="settings"][data-state="undone"]').waitFor(WAIT);
   assert.equal((await settingsNow(page)).new_per_day, was, 'Undo put it back');
@@ -447,15 +446,13 @@ async function phoneRun(browser, server, fake) {
     rhythm: db.prepare('SELECT suspended FROM learn_cards WHERE owner = ? AND id = ?').get(OWNER, ids.rhythm).suspended,
     separate: db.prepare('SELECT zh FROM learn_cards WHERE owner = ? AND id = ?').get(OWNER, ids.separate).zh,
   }));
-  assert.deepEqual(cardState(), { resilient: undefined, rhythm: 0, separate: '\u8bcd separate' }, 'nothing applied before a tap');
+  // Adding and changing cards is small: applied at once with no tap; the removal waits for its tap.
   assert.deepEqual(await cardCards.nth(0).locator('.h5-learn-coach-cards').evaluateAll(list => list.map(el => el.dataset.part)), ['add', 'update']);
-  assert.equal(await cardCards.nth(0).locator('.h5-learn-coach-run').evaluate(el => el.textContent), 'Apply');
   assert.deepEqual(await cardCards.nth(0).locator('.h5-learn-coach-chip').evaluateAll(list => list.map(el => el.textContent)), ['resilient', 'meticulous', 'separate']);
+  await waitFor(async () => (await cardCards.nth(0).getAttribute('data-state')) === 'done', 'added with no tap');
+  assert.deepEqual(cardState(), { resilient: { suspended: 0 }, rhythm: 0, separate: '\u5206\u5f00\u7684' }, 'added and changed, the removal not yet');
   assert.equal(await cardCards.nth(1).locator('.h5-learn-coach-run').evaluate(el => el.textContent), 'Remove');
   assert.deepEqual(await cardCards.nth(1).locator('.h5-learn-coach-chip').evaluateAll(list => list.map(el => el.textContent)), ['rhythm'], 'the removal names the card by its text');
-  await press(page, cardCards.nth(0).locator('.h5-learn-coach-run'), touch);
-  await waitFor(async () => (await cardCards.nth(0).getAttribute('data-state')) === 'done', 'added');
-  assert.deepEqual(cardState(), { resilient: { suspended: 0 }, rhythm: 0, separate: '\u5206\u5f00\u7684' });
   await press(page, cardCards.nth(1).locator('.h5-learn-coach-run'), touch);
   await waitFor(async () => (await cardCards.nth(1).getAttribute('data-state')) === 'done', 'removed');
   assert.deepEqual(cardState(), { resilient: { suspended: 0 }, rhythm: 1, separate: '\u5206\u5f00\u7684' });

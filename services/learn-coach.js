@@ -58,8 +58,8 @@ const TOOLS = [
     parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
   },
   {
-    name: 'propose_practice', description: 'Offer a practice as a card with a Start button. The server builds it from the real queue and tells you its numbers. kind: today_spelling | review | mistakes_series (spell, fill the gap, dictation, retest) | more_new_words (raises today\'s new words when tapped) | dictation | fill_gap. words: card ids or English words to limit it to; count: how many.',
-    parameters: { type: 'object', properties: { kind: { type: 'string', enum: merge.PLAN_KINDS }, words: { type: 'array', items: { type: ['integer', 'string'] } }, count: { type: 'integer' } }, required: ['kind'] },
+    name: 'propose_practice', description: 'Offer a practice as a card with a Start button. The server builds it from the real queue and tells you its numbers. Practice here is WORD SPELLING only. kind: today_spelling | review (spell the words that are due) | mistakes_series (spell the wrong words, then retest them) | more_new_words (raises today\'s new words when tapped). words: card ids or English words to limit it to; count: how many.',
+    parameters: { type: 'object', properties: { kind: { type: 'string', enum: merge.OFFER_KINDS }, words: { type: 'array', items: { type: ['integer', 'string'] } }, count: { type: 'integer' } }, required: ['kind'] },
   },
   {
     name: 'propose_settings', description: `Offer a change of learning settings as a card; nothing changes until the person taps. Allowed keys: ${merge.COACH_CHANGES.join(', ')} (new_per_day is 5, 10, 15, 20 or 30; desired_retention 0.85, 0.9 or 0.95).`,
@@ -113,7 +113,7 @@ function systemPrompt({ level = null, notes = [], summary = '', tools = true, se
   if (tools) {
     lines.push(
       'Tools: chat, translation, grammar and rewriting need NO lookup. Look up data (learn_schema, learn_sql) only when the question is about the person\'s own learning; prefer one well-made query over many.',
-      'To start practice call propose_practice and describe the plan with the numbers it returns; when it says empty, say so and offer something else (5 more new words, practise anyway).',
+      'Learning and reviewing here are word spelling only: no dictation, no fill the gap, no sentence exercises; if the person asks for another kind, offer the spelling practice that is closest, in one short sentence. To start practice call propose_practice and describe the plan with the numbers it returns; when it says empty, say so and offer something else (5 more new words, practise anyway).',
       `Use remember for lasting facts about the person (at most ${MAX_NOTES} notes; when they are full, suggest merging).${settings.coach_memory === false ? ' The person switched memory off: do not use remember.' : ''}`,
       'The app has no menu of its own screens: the person reaches Mistakes, Progress, their material, Learn settings, "How learning works" and the plain practice modes only through you. When they ask to see or open one ("show my mistakes", "open settings", "how does learning work", "my progress"), call open_screen with it and say in one line what they will find there; offer one with open_screen after a talk about their weak spots or progress when it helps.',
     );
@@ -354,7 +354,7 @@ function createLearnCoach({
     if (name === 'learn_schema') return coachSql.schemaText({ readAnswers: current.coach_read_answers, readText: current.coach_read_text });
     if (name === 'learn_sql') return runQuery(await ctx.snapshot(), args.query);
     if (name === 'propose_practice') {
-      if (!merge.PLAN_KINDS.includes(args.kind)) return { error: `kind must be one of ${merge.PLAN_KINDS.join(', ')}` };
+      if (!merge.OFFER_KINDS.includes(args.kind)) return { error: `kind must be one of ${merge.OFFER_KINDS.join(', ')}` };
       const words = Array.isArray(args.words) ? args.words.slice(0, merge.MAX_BATCH) : null;
       const count = Number.isInteger(args.count) ? args.count : null;
       const built = await planner.buildPlan(owner, args.kind, { words, count });

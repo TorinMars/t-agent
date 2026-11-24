@@ -237,6 +237,6 @@ test('the screens a coach answer opens: each once, at most 3, only those this br
   assert.deepEqual(screenView('say', { voice: true }), { kind: 'session', mode: 'say' });
   assert.equal(screenView('toString'), null);
   assert.equal(screenView('nope'), null);
-  // The same names as the server's allow-list.
-  assert.deepEqual(Object.keys(COACH_SCREENS), require('../services/learn-merge').COACH_SCREENS);
+  // The same names as the server's readable list; the coach offers word spelling only now (a smaller list), the rest stays openable for answers saved before.
+  assert.deepEqual(Object.keys(COACH_SCREENS).sort(), [...require('../services/learn-merge').READABLE_SCREENS].sort());
 });

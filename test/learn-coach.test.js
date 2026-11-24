@@ -289,7 +289,7 @@ test('open_screen: a button under the answer for an allowed screen (each once, a
   assert.equal(results[1].ok, true, 'the same screen twice is one button');
   assert.match(results[2].error, /^screen must be one of mistakes, reports, progress/);
   assert.match(results[5].error, /At most 3 screen buttons/);
-  assert.deepEqual(coachModule.TOOLS.find(tool => tool.name === 'open_screen').parameters.properties.screen.enum, ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'review', 'practice', 'spell', 'dictation', 'fill', 'say']);
+  assert.deepEqual(coachModule.TOOLS.find(tool => tool.name === 'open_screen').parameters.properties.screen.enum, ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'spell']);
   assert.match(ctx.provider.requests[0].system, /call open_screen/);
   assert.match(ctx.provider.requests[0].system, /Show my progress/);
   assert.deepEqual(ctx.coach.view('me').messages[1].meta.screens, ['mistakes', 'progress', 'settings'], 'stored with the answer');

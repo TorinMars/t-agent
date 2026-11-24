@@ -61,7 +61,7 @@ test('today\'s spelling: the spell queue (due words, then today\'s new ones), th
   assert.equal(fewer.words, 2);
 });
 
-test('the mistakes series: spell (most often wrong first), fill and dictation with the sentences, retest; the worst words again without sentences', async t => {
+test('the mistakes series is word spelling only: spell (most often wrong first), then the retest; sentences are not offered', async t => {
   const ctx = setup(t);
   const occurred = add(ctx, 'word', 'occurred');
   const separate = add(ctx, 'word', 'separate');
@@ -73,18 +73,11 @@ test('the mistakes series: spell (most often wrong first), fill and dictation wi
   wrong(ctx, occurred, 3);
   ctx.clock.now = NOW;
   const plan = await ctx.plan.buildPlan('me', 'mistakes_series');
-  assert.deepEqual(plan.steps.map(step => step.mode), ['spell', 'fill', 'dictation', 'retest']);
+  assert.deepEqual(plan.steps.map(step => step.mode), ['spell', 'retest']);
   assert.deepEqual(plan.steps[0].card_ids, [occurred.id, separate.id, receive.id], 'the most often wrong first');
-  assert.deepEqual(plan.steps[1].card_ids, [sentence.id], 'the person\'s sentence with a wrong word');
-  assert.deepEqual(plan.steps[2].card_ids, [sentence.id]);
-  assert.deepEqual(plan.steps[3].card_ids, plan.steps[0].card_ids, 'the retest has every word (the page keeps the ones missed again)');
-  assert.deepEqual([plan.words, plan.title], [4, 'Your mistakes']);
-
-  // Without sentences: dictation repeats the worst words (wrong twice or more).
-  ctx.learn.updateCard('me', sentence.id, { suspended: true });
-  const words = await ctx.plan.buildPlan('me', 'mistakes_series');
-  assert.deepEqual(words.steps.map(step => step.mode), ['spell', 'dictation', 'retest']);
-  assert.deepEqual(words.steps[1].card_ids, [occurred.id, separate.id], 'the worst words come back');
+  assert.deepEqual(plan.steps[1].card_ids, plan.steps[0].card_ids, 'the retest has every word (the page keeps the ones missed again)');
+  assert.deepEqual([plan.words, plan.title], [3, 'Your mistakes']);
+  assert.equal(sentence.kind, 'sentence');
   // Named words: only those ("Practise the 2 I missed").
   const named = await ctx.plan.buildPlan('me', 'mistakes_series', { words: ['receive', separate.id] });
   assert.deepEqual(named.steps[0].card_ids, [separate.id, receive.id]);
@@ -117,7 +110,7 @@ test('more new words: the next new words, the allowance raised only when the pla
   assert.deepEqual(await ctx.plan.startPlan('me', { ...spell, words_list: [words[6].en] }, { id: 'plan-00003' }), { empty: true });
 });
 
-test('review, dictation and fill the gap follow their queues', async t => {
+test('review is word spelling; dictation and fill the gap (plans saved before) still follow their queues', async t => {
   const ctx = setup(t);
   const one = add(ctx, 'sentence', 'Please merge the branch.');
   const two = add(ctx, 'sentence', 'The build is green.');
@@ -129,6 +122,8 @@ test('review, dictation and fill the gap follow their queues', async t => {
   const fill = await ctx.plan.buildPlan('me', 'fill_gap', { count: 1 });
   assert.equal(fill.steps[0].card_ids.length, 1);
   const review = await ctx.plan.buildPlan('me', 'review');
-  assert.equal(review.steps[0].mode, 'review');
-  assert.equal(review.words, (await ctx.learn.queue('me', 'review', 20)).cards.length);
+  // Review spells the due WORDS only (no sentence card in it).
+  assert.ok(review.steps.every(step => step.mode === 'spell'));
+  const wordsOnly = new Set(review.steps.flatMap(step => step.card_ids));
+  assert.ok(![...wordsOnly].some(id => [one.id, two.id].includes(id)), 'no sentence cards in a review');
 });

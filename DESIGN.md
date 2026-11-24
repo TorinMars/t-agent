@@ -255,3 +255,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.165.2 English coach: no empty band under the input while the keyboard is up
 > v2.165.3 English coach: learning and reviewing are word spelling only
 > v2.165.4 English coach: small changes are made at once, with Undo
+> v2.166.0 English coach can run on the Claude Agent SDK (a choice in the coach settings)

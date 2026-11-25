@@ -371,6 +371,22 @@ final class SectionHeaderView: NSView {
 }
 
 let dragThreshold: CGFloat = 4
+let pendingRowAlpha: CGFloat = 0.5  // a row whose action is out
+
+/// The small indeterminate spinner of a row whose action is out (TaskRowView.setPending), the size of a row icon's glyph.
+func makeRowSpinner() -> NSProgressIndicator {
+    let spinner = NSProgressIndicator()
+    spinner.style = .spinning
+    spinner.controlSize = .small
+    spinner.isIndeterminate = true
+    spinner.isDisplayedWhenStopped = false
+    spinner.isHidden = true
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+    spinner.widthAnchor.constraint(equalToConstant: 14).isActive = true
+    spinner.heightAnchor.constraint(equalToConstant: 14).isActive = true
+    spinner.setAccessibilityLabel(L("Waiting for T-Agent"))
+    return spinner
+}
 
 /// One task row in the detail panel: a press followed by movement drags it, a plain click does nothing. Its icon
 /// buttons show all the time when `actionsAlwaysShown` (the Needs you section, or VoiceOver running), else only while
@@ -385,7 +401,10 @@ final class TaskRowView: NSView {
     var onRelease: () -> Void = {}
     var contextMenu: () -> NSMenu? = { nil }
     var actionsAlwaysShown = true { didSet { updateActionVisibility() } }
+    /// Shown in place of the row's action buttons while its request is out (setPending); nil for a row without actions.
+    var spinner: NSProgressIndicator?
     private(set) var hovered = false
+    private(set) var pending = false
     private var startPoint: NSPoint?
     private var active = false
 
@@ -410,7 +429,18 @@ final class TaskRowView: NSView {
 
     func updateActionVisibility() {
         let shown = actionsAlwaysShown || hovered
-        actionButtons.forEach { $0.isHidden = !shown }
+        actionButtons.forEach { $0.isHidden = !shown || (pending && !$0.rowAction.opensOnly) }
+        spinner?.isHidden = !pending
+    }
+
+    /// While the row's action is out: the row dimmed and a small spinner in place of its action buttons (the link and session
+    /// buttons stay), so a click shows at once that it was taken. A hidden button takes no click.
+    func setPending(_ on: Bool) {
+        guard on != pending else { return }
+        pending = on
+        alphaValue = on ? pendingRowAlpha : 1
+        updateActionVisibility()
+        if on { spinner?.startAnimation(nil) } else { spinner?.stopAnimation(nil) }
     }
 
     // The label and the engine tag must not take the press, or the panel would not pass it through without

@@ -358,6 +358,15 @@ func timedOrder(_ items: [WidgetItem], _ section: Section, engines: [EngineInfo]
     }.map { ($0, 0) }
 }
 
+/// The status an action leaves the task in, for the list until the refresh (the owner's answer wins when it has one); nil when it is not known.
+func actionStatus(_ action: RowAction) -> String? {
+    switch action {
+    case .confirm, .done: return "done"
+    case .reject, .handled: return "working"
+    default: return nil
+    }
+}
+
 /// Whether a row or bubble may run this action on the task as the list has it now.
 func actionAllowed(_ action: RowAction, _ item: WidgetItem) -> Bool {
     if action == .done { return !finishedStatuses.contains(item.status) }

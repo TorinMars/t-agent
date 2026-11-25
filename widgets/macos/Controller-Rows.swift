@@ -471,6 +471,7 @@ extension WidgetController {
     func syncActionButtons() {
         for (key, view) in rowViews {
             view.setActionsEnabled(!moveInFlight && !actionRows.contains(key))
+            view.setPending(actionRows.contains(key))
         }
     }
 
@@ -502,30 +503,54 @@ extension WidgetController {
         openLink(key)
     }
 
+    /// A row's Confirm, Reject, Handled, Done, Send now or Run again, from its button, its menu, its accessibility action or the bubble: one
+    /// way in, so every one is guarded the same. The row is pending at once (dimmed, a spinner instead of its buttons) and takes no other
+    /// action until the answer; the same action is not taken again on any row within actionDebounce. On success the row moves at once (the
+    /// owner's answer, else the status the action gives) and the refresh afterwards reconciles; a refusal or a timeout gives the row back.
+    /// See "Fast actions on a connected service" in docs/design/attention-desktop-window.md.
     func runAction(_ key: String, _ action: RowAction) {
         // The last check is for a button pressed just as a refresh changed the task under it.
         guard !actionRows.contains(key), !moveInFlight, pressedRow == nil,
               let item = items.first(where: { $0.key == key }), actionAllowed(action, item) else { return }
+        let at = now()
+        if let last = lastActionAt[action.rawValue], at >= last, at.timeIntervalSince(last) < actionDebounce { return }
+        lastActionAt[action.rawValue] = at
         cancelHide()
         actionRows.insert(key)
         actionsRunning += 1
         refreshGeneration += 1  // drop a list that was fetched before this action
         syncActionButtons()
-        perform(scheduleActionRequest(key: key, action: action) ?? api.actionRequest(key: key, action: action)) { [weak self] data, code, error in
-            self?.actionFinished(key, failure: (200..<300).contains(code) ? nil : failureText(data, error))
+        var request = scheduleActionRequest(key: key, action: action) ?? api.actionRequest(key: key, action: action)
+        request.timeoutInterval = actionTimeout
+        perform(request) { [weak self] data, code, error in
+            let timedOut = (error as? URLError)?.code == .timedOut
+            self?.actionFinished(key, action, answer: data, timedOut: timedOut,
+                                 failure: (200..<300).contains(code) ? nil : failureText(data, error))
         }
     }
 
-    private func actionFinished(_ key: String, failure: String?) {
+    private func actionFinished(_ key: String, _ action: RowAction, answer: Data?, timedOut: Bool, failure: String?) {
         actionsRunning -= 1
         refreshGeneration += 1  // drop a list that was fetched before this action finished
-        if let failure = failure {
+        if timedOut {
+            // No answer is not a refusal: the change may have reached the owner. The row comes back as the list has it, and the
+            // refresh below shows what T-Agent has now.
+            actionRows.remove(key)
+            syncActionButtons()
+            showDetail()
+            showToast(L("Still waiting for T-Agent; checking the list"), error: false)
+            actionNeedsRefresh = true
+        } else if let failure = failure {
             actionRows.remove(key)
             syncActionButtons()
             showDetail()
             showToast(L("Action failed: {1}", failure))
         } else {
-            actionNeedsRefresh = true  // the row stays disabled until the refresh has replaced it
+            if applyActionAnswer(key, action, answer) {
+                actionRows.remove(key)  // the row is in its new place; the guard of runAction keeps the old action away
+                syncActionButtons()
+            }
+            actionNeedsRefresh = true  // otherwise the row stays pending until the refresh has replaced it
         }
         guard actionsRunning == 0, actionNeedsRefresh else { return }
         actionNeedsRefresh = false
@@ -537,7 +562,32 @@ extension WidgetController {
         }
     }
 
-    func showToast(_ message: String) {
+    /// Puts the answer of a successful action into the list at once: the item the owner answered (POST confirm, reject, handled and the
+    /// PATCH of Done answer it), else the status the action gives. False when nothing is known to change (Send now, Run again).
+    func applyActionAnswer(_ key: String, _ action: RowAction, _ answer: Data?) -> Bool {
+        guard var current = list, let index = current.items.firstIndex(where: { $0.key == key }) else { return false }
+        let old = current.items[index]
+        var next = old
+        if let data = answer, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let answered = decodeItem(object), answered.key == key {
+            next = answered
+            if next.notes == nil { next.notes = old.notes }
+            if next.session == nil { next.session = old.session }
+        } else if let status = actionStatus(action) {
+            next.status = status
+            if status == "working" { next.attentionReason = ""; next.pending = "" }
+        } else {
+            return false
+        }
+        current.items[index] = next
+        ticks.poll.etag = nil  // the next tick asks for the whole list, not "same as before"
+        apply(current, problem: nil)
+        return true
+    }
+
+    /// The message at the bottom of the panel: red for a failure, neutral for a note (an answer that is late).
+    func showToast(_ message: String, error: Bool = true) {
+        toast.layer?.backgroundColor = (error ? NSColor.systemRed : NSColor(white: 0.22, alpha: 1)).withAlphaComponent(0.92).cgColor
         toastLabel.stringValue = message
         toast.isHidden = false
         toastTimer?.invalidate()

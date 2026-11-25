@@ -227,6 +227,10 @@ extension WidgetController {
         titleField.setAccessibilityElement(false)
         var lineViews: [NSView] = rowMarkView(row).map { [$0, titleField] } ?? [titleField]  // Part G: the symbol of a scheduled task
         lineViews += buttons
+        // In place of the action buttons while the row's action is out (setPending).
+        let spinner = actions.contains { !$0.opensOnly } ? makeRowSpinner() : nil
+        if let spinner = spinner { lineViews.append(spinner) }
+        view.spinner = spinner
         if let tag = row.tag { lineViews.append(EnginePill(tag)) }
         let line = NSStackView(views: lineViews)
         line.orientation = .horizontal
@@ -235,6 +239,7 @@ extension WidgetController {
         line.setCustomSpacing(6, after: titleField)
         if lineViews.first !== titleField, let mark = lineViews.first { line.setCustomSpacing(3, after: mark) }
         if let last = buttons.last, row.tag != nil { line.setCustomSpacing(5, after: last) }
+        if let spinner = spinner, row.tag != nil { line.setCustomSpacing(5, after: spinner) }
         line.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(line)
         let lineHeight: CGFloat = buttons.isEmpty && row.tag == nil ? 16 : rowIconSize

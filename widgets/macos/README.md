@@ -32,7 +32,7 @@ TA_WIDGET_URL=http://127.0.0.1:3000 TA_WIDGET_TOKEN=<token> <binary> --parent-pi
 - Updating from v2.132.0 or older (one file, `TAttentionWidget.swift`): the old server keeps its old launcher until it restarts. If that launcher runs meanwhile (the switch turned on), a git install has no `TAttentionWidget.swift` any more, so it only sets "The window source is missing from this install" and leaves the running window and the binary alone; an archive install still has the old file (an archive update deletes nothing), so it starts the old binary as before. After the restart the new launcher builds the files of this folder (the version in the stamp changed), never the leftover `TAttentionWidget.swift`, which would define everything a second time. A build takes about 30 s with `-O` (about 10 s with `-Onone`). It needs the Xcode command line tools (`xcode-select --install`); without `swiftc` the server should log one line and keep running.
 - `TA_WIDGET_URL`: the server's base address (default `http://127.0.0.1:3000`; anything that is not an `http(s)` URL falls back to it). `TA_WIDGET_TOKEN`: sent as `Authorization: Bearer <token>` on every request. The widget never prints or logs the token.
 - With `--parent-pid` the widget exits within a second after the server process goes away, so restarting T-Agent replaces the window.
-- Requests use their own `URLSession` with no proxy (`connectionProxyDictionary = [:]`, so `http_proxy` never catches `127.0.0.1`), a 3 s timeout and no cache.
+- Requests use their own `URLSession` with no proxy (`connectionProxyDictionary = [:]`, so `http_proxy` never catches `127.0.0.1`), a 3 s timeout for reads and 15 s for changes (an action may go through this server to a connected service), and no cache.
 
 ## Flags
 

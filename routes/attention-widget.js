@@ -47,6 +47,9 @@ const ENGINES_TTL_MS = 30 * 1000; // which engines are listed, with their names 
 const AGENTS_TTL_MS = 60 * 1000; // the agents of this machine's terminals
 const PREFS_TTL_MS = 30 * 1000; // the window preferences
 const TICK_WAIT_MS = 250; // how long a tick waits for a remote read that only its TTL asked for; a slower one is in the next tick
+// How long the owner's answer to a change of a connected service's item stands in for that item in the list, until the list has caught up with it
+// (a copied engine's copies follow only after a background sync round). See "Fast actions on a connected service" in docs/design/attention-desktop-window.md.
+const ANSWERED_TTL_MS = 60 * 1000;
 const AGENT_CHUNK = 500; // task ids in one query
 const ETAG = /^[A-Za-z0-9_-]{1,64}$/;
 const ENGINE_KEY = /^(?:local|remote:[1-9]\d{0,14})$/;
@@ -440,6 +443,7 @@ function createAttentionWidgetRoutes({
   agentsTtlMs = AGENTS_TTL_MS,
   prefsTtlMs = PREFS_TTL_MS,
   tickWaitMs = TICK_WAIT_MS,
+  answeredTtlMs = ANSWERED_TTL_MS,
   // Scheduled tasks on this machine (the server's part, services/attention-schedule.js and services/attention.js): run one now (Send now, Run
   // again) and preview a schedule ({ next, text, error? }). Before that part exists they answer 501 SCHEDULES_UNSUPPORTED.
   runNow = (id, options) => {
@@ -494,6 +498,8 @@ function createAttentionWidgetRoutes({
       let instanceId = null;
       try { instanceId = remoteInstanceId(row); } catch { /* no colour */ }
       const engine = engineOfRow(row);
+      // A copied engine is listed from its copies, so its capability would first be read by its first action: read it ahead, in the background.
+      if (engine.copy && typeof remote.warm === 'function') remote.warm(row);
       const copied = engine.copy ? (copies().owners().find(entry => entry.engine === key) || null) : null;
       // A copied engine that is offline says since when its items are as shown (`as_of`).
       out.push({ key, name: row.name, local: false, color_index: tagColorIndex(instanceId), engine, ...(copied && !copied.online ? { offline: true, as_of: copied.as_of } : {}) });
@@ -532,12 +538,49 @@ function createAttentionWidgetRoutes({
   // This machine's failed read is never kept (the next tick tries again, as GET /items did); a connected service's is, for its TTL.
   const fresh = (entry, part, at) => part.result !== null && !(entry.local && part.result.error) && part.applied === part.serial && at - part.startedAt < ttlOf(entry);
 
+  // The answers of the owners to the window's changes of connected services' items: `${engine}:${id}` -> { item (null: removed), at }. A part read
+  // after the change shows the answered item instead of the one it read, until it reads that item as new as the answer (or newer) or answeredTtlMs
+  // passed: a copied engine's copies follow the owner only after the background sync round, and the row must not come back meanwhile.
+  const answered = new Map();
+  function remember(engineKey, id, item) {
+    if (engineKey === 'local') return; // this machine's part is read again on its change bus, from the change itself
+    if (item !== null && !(item && Number.isSafeInteger(item.id) && typeof item.status === 'string')) return;
+    answered.set(`${engineKey}:${id}`, { item, at: nowMs() });
+  }
+  const caughtUp = (listed, item) => {
+    const seen = String(listed.updated_at || '');
+    const sent = String(item.updated_at || '');
+    return Boolean(seen && sent) && (seen > sent || (seen === sent && listed.status === item.status));
+  };
+  function withAnswered(engineKey, list) {
+    if (!answered.size || !Array.isArray(list)) return list;
+    const at = nowMs();
+    const mine = new Map();
+    for (const [key, entry] of answered) {
+      if (at - entry.at >= answeredTtlMs) answered.delete(key);
+      else if (key.startsWith(`${engineKey}:`)) mine.set(Number(key.slice(engineKey.length + 1)), { key, entry });
+    }
+    if (!mine.size) return list;
+    const out = [];
+    for (const listed of list) {
+      const found = listed && mine.get(listed.id);
+      if (!found) { out.push(listed); continue; }
+      const { item } = found.entry;
+      if (item === null) continue; // removed there; the copies still have it
+      if (caughtUp(listed, item)) { answered.delete(found.key); out.push(listed); continue; }
+      out.push({ ...listed, ...item });
+    }
+    // A removed item the list no longer has: caught up.
+    for (const [id, { key, entry }] of mine) if (entry.item === null && !list.some(listed => listed && listed.id === id)) answered.delete(key);
+    return out;
+  }
+
   function readPart(entry, part) {
     if (part.reading && part.readingSerial === part.serial) return part.reading;
     const serial = part.serial;
     const startedAt = nowMs();
     const reading = within(Promise.resolve().then(() => entry.engine.list()), readTimeoutMs)
-      .then(list => ({ part: keptPart(entry.key, list) }), error => ({ error }))
+      .then(list => ({ part: keptPart(entry.key, withAnswered(entry.key, list)) }), error => ({ error }))
       .then(result => {
         if (serial >= part.applied) Object.assign(part, { applied: serial, startedAt, result, version: part.version + 1 });
         if (part.reading === reading) part.reading = null;
@@ -685,7 +728,8 @@ function createAttentionWidgetRoutes({
   api.get('/items', handle(async (req, res) => res.json(listAnswer(await keptList(true)))));
 
   // A change the window makes: that engine's part is read again by the next tick, also when the change failed (the window asks again after a
-  // refusal, and the item may have changed meanwhile).
+  // refusal, and the item may have changed meanwhile). The answer goes back as soon as the owner has applied the change: a copied engine's copies
+  // follow in the background (copy.nudge), and meanwhile the owner's answer stands in for the item (`answered`).
   const changing = (engineKey, promise) => Promise.resolve(promise).finally(() => touch(engineKey));
 
   // parent_key (same engine, or null) -> parent_id. Undefined when the body does not name it.
@@ -725,12 +769,13 @@ function createAttentionWidgetRoutes({
     delete body.parent_key;
     delete body.parent_id;
     if (parent !== undefined) body.parent_id = parent;
-    res.json(itemOut(key.engine, await changing(key.engine, engineOf(key.engine).update(key.id, body))));
+    const item = await changing(key.engine, engineOf(key.engine).update(key.id, body).then(answer => { remember(key.engine, key.id, answer); return answer; }));
+    res.json(itemOut(key.engine, item));
   }));
 
   api.delete('/items/:key', handle(async (req, res) => {
     const key = keyOf(req);
-    await changing(key.engine, engineOf(key.engine).remove(key.id));
+    await changing(key.engine, engineOf(key.engine).remove(key.id).then(() => remember(key.engine, key.id, null)));
     res.status(204).end();
   }));
 
@@ -771,7 +816,9 @@ function createAttentionWidgetRoutes({
         const item = await engine.get(key.id);
         if (!item) throw new WidgetError('NOT_FOUND', 'Task not found', 404);
         if (item.status !== action.from) throw new WidgetError('WRONG_STATUS', action.message, 409);
-        return itemOut(key.engine, await engine.update(key.id, action.body(req)));
+        const changed = await engine.update(key.id, action.body(req));
+        remember(key.engine, key.id, changed);
+        return itemOut(key.engine, changed);
       })()));
     }));
   }

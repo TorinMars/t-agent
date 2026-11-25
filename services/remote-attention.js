@@ -2,7 +2,9 @@
 // /api/remote-servers/:id/attention (routes/remote-servers.js) and the merged list of the desktop window (routes/attention-widget.js).
 //
 // An Engine without the capability 'attention:remote' answers 501 ATTENTION_REMOTE_UNSUPPORTED before anything is sent (the answer of /v1/info is kept
-// for INFO_MS per row, so a page that polls or reconnects its stream does not read it every time); an offline one 502 with the code `request` gives
+// for INFO_MS per row, so a page that polls or reconnects its stream does not read it every time; an older answer is still used while it is read again in
+// the background, so only the first request to a row ever waits for /v1/info, and `warm` reads it ahead of that; see "Fast actions on a connected
+// service" in docs/design/attention-desktop-window.md); an offline one 502 with the code `request` gives
 // (REMOTE_OFFLINE through a tunnel, REMOTE_CONNECTION_FAILED or REMOTE_TIMEOUT otherwise). An error of the owning service keeps its status, code,
 // message and the `id` / `children` of its 409s. Every failure is a RemoteAttentionError with the status and the JSON body to answer.
 const config = require('../config');
@@ -24,13 +26,11 @@ class RemoteAttentionError extends Error {
 }
 
 function createRemoteAttention({ request = defaultRequest, readInfo = (row, token, options) => readRemoteInfo({ baseUrl: row.base_url, token, serverId: row.id }, options), now = Date.now } = {}) {
-  const support = new Map(); // row id -> { at, supported, baseUrl }
+  const support = new Map(); // row id -> { at, supported, baseUrl, capabilities }
+  const refreshing = new Set(); // row ids whose stale answer is being read again in the background
   const tokenOf = row => decryptToken(row.token_cipher, config.sessionSecret);
 
-  // Whether the row's Engine has the capability; a failed /v1/info read is a RemoteAttentionError (its status, else 502).
-  async function supported(row, token = tokenOf(row), { timeoutMs } = {}) {
-    const cached = support.get(Number(row.id));
-    if (cached && cached.baseUrl === row.base_url && now() - cached.at < INFO_MS) return cached.supported;
+  async function readSupport(row, token, timeoutMs) {
     let info;
     try { info = await readInfo(row, token, timeoutMs ? { timeoutMs } : undefined); }
     catch (error) { throw new RemoteAttentionError(error.statusCode || 502, { error: safeError(error) }); }
@@ -38,6 +38,32 @@ function createRemoteAttention({ request = defaultRequest, readInfo = (row, toke
     const value = capabilities.includes(CAPABILITY);
     support.set(Number(row.id), { at: now(), supported: value, baseUrl: row.base_url, capabilities });
     return value;
+  }
+  // The answer kept for the row (same address), fresh or not; null when there is none.
+  const kept = row => { const cached = support.get(Number(row.id)); return cached && cached.baseUrl === row.base_url ? cached : null; };
+
+  // Whether the row's Engine has the capability; a failed /v1/info read is a RemoteAttentionError (its status, else 502). An answer older than INFO_MS is
+  // used as it is while one background read brings it up to date (a failed one keeps it; the next call tries again): an action never waits for it.
+  async function supported(row, token = tokenOf(row), { timeoutMs } = {}) {
+    const cached = kept(row);
+    if (cached && now() - cached.at < INFO_MS) return cached.supported;
+    if (cached) {
+      const id = Number(row.id);
+      if (!refreshing.has(id)) {
+        refreshing.add(id);
+        readSupport(row, token, timeoutMs).catch(() => {}).finally(() => refreshing.delete(id));
+      }
+      return cached.supported;
+    }
+    return readSupport(row, token, timeoutMs);
+  }
+  // Reads the capability in the background when nothing is known of the row yet, so that its first action does not wait for /v1/info (the desktop
+  // window's copied engines, which are listed from the copies and never read here otherwise). Never waits and never rejects.
+  function warm(row, token) {
+    const id = Number(row.id);
+    if (kept(row) || refreshing.has(id)) return;
+    refreshing.add(id);
+    Promise.resolve().then(() => readSupport(row, token === undefined ? tokenOf(row) : token)).catch(() => {}).finally(() => refreshing.delete(id));
   }
   // Whether the row's Engine lists another capability too (read with the same cached /v1/info answer); false when it cannot be read.
   async function has(row, name, token = tokenOf(row)) {
@@ -68,7 +94,7 @@ function createRemoteAttention({ request = defaultRequest, readInfo = (row, toke
     }
   }
 
-  return { supported, has, call, forget: id => support.delete(Number(id)) };
+  return { supported, has, call, warm, forget: id => support.delete(Number(id)) };
 }
 
 let singleton = null;

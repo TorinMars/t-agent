@@ -97,7 +97,7 @@ function SessionPopup({ menu, ui, keepFocus }) {
     >
       {menu ? menu.items.map((item, index) => (
         <MenuItem
-          key={`${index}:${item.label}`} className={item.kind === 'danger' ? 'danger' : undefined} divider={apart(menu.items, index)} onClick={() => run(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
+          key={`${index}:${item.label}`} className={item.kind === 'danger' ? 'danger' : undefined} divider={apart(menu.items, index)} disabled={item.disabled} onClick={() => run(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
           sx={{ minHeight: 36, px: 1.5, fontSize: 14, whiteSpace: 'normal', overflowWrap: 'anywhere', color: item.kind === 'danger' ? 'error.main' : undefined, [TOUCH]: { minHeight: 44 } }}
         >
           {item.kind === 'raw' ? item.label : t(item.label)}

@@ -706,7 +706,11 @@ I18n.add({
   "Creating…": "正在创建…",
   // The initial command of a new terminal (TaskDrawer.jsx StartCommand, h5.js startCommandState)
   "Run a command when it starts": "启动时运行命令",
-  "Typed into the shell as if you typed it, then Enter. The terminal stays open.": "像你亲手输入一样输入到 shell，然后回车。终端会保持打开。",
+  "Typed into the shell every time this session starts, then Enter. The terminal stays open.": "每次此会话启动时，都会在 shell 中输入命令并回车。终端会保持打开。",
+  "Typed into the shell every time this session starts, then Enter.": "每次此会话启动时，都会在 shell 中输入命令并回车。",
+  "Start command": "启动命令",
+  "Start command…": "启动命令…",
+  "This computer needs an update first": "这台电脑需要先更新",
   "Command": "命令",
   "Command to run when it starts": "启动时运行的命令",
   "Only a terminal runs a start command": "只有终端会运行启动命令",

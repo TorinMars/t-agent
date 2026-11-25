@@ -46,7 +46,7 @@ async function openPage(browser, wide, remote = false) {
     if (url.pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(url.pathname)) return route.fulfill({ contentType: TYPES[path.extname(url.pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', url.pathname)) });
     if (url.pathname === '/api/remote-servers') return json(remote ? [{ id: 7, name: 'VPS' }] : []);
-    if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage', 'terminal:control'] });
+    if (url.pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage', 'terminal:control', 'terminal:start-command'] });
     if (url.pathname === '/api/remote-servers/7/tasks' && method === 'GET') return json([{ id: 9, title: 'Remote 9', status: 'doing' }, { id: 10, title: 'Remote 10', status: 'doing' }]);
     if (url.pathname === '/api/remote-servers/7/task-groups') return json([{ key: 'doing', name: 'Doing', sort_order: 1 }]);
     if (url.pathname === '/api/tasks' && method === 'GET') return json(tasks);
@@ -114,7 +114,7 @@ async function checkOtherTask({ page, requests, size, press, list, shown, base, 
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).waitFor();
     // The first row of a task of this machine can move down (session order); the mocked remote Engine does not say 'terminals:order'.
     const moves = base === '/api/tasks' && index === 0 ? ['Move down'] : [];
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), index === 4 ? ['Rename', 'Remember this', 'Open', 'Delete session'] : ['Rename', 'Remember this', 'Open', ...moves, 'Restart in the working directory', 'Delete session'], `${size}: what can be done from another task`);
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), index === 4 ? ['Rename', 'Start command…', 'Remember this', 'Open', 'Delete session'] : ['Rename', 'Start command…', 'Remember this', 'Open', ...moves, 'Restart in the working directory', 'Delete session'], `${size}: what can be done from another task`);
     await press(page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }));
     await page.locator('#h5-term-rename-input').waitFor();
     await page.locator('#h5-session-menu').waitFor({ state: 'detached' });

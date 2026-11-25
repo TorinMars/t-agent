@@ -4,6 +4,12 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 
 The design document is split (2026-11-18): `DESIGN.md` is a small index (topic table, cross-cutting rules, development notes, "Recent versions"), and the text of each area is in its own file under `docs/design/` (for example `terminals.md`, `page-task-list.md`, `attention-notifiers.md`). Open only the files of your area; never read them all.
 
+## Saved terminal start commands (branch fix/start-command-persist)
+
+- Schema 28 stores cleaned commands for plain terminals. A newly spawned PTY sends its terminal's command once after the normal readiness delay.
+- The local and Engine APIs and the remote proxy support editing and clearing. The session row menu opens the new dialog in the H5 source.
+- The dependency install was denied by the registry proxy. The browser checks and generated H5 bundles still need the project dependencies for verification and rebuild.
+
 ## Access log: devices and sign-ins (branch feat/access-log, 2026-11-25, not released yet)
 
 - What: `services/access-log.js`, `lib/client-ip.js`, `routes/access.js`, schema 27 tables `access_devices`, `access_device_ips`, `access_events`; page `scripts/h5-shell/AccessLog.jsx`. Design: `docs/design/access-log.md`.

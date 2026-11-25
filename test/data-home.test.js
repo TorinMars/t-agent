@@ -1134,3 +1134,41 @@ test('rule 1b: when both folders hold user data and there is no marker, the data
   assert.ok(!fs.existsSync(path.join(to, 'migrated-from.json')));
   assert.equal(dataHome.dataHomeCheck().status, 'conflict');
 });
+
+test('schema 28 gives older terminals an empty start command and preserves saved commands on later starts', t => {
+  const root = temp(t, 'start-command-migration');
+  const env = { TAGENT_HOME: root };
+  assert.equal(openDb(env).status, 0);
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('ALTER TABLE task_terminals DROP COLUMN start_command; DROP TABLE task_default_terminal_commands;');
+  old.prepare("INSERT INTO tasks (id, title, user_id) VALUES (1, 'Kept task', 'owner')").run();
+  old.prepare("INSERT INTO task_terminals (task_id, terminal_id, title) VALUES (1, 'shell', 'Kept terminal')").run();
+  old.pragma('user_version = 27');
+  old.close();
+
+  const migrated = openDb(env);
+  assert.equal(migrated.status, 0, migrated.stderr);
+  assert.match(migrated.stdout, new RegExp(`schema 27 is migrated to ${CODE_SCHEMA}`));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.deepEqual(after.prepare('SELECT title, start_command FROM task_terminals').get(), { title: 'Kept terminal', start_command: '' });
+  assert.equal(after.prepare('SELECT COUNT(*) AS count FROM task_default_terminal_commands').get().count, 0);
+  after.prepare("UPDATE task_terminals SET start_command = ? WHERE terminal_id = 'shell'").run('echo terminal');
+  after.prepare('INSERT INTO task_default_terminal_commands (task_id, start_command) VALUES (1, ?)').run('echo default');
+  after.close();
+
+  const backups = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(backups.length, 1);
+  assert.match(backups[0], new RegExp(`^db-schema-27-before-${CODE_SCHEMA}-`));
+  const again = openDb(env);
+  assert.equal(again.status, 0, again.stderr);
+  const restarted = new Database(file);
+  try {
+    assert.ok(restarted.prepare('SELECT start_command FROM task_terminals').pluck().get() === 'echo terminal');
+    assert.ok(restarted.prepare('SELECT start_command FROM task_default_terminal_commands').pluck().get() === 'echo default');
+  } finally {
+    restarted.close();
+  }
+  assert.deepEqual(fs.readdirSync(path.join(root, 'backups')), backups);
+});

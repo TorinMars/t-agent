@@ -108,6 +108,10 @@ const terminalColumns = db.prepare('PRAGMA table_info(task_terminals)').all().ma
 for (const [column, type] of [['agent', 'TEXT'], ['agent_session_id', 'TEXT'], ['agent_started_at', 'INTEGER'], ['title_custom', 'INTEGER']]) {
   if (!terminalColumns.includes(column)) db.exec(`ALTER TABLE task_terminals ADD COLUMN ${column} ${type}`);
 }
+// Schema 28: a plain terminal keeps its start command. Older terminals start with an empty command.
+if (!terminalColumns.includes('start_command')) {
+  db.exec("ALTER TABLE task_terminals ADD COLUMN start_command TEXT NOT NULL DEFAULT ''");
+}
 if (!terminalColumns.includes('work_dir')) {
   db.transaction(() => {
     db.exec('ALTER TABLE task_terminals ADD COLUMN work_dir TEXT');

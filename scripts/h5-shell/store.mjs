@@ -101,6 +101,7 @@ export const initialState = () => ({
   // rename: { kind, id, task } of the row whose name field is shown in its place;
   // anchor: the "⋯" button of a session row, whose actions are a popup under it (TermMenu.jsx); null for the sheet from the bottom.
   menu: null,
+  startCommandDialog: null, // the terminal endpoint being edited by StartCommandDialog
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
   emptyCreate: false, // the terminal area also offers a button that opens the task's New session dialog (the task has no terminal)
   mods: {},

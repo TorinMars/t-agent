@@ -1,6 +1,6 @@
 // The initial command of a new plain terminal ("Initial command" in docs/design/terminals.md): validation in createTerminal (type, length, kinds),
 // and the typing into a fake PTY: nothing before the shell's first output, then each line followed by Enter once the output went quiet; the
-// fallback for a shell that prints nothing; a restarted shell does not type it again. Temporary data folder.
+// fallback for a shell that prints nothing, and one send per freshly spawned shell. Temporary data folder.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,25 +16,28 @@ const db = require('../db');
 const tasks = require('../test-support/older-tasks').olderTasks(require('../services/engine-tasks'), db);
 const shells = [];
 const terminalPath = path.resolve(__dirname, '../routes/terminal.js');
-const mod = { exports: {} };
-vm.runInNewContext(fs.readFileSync(terminalPath, 'utf8'), {
-  module: mod, __dirname: path.dirname(terminalPath), process, console, URL,
-  setInterval, clearInterval, setTimeout, clearTimeout, Buffer,
-  require(name) {
-    if (name === '../lib/node-pty-runtime') return { repairSpawnHelperPermissions() {} };
-    if (name === 'node-pty') return { spawn(shell, args, options) {
-      const pty = { options, input: [], killed: false, pid: 0,
-        onData(fn) { this.data = fn; }, onExit(fn) { this.exit = fn; },
-        write(text) { this.input.push(text); }, pause() {}, resume() {}, resize() {},
-        kill() { this.killed = true; this.exit(); },
-      };
-      shells.push(pty);
-      return pty;
-    } };
-    return require(name.startsWith('.') ? path.resolve(path.dirname(terminalPath), name) : name);
-  },
-});
-const terminal = mod.exports;
+function loadTerminalModule() {
+  const mod = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(terminalPath, 'utf8'), {
+    module: mod, __dirname: path.dirname(terminalPath), process, console, URL,
+    setInterval, clearInterval, setTimeout, clearTimeout, Buffer,
+    require(name) {
+      if (name === '../lib/node-pty-runtime') return { repairSpawnHelperPermissions() {} };
+      if (name === 'node-pty') return { spawn(shell, args, options) {
+        const pty = { options, input: [], killed: false, pid: 0,
+          onData(fn) { this.data = fn; }, onExit(fn) { this.exit = fn; },
+          write(text) { this.input.push(text); }, pause() {}, resume() {}, resize() {},
+          kill() { this.killed = true; this.exit(); },
+        };
+        shells.push(pty);
+        return pty;
+      } };
+      return require(name.startsWith('.') ? path.resolve(path.dirname(terminalPath), name) : name);
+    },
+  });
+  return mod.exports;
+}
+let terminal = loadTerminalModule();
 class Socket extends EventEmitter {
   readyState = 1;
   sent = [];
@@ -79,7 +82,19 @@ test('the command is typed line by line after the first output and a quiet momen
   for (const name of Object.keys(original)) console[name] = (...args) => { logged.push(args.join(' ')); };
   try {
     const made = terminal.createTerminal(task.id, { command: 'cd docs\r\n\x1b[Anpm run dev\x07\rexit-not-really' });
+    const row = terminal.listTerminals(task.id).find(item => item.terminal_id === made.terminal_id);
+    assert.equal(row.has_start_command, true);
+    assert.equal(Object.hasOwn(row, 'start_command'), false);
+    assert.equal(Object.hasOwn(made, 'start_command'), false);
+    const stored = db.prepare('SELECT start_command FROM task_terminals WHERE terminal_id = ?').get(made.terminal_id);
+    assert.ok(stored.start_command === 'cd docs\n[Anpm run dev\nexit-not-really', 'database contains the cleaned command');
+    // A fresh terminal module has no live PTYs or pending startup state.
+    terminal.closeTaskTerminals(task.id);
+    terminal = loadTerminalModule();
+    const count = shells.length;
+    connect(made.terminal_id);
     const ws = connect(made.terminal_id);
+    assert.equal(shells.length, count + 1, 'two pages use the same new shell');
     const pty = shells.at(-1);
     assert.deepEqual(typed(pty), [], 'nothing is typed before the shell said anything');
     await wait(100);
@@ -92,17 +107,28 @@ test('the command is typed line by line after the first output and a quiet momen
     await wait(250);
     assert.deepEqual(typed(pty), ['cd docs\r', '[Anpm run dev\r', 'exit-not-really\r'], 'each line with Enter, control characters dropped');
     pty.data('more output');
-    await wait(300);
-    assert.equal(typed(pty).length, 3, 'typed once');
     ws.close(1000, 'done');
-    // A restart of that terminal starts a new shell without the command.
-    terminal.controlSession(task.id, 'restart-workdir', made.terminal_id);
     connect(made.terminal_id);
-    const again = shells.at(-1);
-    assert.notEqual(again, pty);
-    again.data('% ');
-    await wait(400);
-    assert.deepEqual(typed(again), [], 'a new shell of the same terminal does not run it again');
+    await wait(300);
+    assert.equal(shells.length, count + 1);
+    assert.equal(typed(pty).length, 3, 'reconnecting to the same shell does not resend the command');
+
+    for (const action of ['restart-workdir', 'close', 'exit']) {
+      const previous = shells.at(-1);
+      if (action === 'exit') {
+        previous.exit();
+        await wait(50); // natural exit drains terminal output before dropping the shell
+      } else {
+        terminal.controlSession(task.id, action, made.terminal_id);
+      }
+      connect(made.terminal_id);
+      const again = shells.at(-1);
+      assert.notEqual(again, previous);
+      assert.equal(typed(again).length, 0, 'a new shell waits for the prompt');
+      again.data('% ');
+      await wait(350);
+      assert.deepEqual(typed(again), typed(pty), 'every new shell sends the command once');
+    }
   } finally { Object.assign(console, original); }
   assert.ok(!logged.some(line => line.includes('npm run dev')), 'the command is not logged');
 });
@@ -124,4 +150,23 @@ test('a plain terminal without a command types nothing', async () => {
   pty.data('% ');
   await wait(400);
   assert.deepEqual(typed(pty), []);
+});
+
+test('editing the implicit default terminal and clearing the command affect subsequent shell starts', async () => {
+  const id = 'default';
+  terminal.patchTerminal(task.id, id, { start_command: '  echo default-start  ' });
+  assert.ok(terminal.terminalStartCommand(task.id, id).command === 'echo default-start');
+  connect(id);
+  const pty = shells.at(-1);
+  pty.data('% ');
+  await wait(350);
+  assert.equal(typed(pty).length, 1);
+  terminal.patchTerminal(task.id, id, { start_command: ' ' });
+  assert.equal(terminal.terminalStartCommand(task.id, id).command, '');
+  terminal.controlSession(task.id, 'restart-workdir', id);
+  connect(id);
+  const again = shells.at(-1);
+  again.data('% ');
+  await wait(350);
+  assert.equal(typed(again).length, 0);
 });

@@ -695,12 +695,13 @@ router.post('/:id/tasks', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
-// Only the agent kind and session id are forwarded when a terminal is created.
+// Only the agent kind, session id, name and initial command are forwarded when a terminal is created.
 const terminalOptions = body => {
   const out = {};
   if (body && typeof body.agent === 'string') out.agent = body.agent;
   if (body && typeof body.session_id === 'string') out.session_id = body.session_id;
   if (body && typeof body.title === 'string') out.title = body.title;
+  if (body && body.command !== undefined && body.command !== null) out.command = body.command; // the Engine checks it (INVALID_INITIAL_COMMAND, ...)
   return out;
 };
 
@@ -730,6 +731,12 @@ for (const method of ['get', 'post']) {
       const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:notebook');
       if (supported === null) return;
       if (!supported) return res.status(501).json({ error: 'NOTEBOOK_UNSUPPORTED' });
+    }
+    // An initial command only on an Engine that advertises 'terminal:initial-command': an older one would open the terminal without running it.
+    if (method === 'post' && req.body && typeof req.body.command === 'string' && req.body.command.trim()) {
+      const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:initial-command');
+      if (supported === null) return;
+      if (!supported) return res.status(501).json({ error: 'INITIAL_COMMAND_UNSUPPORTED' });
     }
     try {
       const result = await request(row.base_url,

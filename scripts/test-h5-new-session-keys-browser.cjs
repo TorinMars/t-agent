@@ -6,7 +6,7 @@
 // - The choices are Claude session, Codex session, New Terminal (a listbox); Claude is highlighted. In the name field Enter makes a NEW Claude session with the
 //   default name, Down + Enter Codex, Down Down + Enter a terminal, Up from the first wraps to the last, a typed name is used, an IME composing Enter or arrow
 //   does nothing.
-// - The focus starts in the name field; Tab goes to the highlighted choice (roving tabIndex), the arrows move the highlight and the focus there with wrap-around,
+// - The focus starts in the name field; Tab goes to "Run a command when it starts", then to the highlighted choice (roving tabIndex), the arrows move the highlight and the focus there with wrap-around,
 //   Enter makes the focused kind with the typed name, Shift+Tab goes back to the field with the text kept, and a further Tab reaches Cancel.
 // What headless Chromium cannot show: whether a real Chrome window lets the page have Cmd/Ctrl+Shift+O before its own bookmarks manager (a browser shortcut
 // handled by the window, outside the page). Here the key reaches the page and its default is prevented.
@@ -224,6 +224,8 @@ async function openPage(browser, apple) {
       await page.keyboard.type('abc');
       assert.equal(await nameField.inputValue(), 'abc', `${label}: typing goes into the field`);
       await page.keyboard.press('Tab');
+      assert.equal(await activeId(), 'h5-start-command-toggle', `${label}: Tab first reaches "Run a command when it starts"`);
+      await page.keyboard.press('Tab');
       assert.equal(await activeId(), 'h5-new-session-option-0', `${label}: Tab lands on the highlighted option (Claude session)`);
       const ring = () => page.evaluate(() => {
         const node = document.activeElement;
@@ -239,12 +241,15 @@ async function openPage(browser, apple) {
         assert.deepEqual(await choices.evaluateAll(nodes => nodes.map(node => node.tabIndex)), [0, 1, 2, 3, 4].map(i => (i === index ? 0 : -1)), `${label}: roving tabIndex after ${key}`);
       }
       await page.keyboard.press('Shift+Tab');
+      assert.equal(await activeId(), 'h5-start-command-toggle', `${label}: Shift+Tab goes back over "Run a command when it starts"`);
+      await page.keyboard.press('Shift+Tab');
       assert.equal(await activeId(), 'h5-new-name-input', `${label}: Shift+Tab goes back to the field`);
       assert.equal(await nameField.inputValue(), 'abc', `${label}: the text is kept`);
       assert.deepEqual((await highlighted()).text, ['Codex session'], `${label}: the highlight is kept`);
       assert.deepEqual(await page.evaluate(() => getComputedStyle(document.getElementById('h5-new-session-option-1')).outlineStyle), 'none', `${label}: no focus ring on the highlighted option while the field has the focus`);
       await page.keyboard.press('Tab');
-      assert.equal(await activeId(), 'h5-new-session-option-1', `${label}: Tab lands on the highlighted option again`);
+      await page.keyboard.press('Tab');
+      assert.equal(await activeId(), 'h5-new-session-option-1', `${label}: Tab lands on the highlighted option again (after the command button)`);
       await page.keyboard.press('Tab');
       assert.equal(await activeId(), 'h5-term-menu-cancel', `${label}: a further Tab reaches Cancel`);
       await page.keyboard.press('Shift+Tab');

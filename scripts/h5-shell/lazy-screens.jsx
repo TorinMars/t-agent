@@ -75,6 +75,8 @@ export const LearnScreen = screen(() => import('./screen-learn.jsx'), 'LearnPage
 export const TaskDialogScreen = screen(() => import('./screen-task-dialog.jsx'), 'TaskDialog', state => Boolean(state.taskDialog), ui => ui.set && ui.set({ taskDialog: null }));
 // The Update dialog of UpdateButton (Update.jsx), which keeps its open state and passes `open` / `onClose`.
 export const UpdateDialogScreen = screen(() => import('./screen-update.jsx'), 'UpdateDialog', (state, props) => Boolean(props.open), (ui, props) => props.onClose());
+// "Run a command when it starts" of the New session dialog (TaskDrawer.jsx `NewSessionDialog`), drawn on its first list; nothing to close.
+export const StartCommand = screen(() => import('./screen-start-command.jsx'), 'StartCommand', () => true, () => {});
 // The banner of an engine on an older version (VersionSkew.jsx): TaskDrawer.jsx draws it only while the update status names one; nothing to close.
 export const VersionSkewBanner = screen(() => import('./screen-skew.jsx'), 'VersionSkewBanner', () => true, () => {});
 // The terminal's dialogs (Dialogs.jsx), one chunk. An upload that cannot show its progress goes on (h5.js unlocks the page when it ends).

@@ -26,10 +26,11 @@
   const IMPORTED_KEY = 'ta-page-state-imported'; // the parts of this browser's old state already sent: 'keys', 'codec', 'recent'
   const MOVED = [
     'h5-task-list-tab', 'h5-columns', 'h5-sidebar-collapsed', 'h5-design-outline', 'h5-attention-collapsed', 'h5-attention-add-on', 'h5-create-on',
-    'ta-saved-commands-used', 'h5-mindmap-list-folded', 'word-translate', 'ta-lang',
+    'ta-saved-commands-used', 'h5-mindmap-list-folded', 'word-translate', 'ta-lang', 'ta-start-commands',
   ];
-  // Kept on the server as JSON (not as the text the browser keeps), so the server can merge it: the recency of saved commands, per command.
-  const JSON_KEYS = new Set(['ta-saved-commands-used']);
+  // Kept on the server as JSON (not as the text the browser keeps), so the server can merge it: the recency of saved commands, per command, and the
+  // recent initial commands of a new terminal (scripts/h5-shell/start-commands.mjs).
+  const JSON_KEYS = new Set(['ta-saved-commands-used', 'ta-start-commands']);
   const toText = shared => (shared === null || shared === undefined ? null : typeof shared === 'string' ? shared : JSON.stringify(shared));
   const fromText = (name, text) => {
     if (text === null || !JSON_KEYS.has(name)) return text;

@@ -30,7 +30,7 @@ import { stateWord } from './columns.mjs';
 import { TOUCH } from './theme.mjs';
 import { Icon } from './Icons.jsx';
 import { ArchivedTasks } from './ArchivedTasks.jsx';
-import { RecentScreen, VersionSkewBanner } from './lazy-screens.jsx';
+import { RecentScreen, StartCommand, VersionSkewBanner } from './lazy-screens.jsx';
 import { DRAG_SX, useListDrag } from './list-drag.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore, useStoreKeys } from './use-store.mjs';
@@ -142,6 +142,8 @@ const composing = event => Boolean(event.nativeEvent && event.nativeEvent.isComp
 // Up and Down move the highlight with the focus, Enter makes the focused kind, Shift+Tab goes back to the field. A press (pointer, or Space on a focused
 // choice) on Claude / Codex / OpenCode session opens its sub-list (New …, the earlier sessions, Back), which replaces the choices; there Enter in the field runs New ….
 // While the terminal is being made nothing can be pressed and the dialog does not close; a failure is shown under the choices.
+// Under the name, on the first list only, "Run a command when it starts" (`StartCommand`, a chunk of its own: screen-start-command.jsx): the initial command of New Terminal. While one is typed the
+// other kinds are greyed and New Terminal is the highlighted choice; it is kept while moving between the lists and cleared at each opening.
 export function NewSessionDialog({ state, ui }) {
   const menu = state.menu && state.menu.naming ? state.menu : null;
   const open = Boolean(menu);
@@ -151,9 +153,21 @@ export function NewSessionDialog({ state, ui }) {
   useFocusedInView(open);
   // The highlighted choice, for the list it was chosen in: a new list (another opening, a sub-list, Back) starts on its first choice again.
   const [highlight, setHighlight] = useState({ items: null, at: 0 });
+  // The initial command: { expanded, value }, empty and folded at every opening (h5.js clears its copy too).
+  const [command, setCommand] = useState({ expanded: false, value: '' });
+  useEffect(() => { if (open) setCommand({ expanded: false, value: '' }); }, [open]);
+  const changeCommand = patch => setCommand(current => {
+    const next = { ...current, ...patch };
+    ui.actions.menuCommand(next.expanded ? next.value : '');
+    return next;
+  });
+  const startCommand = (view && view.startCommand) || { on: false, note: '' };
+  const commandShown = Boolean(view && !view.sub && view.items.some(item => item.icon === 'shell'));
+  const commandSet = commandShown && startCommand.on && command.expanded && command.value.trim() !== '';
+  const kindOff = item => commandSet && item.pick && item.icon !== 'shell'; // only a plain terminal runs a command
   const busy = Boolean(view && view.busy);
   const close = () => { if (!busy) ui.actions.menuCancel(); };
-  const picks = view ? view.items.map((item, index) => (item.pick ? index : -1)).filter(index => index >= 0) : [];
+  const picks = view ? view.items.map((item, index) => (item.pick && !kindOff(item) ? index : -1)).filter(index => index >= 0) : [];
   const at = view && highlight.items === view.items && highlight.at < picks.length ? highlight.at : 0;
   const active = picks.length ? picks[at] : -1;
   const setAt = next => setHighlight({ items: view.items, at: next });
@@ -193,6 +207,12 @@ export function NewSessionDialog({ state, ui }) {
                 ...(active >= 0 ? { role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'h5-term-menu-actions', 'aria-autocomplete': 'none', 'aria-activedescendant': optionId(active) } : {}),
               } }}
             />
+            {commandShown ? (
+              <StartCommand
+                ui={ui} state={command} change={changeCommand} support={startCommand} busy={busy}
+                run={() => { const index = view.items.findIndex(item => item.icon === 'shell' && item.pick); if (index >= 0) create(index); }}
+              />
+            ) : null}
             {view.sub ? <Typography id="h5-new-session-sub" variant="overline" component="h3" color="text.secondary" sx={{ display: 'block', mt: 2, mb: -1 }}>{t(view.sub)}</Typography> : null}
             {/* The choices: an MD2 simple-dialog list, edge to edge; the highlighted one is the selected row. */}
             <Box id="h5-term-menu-actions" className="h5-menu-actions" role={active >= 0 ? 'listbox' : 'group'} aria-label={t(view.sub || 'New session')} sx={{ display: 'flex', flexDirection: 'column', mt: 1, mx: -3 }}>
@@ -201,7 +221,7 @@ export function NewSessionDialog({ state, ui }) {
                 const on = option && index === active;
                 return (
                   <ListItemButton
-                    key={`${index}:${item.label}`} component="button" type="button" selected={on} disabled={busy || item.disabled}
+                    key={`${index}:${item.label}`} component="button" type="button" selected={on} disabled={busy || item.disabled || kindOff(item)}
                     className={[item.kind === 'danger' ? 'danger' : '', on ? 'h5-choice-on' : ''].filter(Boolean).join(' ') || undefined}
                     onClick={() => ui.actions.menuRun(index)} data-track="h5-menu-action" data-track-detail={menuDetail(item)}
                     {...(option ? {
@@ -219,7 +239,7 @@ export function NewSessionDialog({ state, ui }) {
                     <ListItemText
                       className="h5-choice-text" sx={{ my: 0.5 }}
                       primary={<span className="h5-choice-label">{item.kind === 'raw' ? item.label : t(item.label)}</span>}
-                      secondary={item.note ? <span className="h5-choice-note" translate="no">{item.note}</span> : null}
+                      secondary={kindOff(item) ? <span className="h5-choice-note">{t('Only a terminal runs a start command')}</span> : item.note ? <span className="h5-choice-note" translate="no">{item.note}</span> : null}
                       slotProps={{ primary: { variant: 'body1' }, secondary: { variant: 'caption', color: 'text.secondary' } }}
                     />
                   </ListItemButton>

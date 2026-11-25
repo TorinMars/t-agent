@@ -704,6 +704,13 @@ I18n.add({
   "New session": "新建会话",
   "Enter to create · ↑↓ to choose": "回车创建 · ↑↓ 选择",
   "Creating…": "正在创建…",
+  // The initial command of a new terminal (TaskDrawer.jsx StartCommand, h5.js startCommandState)
+  "Run a command when it starts": "启动时运行命令",
+  "Typed into the shell as if you typed it, then Enter. The terminal stays open.": "像你亲手输入一样输入到 shell，然后回车。终端会保持打开。",
+  "Command": "命令",
+  "Command to run when it starts": "启动时运行的命令",
+  "Only a terminal runs a start command": "只有终端会运行启动命令",
+  "This computer needs an update to run a command at start": "这台电脑需要更新后才能在启动时运行命令",
   "Claude session": "Claude 会话",
   "Codex session": "Codex 会话",
   "New Claude session": "新建 Claude 会话",

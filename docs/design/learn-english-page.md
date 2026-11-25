@@ -373,6 +373,8 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
   pause only when the browser has stopped, giving up after the longest time a reading can take.
 - A browser that refuses sound before the first tap (`not-allowed`, or an automatic play that has not started after 2.5 s: iOS): the button
   becomes "Tap to play" (`#h5-learn-tap-play`) once per page load; later automatic plays are not watched.
+- Voice (the first row of the card): this device's voices or DeepSeek's, made on the server; the player is the same for both. See "DeepSeek
+  voice" in [learn-english-voice.md](learn-english-voice.md).
 
 ## Speech
 

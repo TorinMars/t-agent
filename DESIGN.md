@@ -259,3 +259,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.166.0 English coach can run on the Claude Agent SDK (a choice in the coach settings)
 > v2.166.1 zod is a declared dependency (the coach's Claude engine needs it)
 > v2.167.0 Device and IP sign-in log with alerts and sign-out; fast confirm on remote tasks in the widget
+> v2.167.1 A finished sub-task sends no notification or reminder

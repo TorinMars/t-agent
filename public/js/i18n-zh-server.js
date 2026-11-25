@@ -11,7 +11,8 @@ I18n.add({
   "INVALID_INITIAL_COMMAND": "启动命令无效",
   "INITIAL_COMMAND_TOO_LONG": "启动命令太长（最多 4000 个字符）",
   "INITIAL_COMMAND_NOT_A_TERMINAL": "只有普通终端可以运行启动命令",
-  "INITIAL_COMMAND_UNSUPPORTED": "这个服务的版本过旧，无法在启动时运行命令，请先升级",
+  "INITIAL_COMMAND_UNSUPPORTED": "这台电脑需要先更新，才能保存并在每次启动时运行命令。",
+  "TERMINAL_START_COMMAND_READ_FAILED": "无法读取启动命令。",
   // Shell notebooks (routes/notebooks.js, services/notebook-kernels.js, lib/notebook-format.js)
   "NOTEBOOK_UNSUPPORTED": "这个服务的版本过旧，无法创建 Shell 笔记本，请先升级",
   "TASK_HAS_NO_FOLDER": "这个任务没有文件夹，无法创建笔记本",

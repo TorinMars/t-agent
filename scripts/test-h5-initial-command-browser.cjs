@@ -6,7 +6,7 @@
 //   /api/page-state) at the top of Recent, once; the next opening is folded and empty again.
 // - While a command is typed the other kinds are greyed ("Only a terminal runs a start command"); a sub-list (Claude session) has no field; a Claude
 //   session made with the field folded sends no command.
-// - An Engine whose /info does not list 'terminal:initial-command' shows the field disabled with "This computer needs an update to run a command at
+// - An Engine whose /info does not list 'terminal:start-command' shows the field disabled with "This computer needs an update to run a command at
 //   start"; one that lists it gets the command through the proxy.
 // SCREENSHOTS=<dir> saves the dialog.
 const { chromium } = require('playwright');
@@ -25,10 +25,11 @@ const ORIGIN = 'http://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const SHOTS = process.env.SCREENSHOTS || '';
 const SHORT = { timeout: 3000 };
-const HELPER = 'Typed into the shell as if you typed it, then Enter. The terminal stays open.';
+const HELPER = 'Typed into the shell every time this session starts, then Enter. The terminal stays open.';
+const EDIT_HELPER = 'Typed into the shell every time this session starts, then Enter.';
 const NOTE = 'This computer needs an update to run a command at start';
 const LOCAL_TASKS = [{ id: 1, title: 'release-notes', status: 'doing' }];
-const REMOTES = [{ id: 7, name: 'K01', capabilities: ['terminal:control'] }, { id: 8, name: 'K02', capabilities: ['terminal:control', 'terminal:initial-command'] }];
+const REMOTES = [{ id: 7, name: 'K01', capabilities: ['terminal:control', 'terminal:initial-command'] }, { id: 8, name: 'K02', capabilities: ['terminal:control', 'terminal:initial-command', 'terminal:start-command'] }];
 const SAVED = { shell: { 'npm run dev': 2000, 'git status\ngit log -3': 3000 } }; // the shared Recent list: newest first is the two-line one
 
 async function openPage(browser, wide) {
@@ -46,7 +47,7 @@ async function openPage(browser, wide) {
     window.WebSocket.OPEN = 1;
     window.WebSocket.CONNECTING = 0;
   });
-  const server = { posts: [], stateKeys: { 'ta-start-commands': SAVED }, version: 1, puts: [] };
+  const server = { posts: [], stateKeys: { 'ta-start-commands': SAVED }, version: 1, puts: [], patches: [], commands: { '/api/tasks/1/terminals/default': 'cd docs\nmake watch' } };
   const view = () => ({ instance_id: 'local-instance', version: server.version, recent: [], keys: server.stateKeys, moves: [], peers: [] });
   await page.route(`${ORIGIN}/**`, async route => {
     const url = new URL(route.request().url());
@@ -76,7 +77,25 @@ async function openPage(browser, wide) {
       server.posts.push([pathname, body]);
       return json({ terminal_id: `fresh-${server.posts.length}`, title: body.title || `Terminal ${server.posts.length + 1}`, agent: body.agent || null }, 201);
     }
-    if (/\/terminals$/.test(pathname) && method === 'GET') return json([{ terminal_id: 'default', title: 'Terminal 1' }]);
+    if (/\/terminals$/.test(pathname) && method === 'GET') return json([
+      { terminal_id: 'default', title: 'Terminal 1', has_start_command: Boolean(server.commands[`${pathname}/default`]) },
+      ...(!pathname.startsWith('/api/tasks/') ? [] : [
+        { terminal_id: 'claude', title: 'Claude', agent: 'claude' },
+        { terminal_id: 'codex', title: 'Codex', agent: 'codex' },
+        { terminal_id: 'opencode', title: 'OpenCode', agent: 'opencode' },
+        { terminal_id: 'notebook', title: 'Notebook', agent: 'notebook', notebook: 'demo.ipynb' },
+      ]),
+    ]);
+    if (method === 'GET' && pathname.endsWith('/start-command')) {
+      const terminal = pathname.slice(0, -'/start-command'.length);
+      return json({ command: server.commands[terminal] ?? '' });
+    }
+    if (method === 'PATCH' && /\/terminals\/[^/]+$/.test(pathname)) {
+      const body = route.request().postDataJSON();
+      server.patches.push([pathname, body]);
+      server.commands[pathname] = body.start_command;
+      return json({ has_start_command: Boolean(body.start_command) });
+    }
     if (/\/agent-sessions$/.test(pathname)) return json([]);
     if (/\/terminal\/ack$/.test(pathname)) return json({ success: true });
     return json({ error: 'not mocked' }, 404);
@@ -104,7 +123,7 @@ async function openPage(browser, wide) {
     await press(page.locator('#h5-term-menu-cancel'));
     await page.locator('#h5-new-session').waitFor({ state: 'detached', ...SHORT });
   };
-  return { context, page, server, pageErrors, wide, press, choices, openDialog, closeDialog, openSheet };
+  return { context, page, server, pageErrors, wide, press, choices, openDialog, closeDialog, openSheet, row };
 }
 
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name) }); };
@@ -219,6 +238,78 @@ async function checks(t) {
   assert.deepEqual(server.posts.at(-1), ['/api/remote-servers/8/tasks/1/terminals', { command: 'make watch' }], `${size}: the remote engine gets the command`);
 }
 
+async function editChecks({ page, server, press, openSheet, row, wide }) {
+  const openMenu = async (title, id = 'default') => {
+    await openSheet();
+    const task = page.locator(row(title));
+    const more = task.locator('..').locator(`.h5-terminal-row[data-session="${id}"] .h5-terminal-more`);
+    const toggle = task.locator('.h5-task-item');
+    if (await toggle.getAttribute('aria-expanded') === 'false') await press(toggle);
+    await more.waitFor(SHORT);
+    await more.scrollIntoViewIfNeeded();
+    await press(more);
+    await page.locator('#h5-session-menu-actions').waitFor(SHORT);
+  };
+  const edit = page.getByRole('menuitem', { name: 'Start command…', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Start command', exact: true });
+  const field = dialog.getByRole('textbox');
+  const openEdit = async title => {
+    await openMenu(title);
+    await press(edit);
+    await dialog.waitFor(SHORT);
+    await page.waitForFunction(() => {
+      const input = document.getElementById('h5-edit-start-command-input');
+      return input && !input.disabled;
+    }, null, SHORT);
+  };
+
+  await openEdit('release-notes');
+  assert.equal(await dialog.locator('#h5-edit-start-command-input-helper-text').textContent(), EDIT_HELPER);
+  assert.ok(await field.inputValue() === 'cd docs\nmake watch', 'the editor opens with the stored command');
+  if (!wide) {
+    for (const button of await dialog.getByRole('button').all()) assert.ok((await button.boundingBox()).height >= 44);
+  }
+  await field.fill('discard this edit');
+  await press(dialog.getByRole('button', { name: 'Cancel' }));
+  await dialog.waitFor({ state: 'hidden', ...SHORT });
+  assert.equal(server.patches.length, 0);
+  await openEdit('release-notes');
+  await field.fill('make test');
+  await press(dialog.getByRole('button', { name: 'Save' }));
+  await dialog.waitFor({ state: 'hidden', ...SHORT });
+  assert.ok(server.commands['/api/tasks/1/terminals/default'] === 'make test');
+
+  await openEdit('release-notes');
+  await press(dialog.getByRole('button', { name: 'Remove' }));
+  await dialog.waitFor({ state: 'hidden', ...SHORT });
+  assert.equal(server.commands['/api/tasks/1/terminals/default'], '');
+  await openEdit('release-notes');
+  assert.equal(await dialog.getByRole('button', { name: 'Remove' }).count(), 0);
+  await press(dialog.getByRole('button', { name: 'Cancel' }));
+  await dialog.waitFor({ state: 'hidden', ...SHORT });
+
+  for (const agent of ['claude', 'codex', 'opencode', 'notebook']) {
+    await openMenu('release-notes', agent);
+    assert.equal(await edit.count(), 0, `no editor for ${agent}`);
+    await page.keyboard.press('Escape');
+    await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached', ...SHORT });
+  }
+
+  await openMenu('Remote 7');
+  const update = page.getByRole('menuitem', { name: 'This computer needs an update first', exact: true });
+  await update.waitFor(SHORT);
+  assert.equal(await update.isDisabled(), true);
+  assert.equal(await edit.count(), 0);
+  await page.keyboard.press('Escape');
+  await page.locator('#h5-session-menu-actions').waitFor({ state: 'detached', ...SHORT });
+
+  await openEdit('Remote 8');
+  await field.fill('make verify');
+  await press(dialog.getByRole('button', { name: 'Save' }));
+  await dialog.waitFor({ state: 'hidden', ...SHORT });
+  assert.ok(server.commands['/api/remote-servers/8/tasks/1/terminals/default'] === 'make verify');
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -226,10 +317,11 @@ async function checks(t) {
     for (const wide of [true, false]) {
       const t = await openPage(browser, wide);
       await checks(t);
+      await editChecks(t);
       assert.deepEqual(t.pageErrors, [], `${wide ? 'computer' : 'phone'}: no browser runtime errors`);
       await t.context.close();
     }
-    console.log('The initial command of a new terminal passed: folded by default, Recent from the shared page state, the body, cleared after use, other kinds greyed, an older engine disabled.');
+    console.log('The initial command of a new terminal passed: folded by default, Recent from the shared page state, the body, cleared after use, other kinds greyed, an older engine disabled, and the session editor loads, saves and removes.');
   } finally {
     await browser.close();
     fs.rmSync(TEMP, { recursive: true, force: true });

@@ -54,7 +54,7 @@ async function openPage(browser, { wide, remote }) {
     if (pathname === '/h5') return route.fulfill({ contentType: 'text/html', body: fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8') });
     if (/^\/(js|css|vendor)\//.test(pathname)) return route.fulfill({ contentType: TYPES[path.extname(pathname)] || 'text/plain', body: fs.readFileSync(path.join(root, 'public', pathname)) });
     if (pathname === '/api/remote-servers') return json(remote ? [{ id: 7, name: 'VPS' }] : []);
-    if (pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage', 'terminal:control'] });
+    if (pathname === '/api/remote-servers/7/info') return json({ capabilities: ['agent-chat:manage', 'terminal:control', 'terminal:start-command'] });
     if (pathname === base && method === 'GET') return json(taskList);
     if (remote && pathname === '/api/tasks' && method === 'GET') return json([]);
     if (/\/task-groups$/.test(pathname)) return json([{ key: 'doing', name: 'Doing', sort_order: 1 }]);
@@ -155,10 +155,10 @@ async function check(env, h, { wide, remote, label }) {
   // ── Terminals keep their actions, under the selected task and the others ──
   await h.openMenu('Phone terminals', 'Terminal 2');
   // This machine sorts sessions: the last of the selected task's terminals moves up, the first of Beta's down. The mocked remote Engine does not say 'terminals:order'.
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Remember this', 'Reopen', ...(remote ? [] : ['Move up']), RESTART, 'Delete session'], `${label}: the actions of a terminal of the selected task`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Start command…', 'Remember this', 'Reopen', ...(remote ? [] : ['Move up']), RESTART, 'Delete session'], `${label}: the actions of a terminal of the selected task`);
   await h.closeMenu();
   await h.openMenu('Beta', 'Terminal 1');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Remember this', 'Open', ...(remote ? [] : ['Move down']), RESTART, 'Delete session'], `${label}: the actions of a terminal of another task`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Start command…', 'Remember this', 'Open', ...(remote ? [] : ['Move down']), RESTART, 'Delete session'], `${label}: the actions of a terminal of another task`);
   await h.press(h.action('Rename'));
   await page.locator('#h5-term-rename-input').fill('Docs shell');
   await page.locator('#h5-term-rename-input').press('Enter');

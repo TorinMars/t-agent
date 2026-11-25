@@ -141,12 +141,19 @@ CREATE TABLE IF NOT EXISTS task_default_terminal_dirs (
   work_dir TEXT NOT NULL
 );
 
+-- Older tasks can have an implicit default terminal, with no task_terminals row.
+CREATE TABLE IF NOT EXISTS task_default_terminal_commands (
+  task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  start_command TEXT NOT NULL
+);
+
 -- work_dir (added by the column migration in db/index.js, schema 8): the directory the terminal was created in; NULL follows the task.
 CREATE TABLE IF NOT EXISTS task_terminals (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   terminal_id TEXT NOT NULL,
   title TEXT NOT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  start_command TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (task_id, terminal_id)
 );
 

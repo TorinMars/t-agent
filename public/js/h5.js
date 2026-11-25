@@ -2061,6 +2061,21 @@
   const askRename = value => ui.set(state => ({
     menu: state.menu && { ...state.menu, rename: { kind: 'terminal', id: menuRow && menuRow.terminal_id, task: menuScope && taskRef(menuScope.from, menuScope.taskId) }, renameValue: value },
   }));
+  // Only plain shells have a start command. Keep the dialog bound to the row's Engine and task even when a different task is shown.
+  function startCommandSteps({ from, taskId, row }) {
+    if (row.agent) return [];
+    const support = startCommandState(from);
+    if (!support.on) return [[support.note ? 'This computer needs an update first' : 'Start command…', null, null, false, null, true]];
+    return [['Start command…', () => {
+      closeTerminalMenu();
+      ui.set({ startCommandDialog: `${from.tasksBase}/${taskId}/terminals/${encodeURIComponent(row.terminal_id)}` });
+    }]];
+  }
+  function refreshStartCommandMenu({ from, row }, reopen) {
+    if (row.agent || from.key === 'local' || Array.isArray(from.capabilities)) return;
+    const shown = ui.get().menu;
+    readInfo(from).then(() => { if (ui.get().menu === shown) reopen(); }, () => {});
+  }
   // "Delete session" (not "Delete"): beside "Remove from Recent" the two must not be mixed up.
   function openTerminalMenu(row, anchor, { recent = false } = {}) {
     menuRow = row;
@@ -2071,6 +2086,7 @@
       ...(open ? [['Copy text', () => { closeTerminalMenu(); closeTasks(); openCopy(); }]] : []),
       // Agent terminals too: a name given here is kept (title_custom) and wins over the Claude / Codex session title from then on.
       ['Rename', () => askRename(row.title)],
+      ...startCommandSteps(target),
       ['Remember this', () => askRemember(source, task, row.terminal_id, row.title)],
       ['Reopen', () => { closeTerminalMenu(); closeTasks(); switchTerminal(row); }],
       ...sessionSteps(source, task, row.terminal_id),
@@ -2078,6 +2094,7 @@
       ['Restart in the working directory', () => void restartTerminal(target), 'danger'],
       ['Delete session', () => void deleteTerminal(target), 'danger'],
     ], { anchor });
+    refreshStartCommandMenu(target, () => openTerminalMenu(row, anchor, { recent }));
   }
   // A remote Engine that says what it can do and does not list 'terminal:control' cannot restart or delete a terminal; one that has not said is asked (it answers with an error).
   const controlsTerminals = from => from.key === 'local' || !Array.isArray(from.capabilities) || from.capabilities.includes('terminal:control');
@@ -2088,6 +2105,7 @@
     const target = menuScope = { from, taskId: item.id, row: entry, taskTitle: item.title };
     showMenu(entry.title, [
       ['Rename', () => askRename(entry.title)],
+      ...startCommandSteps(target),
       ['Remember this', () => askRemember(from, item, entry.terminal_id, entry.title)],
       ['Open', () => { closeTerminalMenu(); ui.actions.openRow(taskRef(from, item.id), { kind: row.kind, id: row.id }); }],
       ...sessionSteps(from, item, entry.terminal_id),
@@ -2097,6 +2115,7 @@
         ['Delete session', () => void deleteTerminal(target), 'danger'],
       ] : []),
     ], { anchor });
+    refreshStartCommandMenu(target, () => openOtherMenu(from, item, row, entry, anchor, { recent }));
   }
   // ── "Remember this" ("Remember this" in docs/design/usage-time-page.md): a note of the person's own with the time, the task and the session ──
   // From a session's "⋯" (its row, or the session header's More while it is shown) or a task's "⋯": the dialog of the task dialogs chunk
@@ -2266,13 +2285,13 @@
     const extra = { sub, taskTitle: hit ? hit.item.title : '', service: hit ? serviceOf(hit.from) : null, busy: false, error: '', startCommand: startCommandState(hit ? hit.from : source) };
     showMenu(tr(sub || 'New session'), items, { naming: true, extra });
   }
-  // Whether the task's Engine can run an initial command (capability `terminal:initial-command`; this machine always can): { on, note }. An older Engine
-  // would open the terminal without running it, so the field is disabled with a note; while a remote Engine has not said what it can do, it is disabled
+  // Whether the task's Engine can persist a start command (capability `terminal:start-command`; this machine always can): { on, note }. An older Engine
+  // may only run it once, so the field is disabled with a note; while a remote Engine has not said what it can do, it is disabled
   // without one (its `/info` is read and the list drawn again).
   function startCommandState(from) {
     if (from.key === 'local') return { on: true, note: '' };
     const known = Array.isArray(from.capabilities);
-    const on = known && from.capabilities.includes('terminal:initial-command');
+    const on = known && from.capabilities.includes('terminal:start-command');
     return { on, note: known && !on ? tr('This computer needs an update to run a command at start') : '' };
   }
   // The first list, in the order of the keyboard choices: Claude session (highlighted first), Codex session, OpenCode session, New Terminal. A press on a session

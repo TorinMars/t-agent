@@ -497,10 +497,11 @@ function listTerminals(taskId) {
   const task = prepared('SELECT id, work_dir FROM tasks WHERE id = ?').get(taskId) || { id: taskId, work_dir: null };
   const removed = defaultRemoved(taskId);
   const defaultDir = removed ? null : terminalWorkDir(task, 'default');
+  const hasDefaultCommand = !removed && Boolean(prepared('SELECT 1 FROM task_default_terminal_commands WHERE task_id = ?').get(taskId));
   const names = new Map();
-  const rows = withAgentSessions(taskId, inStoredOrder(taskId, [...(removed ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir }]), ...prepared(
-    "SELECT terminal_id, title, work_dir FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
-  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null }))]), names);
+  const rows = withAgentSessions(taskId, inStoredOrder(taskId, [...(removed ? [] : [{ terminal_id: 'default', title: stored ? stored.title : 'Terminal 1', work_dir: defaultDir, has_start_command: hasDefaultCommand }]), ...prepared(
+    "SELECT terminal_id, title, work_dir, agent IS NULL AND start_command != '' AS has_start_command FROM task_terminals WHERE task_id = ? AND substr(terminal_id, 1, 3) != 'h5-' ORDER BY rowid"
+  ).all(taskId).map(row => ({ ...row, work_dir: row.work_dir || task.work_dir || null, has_start_command: Boolean(row.has_start_command) }))]), names);
   rememberSessionNames(taskId, names);
   return withNotebooks(taskId, rows);
 }
@@ -596,19 +597,17 @@ function assertTaskNotArchived(taskId) {
   if (require('../services/task-move').isMoving(taskId)) throw Object.assign(new Error('TASK_MOVING'), { statusCode: 409 });
 }
 
-// The initial command of a new plain terminal ("Initial command" in docs/design/terminals.md): `command` of POST …/terminals, typed into the shell as
+// The saved start command of a plain terminal ("Initial command" in docs/design/terminal-initial-command.md): `command` of POST …/terminals, typed into the shell as
 // if the person typed it, line by line, each line followed by Enter, so the shell stays interactive. CR LF and CR become LF, other control characters
-// (tab and LF kept) are dropped, the ends are trimmed; at most INITIAL_COMMAND_MAX characters. Answers the lines, or null when there is none.
-// The text is held in memory until the shell starts and never logged.
+// (tab and LF kept) are dropped, the ends are trimmed; at most INITIAL_COMMAND_MAX characters. The cleaned text is stored and never logged.
 const INITIAL_COMMAND_MAX = 4000;
 const INITIAL_QUIET_MS = 250; // after the shell's first output, this long without output: its prompt is drawn
 const INITIAL_WAIT_MS = 3000; // a shell that prints nothing (or keeps printing) gets the command after this long anyway
 function cleanInitialCommand(value) {
-  if (value === undefined || value === null) return null;
   if (typeof value !== 'string') throw Object.assign(new Error('INVALID_INITIAL_COMMAND'), { statusCode: 400 });
   const text = value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim();
   if (text.length > INITIAL_COMMAND_MAX) throw Object.assign(new Error('INITIAL_COMMAND_TOO_LONG'), { statusCode: 400 });
-  return text ? text.split('\n') : null;
+  return text;
 }
 
 // Types the initial command into a new shell once it is ready: its first output, then INITIAL_QUIET_MS of quiet (the prompt is drawn), with
@@ -616,17 +615,22 @@ function cleanInitialCommand(value) {
 function typeWhenReady(key, s, lines) {
   let quiet = null;
   let done = false;
-  const fire = () => {
-    if (done) return;
+  const cancel = () => {
     done = true;
     clearTimeout(quiet);
     clearTimeout(fallback);
     s.initialOutput = null;
+    s.cancelStartCommand = null;
+  };
+  const fire = () => {
+    if (done) return;
+    cancel();
     if (sessions.get(key) !== s || s.exiting || !s.pty) return;
     for (const line of lines) s.pty.write(`${line}\r`);
   };
   const unref = timer => { if (timer && timer.unref) timer.unref(); return timer; };
   const fallback = unref(setTimeout(fire, INITIAL_WAIT_MS));
+  s.cancelStartCommand = cancel;
   s.initialOutput = () => { clearTimeout(quiet); quiet = unref(setTimeout(fire, INITIAL_QUIET_MS)); };
 }
 
@@ -637,7 +641,7 @@ function createTerminal(taskId, options = {}) {
   const id = require('crypto').randomUUID();
   const agent = options && options.agent;
   const named = cleanTitle(options && typeof options.title === 'string' ? options.title : '');
-  const initial = cleanInitialCommand(options ? options.command : null);
+  const initial = cleanInitialCommand(options?.command ?? '');
   if (initial && (agent === 'notebook' || Object.hasOwn(AGENT_LABELS, agent))) throw Object.assign(new Error('INITIAL_COMMAND_NOT_A_TERMINAL'), { statusCode: 400 });
   if (agent === 'notebook') return createNotebook(taskId, id, named, options);
   let sessionId = options && options.session_id ? String(options.session_id) : null;
@@ -650,13 +654,12 @@ function createTerminal(taskId, options = {}) {
   const title = named || (command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`);
   // The agent's options are added when the shell starts (getOrCreateSession), from the same switch reading as its environment.
   if (command) pendingStartup.set(sessionKey(taskId, id), { agent, command });
-  else if (initial) pendingStartup.set(sessionKey(taskId, id), { agent: null, command: null, initial });
   // The terminal keeps the task's working directory of this moment, whatever the task's directory becomes later.
   const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
   const workDir = (task && task.work_dir) || null;
-  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom, work_dir) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null, workDir);
-  return { terminal_id: id, title, agent: command ? agent : null, work_dir: workDir };
+  db.prepare('INSERT INTO task_terminals (task_id, terminal_id, title, agent, agent_session_id, agent_started_at, title_custom, work_dir, start_command) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(taskId, id, title, command ? agent : null, sessionId, command ? Date.now() : null, named ? 1 : null, workDir, initial);
+  return { terminal_id: id, title, agent: command ? agent : null, work_dir: workDir, has_start_command: Boolean(initial) };
 }
 
 // A Shell notebook ("Identity and storage" in docs/design/shell-notebook.md): a row with agent 'notebook', its file path relative to its folder in
@@ -736,6 +739,44 @@ async function terminalCwd(task, value) {
   if (!cwd) return { cwd: null, relative: null };
   const configured = terminalWorkDir(task, id) || (task.md_path && path.dirname(task.md_path));
   return { cwd, relative: configured && path.isAbsolute(configured) ? cwdInRoot(cwd, configured) : null };
+}
+
+function storedStartCommand(taskId, id) {
+  const row = id === 'default'
+    ? prepared('SELECT start_command FROM task_default_terminal_commands WHERE task_id = ?').get(taskId)
+    : prepared('SELECT start_command FROM task_terminals WHERE task_id = ? AND terminal_id = ? AND agent IS NULL').get(taskId, id);
+  return row?.start_command || '';
+}
+
+function assertPlainTerminal(taskId, id) {
+  if (id !== 'default' && prepared('SELECT agent FROM task_terminals WHERE task_id = ? AND terminal_id = ?').get(taskId, id)?.agent) {
+    throw Object.assign(new Error('INITIAL_COMMAND_NOT_A_TERMINAL'), { statusCode: 400 });
+  }
+}
+
+function terminalStartCommand(taskId, value) {
+  const id = assertTerminal(taskId, value);
+  assertPlainTerminal(taskId, id);
+  return { command: storedStartCommand(taskId, id) };
+}
+
+function patchTerminal(taskId, value, body) {
+  if (!Object.hasOwn(body ?? {}, 'start_command')) return renameTerminal(taskId, value, body?.title);
+  const id = assertTerminal(taskId, value);
+  assertPlainTerminal(taskId, id);
+  const command = cleanInitialCommand(body.start_command);
+  return db.transaction(() => {
+    const result = Object.hasOwn(body, 'title') ? renameTerminal(taskId, id, body.title) : { terminal_id: id };
+    if (id !== 'default') {
+      prepared('UPDATE task_terminals SET start_command = ? WHERE task_id = ? AND terminal_id = ?').run(command, taskId, id);
+    } else if (command) {
+      prepared(`INSERT INTO task_default_terminal_commands (task_id, start_command) VALUES (?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET start_command = excluded.start_command`).run(taskId, command);
+    } else {
+      prepared('DELETE FROM task_default_terminal_commands WHERE task_id = ?').run(taskId);
+    }
+    return { ...result, has_start_command: Boolean(command) };
+  })();
 }
 
 function renameTerminal(taskId, value, requestedTitle) {
@@ -858,11 +899,13 @@ function terminalLaunch(ownerTaskId, id, workDir, { peer = peerFsOn(), name = nu
 
 function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   const taskId = sessionKey(ownerTaskId, id);
+  // There is no asynchronous gap between this check and registering the new PTY.
   if (sessions.has(taskId)) return sessions.get(taskId);
 
   // The history is not persisted: after a service restart (or a close / restart) a terminal starts empty with a new shell.
   // No old text is replayed, so the stale mouse/focus mode reset of a restored history is not needed here.
   const savedBuffer = dirWarning || '';
+  const startCommand = storedStartCommand(ownerTaskId, id);
 
   let pty;
   let shell;
@@ -938,7 +981,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     emit(data);
     if (s.initialOutput) s.initialOutput();
   });
-  if (pending && pending.initial) typeWhenReady(taskId, s, pending.initial); // the initial command of a new plain terminal
+  if (!startup && startCommand) typeWhenReady(taskId, s, startCommand.split('\n'));
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
   const turnEnd = createTurnEndWatch({ agentOf: () => terminalAgent(s), onTurnEnd: agent => agentTurnEnded(agent, { task_id: Number(ownerTaskId), terminal_id: id }) });
@@ -955,6 +998,7 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
     // The parser queue also owns live delivery. Drain its last bytes before
     // closing a naturally exited shell; explicit control remains immediate.
     s.exiting = true;
+    s.cancelStartCommand?.();
     stopFlowWatch();
     s.stopShellWatch();
     s.activity.stop();
@@ -986,6 +1030,7 @@ function detachSession(taskId, id, reason) {
   terminalEnded(taskId, id);
   activityStream.notify();
   session.snapshot.dispose();
+  session.cancelStartCommand?.();
   session.stopShellWatch?.();
   session.stopFlowWatch?.();
   session.activity?.stop();
@@ -1050,6 +1095,7 @@ function controlSession(taskId, action, requestedTerminalId) {
     db.prepare('INSERT OR IGNORE INTO task_default_terminal_removed (task_id) VALUES (?)').run(id);
     db.prepare('DELETE FROM task_default_terminal_titles WHERE task_id = ?').run(id);
     db.prepare('DELETE FROM task_default_terminal_dirs WHERE task_id = ?').run(id);
+    prepared('DELETE FROM task_default_terminal_commands WHERE task_id = ?').run(id);
   } else if (action === 'delete') {
     db.prepare('DELETE FROM task_terminals WHERE task_id = ? AND terminal_id = ?').run(id, selectedId);
   }
@@ -1760,4 +1806,4 @@ function shutdownTerminals() {
   try { if (notebookKernels) notebookKernels.shutdown(); } catch {}
 }
 
-module.exports = { INITIAL_COMMAND_MAX, terminalLaunch, terminalShell, onAgentTurnEnd, onActivityChanged, onTerminalInput, clockSnapshot, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };
+module.exports = { INITIAL_COMMAND_MAX, terminalLaunch, terminalShell, onAgentTurnEnd, onActivityChanged, onTerminalInput, clockSnapshot, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, patchTerminal, terminalStartCommand, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

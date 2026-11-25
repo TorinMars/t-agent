@@ -20,7 +20,7 @@ function freshServer(ids) {
   return { lists, writes: [], fail: null, holdLists: [], holdControl: null };
 }
 
-async function openPage(browser, { wide, remote, capabilities = ['agent-chat:manage', 'terminal:control'] }) {
+async function openPage(browser, { wide, remote, capabilities = ['agent-chat:manage', 'terminal:control', 'terminal:start-command'] }) {
   const context = await browser.newContext(wide ? { viewport: { width: 1440, height: 900 } } : { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -166,7 +166,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   await h.openMenu('Beta', 'Terminal 1');
   // This machine sorts sessions (Move up / Move down where the row can go); the mocked remote Engine does not say 'terminals:order'.
   const moves = steps => (remote ? [] : steps);
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Remember this', 'Open', ...moves(['Move down']), RESTART, 'Delete session'], `${label}: terminal actions`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Start command…', 'Remember this', 'Open', ...moves(['Move down']), RESTART, 'Delete session'], `${label}: terminal actions`);
   assert.deepEqual(await h.actions.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, false, ...moves([false]), true, true], `${label}: the same danger style`);
   await h.closeMenu();
 
@@ -260,7 +260,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
 
   // ── The selected task's own actions behave as before ──
   await h.openMenu('Phone terminals', 'Terminal 3');
-  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Remember this', 'Reopen', ...moves(['Move up', 'Move down']), RESTART, 'Delete session'], `${label}: own terminal actions`);
+  assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Start command…', 'Remember this', 'Reopen', ...moves(['Move up', 'Move down']), RESTART, 'Delete session'], `${label}: own terminal actions`);
   await h.press(h.action(RESTART));
   await h.shown(alpha, `t${alpha}-3`);
   assert.deepEqual(server.writes, [['POST', `${base}/${alpha}/terminal/control`, { action: 'restart-workdir', terminal_id: `t${alpha}-3` }]], `${label}: own restart`);
@@ -313,7 +313,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
     const h = helpers({ page: env.page, wide: true });
     await setup(env, h, { remote: true });
     await h.openMenu('Beta', 'Terminal 1');
-    assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Remember this', 'Open'], 'no Restart or Delete without terminal:control');
+    assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'This computer needs an update first', 'Remember this', 'Open'], 'no Restart or Delete without terminal:control');
     await env.context.close();
   } finally {
     await browser.close();

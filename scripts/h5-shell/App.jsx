@@ -14,7 +14,7 @@ import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 // Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
 import {
-  AttentionPanel, CopyScreen, DesignSheet, FileTreeSheet, LearnScreen, PasteScreen, RetainScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen, UploadScreen,
+  AttentionPanel, CopyScreen, DesignSheet, FileTreeSheet, LearnScreen, PasteScreen, RetainScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen, UploadScreen, StartCommandDialog,
 } from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
@@ -46,6 +46,7 @@ const RETAIN_KEYS = ['retainUrl'];
 const PASTE_KEYS = ['pasteSheet'];
 const TASK_DIALOG_KEYS = ['taskDialog'];
 const NEW_SESSION_KEYS = ['menu'];
+const START_COMMAND_KEYS = ['startCommandDialog'];
 const NEW_TASK_KEYS = ['newTaskOpen', 'sources', 'creatingTask'];
 const NOTICE_KEYS = ['notice'];
 const LEARN_KEYS = ['learnOpen', 'learnTarget', 'wide', 'pane', 'input', 'hasKeyboard'];
@@ -67,6 +68,7 @@ const OPEN = state => ({
   taskDialog: Boolean(state.taskDialog),
   naming: Boolean(state.menu && state.menu.naming),
   newTask: state.newTaskOpen,
+  startCommand: Boolean(state.startCommandDialog),
   switcher: Boolean(state.switcher),
 });
 
@@ -123,6 +125,7 @@ export function App({ ui }) {
       <Lazy open={open.taskDialog}><Part ui={ui} keys={TASK_DIALOG_KEYS} part={TaskDialogScreen} /></Lazy>
       {/* The two create dialogs: they lie over the task sheet of a phone, outside it, so it closing after a create does not take them away mid-animation. */}
       <Lazy open={open.naming}><Part ui={ui} keys={NEW_SESSION_KEYS} part={NewSessionDialog} /></Lazy>
+      <Lazy open={open.startCommand}><Part ui={ui} keys={START_COMMAND_KEYS} part={StartCommandDialog} /></Lazy>
       <Lazy open={open.newTask}><Part ui={ui} keys={NEW_TASK_KEYS} part={NewTaskDialog} /></Lazy>
       {/* The session switcher of the single view, over the terminal (Switcher.jsx; opened by the switch button, `#h5-cycle`). */}
       <Lazy open={open.switcher}><Part ui={ui} keys={SWITCHER_KEYS} part={SwitcherScreen} /></Lazy>

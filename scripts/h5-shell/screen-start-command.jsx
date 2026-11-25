@@ -2,7 +2,7 @@
 // that unfolds a multiline field (at most COMMAND_MAX characters) and a Recent menu of the last commands that started a terminal (start-commands.mjs, the same on
 // every device and engine; a pick fills the field). Enter in the field is a new line; Cmd/Ctrl+Enter makes the terminal (`run`). A chunk of its own
 // (lazy-screens.jsx `StartCommand`, so the first screen does not grow), drawn by TaskDrawer.jsx `NewSessionDialog`. An Engine without
-// `terminal:initial-command` (support.on false) has the field disabled, with its note under the button. It also gives h5.js
+// `terminal:start-command` (support.on false) has the field disabled, with its note under the button. It also gives h5.js
 // `ui.actions.startCommandUsed`, which remembers a command that made a terminal for Recent.
 //
 // shell-core.mjs is imported only to keep the first screen's modules in one shared chunk (see there).
@@ -10,11 +10,15 @@ import './shell-core.mjs';
 import React, { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import Typography from '@mui/material/Typography';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import TextField from './TextField.jsx';
-import { t, useShared } from './common.jsx';
+import { api, DialogError, errorText, t, useShared } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { TOUCH } from './theme.mjs';
 import { COMMAND_MAX, START_COMMANDS_KEY, commandPreview, recentCommands, recordCommand } from './start-commands.mjs';
@@ -57,12 +61,10 @@ function Body({ open, value, change, off, run }) {
   };
   return (
     <Box id="h5-start-command-body" sx={{ px: 1, mt: 1 }}>
-      <TextField
-        id="h5-start-command-input" name="command" size="small" fullWidth multiline minRows={2} maxRows={6} disabled={off} value={value}
+      <CommandField
+        id="h5-start-command-input" disabled={off} value={value}
         inputRef={field} onChange={event => change({ value: event.target.value })} onKeyDown={key}
-        placeholder={t('Command')} helperText={t('Typed into the shell as if you typed it, then Enter. The terminal stays open.')}
-        slotProps={{ htmlInput: { maxLength: COMMAND_MAX, autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false, 'aria-label': t('Command to run when it starts') } }}
-        sx={{ '& textarea': { fontFamily: 'monospace' } }}
+        helper="Typed into the shell every time this session starts, then Enter. The terminal stays open."
       />
       <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5, mx: -1 }}>
         <Button
@@ -81,5 +83,73 @@ function Body({ open, value, change, off, run }) {
         ))}
       </Menu>
     </Box>
+  );
+}
+
+function CommandField({ helper, ...props }) {
+  return (
+    <TextField
+      name="command" size="small" fullWidth multiline minRows={2} maxRows={6}
+      placeholder={t('Command')} helperText={t(helper)}
+      slotProps={{ htmlInput: { maxLength: COMMAND_MAX, autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false, 'aria-label': t('Command to run when it starts') } }}
+      sx={{ '& textarea': { fontFamily: 'monospace' }, mt: 1 }}
+      {...props}
+    />
+  );
+}
+
+export function StartCommandDialog({ state, ui }) {
+  const url = state.startCommandDialog;
+  const close = () => ui.set({ startCommandDialog: null });
+  return url ? <EditStartCommand key={url} url={url} close={close} /> : null;
+}
+
+function EditStartCommand({ url, close }) {
+  const [stored, setStored] = useState(null);
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const field = useRef(null);
+  useEffect(() => {
+    let active = true;
+    api('GET', `${url}/start-command`).then(({ command }) => {
+      if (!active) return;
+      setStored(command);
+      setValue(command);
+    }).catch(failure => { if (active) setError(errorText(failure)); });
+    return () => { active = false; };
+  }, [url]);
+  useEffect(() => { if (stored !== null) field.current?.focus(); }, [stored]);
+
+  const save = async command => {
+    if (stored === null || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api('PATCH', url, { start_command: command });
+      close();
+    } catch (failure) {
+      setError(errorText(failure));
+      setBusy(false);
+    }
+  };
+  const dismiss = () => { if (!busy) close(); };
+  return (
+    <Dialog id="h5-edit-start-command" open onClose={dismiss} fullWidth maxWidth="xs" aria-labelledby="h5-edit-start-command-title"
+      sx={{ bottom: 'auto', height: 'var(--h5-height, 100%)' }}
+      slotProps={{ paper: { component: 'form', onSubmit: event => { event.preventDefault(); void save(value); } } }}>
+      <DialogTitle id="h5-edit-start-command-title">{t('Start command')}</DialogTitle>
+      <DialogContent>
+        <CommandField id="h5-edit-start-command-input" inputRef={field} disabled={stored === null || busy} value={value}
+          onChange={event => setValue(event.target.value)}
+          helper="Typed into the shell every time this session starts, then Enter." />
+        {error ? <DialogError>{error}</DialogError> : null}
+      </DialogContent>
+      <DialogActions>
+        {stored ? <Button type="button" color="error" disabled={busy} onClick={() => save('')} sx={{ minHeight: 44, mr: 'auto' }}>{t('Remove')}</Button> : null}
+        <Button type="button" disabled={busy} onClick={dismiss} sx={{ minHeight: 44 }}>{t('Cancel')}</Button>
+        <Button type="submit" variant="contained" disabled={stored === null || busy} sx={{ minHeight: 44 }}>{t('Save')}</Button>
+      </DialogActions>
+    </Dialog>
   );
 }

@@ -732,9 +732,9 @@ for (const method of ['get', 'post']) {
       if (supported === null) return;
       if (!supported) return res.status(501).json({ error: 'NOTEBOOK_UNSUPPORTED' });
     }
-    // An initial command only on an Engine that advertises 'terminal:initial-command': an older one would open the terminal without running it.
+    // A start command requires persistence. An older Engine may only run it once.
     if (method === 'post' && req.body && typeof req.body.command === 'string' && req.body.command.trim()) {
-      const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:initial-command');
+      const supported = await remoteHas({ row, token: decryptToken(row.token_cipher, config.sessionSecret) }, res, 'terminal:start-command');
       if (supported === null) return;
       if (!supported) return res.status(501).json({ error: 'INITIAL_COMMAND_UNSUPPORTED' });
     }
@@ -760,14 +760,32 @@ router.put('/:id/tasks/:taskId/terminals/order', async (req, res) => {
   catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+const remoteTerminalPath = req => `${taskPath(req)}/terminals/${encodeURIComponent(req.params.terminalId)}`;
+
 router.patch('/:id/tasks/:taskId/terminals/:terminalId', async (req, res) => {
-  const row = getServer(req);
-  if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const body = { title: req.body?.title };
+  if (Object.hasOwn(req.body ?? {}, 'start_command')) {
+    const supported = await remoteHas(target, res, 'terminal:start-command');
+    if (supported === null) return;
+    if (!supported) return res.status(501).json({ error: 'INITIAL_COMMAND_UNSUPPORTED' });
+    body.start_command = req.body.start_command;
+  }
   try {
-    res.json(await request(row.base_url,
-      `/v1/tasks/${encodeURIComponent(req.params.taskId)}/terminals/${encodeURIComponent(req.params.terminalId)}`,
-      decryptToken(row.token_cipher, config.sessionSecret),
-      { method: 'PATCH', body: { title: req.body && req.body.title } }));
+    res.json(await request(target.row.base_url, remoteTerminalPath(req), target.token, { method: 'PATCH', body }));
+  } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+});
+
+router.get('/:id/tasks/:taskId/terminals/:terminalId/start-command', async (req, res) => {
+  const target = remoteTarget(req, res);
+  if (!target) return;
+  const supported = await remoteHas(target, res, 'terminal:start-command');
+  if (supported === null) return;
+  if (!supported) return res.status(501).json({ error: 'INITIAL_COMMAND_UNSUPPORTED' });
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json(await request(target.row.base_url, `${remoteTerminalPath(req)}/start-command`, target.token));
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 

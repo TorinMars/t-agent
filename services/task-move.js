@@ -923,7 +923,13 @@ function createTaskMove(options) {
     };
     return db.transaction(() => {
       const taskId = Number(insertRow('tasks', Object.fromEntries(Object.entries(row).filter(([name]) => taskColumns.has(name)))).lastInsertRowid);
-      for (const terminal of payload.terminals || []) insertRow('task_terminals', { ...terminal, task_id: taskId, work_dir: terminal.work_dir ? swapPath(terminal.work_dir, fromDirs, to) : terminal.work_dir });
+      for (const terminal of payload.terminals || []) {
+        // Start commands are configured on the hosting engine through the terminal API.
+        insertRow('task_terminals', {
+          ...terminal, task_id: taskId, start_command: undefined,
+          work_dir: terminal.work_dir ? swapPath(terminal.work_dir, fromDirs, to) : terminal.work_dir,
+        });
+      }
       const def = payload.default_terminal || {};
       if (def.title) db.prepare('INSERT OR REPLACE INTO task_default_terminal_titles (task_id, title) VALUES (?, ?)').run(taskId, def.title);
       if (def.removed) db.prepare('INSERT OR IGNORE INTO task_default_terminal_removed (task_id) VALUES (?)').run(taskId);

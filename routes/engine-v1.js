@@ -192,9 +192,8 @@ function infoHandler(req, res) {
       // terminal:notebook: POST /v1/tasks/:id/terminals takes agent 'notebook' (a Shell notebook), GET /v1/tasks/:id/agent-sessions?agent=notebook lists
       // the task folder's .ipynb files, and /v1/tasks/:id/notebooks/:tid/... runs it (routes/notebooks.js, docs/design/shell-notebook.md).
       'terminal:notebook',
-      // terminal:initial-command: POST /v1/tasks/:id/terminals takes `command` for a plain terminal, typed into its shell once it is ready ("Initial
-      // command" in docs/design/terminals.md). An older Engine ignores the field, so the page and the proxy offer it only for an Engine with this.
-      'terminal:initial-command',
+      'terminal:initial-command', // older clients use this to detect the POST command field
+      'terminal:start-command', // persisted and editable ("Initial command" in docs/design/terminal-initial-command.md)
       // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.
@@ -598,7 +597,15 @@ router.get('/tasks/:id/agent-sessions', requireEngineAuth('terminal:execute'), (
 router.patch('/tasks/:id/terminals/:terminalId', requireEngineAuth('terminal:execute'), (req, res) => {
   const task = tasks.ownedTask(principal(req), req.params.id);
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  try { res.json(terminal.renameTerminal(task.id, req.params.terminalId, req.body && req.body.title)); }
+  try { res.json(terminal.patchTerminal(task.id, req.params.terminalId, req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+
+router.get('/tasks/:id/terminals/:terminalId/start-command', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.set('Cache-Control', 'no-store');
+  try { res.json(terminal.terminalStartCommand(task.id, req.params.terminalId)); }
   catch (error) { errorResponse(res, error); }
 });
 

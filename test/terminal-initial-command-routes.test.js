@@ -1,5 +1,5 @@
 // The initial command over HTTP ("Initial command" in docs/design/terminals.md): POST /api/tasks/:id/terminals refuses a bad one with 400, the
-// Engine's /v1/info lists 'terminal:initial-command', and the Client's proxy forwards `command` to an Engine that lists it and refuses (501
+// Engine's /v1/info lists 'terminal:start-command', and the Client's proxy forwards commands to an Engine that can persist them and refuses (501
 // INITIAL_COMMAND_UNSUPPORTED) one that does not, before anything is made. Temporary data folder.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -49,12 +49,20 @@ test.before(async () => {
     app.use(express.json());
     app.get('/v1/info', (req, res) => res.json({ capabilities }));
     app.post('/v1/tasks/:id/terminals', (req, res) => { received.push({ capabilities, body: req.body }); res.status(201).json({ terminal_id: 'made', title: 'Terminal 2', agent: null }); });
+    app.get('/v1/tasks/:id/terminals/:terminalId/start-command', (req, res) => {
+      received.push({ method: 'GET', id: req.params.terminalId });
+      res.json({ command: 'make watch' });
+    });
+    app.patch('/v1/tasks/:id/terminals/:terminalId', (req, res) => {
+      received.push({ method: 'PATCH', id: req.params.terminalId, body: req.body });
+      res.json({ terminal_id: req.params.terminalId });
+    });
     return listen(app);
   };
   const remote = base => db.prepare('INSERT INTO remote_servers (owner_id, name, base_url, token_cipher) VALUES (?, ?, ?, ?)')
     .run('owner', base, base, encryptToken(token, process.env.SESSION_SECRET)).lastInsertRowid;
-  newId = remote(await fake(['tasks:read', 'terminal:execute', 'terminal:initial-command']));
-  oldId = remote(await fake(['tasks:read', 'terminal:execute']));
+  newId = remote(await fake(['tasks:read', 'terminal:execute', 'terminal:initial-command', 'terminal:start-command']));
+  oldId = remote(await fake(['tasks:read', 'terminal:execute', 'terminal:initial-command']));
   const proxyApp = express();
   proxyApp.use(express.json());
   proxyApp.use('/api/remote-servers', require('../routes/remote-servers'));
@@ -95,6 +103,7 @@ test('the local route takes a command for a plain terminal and refuses a bad one
 test('the Engine lists terminal:initial-command and takes the field on /v1', async () => {
   const info = await call('GET', `${engine}/v1/info`, undefined, auth);
   assert.ok(info.body.capabilities.includes('terminal:initial-command'));
+  assert.ok(info.body.capabilities.includes('terminal:start-command'));
   const task = engineTasks.createTask('owner', { title: 'engine' });
   assert.equal((await call('POST', `${engine}/v1/tasks/${task.id}/terminals`, { command: 'ls' }, auth)).status, 201);
   const refused = await call('POST', `${engine}/v1/tasks/${task.id}/terminals`, { agent: 'codex', command: 'ls' }, auth);
@@ -112,4 +121,59 @@ test('the proxy forwards the command to an Engine that can run it and refuses an
   // Without a command (or a blank one) the older Engine is used as before.
   assert.equal((await call('POST', `${proxy}/api/remote-servers/${oldId}/tasks/1/terminals`, { command: '  ' })).status, 201);
   assert.equal((await call('POST', `${proxy}/api/remote-servers/${oldId}/tasks/1/terminals`, {})).status, 201);
+});
+
+test('local and Engine terminal details support set and clear while lists expose a boolean', async () => {
+  for (const [base, headers] of [[`${local}/api/tasks`, {}], [`${engine}/v1/tasks`, auth]]) {
+    const task = engineTasks.createTask('owner', { title: 'edit' });
+    const list = `${base}/${task.id}/terminals`;
+    const made = await call('POST', list, { title: 'Before' }, headers);
+    const id = made.body.terminal_id;
+    const url = `${list}/${id}`;
+    const detail = `${url}/start-command`;
+    assert.equal((await call('GET', detail, undefined, headers)).body.command, '');
+    assert.equal((await call('PATCH', url, { start_command: null, title: 'Invalid' }, headers)).status, 400);
+    assert.equal((await call('PATCH', url, { start_command: 'discard', title: '' }, headers)).status, 400);
+    assert.equal((await call('GET', detail, undefined, headers)).body.command, '');
+    assert.equal((await call('GET', list, undefined, headers)).body[0].title, 'Before');
+
+    const patch = await call('PATCH', url, { start_command: '  cd docs\r\nls\x07 ', title: 'After' }, headers);
+    assert.deepEqual(patch.body, { terminal_id: id, title: 'After', has_start_command: true });
+    const read = await call('GET', detail, undefined, headers);
+    assert.equal(read.status, 200);
+    assert.ok(read.body.command === 'cd docs\nls', 'the detail contains the cleaned value');
+    const rows = (await call('GET', list, undefined, headers)).body;
+    assert.equal(rows[0].has_start_command, true);
+    assert.equal(Object.hasOwn(rows[0], 'start_command'), false);
+    assert.equal(Object.hasOwn(rows[0], 'command'), false);
+
+    const clear = await call('PATCH', url, { start_command: '  ' }, headers);
+    assert.deepEqual(clear.body, { terminal_id: id, has_start_command: false });
+    assert.equal((await call('GET', detail, undefined, headers)).body.command, '');
+    const agent = await call('POST', list, { agent: 'claude' }, headers);
+    const agentUrl = `${list}/${agent.body.terminal_id}`;
+    assert.equal((await call('PATCH', agentUrl, { start_command: 'ls' }, headers)).body.error, 'INITIAL_COMMAND_NOT_A_TERMINAL');
+    assert.equal((await call('GET', `${agentUrl}/start-command`, undefined, headers)).body.error, 'INITIAL_COMMAND_NOT_A_TERMINAL');
+  }
+});
+
+test('the proxy forwards reads, edits and clears only to Engines with persistence', async () => {
+  const url = id => `${proxy}/api/remote-servers/${id}/tasks/1/terminals/made`;
+  const detail = await call('GET', `${url(newId)}/start-command`);
+  assert.equal(detail.status, 200);
+  assert.ok(detail.body.command === 'make watch');
+  assert.deepEqual(received.at(-1), { method: 'GET', id: 'made' });
+  for (const command of ['make test', '']) {
+    assert.equal((await call('PATCH', url(newId), { start_command: command, extra: 'drop' })).status, 200);
+    const patch = received.at(-1);
+    assert.equal(patch.method, 'PATCH');
+    assert.deepEqual(Object.keys(patch.body), ['start_command']);
+    assert.ok(patch.body.start_command === command);
+  }
+  const count = received.length;
+  assert.equal((await call('GET', `${url(oldId)}/start-command`)).status, 501);
+  assert.equal((await call('PATCH', url(oldId), { start_command: '' })).status, 501);
+  assert.equal(received.length, count);
+  assert.equal((await call('PATCH', url(oldId), { title: 'Renamed' })).status, 200);
+  assert.deepEqual(received.at(-1).body, { title: 'Renamed' });
 });

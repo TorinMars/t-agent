@@ -262,8 +262,16 @@ router.get('/:id/agent-sessions', (req, res) => {
 router.patch('/:id/terminals/:terminalId', (req, res) => {
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
   if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-  try { res.json(terminal.renameTerminal(task.id, req.params.terminalId, req.body && req.body.title)); }
+  try { res.json(terminal.patchTerminal(task.id, req.params.terminalId, req.body)); }
   catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_RENAME_FAILED' }); }
+});
+
+router.get('/:id/terminals/:terminalId/start-command', (req, res) => {
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.set('Cache-Control', 'no-store');
+  try { res.json(terminal.terminalStartCommand(task.id, req.params.terminalId)); }
+  catch (error) { res.status(error.statusCode || 400).json({ error: error.statusCode ? error.message : 'TERMINAL_START_COMMAND_READ_FAILED' }); }
 });
 
 // The live current directory of a terminal's shell, for terminal file links (read-only, see terminal.terminalCwd).

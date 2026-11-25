@@ -972,6 +972,7 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     sent = []
     window.testShowNotices([WidgetNotice(seq: 2, kind: "item", title: "Allow", status: "waiting_user", key: "local:1", target: base + "/")])
     check("bubble: waiting with a live terminal shows Handled and Reply", window.testBubbleActions == ["Handled", "Reply"])
+    window.testLetActionPausePass()  // the Handled of the row above was less than actionDebounce ago
     check("bubble: Handled sends handled and closes", window.testBubbleAction(.handled)
           && posts() == ["/api/attention/widget/items/local:1/handled {}"] && window.testBubbleTitle == nil)
     answer("{}", 200)

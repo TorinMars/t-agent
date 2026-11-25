@@ -181,6 +181,11 @@ func renderSample(_ dir: String) -> Never {
         save("delete-confirm.png", controller.renderPanel((dir as NSString).appendingPathComponent("delete-confirm.png"), dark: dark))
         controller.testClose()
     }
+    // A Confirm that is out: the row dimmed with its spinner (the request is never answered here).
+    controller.loadForTest(sampleList())
+    _ = controller.testPressButton("local:9", .confirm)
+    save("action-pending.png", controller.renderPanel((dir as NSString).appendingPathComponent("action-pending.png"), dark: dark))
+    controller.testFinishActionsForRender()
     controller.loadForTest(nil)
     save("unreachable-panel.png", controller.renderPanel((dir as NSString).appendingPathComponent("unreachable-panel.png"), dark: dark))
     save("unreachable-widget.png", controller.renderWidget((dir as NSString).appendingPathComponent("unreachable-widget.png"), dark: dark))

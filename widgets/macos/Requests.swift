@@ -4,7 +4,13 @@ import AppKit
 // MARK: - Requests
 
 let defaultBaseURL = "http://127.0.0.1:3000"
-let requestTimeout: TimeInterval = 3
+let requestTimeout: TimeInterval = 3  // a read (the list polls, strings, notices, previews of a GET)
+/// A change (Confirm, Reject, Handled, Done, Send now, Run again, a save, a delete, a move): it may go through this server to a connected
+/// service and wait for it, so it gets more time than a poll ("Fast actions on a connected service" in docs/design/attention-desktop-window.md).
+let actionTimeout: TimeInterval = 15
+/// The pause after an action is accepted during which the same action is not taken again on any row (a double click whose second click lands
+/// on the next row's button once the first row has left).
+let actionDebounce: TimeInterval = 0.3
 let keyAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 /// What the task form holds; every value is trimmed the way the server stores it.
@@ -61,7 +67,7 @@ struct WidgetAPI {
         var request = URLRequest(url: URL(string: base + path) ?? URL(string: defaultBaseURL + path)!)
         request.httpMethod = method
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = requestTimeout
+        request.timeoutInterval = method == "GET" ? requestTimeout : actionTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if !token.isEmpty { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         if let body = body {

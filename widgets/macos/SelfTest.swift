@@ -519,6 +519,70 @@ func runSelfTest() -> Never {
     check("strings: loaded once with the token", network.filter { $0.url?.path == "/api/attention/widget/strings" }.count == 1
           && network.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer t" })
 
+    // Fast actions ("Fast actions on a connected service" in docs/design/attention-desktop-window.md): a longer timeout for changes, the row
+    // pending at once, one action per row and the same action not again within actionDebounce, the row moved on success before the
+    // refresh, a stale list that cannot bring it back, and a timeout that gives the row back without claiming a failure.
+    check("timeouts: 3 s for reads, 15 s for changes", api.itemsRequest.timeoutInterval == 3 && api.tickRequest(after: nil, etag: nil, activity: true).timeoutInterval == 3
+          && api.actionRequest(key: "remote:7:5", action: .confirm).timeoutInterval == 15
+          && api.updateRequest(key: "local:1", fields: [:]).timeoutInterval == 15 && api.runNowRequest(key: "local:1").timeoutInterval == 15)
+    mouse.testLetActionPausePass()
+    mouse.loadForTest(board)
+    network = []
+    pending = []
+    answers = [:]
+    mouse.testRefresh()  // a list read that is still out when the action starts (it has the old status)
+    let staleList = pending.popLast()
+    check("fast action: a list read is out", staleList != nil)
+    _ = mouse.testPressButton("remote:7:1", .handled)
+    let actionSent = network.last
+    check("fast action: the request goes out with the change timeout", actionSent?.url?.path == "/api/attention/widget/items/remote:7:1/handled"
+          && actionSent?.timeoutInterval == actionTimeout)
+    check("fast action: the row is pending at once: dimmed, a spinner instead of its buttons", mouse.testRowPending("remote:7:1")
+          && mouse.testRowAlpha("remote:7:1") == pendingRowAlpha && mouse.testSpinnerShown("remote:7:1")
+          && mouse.testShownButtons("remote:7:1").isEmpty && mouse.testButtonsEnabled("remote:7:1") == [false])
+    check("fast action: the other rows are not pending", !mouse.testRowPending("local:1") && !mouse.testSpinnerShown("local:1")
+          && mouse.testShownButtons("local:1") == [.handled])
+    let sentBefore = network.count
+    _ = mouse.testPressButton("remote:7:1", .handled)
+    _ = mouse.testRowView("remote:7:1")?.accessibilityCustomActions()?.first?.handler?()
+    check("fast action: the pending row takes no other click, also not from its accessibility action", network.count == sentBefore)
+    _ = mouse.testPressButton("local:1", .handled)
+    check("fast action: the same action on another row waits for the pause", network.count == sentBefore && !mouse.testRowPending("local:1"))
+    let actionAnswer = pending.popLast()
+    let handledItem: [String: Any] = ["key": "remote:7:1", "engine": "remote:7", "id": "1", "status": "working", "title": "remote:7:1", "sort_order": 90]
+    actionAnswer?(try? JSONSerialization.data(withJSONObject: handledItem), 200)
+    check("fast action: success moves the row at once, before the refresh answers", mouse.testOrder.hasPrefix("needs[local:1 local:2 local:3] working[")
+          && mouse.testOrder.contains("remote:7:1") && mouse.testBadge == "3" && !mouse.testRowPending("remote:7:1"))
+    check("fast action: the refresh afterwards is out", network.last?.url?.path == "/api/attention/widget/items")
+    staleList?(try? JSONSerialization.data(withJSONObject: ["items": board.items.map { ["key": $0.key, "status": $0.status, "title": $0.title,
+                                                                                            "sort_order": $0.sortOrder, "parent_key": $0.parentKey] }]), 200)
+    check("fast action: a list read before the action cannot bring the row back", mouse.testBadge == "3" && !mouse.testOrder.hasPrefix("needs[local:1 local:2 local:3 remote:7:1]"))
+    pending.popLast()?(try? JSONSerialization.data(withJSONObject: ["items": board.items.map { item -> [String: Any] in
+        ["key": item.key, "status": item.key == "remote:7:1" ? "working" : item.status, "title": item.title, "sort_order": item.sortOrder, "parent_key": item.parentKey]
+    }]), 200)
+    check("fast action: the refresh reconciles and ends the pending state", mouse.testBadge == "3" && mouse.testOrder.contains("remote:7:1")
+          && !mouse.testOrder.contains("needs[local:1 local:2 local:3 remote:7:1]") && !mouse.testRowPending("remote:7:1"))
+    mouse.testLetActionPausePass()
+    mouse.loadForTest(board)
+    network = []
+    answers["POST /api/attention/widget/items/local:3/confirm"] = (nil, NSURLErrorTimedOut)
+    _ = mouse.testPressButton("local:3", .confirm)
+    check("fast action: a timeout gives the row back and says so honestly", !mouse.testRowPending("local:3") && mouse.testButtonsEnabled("local:3") == [true, true]
+          && mouse.testToast == "Still waiting for T-Agent; checking the list" && mouse.testOrder.hasPrefix("needs[local:1 local:2 local:3 remote:7:1]"))
+    check("fast action: after a timeout the list is read again to show the truth", network.last?.url?.path == "/api/attention/widget/items")
+    pending.popLast()?(try? JSONSerialization.data(withJSONObject: ["items": board.items.filter { $0.key != "local:3" }.map { ["key": $0.key, "status": $0.status,
+        "title": $0.title, "sort_order": $0.sortOrder, "parent_key": $0.parentKey] }]), 200)
+    check("fast action: the list shows that the change went through after all", !mouse.testOrder.contains("local:3"))
+    mouse.testLetActionPausePass()
+    mouse.loadForTest(board)
+    network = []
+    answers["POST /api/attention/widget/items/local:3/confirm"] = (Data("{}".utf8), 200)
+    _ = mouse.testPressButton("local:3", .confirm)
+    check("fast action: without an item in the answer, Confirm still takes the row out of Needs you", !mouse.testOrder.contains("needs[local:1 local:2 local:3")
+          && mouse.testBadge == "3")
+    pending = []
+    answers = [:]
+
     // Unreachable, the token refused, and the language table.
     mouse.testApply(nil)
     check("unreachable: open and Needs you are dashes, the rows stay", mouse.testCount == "\u{2013}" && mouse.testBadge == "\u{2013}"

@@ -112,6 +112,18 @@ extension WidgetController {
         return true
     }
 
+    /// --render-sample: forgets an action whose request is never answered there.
+    func testFinishActionsForRender() {
+        actionsRunning = 0
+        actionRows.removeAll()
+        syncActionButtons()
+    }
+    /// As if actionDebounce had passed since every action taken so far.
+    func testLetActionPausePass() { lastActionAt = lastActionAt.mapValues { $0.addingTimeInterval(-actionDebounce) } }
+    func testRowPending(_ key: String) -> Bool { rowViews[key]?.pending ?? false }
+    func testSpinnerShown(_ key: String) -> Bool { rowViews[key]?.spinner.map { !$0.isHidden } ?? false }
+    func testShownButtons(_ key: String) -> [RowAction] { rowViews[key]?.actionButtons.filter { !$0.isHidden }.map { $0.rowAction } ?? [] }
+    func testRowAlpha(_ key: String) -> CGFloat { rowViews[key]?.alphaValue ?? 0 }
     func testButtonsEnabled(_ key: String) -> [Bool] { rowViews[key]?.actionButtons.map { $0.isEnabled } ?? [] }
     func testButtonTitles(_ key: String) -> [String] { rowViews[key]?.actionButtons.map { $0.label } ?? [] }
     func testButton(_ key: String, _ action: RowAction) -> ActionButton? {

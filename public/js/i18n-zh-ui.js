@@ -2668,6 +2668,8 @@ I18n.add({
   "Tasks": "任务",
   "Save failed: {1}": "保存失败：{1}",
   "Action failed: {1}": "操作失败：{1}",
+  "Still waiting for T-Agent; checking the list": "仍在等待 T-Agent，正在核对列表",
+  "Waiting for T-Agent": "正在等待 T-Agent",
   "T-Agent did not accept the widget token": "T-Agent 不接受悬浮窗的令牌",
   "Open link: {1}": "打开链接：{1}",
   "Open T-Agent": "打开 T-Agent",

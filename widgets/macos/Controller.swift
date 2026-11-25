@@ -83,7 +83,8 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var drop: DropDecision = .noChange
     var moveInFlight = false { didSet { syncActionButtons() } }
     var buttonHeld = false  // set while an action button is pressed; holds the panel and the refresh
-    var actionRows = Set<String>()  // rows whose request is out or whose success is not refreshed yet
+    var actionRows = Set<String>()  // rows whose request is out (dimmed, with a spinner) or whose success is not refreshed yet
+    var lastActionAt: [String: Date] = [:]  // RowAction raw value -> when it was last accepted (actionDebounce)
     var actionsRunning = 0
     var actionNeedsRefresh = false
     var refreshGeneration = 0
@@ -95,7 +96,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let partG = PartGState()  // scheduled tasks: the firings seen, the form's preview and pop-ups (Part G)
     var moveHook: ((String, MoveSpec, String?) -> Void)?  // for --self-test: takes a drop instead of the server
     /// For --self-test and --render-sample: takes every request instead of the network, with the function that
-    /// answers it (body, status), now or later.
+    /// answers it (body, status), now or later. The status NSURLErrorTimedOut (-1001) answers as a timed-out request.
     var requestHook: ((URLRequest, @escaping (Data?, Int) -> Void) -> Void)?
     /// Opens a task's link in the default browser; --self-test and --render-sample replace it so nothing is opened.
     var openURL: (URL) -> Void = { url in _ = NSWorkspace.shared.open(url) }
@@ -140,7 +141,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.options = options
         let config = URLSessionConfiguration.ephemeral
         config.connectionProxyDictionary = [:]  // localhost must never go through http_proxy
-        config.timeoutIntervalForRequest = requestTimeout
+        config.timeoutIntervalForRequest = actionTimeout  // each request sets its own: requestTimeout or actionTimeout (WidgetAPI.request)
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.urlCache = nil
         self.session = URLSession(configuration: config, delegate: nil, delegateQueue: .main)
@@ -184,7 +185,9 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func perform(_ request: URLRequest, _ done: @escaping (Data?, Int, Error?) -> Void) {
         if let hook = requestHook {
-            hook(request) { data, code in done(data, code, nil) }
+            hook(request) { data, code in
+                code == NSURLErrorTimedOut ? done(nil, 0, URLError(.timedOut)) : done(data, code, nil)
+            }
             return
         }
         session.dataTask(with: request) { data, response, error in

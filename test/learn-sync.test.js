@@ -219,6 +219,7 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
       db, serviceLinks: side.links, owner: () => 'me', identity: () => ({ instance_id: instanceId, name }),
       linkKeys: { publicKey: () => side.settingsSync.publicKey(), linkKey: (peer, key) => side.settingsSync.linkKey(peer, key) },
       tier, learn: side.learn, timeZone: TZ, log: { warn: message => side.logs.push(message), info() {} }, intervalMs: 0, debounceMs: 30, companyDebounceMs: 10, pageSize,
+      loadCoach: () => { if (side.loadCoach) side.loadCoach(); },
       request: async (baseUrl, route, token, opts = {}) => {
         const peer = side.peers.find(candidate => candidate.baseUrl === baseUrl);
         if (!peer || !peer.online) throw Object.assign(new Error('REMOTE_OFFLINE'), { statusCode: 502 });
@@ -938,4 +939,18 @@ test('new words a day on a company computer: "5 more new words" is made on its h
   assert.deepEqual(K.learn.pace('me'), { new_per_day: 10, new_today: 1, new_left: 14 });
   setOnline(K, 'T', false);
   assert.equal((await K.page('POST', '/learn/new-words', { count: 5 })).status, 503, 'the home away: said so');
+});
+
+test('a home whose coach is made on first use still answers a company computer (no 404 that reads as "older" right after a restart)', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  // The home has no coach yet and cannot make one: the 404 the company page reads as "older".
+  T.sync.setCoach(null);
+  await assert.rejects(K.sync.askHome('coach?limit=1', {}), { statusCode: 404 });
+  // The home makes it when the first question comes (its service hands itself in by setCoach), as the server does at start and on first use.
+  T.loadCoach = () => T.sync.setCoach({ view: () => ({ messages: [], translator: true, settings: {} }) });
+  const answered = await K.sync.askHome('coach?limit=1', {});
+  assert.equal(answered.translator, true, JSON.stringify(answered));
 });

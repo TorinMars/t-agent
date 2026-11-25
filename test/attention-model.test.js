@@ -322,6 +322,9 @@ test('a reminder only for a move INTO waiting_user, failed or review', async () 
   assert.equal(reminderFor({ kind: 'updated', item: item(3, 'review'), previous: item(3, 'working') }).status, 'review');
   assert.equal(reminderFor({ kind: 'updated', item: item(1, 'waiting_user'), previous: item(1, 'waiting_user') }), null, 'already there');
   assert.equal(reminderFor({ kind: 'updated', item: item(1, 'done'), previous: item(1, 'working') }), null);
+  assert.equal(reminderFor({ kind: 'updated', item: item(8, 'review', { parent_id: 1 }), previous: item(8, 'working', { parent_id: 1 }) }), null, 'a finished sub-task is no reminder');
+  assert.equal(reminderFor({ kind: 'updated', item: item(8, 'waiting_user', { parent_id: 1 }), previous: item(8, 'working', { parent_id: 1 }) }).status, 'waiting_user', 'a sub-task that needs the person still is');
+  assert.equal(reminderFor({ kind: 'updated', item: item(9, 'failed', { parent_id: 1 }), previous: item(9, 'working', { parent_id: 1 }) }).status, 'failed');
   assert.equal(reminderFor({ kind: 'created', item: item(1, 'todo') }), null);
   assert.equal(reminderFor({ kind: 'deleted', item: item(1, 'failed') }), null);
 });

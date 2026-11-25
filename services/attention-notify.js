@@ -796,6 +796,9 @@ function createAttentionNotify(options) {
     const owner = getOwner();
     const rules = getRules(owner);
     if (!rules.statuses.includes(item.status)) return tasks;
+    // A sub-task that finished (review) sends nothing: the main task reports when the whole work is done (the user's rule, 2026-11-25). A sub-task that
+    // needs the person (waiting_user) or failed still does.
+    if (item.status === 'review' && item.parent_id !== null && item.parent_id !== undefined) return tasks;
     const quiet = inQuietHours(rules.quietHours, new Date(now()));
     const foreground = onScreen(item);
     for (const plugin of notifiers) {

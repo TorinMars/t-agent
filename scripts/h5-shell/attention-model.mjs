@@ -343,6 +343,8 @@ export function reminderFor(change) {
     return { id: item.id, status: item.status, label: 'Due now', title: String(item.title || ''), reason: String(item.attention_reason || '') };
   }
   if (!REMIND_STATUSES.includes(item.status)) return null;
+  // A finished sub-task (review) is no reminder: the main task reports when the whole work is done; a sub-task that needs the person or failed still is.
+  if (item.status === 'review' && item.parent_id !== null && item.parent_id !== undefined) return null;
   if (previous && previous.status === item.status) return null;
   // A move (POST /move publishes every task whose order or status changed with `reorder: true`; the renumbered neighbours with `event: null`) is a
   // reminder only when it changed the status.

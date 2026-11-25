@@ -98,6 +98,20 @@ test('the default rules notify only on entering waiting_user, failed or review: 
   assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status]), [[3, 'review']]);
 });
 
+test('a finished sub-task sends nothing; a sub-task that needs the person or failed still does', async () => {
+  const { bus, fake } = setup();
+  bus.emit(change('updated', { ...item(4, 'review'), parent_id: 1 }, { ...item(4, 'working'), parent_id: 1 }));
+  await settle();
+  assert.equal(fake.calls.length, 0, 'a sub-task in review');
+  bus.emit(change('updated', { ...item(5, 'waiting_user'), parent_id: 1 }, { ...item(5, 'working'), parent_id: 1 }));
+  bus.emit(change('updated', { ...item(6, 'failed'), parent_id: 1 }, { ...item(6, 'working'), parent_id: 1 }));
+  await settle();
+  assert.deepEqual(fake.calls.map(call => [call.item.id, call.item.status]), [[5, 'waiting_user'], [6, 'failed']]);
+  bus.emit(change('updated', { ...item(7, 'review'), parent_id: null }, { ...item(7, 'working'), parent_id: null }));
+  await settle();
+  assert.equal(fake.calls.at(-1).item.id, 7, 'a main task in review still notifies');
+});
+
 test('nothing is sent while the session of the item is in the foreground on this engine; in the background it is', async () => {
   const shown = new Set(['7:term-a']);
   const asked = [];

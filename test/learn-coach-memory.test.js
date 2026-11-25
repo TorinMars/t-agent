@@ -131,6 +131,7 @@ test('the rolling summary: folded after the answer when the history outgrows its
   const [first] = ctx.folds;
   assert.equal(first.options.temperature, 0.2);
   assert.match(first.system, /Facts only/);
+  assert.match(first.system, /Keep the latest preference when the learner corrects an earlier one/);
   assert.match(first.messages[0].content, /^Summary so far:\n\(none\)\n\nNew messages:\nPerson: Question 0/);
   const row = ctx.db.prepare("SELECT * FROM learn_coach_summary WHERE owner = 'me'").get();
   assert.match(row.text, /^Summary \d+: the person practises spelling\.$/);

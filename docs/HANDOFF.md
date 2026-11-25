@@ -4,6 +4,11 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 
 The design document is split (2026-11-18): `DESIGN.md` is a small index (topic table, cross-cutting rules, development notes, "Recent versions"), and the text of each area is in its own file under `docs/design/` (for example `terminals.md`, `page-task-list.md`, `attention-notifiers.md`). Open only the files of your area; never read them all.
 
+## Learn coach conversation flexibility (in development)
+
+- The coach prompt uses current requests and stated learning preferences to guide text exercises and feedback. Built-in practice plans still use word spelling. The rolling summary preserves updated preferences.
+- The targeted coach, Claude, memory and plan tests cover the prompt and existing plan rules with mock providers. Live model replies still need checking with a real example of the rigid behavior.
+
 ## Saved terminal start commands (branch fix/start-command-persist)
 
 - Schema 28 stores cleaned commands for plain terminals. A newly spawned PTY sends its terminal's command once after the normal readiness delay.

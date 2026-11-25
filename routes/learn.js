@@ -52,6 +52,11 @@ const express = require('express');
 //   POST  /api/learn/coach/undo { token }; POST /api/learn/coach/plans/start { message_uid, proposal_id } -> { plan, stale } | { empty: true }
 //   GET   /api/learn/coach/notes; PATCH|DELETE /api/learn/coach/notes/:uid; POST /api/learn/coach/summary/reset
 // ("The coach" in docs/design/learn-english-coach.md; services/learn-coach.js. On a company computer its home answers, in one piece.)
+//   GET   /api/learn/speech/status                    -> { ready, reason: null | 'no_key' | 'offline' | 'home_older', voices: ['stella', 'tide'] }
+//   GET   /api/learn/speech?text=&voice=stella|tide   -> audio/wav (Cache-Control private): the text read by DeepSeek with the translation service's
+//         DeepSeek key (400 bad text or voice, 409 no DeepSeek key, 422 DeepSeek could not read it, 502 / 503 / 504 DeepSeek failed). On a company
+//         computer made on its home (its key and cache), the audio coming over the link as base64. ("DeepSeek voice" in
+//         docs/design/learn-english-voice.md; services/learn-speech.js.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
@@ -62,12 +67,13 @@ const HOME_OLDER = 'The normal computer that keeps your learning data needs an u
 const STATS_OFFLINE = 'Your progress is kept on a normal computer, which cannot be reached right now';
 const CHAT_OFFLINE = 'Your English chats are kept on a normal computer, which cannot be reached right now';
 const COACH_OFFLINE = 'Your English coach is on a normal computer, which cannot be reached right now';
+const SPEECH_OFFLINE = 'The DeepSeek voice is on a normal computer, which cannot be reached right now';
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
 // `pick`: the level and the picking (services/learn-pick.js), or null for none (like `analysis`). `ask`: the questions about a card
 // (services/learn-ask.js), or null for none (like `analysis`). `chat`: the English chats (services/learn-chat.js), or null for none (like `analysis`).
-function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, chat, coach, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
+function createLearnRouter({ service = null, lookupWord = null, sync, analysis, pick, ask, chat, coach, speech, requireAuth = require('../middleware/auth'), clientOrigin = require('../middleware/client-origin') } = {}) {
   const router = express.Router();
   router.use(clientOrigin, requireAuth);
   let syncService = sync === undefined ? (service ? null : undefined) : sync;
@@ -109,6 +115,12 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     if (coachService === undefined) coachService = require('../services/learn-coach').getLearnCoach();
     if (!coachService) throw Object.assign(new Error('The English coach is not available'), { statusCode: 503 });
     return coachService;
+  };
+  let speechService = speech === undefined ? (service ? null : undefined) : speech;
+  const speaker = () => {
+    if (speechService === undefined) speechService = require('../services/learn-speech').getLearnSpeech();
+    if (!speechService) throw Object.assign(new Error('The DeepSeek voice is not available'), { statusCode: 503 });
+    return speechService;
   };
   const mustPicker = () => {
     const current = picker();
@@ -317,6 +329,37 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     let chatLine = null;
     await streamed(req, res, ({ onDelta, signal }) => service.send(owner(req), req.body, { onChat: value => { chatLine = value; }, onDelta, signal }),
       result => ({ done: true, chat: result.chat, messages: result.messages }), () => (chatLine ? [{ chat: chatLine }] : []));
+  });
+  // ---- The DeepSeek voice: on a company computer made on its home, which has the key and the cache ----
+  router.get('/speech/status', handle(async req => {
+    if (!cacheOnly()) return speaker().status(owner(req));
+    const { VOICES } = require('../services/learn-speech');
+    try { return await learnSync().askHome('speech-status', { offline: SPEECH_OFFLINE }); } catch (error) {
+      // Away, or a home without the voice: not ready, said why (the page reads with this device's voices).
+      if (error.statusCode === 503) return { ready: false, reason: 'offline', voices: [...VOICES] };
+      if (error.statusCode === 404) return { ready: false, reason: 'home_older', voices: [...VOICES] };
+      throw error;
+    }
+  }));
+  router.get('/speech', async (req, res) => {
+    try {
+      const { checkRequest, isWav } = require('../services/learn-speech');
+      const asked = { text: req.query.text, voice: req.query.voice };
+      let audio;
+      if (cacheOnly()) {
+        const { text, voice } = checkRequest(asked);
+        let answer;
+        try { answer = await learnSync().askHome(`speech?${new URLSearchParams({ text, voice })}`, { offline: SPEECH_OFFLINE, timeout: 45_000 }); } catch (error) {
+          if (error.statusCode === 404) throw Object.assign(new Error(HOME_OLDER), { statusCode: 409 });
+          throw error;
+        }
+        audio = answer && typeof answer.audio === 'string' ? Buffer.from(answer.audio, 'base64') : null;
+        if (!isWav(audio)) throw Object.assign(new Error('The DeepSeek voice is not available right now'), { statusCode: 502 });
+      } else {
+        audio = await speaker().speak(owner(req), asked);
+      }
+      res.status(200).set({ 'Content-Type': 'audio/wav', 'Cache-Control': 'private, max-age=604800', 'X-Content-Type-Options': 'nosniff' }).send(audio);
+    } catch (error) { fail(res, error); }
   });
   // ---- The English coach: on a company computer kept and answered on its home (personal data, like the chats) ----
   const homeCoach = async (route, options = {}) => {

@@ -36,7 +36,8 @@ export const longestMs = (text, slow) => Math.round((4000 + String(text || '').l
 // How often the player looks again whether the browser is still reading before it starts the next repeat.
 export const SPEAKING_CHECK_MS = 200;
 
-// `speakOnce(text, { slow, onStart, onEnd, onError })` reads once and calls back (onError with the error name); returns false when it cannot.
+// `speakOnce(text, { slow, onStart, onEnd, onError, onLoading, onReady })` reads once and calls back (onError with the error name); returns false when
+// it cannot. A voice that first loads its audio calls onLoading at once and onReady when the sound can start.
 // `cancel()` stops what is being read. `speaking()`: whether the browser is still reading (speechSynthesis.speaking / pending). Some browsers
 // report the end of a long reading (a whole sentence in Spell) before it is heard to the end; the next repeat starts with a cancel, so it would cut
 // the sentence off. The next repeat therefore waits until the browser has really stopped, then the pause, and gives up waiting after the longest
@@ -98,6 +99,14 @@ export function createPlayer({ speakOnce, cancel = () => {}, speaking = () => fa
         done();
       };
       const first = auto && mine.index === 1;
+      // The watches start when the sound can start: at once, or, for a voice whose audio is still loading (the DeepSeek voice, learn-voice.mjs
+      // calls `onLoading` and then `onReady`), when it has arrived; the wait for it is not taken for a browser that refuses sound.
+      let loading = false;
+      const watch = () => {
+        if (!live() || ended) return;
+        if (first) later(() => { if (!started && !ended) refused(); }, START_MS);
+        later(end, longestMs(text, slow));
+      };
       const ok = speakOnce(text, {
         slow,
         onStart: () => { started = true; },
@@ -106,10 +115,11 @@ export function createPlayer({ speakOnce, cancel = () => {}, speaking = () => fa
           if (!live()) return;
           if (first && (error === 'not-allowed' || !started)) refused(); else end();
         },
+        onLoading: () => { loading = true; },
+        onReady: () => { if (loading) { loading = false; watch(); } },
       });
       if (!ok) { finish(); return; }
-      if (first) later(() => { if (!started && !ended) refused(); }, START_MS);
-      later(end, longestMs(text, slow));
+      if (!loading) watch();
     };
     next();
   }

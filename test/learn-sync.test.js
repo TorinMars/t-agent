@@ -17,7 +17,7 @@ const Database = require('better-sqlite3');
 
 const merge = require('../services/learn-merge');
 const syncStore = require('../services/learn-sync-store');
-const { createLearn } = require('../services/learn');
+const { createLearn, LearnError } = require('../services/learn');
 const { createLearnRouter } = require('../routes/learn');
 const { createLearnSync, CAPABILITY, REPORTS_CAPABILITY } = require('../services/learn-sync');
 const { createLearnAnalysis } = require('../services/learn-analysis');
@@ -136,6 +136,9 @@ test('merge: what a peer sends is checked; norm is computed here, never taken fr
   // The audio settings travel with them; a value this version does not know is left out (the default here), never an error.
   assert.deepEqual(merge.settingsFromPeer({ collect: true, audio_repeat: 5, audio_speed: 'slow', audio_words: false, audio_pause: 9, audio_sentences_at: 'later' }, { dev: {} }),
     { collect: true, audio_repeat: 5, audio_speed: 'slow', audio_words: false });
+  // The voice ("DeepSeek voice" in docs/design/learn-english-voice.md) too; an unknown engine or voice is left out.
+  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'deepseek', voice_id: 'tide' }, { dev: {} }), { voice_engine: 'deepseek', voice_id: 'tide' });
+  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'cloud', voice_id: 'echo' }, { dev: {} }), {});
 });
 
 // ---- Schema 13 -> 14 ----
@@ -220,6 +223,7 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
       linkKeys: { publicKey: () => side.settingsSync.publicKey(), linkKey: (peer, key) => side.settingsSync.linkKey(peer, key) },
       tier, learn: side.learn, timeZone: TZ, log: { warn: message => side.logs.push(message), info() {} }, intervalMs: 0, debounceMs: 30, companyDebounceMs: 10, pageSize,
       loadCoach: () => { if (side.loadCoach) side.loadCoach(); },
+      loadSpeech: () => side.speech,
       request: async (baseUrl, route, token, opts = {}) => {
         const peer = side.peers.find(candidate => candidate.baseUrl === baseUrl);
         if (!peer || !peer.online) throw Object.assign(new Error('REMOTE_OFFLINE'), { statusCode: 502 });
@@ -294,9 +298,19 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
         return { content: text, toolCalls: [] };
       },
     });
+    // The DeepSeek voice with a stub (never DeepSeek itself): a tiny WAV that names the engine and the text; `speechFails` makes it refuse.
+    side.speechCalls = [];
+    side.speech = {
+      status: () => ({ ready: true, reason: null, voices: ['stella', 'tide'] }),
+      speak: async (owner, body) => {
+        side.speechCalls.push(body);
+        if (side.speechFails) throw new LearnError('DeepSeek could not read this text', 422);
+        return tinyWav(`${name}:${body.voice}:${body.text}`);
+      },
+    };
     const app = express();
     app.use(express.json({ limit: '32mb' }));
-    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, chat: side.chat, coach: side.coach, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
+    app.use('/api/learn', createLearnRouter({ service: side.learn, sync: side.sync, analysis: side.analysis, pick: side.pick, ask: side.ask, chat: side.chat, coach: side.coach, speech: side.speech, requireAuth: (req, res, next) => { req.session = { user: { login: 'me' } }; next(); }, clientOrigin: pass }));
     app.use('/api/device-tier', createDeviceTierRouter({ tier: () => tier }));
     const engineAuth = () => (req, res, next) => {
       const token = (req.get('Authorization') || '').replace(/^Bearer /, '');
@@ -939,6 +953,50 @@ test('new words a day on a company computer: "5 more new words" is made on its h
   assert.deepEqual(K.learn.pace('me'), { new_per_day: 10, new_today: 1, new_left: 14 });
   setOnline(K, 'T', false);
   assert.equal((await K.page('POST', '/learn/new-words', { count: 5 })).status, 503, 'the home away: said so');
+});
+
+// A WAV header and `label` as its sound bytes (enough for the check of services/learn-speech.js isWav).
+function tinyWav(label) {
+  const data = Buffer.from(label, 'utf8');
+  const head = Buffer.alloc(44);
+  head.write('RIFF', 0, 'latin1'); head.writeUInt32LE(36 + data.length, 4); head.write('WAVE', 8, 'latin1');
+  head.write('fmt ', 12, 'latin1'); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22); head.writeUInt32LE(24000, 24);
+  head.writeUInt32LE(48000, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34); head.write('data', 36, 'latin1'); head.writeUInt32LE(data.length, 40);
+  return Buffer.concat([head, data]);
+}
+
+test('the DeepSeek voice on a company computer is made on its home: the audio comes over the link as base64 and is served as WAV', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  K.tier.setCompany(true);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal(K.sync.cacheOnly(), true);
+  assert.deepEqual((await K.page('GET', '/learn/speech/status')).body, { ready: true, reason: null, voices: ['stella', 'tide'] }, "the home's status");
+  const response = await fetch(`${K.base}/api/learn/speech?${new URLSearchParams({ text: '  Deploy   it. ', voice: 'tide' })}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'audio/wav');
+  assert.match(response.headers.get('cache-control'), /^private/);
+  const audio = Buffer.from(await response.arrayBuffer());
+  assert.equal(audio.subarray(44).toString('utf8'), 'T:tide:Deploy it.', 'made on the home, the text checked first');
+  assert.deepEqual(T.speechCalls, [{ text: 'Deploy it.', voice: 'tide' }]);
+  assert.deepEqual(K.speechCalls, [], 'never made on the company computer');
+  assert.ok(K.requests.includes('GET /v1/learn-sync/speech'), JSON.stringify(K.requests));
+  // The choice of the voice is shared like the other learning settings: made on the home from here, read back here.
+  assert.equal((await K.page('PUT', '/learn/settings', { voice_engine: 'deepseek', voice_id: 'tide' })).status, 200);
+  assert.deepEqual([(await T.page('GET', '/learn/settings')).body.voice_engine, (await K.page('GET', '/learn/settings')).body.voice_id], ['deepseek', 'tide']);
+  // A refusal of the home keeps its status and message; a text refused here never reaches the home.
+  T.speechFails = true;
+  const refused = await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'Deploy it.' })}`);
+  assert.deepEqual([refused.status, refused.body.error], [422, 'DeepSeek could not read this text']);
+  assert.equal((await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'x'.repeat(501) })}`)).status, 400);
+  assert.equal(T.speechCalls.length, 2);
+  // A home without the voice (an older version) and a home that is away.
+  T.speech = null;
+  assert.equal((await K.page('GET', '/learn/speech/status')).body.reason, 'home_older');
+  assert.equal((await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'Deploy it.' })}`)).status, 409);
+  setOnline(K, 'T', false);
+  assert.equal((await K.page('GET', '/learn/speech/status')).body.reason, 'offline');
+  assert.equal((await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'Deploy it.' })}`)).status, 503);
 });
 
 test('a home whose coach is made on first use still answers a company computer (no 404 that reads as "older" right after a restart)', async t => {

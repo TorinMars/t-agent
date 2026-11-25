@@ -11,6 +11,8 @@
 //   GET  /v1/learn-sync/ask?kind=&norm=, POST /v1/learn-sync/ask { kind, norm, question, mode, state }: the questions about a card for a company
 //   computer's page (the card named by kind and normalized text; the model is asked on the home, and the answer comes as one JSON { messages }).
 //   GET  /v1/learn-sync/stats: the numbers of the Progress view of the home for a company computer's page (the same answer as GET /api/learn/stats).
+//   GET  /v1/learn-sync/speech-status, GET /v1/learn-sync/speech?text=&voice=: the DeepSeek voice for a company computer's page (made with the home's
+//   key and kept in its cache): { ready, reason, voices }, and { type: 'audio/wav', audio } with the WAV as base64 (the links carry JSON only).
 //   GET  /v1/learn-sync/chats, GET /v1/learn-sync/chat?uid=, POST /v1/learn-sync/chat-send { chat, question, topic }, POST /v1/learn-sync/chat-update
 //   { uid, title?, journal? }, POST /v1/learn-sync/chat-delete { uid }: the English chats for a company computer's page (kept and answered on the home;
 //   the same answers as /api/learn/chats, the send as one JSON { chat, messages }).
@@ -65,6 +67,9 @@ function createEngineLearnSyncRouter(options = {}) {
   router.get('/ask', handle(req => service().engineHome(req.serviceLink, 'ask-history', { kind: req.query.kind, norm: req.query.norm })));
   router.post('/ask', handle(req => service().engineHome(req.serviceLink, 'ask', req.body)));
   router.get('/stats', handle(req => service().engineHome(req.serviceLink, 'stats')));
+  // The DeepSeek voice of Learn: { ready, reason, voices } and { type: 'audio/wav', audio: <base64> } (services/learn-speech.js).
+  router.get('/speech-status', handle(req => service().engineHome(req.serviceLink, 'speech-status')));
+  router.get('/speech', handle(req => service().engineHome(req.serviceLink, 'speech', { text: req.query.text, voice: req.query.voice })));
   router.get('/chats', handle(req => service().engineHome(req.serviceLink, 'chats')));
   router.get('/chat', handle(req => service().engineHome(req.serviceLink, 'chat', { uid: req.query.uid })));
   router.post('/chat-send', handle(req => service().engineHome(req.serviceLink, 'chat-send', req.body)));

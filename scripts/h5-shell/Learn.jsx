@@ -10,9 +10,12 @@ import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import InputBase from '@mui/material/InputBase';
 import LinearProgress from '@mui/material/LinearProgress';
 import OutlinedInput from '@mui/material/OutlinedInput';
+import Radio from '@mui/material/Radio';
+import RadioGroup from '@mui/material/RadioGroup';
 import Slide from '@mui/material/Slide';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
@@ -32,6 +35,7 @@ import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss
 import { BUILD_HIDDEN, SENTENCE_EXERCISE, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, gapLayout, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
+import { TRY_TEXT, createServerVoice, createVoiceEngine, fetchVoiceStatus, voiceOptions, voiceState } from './learn-voice.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
@@ -116,25 +120,72 @@ function useLearnData() {
   return { summary, error, reload, settings, setSettings };
 }
 
-// Speech output (Hear it, Dictation) and the way Say it hears the person, read when the page opens (the voices may come a moment later).
-function useSpeech() {
+// ── The DeepSeek voice ("DeepSeek voice" in docs/design/learn-english-voice.md; learn-voice.mjs) ──
+// One player of the server's audio for the page (one audio element, unlocked by the first tap on iOS, and the audio of each text fetched once).
+let serverVoice = null;
+function getServerVoice() {
+  if (serverVoice) return serverVoice;
+  if (typeof window === 'undefined' || typeof window.Audio !== 'function' || typeof URL.createObjectURL !== 'function') return null;
+  serverVoice = createServerVoice({
+    fetchImpl: (...args) => window.fetch(...args), makeAudio: () => new window.Audio(),
+    createUrl: blob => URL.createObjectURL(blob), revokeUrl: url => URL.revokeObjectURL(url),
+  });
+  return serverVoice;
+}
+// DeepSeek could not read: one short notice per page load (this device's voice read instead).
+let voiceNoticeShown = false;
+function voiceNotice(ui, reason) {
+  if (voiceNoticeShown || !ui || typeof ui.notify !== 'function') return;
+  voiceNoticeShown = true;
+  const text = reason === 409 || reason === 'no_key' ? "Set up the DeepSeek translation service first. This device's voice reads for now."
+    : reason === 404 || reason === 'unsupported' || reason === 'home_older' ? "This engine has no DeepSeek voice yet. This device's voice reads instead."
+      : "The DeepSeek voice is not available right now. This device's voice reads instead.";
+  ui.notify(t(text), 'info');
+}
+// Whether the DeepSeek voice can read (GET /api/learn/speech/status), asked when it is chosen and again with `again`. No key and an engine
+// without the voice make every play use this device's voice at once (the player's `setDown`).
+function useVoiceStatus(engine, again = 0) {
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    if (engine !== 'deepseek') return undefined;
+    let live = true;
+    fetchVoiceStatus().then(next => {
+      if (!live) return;
+      setStatus(next);
+      const server = getServerVoice();
+      if (server) server.setDown(next.unsupported || next.reason === 'home_older' ? 404 : next.reason === 'no_key' ? 409 : null);
+    });
+    return () => { live = false; };
+  }, [engine, again]);
+  return engine === 'deepseek' ? voiceState(status) : { ready: null, reason: null };
+}
+
+// Speech output (Hear it, Dictation) and the way Say it hears the person, read when the page opens (the voices may come a moment later). With
+// the DeepSeek voice chosen (and not known to be unable) `engine` is 'deepseek' and the page can read aloud even without speechSynthesis.
+function useSpeech(settings, ui) {
   const [tts, setTts] = useState(canSpeak);
   const [voice] = useState(voiceWay);
   useEffect(() => {
     const speech = window.speechSynthesis;
-    if (!speech || typeof speech.addEventListener !== 'function') return undefined;
+    const stopAll = () => { stopSpeaking(); if (serverVoice) serverVoice.stop(); };
+    if (!speech || typeof speech.addEventListener !== 'function') return stopAll;
     const update = () => setTts(canSpeak());
     speech.addEventListener('voiceschanged', update);
-    return () => { speech.removeEventListener('voiceschanged', update); stopSpeaking(); };
+    return () => { speech.removeEventListener('voiceschanged', update); stopAll(); };
   }, []);
-  return { tts, voice: Boolean(voice) };
+  const chosen = voiceOptions(settings);
+  const deepseek = useVoiceStatus(chosen.engine);
+  const server = chosen.engine === 'deepseek' && deepseek.ready !== false && Boolean(getServerVoice());
+  // Chosen but unable (no key, an engine without it): said once, and this device's voices read.
+  useEffect(() => { if (chosen.engine === 'deepseek' && deepseek.ready === false) voiceNotice(ui, deepseek.reason); }, [chosen.engine, deepseek.ready, deepseek.reason]); // eslint-disable-line react-hooks/exhaustive-deps -- once the state is known
+  return { tts: tts || server, voice: Boolean(voice), engine: server ? 'deepseek' : 'system', voiceId: chosen.voice };
 }
 
 function Learn({ state, ui }) {
   const phone = !state.wide;
   const keys = state.input === 'pointer' || Boolean(state.hasKeyboard);
   const data = useLearnData();
-  const speech = useSpeech();
+  const speech = useSpeech(data.settings, ui);
   // 'chat': the coach (LearnCoach.jsx; the old English chat on an engine without it), 'chats' / 'oldchat': earlier chats, 'series': a practice series of the coach.
   const [view, setView] = useState(null); // { kind: 'session' | 'material' | 'settings' | 'mistakes' | 'reports' | 'report' | 'how' | 'chat' | 'chats' | 'oldchat' | 'series' | 'progress', mode?, preset?, uid?, seq }
   const viewRef = useRef(null);
@@ -746,7 +797,7 @@ function useExerciseKeys(register) {
 }
 
 function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, onRestart, onDone, openTranslator, settings }) {
-  const audio = useAudio(settings, speech.tts);
+  const audio = useAudio(settings, speech, ui);
   const [cards, setCards] = useState(preset || null);
   const [error, setError] = useState('');
   const [index, setIndex] = useState(0);
@@ -880,7 +931,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
 // kept) and the end returns by itself, both to the coach with the result.
 const SERIES_TITLES = { spell: 'Spell the word', review: 'Daily review', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
 function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settings, leaveRef, onEnd, onDone }) {
-  const audio = useAudio(settings, speech.tts);
+  const audio = useAudio(settings, speech, ui);
   const [run, setRun] = useState(() => createSeries(series.plan, { tts: speech.tts }));
   const runRef = useRef(run);
   runRef.current = run;
@@ -1180,17 +1231,28 @@ function useAsk({ card, exercise, result, answer, expected = '', gap = false, fi
 // repeat, typing skips the rest of the repeats (when "Stop when I start typing" is on), and leaving the card, answering or Stop cancels what is
 // pending, so nothing of one card is heard over the next. A browser that refuses sound before the first tap shows "Tap to play" once per page load.
 let tapToPlayShown = false;
-function useAudio(settings, tts) {
+function useAudio(settings, speech, ui) {
   const options = audioOptions(settings);
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  const ttsRef = useRef(tts);
-  ttsRef.current = tts;
+  const speechRef = useRef(speech);
+  speechRef.current = speech;
+  const ttsRef = useRef(speech.tts);
+  ttsRef.current = speech.tts;
+  const uiRef = useRef(ui);
+  uiRef.current = ui;
   const [state, setState] = useState({ playing: false, text: '', index: 0, total: 0, blocked: false });
-  const player = useMemo(() => createPlayer({
-    speakOnce, cancel: stopSpeaking, speaking: isSpeaking,
-    onChange: next => { if (next.blocked) tapToPlayShown = true; setState(next); },
+  // This device's voices or DeepSeek's (learn-voice.mjs), as chosen now; a DeepSeek play that fails is read by this device's voice.
+  const engine = useMemo(() => createVoiceEngine({
+    system: { speakOnce, cancel: stopSpeaking, speaking: isSpeaking },
+    server: getServerVoice(),
+    choice: () => ({ engine: speechRef.current.engine, voice: speechRef.current.voiceId }),
+    onNotice: reason => voiceNotice(uiRef.current, reason),
   }), []);
+  const player = useMemo(() => createPlayer({
+    speakOnce: engine.speakOnce, cancel: engine.cancel, speaking: engine.speaking,
+    onChange: next => { if (next.blocked) tapToPlayShown = true; setState(next); },
+  }), [engine]);
   useEffect(() => () => player.stop(), [player]);
   return useMemo(() => ({
     options, state,
@@ -1202,12 +1264,15 @@ function useAudio(settings, tts) {
     },
     stop: () => player.stop(),
     typed: () => { if (optionsRef.current.stopOnTyping) player.skipRest(); },
+    // The DeepSeek audio of a card is fetched when the card appears, so Hear it plays at once (nothing for this device's voices).
+    preload: text => { if (ttsRef.current && text) engine.preload(text); },
   }), [player, state, options.words, options.sentences, options.sentencesAt, options.repeat, options.pauseMs, options.slow, options.stopOnTyping]); // eslint-disable-line react-hooks/exhaustive-deps -- the options by value
 }
 // The plays of a card by itself: at the start (when it appears) and after the answer, as `autoPlays` says for the exercise.
 function useCardAudio(audio, exercise, text, result) {
   const plays = autoPlays(exercise, audio.options);
   useEffect(() => {
+    audio.preload(text);
     if (plays.includes('start')) audio.play(text, { auto: true });
     return () => audio.stop();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per card (an exercise is drawn again for each card)
@@ -2360,7 +2425,7 @@ function SettingsView({ frame, ui, data, openTranslator, open, focus = '' }) {
       )}
       {settings && typeof current.new_per_day === 'number' ? <NewWordsSettings current={current} busy={busy} save={save} /> : null}
       {settings && typeof current.desired_retention === 'number' ? <ScheduleSettings current={current} busy={busy} save={save} /> : null}
-      {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}
+      {settings ? <AudioSettings current={current} busy={busy} save={save} openTranslator={openTranslator} /> : null}
       {/* Coach: shown by a server whose learning settings have the coach's fields ("Coach settings" in docs/design/learn-english-coach-page.md). */}
       {settings && typeof current.coach_memory === 'boolean' ? <CoachSettings current={current} busy={busy} save={save} ui={ui} focus={focus === 'coach'} /> : null}
       <Card sx={{ p: 2 }}>
@@ -2474,12 +2539,90 @@ function ChoiceRow({ id, label, secondary = null, value, choices, disabled = fal
     </Box>
   );
 }
-function AudioSettings({ current, busy, save }) {
+// The voice that reads ("DeepSeek voice" in docs/design/learn-english-voice.md): this device's voices or DeepSeek's (`voice_engine`, `voice_id` of the
+// learning settings, shared and saved at once like the rest of Audio). For DeepSeek: its voice, Try it, and what it needs or cannot do.
+const VOICE_FAILURES = {
+  409: 'Set up the DeepSeek translation service first',
+  404: 'This engine has no DeepSeek voice yet.',
+  422: 'DeepSeek could not read this text',
+  media: 'This browser could not play the DeepSeek audio.',
+};
+function VoiceChoice({ current, busy, save, openTranslator }) {
+  const chosen = voiceOptions(current);
+  const options = audioOptions(current);
+  const [again, setAgain] = useState(0);
+  const state = useVoiceStatus(chosen.engine, again);
+  const [trying, setTrying] = useState(false);
+  const [tryFailed, setTryFailed] = useState('');
+  const tryIt = () => {
+    const server = getServerVoice();
+    if (!server) { setTryFailed(VOICE_FAILURES.media); return; }
+    setTryFailed('');
+    setTrying(true);
+    const done = () => setTrying(false);
+    server.speakOnce(TRY_TEXT, {
+      voice: chosen.voice, slow: options.slow, onEnd: done,
+      onError: error => { done(); setTryFailed(error === 'not-allowed' ? 'Tap Try it again to play.' : VOICE_FAILURES.media); },
+      onFail: reason => { done(); setTryFailed(VOICE_FAILURES[reason] || 'The DeepSeek voice is not available right now'); if (reason === 409) setAgain(n => n + 1); },
+    });
+  };
+  useEffect(() => () => { if (serverVoice) serverVoice.stop(); }, []);
+  const option = (value, title, caption) => (
+    <FormControlLabel value={value} disabled={busy} sx={{ alignItems: 'flex-start', mx: 0, py: 0.5, minHeight: 44 }}
+      control={<Radio slotProps={{ input: { id: `h5-learn-voice-${value}` } }} sx={{ mt: -0.75, ml: -1 }} />}
+      label={(
+        <Box component="span" sx={{ display: 'block', pt: 0.25 }}>
+          <Typography component="span" variant="body1" sx={{ display: 'block' }}>{t(title)}</Typography>
+          <Typography component="span" variant="body2" color="text.secondary" sx={{ display: 'block' }}>{t(caption)}</Typography>
+        </Box>
+      )} />
+  );
+  const deepseek = chosen.engine === 'deepseek';
+  return (
+    <Box id="h5-learn-voice" data-engine={chosen.engine} data-ready={deepseek && state.ready !== null ? String(state.ready) : undefined} sx={{ py: 1 }}>
+      <Typography variant="body1" id="h5-learn-voice-label" sx={{ mb: 0.5 }}>{t('Voice')}</Typography>
+      <RadioGroup aria-labelledby="h5-learn-voice-label" name="h5-learn-voice-engine" value={chosen.engine}
+        onChange={event => { if (event.target.value !== chosen.engine) { setTryFailed(''); save({ voice_engine: event.target.value }); } }}>
+        {option('system', "This device's voices", 'The voices of this browser, in American English when it has one.')}
+        {option('deepseek', 'DeepSeek', 'Made by DeepSeek with the key of the translation service; each word or sentence is made once and kept on the server.')}
+      </RadioGroup>
+      {deepseek ? (
+        <Box id="h5-learn-voice-deepseek" sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 1, pt: 1.5 }}>
+          {state.reason === 'no_key' ? <TranslatorNotice id="h5-learn-voice-no-key" onOpen={openTranslator} text="Set up the DeepSeek translation service first" /> : null}
+          {state.reason === 'unsupported' || state.reason === 'home_older'
+            ? <Typography id="h5-learn-voice-unsupported" variant="body2" color="text.secondary">{t("This engine has no DeepSeek voice yet. This device's voices read until it is updated.")}</Typography> : null}
+          {state.reason === 'offline'
+            ? <Typography id="h5-learn-voice-offline" variant="body2" color="text.secondary">{t('The DeepSeek voice is on a normal computer, which cannot be reached right now')}</Typography> : null}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <TextField id="h5-learn-voice-id" select size="small" label={t('DeepSeek voice')} value={chosen.voice} disabled={busy}
+              onChange={event => { if (event.target.value !== chosen.voice) { setTryFailed(''); save({ voice_id: event.target.value }); } }} sx={{ minWidth: 180 }}>
+              <option value="stella">{t('Stella (female)')}</option>
+              <option value="tide">{t('Tide (male)')}</option>
+            </TextField>
+            <Button id="h5-learn-voice-try" startIcon={<Icon name="learnSound" size={20} />} disabled={trying || state.reason === 'no_key'} onClick={tryIt}
+              data-playing={trying ? 'true' : undefined}>{trying ? t('Playing…') : t('Try it')}</Button>
+          </Box>
+          {tryFailed ? <Typography id="h5-learn-voice-try-failed" variant="body2" color="error">{t(tryFailed)}</Typography> : null}
+          <Typography id="h5-learn-voice-caption" variant="caption" component="p" color="text.secondary">
+            {t("DeepSeek's voices have their own accent, which may not be American. For a specific accent, choose This device's voices. DeepSeek has no speed control, so Slow plays its audio slower.")}
+          </Typography>
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+function AudioSettings({ current, busy, save, openTranslator }) {
   const options = audioOptions(current);
   return (
     <>
       <Typography variant="overline" component="h3" color="text.secondary" sx={SECTION_SX}>{t('Audio')}</Typography>
       <Card id="h5-learn-audio-card" sx={{ px: 2, py: 1 }}>
+        {voiceOptions(current).known ? (
+          <>
+            <VoiceChoice current={current} busy={busy} save={save} openTranslator={openTranslator} />
+            <Divider sx={{ mx: -2 }} />
+          </>
+        ) : null}
         <SwitchRow inputId="h5-learn-audio-words" label={t('Play words automatically')} disabled={busy} checked={options.words} onChange={on => save({ audio_words: on })}
           secondary={t('When a word card appears, and once more after the answer')} />
         <Divider sx={{ mx: -2 }} />

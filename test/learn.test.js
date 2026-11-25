@@ -18,7 +18,9 @@ const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'a
   // New words a day and the words added for one day ("New words a day" in docs/design/learn-review-fsrs.md).
   new_per_day: 10, extra_new: { day: '', count: 0 },
   // The English coach's switches ("Views" and "Memory" in docs/design/learn-english-coach.md).
-  coach_read_answers: true, coach_read_text: true, coach_memory: true, coach_economy: false, coach_engine: 'translator' };
+  coach_read_answers: true, coach_read_text: true, coach_memory: true, coach_economy: false, coach_engine: 'translator',
+  // The voice that reads ("DeepSeek voice" in docs/design/learn-english-voice.md).
+  voice_engine: 'system', voice_id: 'stella' };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');

@@ -4,11 +4,11 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 
 The design document is split (2026-11-18): `DESIGN.md` is a small index (topic table, cross-cutting rules, development notes, "Recent versions"), and the text of each area is in its own file under `docs/design/` (for example `terminals.md`, `page-task-list.md`, `attention-notifiers.md`). Open only the files of your area; never read them all.
 
-## Learn coach conversation flexibility (in development)
+## Learn coach conversation flexibility (v2.172.0)
 
 - The coach prompt uses current requests and stated learning preferences to guide text exercises and feedback. The rolling summary preserves updated preferences.
 - Word practice selects cards before it builds an exercise. It supports new or due words, highest error rate, exact selections and custom read-only filters. The same ordered words can be reused with direct spelling, sentence gaps or an ungraded preview followed by spelling.
-- Existing plans still load. New plans store selected word text and validated example sentences in the proposal, so linked engines use their own card ids. The targeted tests and the coach browser test pass with mock providers. Live model interpretation of natural-language filters is unverified.
+- Existing plans still load. New plans store selected word text and validated example sentences in the proposal, so linked engines use their own card ids. The release run passed 3,080 checks. Eight browser checks failed initially and passed on targeted reruns after their fixtures or waits were corrected. The coach tests use mock providers. Live model interpretation of natural-language filters is unverified.
 
 ## Saved terminal start commands (branch fix/start-command-persist)
 

@@ -308,4 +308,10 @@ I18n.add({
   "Every {1} at {2} ({3} time): \"{4}\".": "每{1} {2}（{3} 时间）：“{4}”。",
   "{1} of {2} notes. Tap a line to edit it, × deletes it (with Undo). Secrets such as passwords are never kept.": "共 {1} / {2} 条记忆。点按一行可编辑，× 删除（可撤销）。密码等机密信息从不保存。",
   "Step {1} of {2}": "第 {1} 步，共 {2} 步",
+
+  // ---- Settings → Account and access → Devices and sign-ins (AccessLog.jsx) ----
+  "{1} addresses": "{1} 个地址",
+  "Sign out {1}?": "登出 {1}？",
+  "Forget {1}?": "忘记 {1}？",
+  "{1} must log in again with a code. Its open terminals close.": "{1} 必须用验证码重新登录。它打开的终端会关闭。",
 });

@@ -45,10 +45,15 @@
     return token && nonce ? { token, nonce } : null;
   })();
 
+  // The id of this browser (`TALocalKeys.deviceId()`, public/js/local-keys.js) goes with every request, so the login is tied to this device in
+  // the access log ("Devices and sign-ins" in docs/design/page-files-and-settings.md).
+  function deviceHeader() {
+    try { const id = window.TALocalKeys && window.TALocalKeys.deviceId ? window.TALocalKeys.deviceId() : ''; return id ? { 'X-TA-Device': id } : {}; } catch { return {}; }
+  }
   async function request(url, body) {
     const response = await fetch(url, {
       method: body ? 'POST' : 'GET', cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...deviceHeader() },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     const data = await response.json();

@@ -31,6 +31,7 @@ import { InTab, LocalOnly, chooseTab, refreshDeviceTargets, useDeviceTarget, use
 import { SettingsTabs } from './SettingsTabs.jsx';
 import { UsageDataGroup } from './UsageData.jsx';
 import { KeyboardGroup } from './KeyboardSettings.jsx';
+import { AccessAlertsSection, AccessDevicesSection } from './AccessLog.jsx';
 import { refreshEnvironment, useEnvironmentSummary } from './EnvironmentCompare.jsx';
 
 // The address this page was opened at, to come back to after a login or a switch: `/` or `/h5` (an iPhone Home Screen app starts at /h5).
@@ -332,8 +333,10 @@ function VoiceSection({ opened }) {
   );
 }
 
-// "Account and access": the access mode, then the authenticator. Log out is a row of the group list (LogoutRow).
+// "Account and access": the access mode, the authenticator, then the devices that used this service with their sign-ins and the switch of the
+// alerts about new devices (AccessLog.jsx). Log out is a row of the group list (LogoutRow).
 function AccountGroup({ request }) {
+  const [opened, setOpened] = useState(0);
   const [info, setInfo] = useState({ local: false, loopbackOnly: false, host: '', bound: false });
   const [loaded, setLoaded] = useState(false);
   const [code, setCode] = useState('');
@@ -368,28 +371,34 @@ function AccountGroup({ request }) {
     : 'An authenticator login is required; phones, other computers and remote clients can connect.')
     + (!info.local && info.loopbackOnly ? ` ${t('Note: the service currently listens only on')} ${info.host}. ${t('To let other devices connect, set HOST=0.0.0.0 in .env and restart the service.')}` : '');
   return (
-    <Group id="account" title="Account and access" onOpen={load} request={request}>
-      <Section id="access" title="Access mode" aside={<ScopeLabel id="access" />}>
-        <LocalOnly id="h5-access-remote">
-          <Typography id="h5-access-title" variant="body1" component="strong" className="h5-setting-minor">{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
-          <Hint id="h5-access-hint">{hint}</Hint>
-          {info.local && info.bound ? (
-            <Box id="h5-access-code-row">
-              <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
-            </Box>
-          ) : <span id="h5-access-code-row" hidden />}
-          <Actions>
-            <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
-          </Actions>
-          <Feedback id="h5-access-feedback" feedback={feedback} />
-        </LocalOnly>
-      </Section>
-      <Section id="authenticator" title="Authenticator" aside={<ScopeLabel id="authenticator" />}>
-        <LocalOnly id="h5-authenticator-remote">
-          <Hint>{t('Computer and phone share one binding. A login lasts 30 days and renews while in use. Replacing it ends the old authenticator, its recovery codes and other devices’ logins at once.')}</Hint>
-          <Actions><Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`}>{t('Replace authenticator')}</Button></Actions>
-        </LocalOnly>
-      </Section>
+    <Group id="account" title="Account and access" onOpen={() => { setOpened(count => count + 1); void load(); }} request={request}>
+      <InTab part="access">
+        <Section id="access" title="Access mode" aside={<ScopeLabel id="access" />}>
+          <LocalOnly id="h5-access-remote">
+            <Typography id="h5-access-title" variant="body1" component="strong" className="h5-setting-minor">{loaded ? t(info.local ? 'Local access only' : 'Authenticator + allow external access') : ''}</Typography>
+            <Hint id="h5-access-hint">{hint}</Hint>
+            {info.local && info.bound ? (
+              <Box id="h5-access-code-row">
+                <Field id="h5-access-code" label="6-digit authenticator code (verified when switching back to external access)" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" htmlInput={{ inputMode: 'numeric', maxLength: 6 }} />
+              </Box>
+            ) : <span id="h5-access-code-row" hidden />}
+            <Actions>
+              <Button id="h5-access-switch" variant="contained" disabled={busy || !loaded} onClick={() => void switchMode()}>{loaded ? t(info.local ? 'Switch to: authenticator + external access' : 'Switch to: local access only (no verification)') : ''}</Button>
+            </Actions>
+            <Feedback id="h5-access-feedback" feedback={feedback} />
+          </LocalOnly>
+        </Section>
+      </InTab>
+      <InTab part="authenticator">
+        <Section id="authenticator" title="Authenticator" aside={<ScopeLabel id="authenticator" />}>
+          <LocalOnly id="h5-authenticator-remote">
+            <Hint>{t('Computer and phone share one binding. A login lasts 30 days and renews while in use. Replacing it ends the old authenticator, its recovery codes and other devices’ logins at once.')}</Hint>
+            <Actions><Button id="h5-authenticator-replace" component="a" href={`/auth/setup?return_to=${pagePath()}`}>{t('Replace authenticator')}</Button></Actions>
+          </LocalOnly>
+        </Section>
+      </InTab>
+      <InTab part="access-devices"><AccessDevicesSection opened={opened} /></InTab>
+      <InTab part="access-alerts"><AccessAlertsSection opened={opened} /></InTab>
     </Group>
   );
 }

@@ -65,6 +65,10 @@ function mockServer({ scopes, devices, syncOff }) {
     '/api/attention/plugins': { listeners: [{ name: 'claude', version: '1.0.0', description: 'Claude', loaded: true, error: null, enabled: true, statuses: {} }], notifiers: [{ name: 'telegram', version: '1.0.0', description: 'Telegram', loaded: true, error: null, enabled: true, configured: true, summary: 'Logged in', statuses: {}, settings: true, test: true, customUi: 'telegram' }] },
     '/api/attention/widget/settings': { enabled: true, language: 'auto', platform_supported: true, swiftc: true, running: true, building: false, last_error: null },
     '/api/attention/market': { plugins: [] },
+    // Devices and sign-ins (AccessLog.jsx): this machine's own access log, and the shared alert switch.
+    '/api/access/devices': { mode: 'remote', can_sign_out: true, current_device: 'abcdef123456', alerts: { enabled: true }, ip_note: null, devices: [{ id: 'abcdef123456', name: 'Chrome on macOS', custom_name: null, first_seen: 1764000000000, last_seen: 1764000000000, last_ip: '192.168.1.5', ips_seen_count: 1, confirmed: true, revoked_at: null, current: true, sessions: 1, loopback: false }] },
+    '/api/access/events': { events: [], more: false },
+    '/api/access/settings': { access_alerts: true },
   };
   const k01 = {
     '/auth/me': { work_dir: '/k01/work', effective_work_dir: '/k01/work' },
@@ -143,7 +147,7 @@ const partsOf = (page, id) => page.evaluate(groupId => {
   const seen = el => el.getBoundingClientRect().height > 0;
   const headings = [...group.querySelectorAll('h3')].filter(seen).map(el => el.textContent.trim());
   const marks = ['#h5-engine-list', '#h5-shown-devices', '#h5-settings-sync', '#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market',
-    '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound']
+    '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound', '#h5-access-alerts']
     .filter(selector => { const el = group.querySelector(selector); return el && (seen(el) || el.type === 'checkbox'); });
   return { headings, marks };
 }, id);
@@ -153,7 +157,7 @@ const groupsReady = {
   'voice-translate': () => document.getElementById('h5-tr-model') && document.getElementById('h5-tr-model').value === 'deepseek-chat',
   devices: () => document.getElementById('h5-engine-list') ? document.getElementById('h5-rule-sync-role') && document.getElementById('h5-peer-fs-enabled') : document.querySelectorAll('.h5-shown-device').length === 5,
   attention: () => document.querySelector('#h5-plugins-listeners, #h5-plugins-notifiers') && document.querySelector('#h5-attention-widget-enabled, #h5-attention-widget-language'),
-  account: () => document.getElementById('h5-access-title') || document.getElementById('h5-access-remote'),
+  account: () => document.getElementById('h5-access-title') || document.getElementById('h5-access-remote') || document.getElementById('h5-access-alerts'),
   'usage-data': () => document.getElementById('h5-usage-enabled') || document.getElementById('h5-usage-data'),
   keyboard: () => document.getElementById('h5-sec-key-haptics'),
 };
@@ -173,6 +177,8 @@ const EXPECTED = {
     'voice-translate': { headings: ['Voice input', 'Translation'], marks: [] },
     devices: { headings: ['Settings sync', 'Show in task list', 'Environment'], marks: ['#h5-shown-devices', '#h5-settings-sync'] },
     attention: { headings: ['Plugins', 'Desktop window (macOS)', 'AI summary'], marks: ['#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-attention-widget-language'] },
+    // "Alert me about new devices" is shared (settings sync group access-alerts); the access log itself is this device's.
+    account: { headings: [], marks: ['#h5-access-alerts'] },
     // The switch is shared; the data is one set for the linked machines, so its cards are in every tab.
     'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
   },
@@ -182,7 +188,7 @@ const EXPECTED = {
     keyboard: { headings: ['Vibration on key taps'], marks: [] },
     devices: { headings: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
     attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
-    account: { headings: ['Access mode', 'Authenticator'], marks: [] },
+    account: { headings: ['Access mode', 'Authenticator', 'Devices and sign-ins'], marks: [] },
     'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
   },
 };
@@ -289,14 +295,17 @@ async function testOpenSettings(browser) {
   // An old alias of a per-device part: this device's tab, with Link a device.
   await page.evaluate(() => window.H5UI.actions.openSettings('service-links'));
   await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-devices').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')) && document.getElementById('h5-sec-link'));
-  // A whole group stays on the chosen tab when it has parts there; Account has none in Shared.
+  // A whole group stays on the chosen tab when it has parts there: Account has the alert switch in Shared.
   await chooseTab(page, '2');
   await page.evaluate(() => window.H5UI.actions.openSettings('attention'));
   await page.waitForFunction(() => (!document.getElementById('h5-set-attention').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
   assert.equal(await chosenTab(page), '2');
   await chooseTab(page, 'shared');
   await page.evaluate(() => window.H5UI.actions.openSettings('account'));
-  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-account').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
+  await page.waitForFunction(() => document.getElementById('h5-settings-tab-shared').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-account').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')));
+  // A per-device part of Account moves to this device's tab.
+  await page.evaluate(() => window.H5UI.actions.openSettings('access-devices'));
+  await page.waitForFunction(() => document.getElementById('h5-settings-tab-local').getAttribute('aria-selected') === 'true' && (!document.getElementById('h5-set-account').hidden && !document.getElementById('h5-settings-page').classList.contains('MuiModal-hidden')) && document.getElementById('h5-sec-access-devices'));
   // Once placed, a request does not hold the tab: the person can move on.
   await chooseTab(page, 'shared');
   await page.waitForTimeout(300);
@@ -313,7 +322,7 @@ const ALL_LOCAL = {
   devices: { headings: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'], marks: ['#h5-engine-list'] },
   // The desktop window is one card again, with its switch and its language (as without tabs).
   attention: { headings: ['Reminders on this device', 'Plugins', 'Desktop window (macOS)', 'AI summary', 'CLI tokens'], marks: ['#h5-plugins-listeners', '#h5-plugins-notifiers', '#h5-plugins-rules', '#h5-plugins-tab-market', '#h5-attention-widget-enabled', '#h5-attention-widget-language', '#h5-guide-show', '#h5-skill-pointer', '#h5-attention-token-create', '#h5-attention-sound'] },
-  account: { headings: ['Access mode', 'Authenticator'], marks: [] },
+  account: { headings: ['Access mode', 'Authenticator', 'Devices and sign-ins'], marks: ['#h5-access-alerts'] },
   'usage-data': { headings: ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'], marks: [] },
 };
 async function testSyncOff(browser) {

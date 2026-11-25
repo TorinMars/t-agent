@@ -39,6 +39,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `ui_usage_v1` | system_state | shared | settings sync, group usage-record: the "Record button use" switch of the usage data | `services/ui-events.js` |
 | `usage_time_record_v1` | system_state | shared | settings sync, group usage-time-record: the "Record time" switch of the usage time | `services/usage-time.js` |
 | `usage_memories_digest_v1` | system_state | shared | settings sync, group usage-memories-digest: the "Write a weekly digest" switch of the memories | `services/usage-time.js` |
+| `access_alerts_v1` | system_state | shared | settings sync, group access-alerts: the "Alert me about new devices" switch of the access log | `services/access-log.js` |
 | `page_state_v1:<owner>` | system_state | shared | the shared page state sync | `services/page-state.js` |
 | `task_order_v1` | system_state | shared | the shared task order sync, last writer wins | `services/task-order.js` |
 | `telegram_sender` | system_state | shared | the Telegram sender choice, sent to every linked device (`PUT /v1/attention/notify-relay/sender`), newest wins | `services/attention-relay.js` |
@@ -60,6 +61,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `browser_ext_v1` | system_state | device | the browsers paired with this machine (token hashes) | `services/browser-bridge.js` |
 | `frp_config` | system_state | device | the frp tunnel of this machine | `services/frp.js` |
 | `ssh_tunnel_config` | system_state | device | the SSH tunnel of this machine | `services/ssh-tunnel.js` |
+| `access_log_v1` | system_state | device | when this machine's access log started (sessions signed in before it are learned without an alert); the log is this machine's own | `services/access-log.js` |
 | `file_sync_v1` | system_state | device | this machine's file sync role and file list (the files travel by the file sync itself) | `services/file-sync.js` |
 | `single_user_id` | system_state | device | the login that owns this machine's data | `services/single-user.js` |
 | `updated_notice_v1:<owner>` | system_state | device | the update of this machine the person has not acknowledged yet; the dialog of any linked page acknowledges it here through /v1/updated-notice | `services/updated-notice.js` |

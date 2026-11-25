@@ -113,9 +113,11 @@
   };
 
   // ---- This browser ----
-  // A random id of this browser (`ta-device-id`, a `browser` key of public/js/local-keys.js): without storage, one per page load.
+  // A random id of this browser (`ta-device-id`, a `browser` key of public/js/local-keys.js; `TALocalKeys.deviceId()` makes it, and the access
+  // log names this device by it): without storage, one per page load.
   function deviceId() {
     const keys = root.TALocalKeys;
+    if (keys && typeof keys.deviceId === 'function') return keys.deviceId();
     const kept = keys && keys.get('ta-device-id');
     if (typeof kept === 'string' && /^[a-z0-9]{8,32}$/.test(kept)) return kept;
     let id = '';

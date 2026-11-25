@@ -10,7 +10,7 @@ Code: `public/js/continue-drafts.js` (`window.TAContinue`: the pure rules and th
 
 - A recent entry ("Recent sessions" in [session-switcher.md](session-switcher.md)) carries `client`, the kind of client that noted it, and `device`, a random id of that browser. Both are optional and left out when unknown, so an entry from an older page keeps the same JSON (and digest) as before; the merge rules check them (`client` one of `phone`, `computer`, `mac`, `home`; `device` 8 to 32 lower-case letters and digits).
 - The client kind (`clientKind`): the Mac app (its `tagentOpen` message handler) is `mac`, a Home Screen app (standalone display mode) `home`, an iPhone, iPad or Android browser `phone`, anything else `computer` (from `OpenLink.environment`, open-links.md). Shown as "phone", "computer", "Mac app", "Home Screen app".
-- The device id is `ta-device-id` in localStorage (a `browser` key of `public/js/local-keys.js`): without storage it is new on every page load.
+- The device id is `ta-device-id` in localStorage (a `browser` key of `public/js/local-keys.js`, made by `TALocalKeys.deviceId()`): without storage it is new on every page load. The same id names this browser in the access log ("Devices and sign-ins" in [page-files-and-settings.md](page-files-and-settings.md)): `client-auth.js` sends it as `X-TA-Device` on every same-origin request.
 - `noteShown` stamps this device on the entry when the page has just come to the session (`recentShownKey` changed), also when the session was already first because another device noted it (`noteRecent` notes it again when the `device` differs). Drawing the same session again never restamps it, so two devices that show one session never take turns noting it.
 
 ## The continue hint

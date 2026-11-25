@@ -273,6 +273,9 @@ function infoHandler(req, res) {
       // agent-usage:read: GET /v1/agent-usage and POST /v1/agent-usage/refresh, this engine's Claude and Codex plan windows (services/agent-usage.js).
       // A page asks only engines that list it for the plan usage bars.
       require('../services/agent-usage').CAPABILITY,
+      // access:log: this engine keeps an access log of its own (services/access-log.js; its page reads it on /api/access, nothing on /v1), and takes
+      // the switch "Alert me about new devices" through the settings sync (group access-alerts).
+      'access:log',
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });

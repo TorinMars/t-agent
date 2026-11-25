@@ -872,6 +872,37 @@ test('a schema 25 database gets the tables usage_time and memories (schema 26), 
   assert.doesNotMatch(again.stdout, /is migrated/);
 });
 
+test('a schema 26 database gets the access log tables (schema 27), with a copy taken first; existing data is kept and a second start changes nothing', t => {
+  const root = temp(t);
+  assert.equal(openDb({ TAGENT_HOME: root }).status, 0);
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.exec('DROP TABLE access_devices; DROP TABLE access_device_ips; DROP TABLE access_events');
+  old.prepare("INSERT INTO tasks (title, work_dir, user_id) VALUES ('kept task', '/work', 'owner')").run();
+  old.pragma('user_version = 26');
+  old.close();
+
+  const result = openDb({ TAGENT_HOME: root });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`schema 26 is migrated to ${CODE_SCHEMA}; a copy of the database before the migration is in `));
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.equal(after.prepare('SELECT title FROM tasks').get().title, 'kept task');
+  const columns = table => after.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
+  assert.deepEqual(columns('access_devices'), ['device_id', 'name', 'custom_name', 'first_seen', 'last_seen', 'last_ip', 'confirmed', 'revoked_at', 'alerted_at', 'attention_id']);
+  assert.deepEqual(columns('access_device_ips'), ['device_id', 'ip', 'first_seen', 'last_seen']);
+  assert.deepEqual(columns('access_events'), ['id', 'at', 'device_id', 'ip', 'kind', 'detail']);
+  const indexes = after.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_access%' ORDER BY name").pluck().all();
+  assert.deepEqual(indexes, ['idx_access_devices_seen', 'idx_access_events_at', 'idx_access_events_device', 'idx_access_events_ip']);
+  after.close();
+  const copies = fs.readdirSync(path.join(root, 'backups'));
+  assert.equal(copies.length, 1);
+  assert.match(copies[0], new RegExp(`^db-schema-26-before-${CODE_SCHEMA}-.+\\.sqlite$`));
+  const again = openDb({ TAGENT_HOME: root });
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated/);
+});
+
 test('a database of this schema is refused by a version that knows the one before at most', t => {
   // An older app: the same code with the previous schema_version in its VERSION.json (lib/data-home.js reads it from there).
   const root = temp(t);

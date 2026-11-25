@@ -44,7 +44,7 @@
     ['h5-mindmap-draft:*', 'local', 'browser', 'the unsaved edits of a map in this browser (the saved map is on its service)', false],
     ['h5-mindmap', 'local', 'browser', 'kept by mind map columns of v2.133 and v2.134: read only to drop them', true],
     ['ta-linked-engines', 'local', 'cache-of-shared-state', 'this engine\'s name and the web addresses of its linked engines, for the offline page\'s "Continue on" while this engine is down (the server keeps them too)', false],
-    ['ta-device-id', 'local', 'browser', 'a random id of this browser, so the "Continue" hint and the drafts never offer this device its own session or text', false],
+    ['ta-device-id', 'local', 'browser', 'a random id of this browser: it names this device in the access log of Settings → Account and access, and keeps the "Continue" hint and the drafts from offering this device its own session or text', false],
     ['terminal-client-id', 'session', 'browser', 'names this tab as one terminal client', true],
     ['h5-auto-reloaded-versions', 'session', 'browser', 'the versions this tab reloaded for by itself, so it never reloads twice', false],
     ['ta-lang-applied', 'session', 'browser', 'a language from another device is applied once per tab', false],
@@ -104,7 +104,23 @@
     // A Storage-like object over the declared keys of one area, for code that takes a storage (settings-tabs.mjs, page-state.js).
     const storage = (where = 'local') => ({ getItem: key => get(key, where), setItem: (key, value) => { set(key, value, where); }, removeItem: key => { remove(key, where); } });
 
-    return { KEYS, CATEGORIES, declared, get, set, remove, forget, storage, build, refused: () => refusedKeys.slice() };
+    // The random id of this browser (`ta-device-id`, /^[a-z0-9]{8,32}$/): sent as `X-TA-Device` on every same-origin request (client-auth.js)
+    // for the access log ("Devices and sign-ins" in docs/design/page-files-and-settings.md), and used by the "Continue" hint and the drafts
+    // (continue-drafts.js). Without storage, one per page load.
+    let pageDeviceId = '';
+    function deviceId() {
+      const kept = get('ta-device-id');
+      if (typeof kept === 'string' && /^[a-z0-9]{8,32}$/.test(kept)) return kept;
+      if (pageDeviceId) return pageDeviceId;
+      let id = '';
+      try { id = Array.from(root.crypto.getRandomValues(new Uint8Array(10)), byte => (byte % 36).toString(36)).join(''); } catch { id = ''; }
+      while (id.length < 12) id += Math.floor(Math.random() * 36).toString(36);
+      pageDeviceId = id;
+      set('ta-device-id', id);
+      return id;
+    }
+
+    return { KEYS, CATEGORIES, declared, get, set, remove, forget, storage, deviceId, build, refused: () => refusedKeys.slice() };
   }
 
   const api = build(global);

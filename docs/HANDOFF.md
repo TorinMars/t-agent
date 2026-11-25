@@ -4,6 +4,13 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 
 The design document is split (2026-11-18): `DESIGN.md` is a small index (topic table, cross-cutting rules, development notes, "Recent versions"), and the text of each area is in its own file under `docs/design/` (for example `terminals.md`, `page-task-list.md`, `attention-notifiers.md`). Open only the files of your area; never read them all.
 
+## Access log: devices and sign-ins (branch feat/access-log, 2026-11-25, not released yet)
+
+- What: `services/access-log.js`, `lib/client-ip.js`, `routes/access.js`, schema 27 tables `access_devices`, `access_device_ips`, `access_events`; page `scripts/h5-shell/AccessLog.jsx`. Design: `docs/design/access-log.md`.
+- Device id = `ta-device-id` sent as `X-TA-Device` (and `device=` on the terminal socket); sessions are bound to it at login (`session.access`), sign-out deletes those sessions.
+- Unverified: a real VPS proxy for torinmoon.icu through the SSH tunnel (tests only send the headers). After deploying, open Settings → Account and access and check the caption: "All visits come from the tunnel" means the VPS proxy does not set X-Forwarded-For.
+- Caveat: while TRUSTED_PROXY is on (auto with a tunnel), a local process can spoof X-Forwarded-For; the address is a label only. The "is this request local" checks are unchanged.
+
 ## Browser extension, tcli browser and the site library (v2.121.0, 2026-11-12)
 
 - A paired Chrome extension (`extensions/chrome/`, Manifest V3, no build step) lets agent sessions drive the computer's own Chrome through `tcli browser ...`: open/navigate pages, click/type, read the page as an outline/text/HTML, read the console and full network traffic, call a site's API in-page, screenshot, and record a page's behaviour. Server bridge: `services/browser-bridge.js`, WebSocket `/api/browser-ext/ws` (hooked into `server.on('upgrade')`, loopback + `chrome-extension://` Origin only), pairing codes/tokens hashed in `system_state` key `browser_ext_v1` (no schema bump), recordings in `<data dir>/browser-recordings/` (14 days, 2 GiB). Routes `routes/browser-ext.js`; CLI `scripts/tcli-browser.js`; Settings part `scripts/h5-shell/BrowserExtSettings.jsx` (Tasks and files, "This device only").

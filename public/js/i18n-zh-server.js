@@ -1087,4 +1087,10 @@ I18n.add({
   "Claude offered tools the coach does not allow. Try again later or set up a translation service.": "Claude 提供了教练不允许的工具。请稍后再试，或设置翻译服务。",
   "Claude could not answer. Try again later or set up a translation service.": "Claude 无法回答。请稍后再试，或设置翻译服务。",
   "Claude took too long to answer": "Claude 回答超时",
+  // ---- Access log (/api/access/*) ----
+  "This service has no login in local access mode: devices are only logged, there is nothing to sign out.": "本机访问模式下这个服务没有登录：设备只会被记录，没有可以登出的。",
+  "This is the device you are using. Use Log out instead.": "这是你正在使用的设备。请改用“退出”。",
+  "This device is not in the access log.": "这台设备不在访问记录里。",
+  "A device name is one line of at most 60 characters.": "设备名称是一行，最多 60 个字符。",
+  "access_alerts must be true or false.": "access_alerts 必须是 true 或 false。",
 });

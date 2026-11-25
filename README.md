@@ -455,6 +455,8 @@ location / {
 }
 ```
 
+The access log (Settings → Account and access → Devices and sign-ins) shows the visitor's address from the right-most `X-Forwarded-For` entry, which the proxy appends (`$remote_addr`), when the request reaches the Client from the loopback and a proxy is set up: `TRUSTED_PROXY=auto` (default) trusts it while an SSH tunnel, frp or a public page address is configured; set `TRUSTED_PROXY=on` for a proxy on the same machine without those, or `off`. Headers from any other address are never used. See `docs/design/access-log.md`.
+
 BT Panel users can set the target URL to `http://127.0.0.1:3000` under the site's "Reverse proxy", enable WebSocket, and confirm that the generated site configuration contains the `Upgrade`, `Connection` and long-timeout settings above. It is also recommended to enable forced HTTPS and keep only TLS 1.2/1.3.
 
 Check the configuration and connectivity:

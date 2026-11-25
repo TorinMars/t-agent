@@ -55,6 +55,10 @@ export const PARTS = {
   'cli-tokens': ['attention', 'device'],
   access: ['account', 'device'],
   authenticator: ['account', 'device'],
+  // Devices and sign-ins (AccessLog.jsx): the access log of this machine's own server, not synced; the alert switch is one choice for every linked
+  // engine (settings sync group access-alerts).
+  'access-devices': ['account', 'device'],
+  'access-alerts': ['account', 'shared'],
   // Usage data (UsageData.jsx): the switch is one choice for every linked engine (settings sync group usage-record); the data is one set for the
   // linked normal engines, so its cards are the same in every tab.
   'usage-record': ['usage-data', 'shared'],

@@ -392,7 +392,7 @@ test('the global save hook reaches a started service; a value written by the syn
 
 test('only the shared groups are in the registry; per-device settings and Telegram never are', () => {
   const keys = defaultRegistry({ db, sessionSecret: SECRET }).map(entry => entry.key);
-  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'agent-config', 'attention-summary', 'attention-guide', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'update-auto', 'browser-sites', 'usage-record', 'usage-time-record', 'usage-memories-digest', 'access-alerts']);
+  assert.deepEqual(keys, ['translate', 'voice', 'oss', 'oss-agent-access', 'agent-config', 'attention-summary', 'attention-guide', 'notify-rules', 'notifier-plugins', 'widget-language', 'task-list-devices', 'update-auto', 'browser-sites', 'usage-record', 'usage-time-record', 'usage-memories-digest', 'access-alerts', 'learn-voice']);
   assert.deepEqual(Object.entries(SCOPES).filter(([, scope]) => scope === 'shared').map(([key]) => key), keys);
   for (const key of ['workdir', 'access', 'authenticator', 'engine-name', 'widget-enabled', 'peer-fs', 'restart', 'rule-sync']) {
     assert.equal(SCOPES[key], 'device', key);
@@ -441,8 +441,10 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     require('../services/ui-events').createUiEvents({ db, now: () => 0 }).setEnabled(false);
     require('../services/usage-time').createUsageTime({ db, now: () => 0 }).setSettings({ usage_time_record: false, usage_memories_digest: true });
     require('../services/access-log').createAccessLog({ db, now: () => 0 }).setAlertsEnabled(false);
+    const voiceKeys = require('../services/learn-voice-keys').createVoiceKeys({ db, sessionSecret: SECRET });
+    voiceKeys.saveBailian(owner, { api_key: 'sk-bailian-REGISTRY-6', workspace: 'llm-registry' });
 
-    assert.deepEqual([...new Set(changed)].sort(), ['agent-config', 'attention-guide', 'attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'update-auto', 'usage-memories-digest', 'usage-record', 'usage-time-record', 'voice', 'widget-language', 'access-alerts'].sort(), 'every save path calls the hook');
+    assert.deepEqual([...new Set(changed)].sort(), ['agent-config', 'attention-guide', 'attention-summary', 'browser-sites', 'notifier-plugins', 'notify-rules', 'oss', 'oss-agent-access', 'translate', 'update-auto', 'usage-memories-digest', 'usage-record', 'usage-time-record', 'voice', 'widget-language', 'access-alerts', 'learn-voice'].sort(), 'every save path calls the hook');
 
     const registry = defaultRegistry({ db, sessionSecret: SECRET });
     const saved = Object.fromEntries(registry.map(entry => [entry.key, entry.read(owner)]));
@@ -464,6 +466,7 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.deepEqual(saved['usage-time-record'], { enabled: false });
     assert.deepEqual(saved['usage-memories-digest'], { enabled: true });
     assert.deepEqual(saved['access-alerts'], { enabled: false });
+    assert.deepEqual(saved['learn-voice'], { bailian: { apiKey: 'sk-bailian-REGISTRY-6', workspace: 'llm-registry' } });
 
     changed.length = 0;
     // browser-sites has merge (CRDT) semantics, not replace: write(null) is a no-op (deletions travel as per-site tombstones inside the value), so it
@@ -495,11 +498,12 @@ test('every registry adapter round-trips its setting with the secrets, and the s
     assert.deepEqual(notify.getPluginConfig('webhook', owner).values.token, { set: true });
     assert.equal(widget.read().enabled, false);
     assert.equal(widget.read().language, 'zh');
+    assert.deepEqual(voiceKeys.view(owner), { has_key: true, workspace: 'llm-registry' }, 'the Bailian key is back, and never in the view');
 
     // A malformed value is refused before anything is written.
     for (const [key, bad] of [['translate', 'text'], ['oss-agent-access', { enabled: 'yes' }], ['widget-language', 'fr'], ['notifier-plugins', { webhook: { enabled: true } }], ['task-list-devices', ['not an id!']],
       ['agent-config', { claude: { bogus: '1' } }], ['agent-config', { zsh: {} }], ['attention-guide', { dismissed: 'yes', pageOnly: false }], ['attention-guide', { dismissed: true, pageOnly: false, paired: true }],
-      ['update-auto', { enabled: 'no' }], ['update-auto', { enabled: true, attempts: {} }], ['access-alerts', { enabled: 'off' }]]) {
+      ['update-auto', { enabled: 'no' }], ['update-auto', { enabled: true, attempts: {} }], ['access-alerts', { enabled: 'off' }], ['learn-voice', 'sk-plain']]) {
       assert.throws(() => registry.find(entry => entry.key === key).write(owner, bad), /INVALID_SYNC_VALUE/, key);
     }
     assert.deepEqual(registry.find(entry => entry.key === 'translate').read(owner), saved.translate);

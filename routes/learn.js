@@ -52,11 +52,14 @@ const express = require('express');
 //   POST  /api/learn/coach/undo { token }; POST /api/learn/coach/plans/start { message_uid, proposal_id } -> { plan, stale } | { empty: true }
 //   GET   /api/learn/coach/notes; PATCH|DELETE /api/learn/coach/notes/:uid; POST /api/learn/coach/summary/reset
 // ("The coach" in docs/design/learn-english-coach.md; services/learn-coach.js. On a company computer its home answers, in one piece.)
-//   GET   /api/learn/speech/status                    -> { ready, reason: null | 'no_key' | 'offline' | 'home_older', voices: ['stella', 'tide'] }
-//   GET   /api/learn/speech?text=&voice=stella|tide   -> audio/wav (Cache-Control private): the text read by DeepSeek with the translation service's
-//         DeepSeek key (400 bad text or voice, 409 no DeepSeek key, 422 DeepSeek could not read it, 502 / 503 / 504 DeepSeek failed). On a company
-//         computer made on its home (its key and cache), the audio coming over the link as base64. ("DeepSeek voice" in
-//         docs/design/learn-english-voice.md; services/learn-speech.js.)
+//   GET   /api/learn/speech/status -> { bailian: { ready, reason: null | 'no_key' | 'offline' | 'home_older', has_key, workspace, voices, regions } }
+//         (never a key)
+//   GET   /api/learn/speech?text=&voice=Cindy_v3.1&region=beijing|singapore&speed=normal|slow -> audio/wav (Cache-Control private): read by Bailian
+//         (qwen-audio-3.1-tts-flash) with the Learn voice's Bailian key (400 bad text or voice, 409 key missing or wrong, 422 not readable, 503 busy,
+//         504 too long; `engine` may be given as 'bailian', anything else is 400).
+//   PUT   /api/learn/speech/bailian-key { api_key, workspace } -> the status; DELETE /api/learn/speech/bailian-key -> the status.
+//         On a company computer all of these are made on its home (its key and cache), the audio coming over the link as base64. ("Bailian voice"
+//         in docs/design/learn-english-voice.md; services/learn-speech.js, services/learn-voice-keys.js.)
 // The summary also has `device` (the status, plus `offline_copy_at`). On a company computer whose data lives on a normal machine (services/learn-sync.js,
 // "Company computer" in docs/design/learn-english.md) the reads first sync with that machine, the summary comes from it (or, while it is away, from the
 // cards here and the last copy of its numbers), and settings and the starter list are changed there (503 while it cannot be reached).
@@ -67,7 +70,7 @@ const HOME_OLDER = 'The normal computer that keeps your learning data needs an u
 const STATS_OFFLINE = 'Your progress is kept on a normal computer, which cannot be reached right now';
 const CHAT_OFFLINE = 'Your English chats are kept on a normal computer, which cannot be reached right now';
 const COACH_OFFLINE = 'Your English coach is on a normal computer, which cannot be reached right now';
-const SPEECH_OFFLINE = 'The DeepSeek voice is on a normal computer, which cannot be reached right now';
+const BAILIAN_OFFLINE = 'The Bailian voice is on a normal computer, which cannot be reached right now';
 
 // `sync`: the learning sync of this server (services/learn-sync.js), or null for none (a test that hands in its own service gets none by default).
 // `analysis`: the mistake analysis (services/learn-analysis.js), or null for none (a test that hands in its own service gets none unless it hands one in).
@@ -119,7 +122,7 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
   let speechService = speech === undefined ? (service ? null : undefined) : speech;
   const speaker = () => {
     if (speechService === undefined) speechService = require('../services/learn-speech').getLearnSpeech();
-    if (!speechService) throw Object.assign(new Error('The DeepSeek voice is not available'), { statusCode: 503 });
+    if (!speechService) throw Object.assign(new Error('The Bailian voice is not available'), { statusCode: 503 });
     return speechService;
   };
   const mustPicker = () => {
@@ -330,37 +333,58 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     await streamed(req, res, ({ onDelta, signal }) => service.send(owner(req), req.body, { onChat: value => { chatLine = value; }, onDelta, signal }),
       result => ({ done: true, chat: result.chat, messages: result.messages }), () => (chatLine ? [{ chat: chatLine }] : []));
   });
-  // ---- The DeepSeek voice: on a company computer made on its home, which has the key and the cache ----
+  // ---- The Bailian voice: on a company computer made on its home, which has the key and the cache ----
+  const bailianAway = reason => {
+    const { BAILIAN_VOICES, BAILIAN_REGIONS } = require('../services/learn-speech');
+    return { bailian: { ready: false, reason, has_key: false, workspace: '', voices: [...BAILIAN_VOICES], regions: Object.keys(BAILIAN_REGIONS) } };
+  };
   router.get('/speech/status', handle(async req => {
     if (!cacheOnly()) return speaker().status(owner(req));
-    const { VOICES } = require('../services/learn-speech');
-    try { return await learnSync().askHome('speech-status', { offline: SPEECH_OFFLINE }); } catch (error) {
+    let answer;
+    try { answer = await learnSync().askHome('speech-status', { offline: BAILIAN_OFFLINE }); } catch (error) {
       // Away, or a home without the voice: not ready, said why (the page reads with this device's voices).
-      if (error.statusCode === 503) return { ready: false, reason: 'offline', voices: [...VOICES] };
-      if (error.statusCode === 404) return { ready: false, reason: 'home_older', voices: [...VOICES] };
+      if (error.statusCode === 503) return bailianAway('offline');
+      if (error.statusCode === 404) return bailianAway('home_older');
       throw error;
     }
+    // A home of v2.169.0 answers its DeepSeek voice only.
+    return answer && typeof answer === 'object' && answer.bailian && typeof answer.bailian === 'object' ? { bailian: answer.bailian } : bailianAway('home_older');
   }));
   router.get('/speech', async (req, res) => {
     try {
       const { checkRequest, isWav } = require('../services/learn-speech');
-      const asked = { text: req.query.text, voice: req.query.voice };
+      const asked = { text: req.query.text, engine: req.query.engine, voice: req.query.voice, region: req.query.region, speed: req.query.speed };
       let audio;
       if (cacheOnly()) {
-        const { text, voice } = checkRequest(asked);
+        const request = checkRequest(asked);
+        // A route of its own on the home, so a home without the Bailian voice answers 404.
+        const route = `bailian-speech?${new URLSearchParams({ text: request.text, voice: request.voice, region: request.region, speed: request.speed })}`;
         let answer;
-        try { answer = await learnSync().askHome(`speech?${new URLSearchParams({ text, voice })}`, { offline: SPEECH_OFFLINE, timeout: 45_000 }); } catch (error) {
+        try { answer = await learnSync().askHome(route, { offline: BAILIAN_OFFLINE, timeout: 45_000 }); } catch (error) {
           if (error.statusCode === 404) throw Object.assign(new Error(HOME_OLDER), { statusCode: 409 });
           throw error;
         }
         audio = answer && typeof answer.audio === 'string' ? Buffer.from(answer.audio, 'base64') : null;
-        if (!isWav(audio)) throw Object.assign(new Error('The DeepSeek voice is not available right now'), { statusCode: 502 });
+        if (!isWav(audio)) throw Object.assign(new Error('The Bailian voice is not available right now'), { statusCode: 502 });
       } else {
         audio = await speaker().speak(owner(req), asked);
       }
       res.status(200).set({ 'Content-Type': 'audio/wav', 'Cache-Control': 'private, max-age=604800', 'X-Content-Type-Options': 'nosniff' }).send(audio);
     } catch (error) { fail(res, error); }
   });
+  // The Bailian key: saved on the home from a company computer (the key is the home's), never answered.
+  const homeKey = async (action, body) => {
+    try { return await learnSync().askHome(action, { method: 'POST', body, offline: BAILIAN_OFFLINE }); } catch (error) {
+      if (error.statusCode === 404) throw Object.assign(new Error(HOME_OLDER), { statusCode: 409 });
+      throw error;
+    }
+  };
+  const keyBody = req => {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    return { api_key: typeof body.api_key === 'string' ? body.api_key : '', workspace: typeof body.workspace === 'string' ? body.workspace : '' };
+  };
+  router.put('/speech/bailian-key', handle(req => (cacheOnly() ? homeKey('bailian-key', keyBody(req)) : speaker().saveBailianKey(owner(req), keyBody(req)))));
+  router.delete('/speech/bailian-key', handle(req => (cacheOnly() ? homeKey('bailian-key-remove', {}) : speaker().removeBailianKey(owner(req)))));
   // ---- The English coach: on a company computer kept and answered on its home (personal data, like the chats) ----
   const homeCoach = async (route, options = {}) => {
     try { return await learnSync().askHome(route, { offline: COACH_OFFLINE, ...options }); } catch (error) {

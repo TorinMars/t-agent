@@ -54,13 +54,23 @@ const AUDIO_SETTINGS = {
   audio_speed: { default: 'normal', values: ['normal', 'slow'] },
   audio_stop_on_typing: { default: true, values: [true, false] },
 };
-// The voice that reads ("DeepSeek voice" in docs/design/learn-english-voice.md): this device's voices (the browser's speechSynthesis, the default) or
-// DeepSeek's text-to-speech with the translation service's DeepSeek key (services/learn-speech.js), and DeepSeek's voice (Stella, female; Tide,
-// male). Shared like the audio settings. An older peer sends neither, so they are kept (KEPT_SETTINGS).
+// The voice that reads ("Bailian voice" in docs/design/learn-english-voice.md): this device's voices (the browser's speechSynthesis, the default) or
+// Bailian's text-to-speech (Alibaba Cloud Model Studio) with the Learn voice's own key (services/learn-speech.js); Bailian's voice (Cindy, American
+// female, by default) and region. Shared like the audio settings. An older peer sends none of them, so they are kept (KEPT_SETTINGS).
 const VOICE_SETTINGS = {
-  voice_engine: { default: 'system', check: value => value === 'system' || value === 'deepseek' },
-  voice_id: { default: 'stella', check: value => value === 'stella' || value === 'tide' },
+  voice_engine: { default: 'system', check: value => value === 'system' || value === 'bailian' },
+  voice_id_bailian: { default: 'Cindy_v3.1', check: value => require('./learn-speech').BAILIAN_VOICES.includes(value) },
+  voice_region: { default: 'beijing', check: value => value === 'beijing' || value === 'singapore' },
 };
+// The DeepSeek voice of v2.169.0 was removed: a page or a peer of that version may still send `voice_engine: 'deepseek'` (read as this device's
+// voices) and `voice_id` (Stella / Tide, no longer used, dropped). A stored 'deepseek' reads as 'system' by the check above.
+function retiredVoice(value) {
+  if (!isPlainObject(value)) return value;
+  const out = { ...value };
+  delete out.voice_id;
+  if (out.voice_engine === 'deepseek') out.voice_engine = 'system';
+  return out;
+}
 // The mistake analysis ("Mistake reports" in docs/design/learn-english.md): the weekly automatic report on or off, the report the person last opened
 // (so the Learn home offers a new automatic one once, on every device) and the language reports are written in (the page's language, sent by the page).
 const REPORT_SETTINGS = {
@@ -346,7 +356,8 @@ function createLearn({
       extra_new: cleanExtraNew(value.extra_new),
     };
   }
-  function saveSettings(owner, body) {
+  function saveSettings(owner, given) {
+    const body = retiredVoice(given);
     if (!isPlainObject(body) || Object.keys(body).some(key => !SETTINGS_FIELDS.has(key))) throw bad('Invalid learning settings');
     const next = settings(owner);
     if (body.collect !== undefined) {
@@ -1096,7 +1107,7 @@ function sharedLearn() {
 
 module.exports = {
   createLearn, sharedLearn, translatorLookup, LearnError, checkEnglish, codeLike, wordForm, normalize, settingsKey, settingsVersionKey, levelKey, levelJson, FROM_TRANSLATION,
-  MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS, COACH_SETTINGS, VOICE_SETTINGS, CHECKED_SETTINGS, KEPT_SETTINGS,
+  retiredVoice, MODES, SENTENCE_MODES, KINDS, SOURCES, DEFAULT_SETTINGS, AUDIO_SETTINGS, REPORT_SETTINGS, PICK_SETTINGS, SCHEDULE_SETTINGS, PACE_SETTINGS, COACH_SETTINGS, VOICE_SETTINGS, CHECKED_SETTINGS, KEPT_SETTINGS,
   MISTAKE_TAGS, MAX_EXPECTED, NEW_PER_DAY, MAX_NEW_WORDS, cleanExtraNew, mergeExtraNew, studyMinutes, checkParts, storedParts, checkTip, parseSpelling, SPELLING_SYSTEM,
   LEECH_MISSED, PARTS_JOIN,
   LEVELS, MAX_CONTEXT, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON, MAX_ZH, WORD, collapse, PREFILL_BATCH,

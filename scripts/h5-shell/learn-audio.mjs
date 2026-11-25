@@ -99,7 +99,7 @@ export function createPlayer({ speakOnce, cancel = () => {}, speaking = () => fa
         done();
       };
       const first = auto && mine.index === 1;
-      // The watches start when the sound can start: at once, or, for a voice whose audio is still loading (the DeepSeek voice, learn-voice.mjs
+      // The watches start when the sound can start: at once, or, for a voice whose audio is still loading (the Bailian voice, learn-voice.mjs
       // calls `onLoading` and then `onReady`), when it has arrived; the wait for it is not taken for a browser that refuses sound.
       let loading = false;
       const watch = () => {

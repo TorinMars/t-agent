@@ -35,7 +35,7 @@ import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss
 import { BUILD_HIDDEN, SENTENCE_EXERCISE, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, gapLayout, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
 import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
-import { TRY_TEXT, createServerVoice, createVoiceEngine, fetchVoiceStatus, voiceOptions, voiceState } from './learn-voice.mjs';
+import { BAILIAN_VOICES, SERVER_ENGINES, TRY_TEXT, createServerVoice, createVoiceEngine, fetchVoiceStatus, saveBailianKey, voiceOptions, voiceState } from './learn-voice.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
@@ -120,7 +120,7 @@ function useLearnData() {
   return { summary, error, reload, settings, setSettings };
 }
 
-// ── The DeepSeek voice ("DeepSeek voice" in docs/design/learn-english-voice.md; learn-voice.mjs) ──
+// ── The server voice ("Bailian voice" in docs/design/learn-english-voice.md; learn-voice.mjs) ──
 // One player of the server's audio for the page (one audio element, unlocked by the first tap on iOS, and the audio of each text fetched once).
 let serverVoice = null;
 function getServerVoice() {
@@ -132,36 +132,51 @@ function getServerVoice() {
   });
   return serverVoice;
 }
-// DeepSeek could not read: one short notice per page load (this device's voice read instead).
+// A server voice could not read: one short notice per page load (this device's voice read instead).
 let voiceNoticeShown = false;
 function voiceNotice(ui, reason) {
   if (voiceNoticeShown || !ui || typeof ui.notify !== 'function') return;
   voiceNoticeShown = true;
-  const text = reason === 409 || reason === 'no_key' ? "Set up the DeepSeek translation service first. This device's voice reads for now."
-    : reason === 404 || reason === 'unsupported' || reason === 'home_older' ? "This engine has no DeepSeek voice yet. This device's voice reads instead."
-      : "The DeepSeek voice is not available right now. This device's voice reads instead.";
+  const older = reason === 404 || reason === 'unsupported' || reason === 'home_older';
+  const text = reason === 409 || reason === 'no_key' ? "Bailian key missing or wrong. This device's voice reads for now."
+    : older ? "This engine has no Bailian voice yet. This device's voice reads instead."
+      : "The Bailian voice is not available right now. This device's voice reads instead.";
   ui.notify(t(text), 'info');
 }
-// Whether the DeepSeek voice can read (GET /api/learn/speech/status), asked when it is chosen and again with `again`. No key and an engine
-// without the voice make every play use this device's voice at once (the player's `setDown`).
+// What the status says for the player of one engine: 404 (no route, an older home), 409 (no key) or null (it may read).
+const downOf = state => (state.reason === 'unsupported' || state.reason === 'home_older' ? 404 : state.reason === 'no_key' ? 409 : null);
+// The status a Bailian key save answered, handed to every useVoiceStatus of the page (the settings and the page's own player).
+const voiceStatusListeners = new Set();
+function voiceStatusChanged(next) {
+  const player = getServerVoice();
+  if (player) player.setDown(downOf(voiceState(next)));
+  for (const listener of voiceStatusListeners) listener(next);
+}
+// Whether a server voice can read (GET /api/learn/speech/status), asked when one is chosen and again with `again`, and taken from a key save
+// (voiceStatusChanged). No key and an engine without the voice make every play of that engine use this device's voice at once (`setDown`).
 function useVoiceStatus(engine, again = 0) {
   const [status, setStatus] = useState(null);
+  const server = SERVER_ENGINES.includes(engine);
   useEffect(() => {
-    if (engine !== 'deepseek') return undefined;
+    voiceStatusListeners.add(setStatus);
+    return () => { voiceStatusListeners.delete(setStatus); };
+  }, []);
+  useEffect(() => {
+    if (!server) return undefined;
     let live = true;
     fetchVoiceStatus().then(next => {
       if (!live) return;
       setStatus(next);
-      const server = getServerVoice();
-      if (server) server.setDown(next.unsupported || next.reason === 'home_older' ? 404 : next.reason === 'no_key' ? 409 : null);
+      const player = getServerVoice();
+      if (player) player.setDown(downOf(voiceState(next)));
     });
     return () => { live = false; };
-  }, [engine, again]);
-  return engine === 'deepseek' ? voiceState(status) : { ready: null, reason: null };
+  }, [engine, again]); // eslint-disable-line react-hooks/exhaustive-deps -- asked again when the engine changes
+  return server ? voiceState(status) : { ready: null, reason: null, hasKey: false, workspace: '' };
 }
 
 // Speech output (Hear it, Dictation) and the way Say it hears the person, read when the page opens (the voices may come a moment later). With
-// the DeepSeek voice chosen (and not known to be unable) `engine` is 'deepseek' and the page can read aloud even without speechSynthesis.
+// the Bailian voice chosen (and not known to be unable) `engine` is 'bailian' and the page can read aloud even without speechSynthesis.
 function useSpeech(settings, ui) {
   const [tts, setTts] = useState(canSpeak);
   const [voice] = useState(voiceWay);
@@ -174,11 +189,11 @@ function useSpeech(settings, ui) {
     return () => { speech.removeEventListener('voiceschanged', update); stopAll(); };
   }, []);
   const chosen = voiceOptions(settings);
-  const deepseek = useVoiceStatus(chosen.engine);
-  const server = chosen.engine === 'deepseek' && deepseek.ready !== false && Boolean(getServerVoice());
+  const voiceStatus = useVoiceStatus(chosen.engine);
+  const server = SERVER_ENGINES.includes(chosen.engine) && voiceStatus.ready !== false && Boolean(getServerVoice());
   // Chosen but unable (no key, an engine without it): said once, and this device's voices read.
-  useEffect(() => { if (chosen.engine === 'deepseek' && deepseek.ready === false) voiceNotice(ui, deepseek.reason); }, [chosen.engine, deepseek.ready, deepseek.reason]); // eslint-disable-line react-hooks/exhaustive-deps -- once the state is known
-  return { tts: tts || server, voice: Boolean(voice), engine: server ? 'deepseek' : 'system', voiceId: chosen.voice };
+  useEffect(() => { if (SERVER_ENGINES.includes(chosen.engine) && voiceStatus.ready === false) voiceNotice(ui, voiceStatus.reason); }, [chosen.engine, voiceStatus.ready, voiceStatus.reason]); // eslint-disable-line react-hooks/exhaustive-deps -- once the state is known
+  return { tts: tts || server, voice: Boolean(voice), engine: server ? chosen.engine : 'system', bailianVoice: chosen.bailianVoice, region: chosen.region };
 }
 
 function Learn({ state, ui }) {
@@ -1242,11 +1257,14 @@ function useAudio(settings, speech, ui) {
   const uiRef = useRef(ui);
   uiRef.current = ui;
   const [state, setState] = useState({ playing: false, text: '', index: 0, total: 0, blocked: false });
-  // This device's voices or DeepSeek's (learn-voice.mjs), as chosen now; a DeepSeek play that fails is read by this device's voice.
+  // This device's voices or a server voice (learn-voice.mjs), as chosen now; a server play that fails is read by this device's voice.
   const engine = useMemo(() => createVoiceEngine({
     system: { speakOnce, cancel: stopSpeaking, speaking: isSpeaking },
     server: getServerVoice(),
-    choice: () => ({ engine: speechRef.current.engine, voice: speechRef.current.voiceId }),
+    choice: () => ({
+      engine: speechRef.current.engine, bailianVoice: speechRef.current.bailianVoice, region: speechRef.current.region,
+      slow: optionsRef.current.slow,
+    }),
     onNotice: reason => voiceNotice(uiRef.current, reason),
   }), []);
   const player = useMemo(() => createPlayer({
@@ -1264,7 +1282,7 @@ function useAudio(settings, speech, ui) {
     },
     stop: () => player.stop(),
     typed: () => { if (optionsRef.current.stopOnTyping) player.skipRest(); },
-    // The DeepSeek audio of a card is fetched when the card appears, so Hear it plays at once (nothing for this device's voices).
+    // The server audio of a card is fetched when the card appears, so Hear it plays at once (nothing for this device's voices).
     preload: text => { if (ttsRef.current && text) engine.preload(text); },
   }), [player, state, options.words, options.sentences, options.sentencesAt, options.repeat, options.pauseMs, options.slow, options.stopOnTyping]); // eslint-disable-line react-hooks/exhaustive-deps -- the options by value
 }
@@ -2425,7 +2443,7 @@ function SettingsView({ frame, ui, data, openTranslator, open, focus = '' }) {
       )}
       {settings && typeof current.new_per_day === 'number' ? <NewWordsSettings current={current} busy={busy} save={save} /> : null}
       {settings && typeof current.desired_retention === 'number' ? <ScheduleSettings current={current} busy={busy} save={save} /> : null}
-      {settings ? <AudioSettings current={current} busy={busy} save={save} openTranslator={openTranslator} /> : null}
+      {settings ? <AudioSettings current={current} busy={busy} save={save} /> : null}
       {/* Coach: shown by a server whose learning settings have the coach's fields ("Coach settings" in docs/design/learn-english-coach-page.md). */}
       {settings && typeof current.coach_memory === 'boolean' ? <CoachSettings current={current} busy={busy} save={save} ui={ui} focus={focus === 'coach'} /> : null}
       <Card sx={{ p: 2 }}>
@@ -2539,15 +2557,68 @@ function ChoiceRow({ id, label, secondary = null, value, choices, disabled = fal
     </Box>
   );
 }
-// The voice that reads ("DeepSeek voice" in docs/design/learn-english-voice.md): this device's voices or DeepSeek's (`voice_engine`, `voice_id` of the
-// learning settings, shared and saved at once like the rest of Audio). For DeepSeek: its voice, Try it, and what it needs or cannot do.
+// The voice that reads ("Bailian voice" in docs/design/learn-english-voice.md): this device's voices or Bailian's (`voice_engine`,
+// `voice_id_bailian`, `voice_region` of the learning settings, shared and saved at once like the rest of Audio). For a
+// server voice: its voice, Try it, and what it needs or cannot do; for Bailian also its region and its key (saved on the server, never shown again).
 const VOICE_FAILURES = {
-  409: 'Set up the DeepSeek translation service first',
-  404: 'This engine has no DeepSeek voice yet.',
-  422: 'DeepSeek could not read this text',
-  media: 'This browser could not play the DeepSeek audio.',
+  409: 'Bailian key missing or wrong',
+  404: 'This engine has no Bailian voice yet.',
+  422: 'Bailian could not read this text',
+  503: 'Bailian is busy, try again in a moment',
+  media: 'This browser could not play the Bailian audio.',
+  other: 'The Bailian voice is not available right now',
 };
-function VoiceChoice({ current, busy, save, openTranslator }) {
+// The Bailian key: a workspace id and a write-only key with Save, or "Key saved" with Remove once the server has one.
+function BailianKey({ state, busy, onSaved }) {
+  const [workspace, setWorkspace] = useState('');
+  const [key, setKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const send = async body => {
+    setSaving(true);
+    setError('');
+    try {
+      const next = await saveBailianKey(body);
+      setKey('');
+      if (body) setWorkspace('');
+      onSaved(next);
+    } catch (failure) {
+      setError(failure && failure.message ? failure.message : 'The Bailian voice is not available right now');
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (state.hasKey) {
+    return (
+      <Box id="h5-learn-voice-key-part" data-saved="true" sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minHeight: 44 }}>
+        <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+          <Typography id="h5-learn-voice-key-saved" variant="body2">{t('Key saved')}</Typography>
+          {state.workspace ? <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>{tf('Workspace {1}', state.workspace)}</Typography> : null}
+        </Box>
+        <Button id="h5-learn-voice-key-remove" color="error" disabled={busy || saving} onClick={() => void send(null)} sx={{ minHeight: 44 }}>{t('Remove')}</Button>
+        {error ? <Typography id="h5-learn-voice-key-error" variant="body2" color="error" sx={{ flexBasis: '100%' }}>{t(error)}</Typography> : null}
+      </Box>
+    );
+  }
+  const ready = Boolean(workspace.trim() && key.trim());
+  return (
+    <Box id="h5-learn-voice-key-part" data-saved="false" component="form" autoComplete="off"
+      onSubmit={event => { event.preventDefault(); if (ready && !saving) void send({ api_key: key, workspace }); }}
+      sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <TextField id="h5-learn-voice-workspace" size="small" label={t('Workspace ID')} value={workspace} disabled={busy || saving}
+        onChange={event => setWorkspace(event.target.value)} autoComplete="off" spellCheck={false}
+        helperText={t('From the API Host of your workspace in the Bailian console; you can paste the whole host.')} />
+      <TextField id="h5-learn-voice-key" size="small" type="password" label={t('Bailian API key')} value={key} disabled={busy || saving}
+        onChange={event => setKey(event.target.value)} autoComplete="new-password" spellCheck={false}
+        helperText={t('Kept on the server and never shown again.')} />
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button id="h5-learn-voice-key-save" type="submit" variant="contained" disabled={busy || saving || !ready} sx={{ minHeight: 44 }}>{saving ? t('Saving…') : t('Save')}</Button>
+      </Box>
+      {error ? <Typography id="h5-learn-voice-key-error" variant="body2" color="error">{t(error)}</Typography> : null}
+    </Box>
+  );
+}
+function VoiceChoice({ current, busy, save }) {
   const chosen = voiceOptions(current);
   const options = audioOptions(current);
   const [again, setAgain] = useState(0);
@@ -2561,9 +2632,9 @@ function VoiceChoice({ current, busy, save, openTranslator }) {
     setTrying(true);
     const done = () => setTrying(false);
     server.speakOnce(TRY_TEXT, {
-      voice: chosen.voice, slow: options.slow, onEnd: done,
+      choice: chosen, slow: options.slow, onEnd: done,
       onError: error => { done(); setTryFailed(error === 'not-allowed' ? 'Tap Try it again to play.' : VOICE_FAILURES.media); },
-      onFail: reason => { done(); setTryFailed(VOICE_FAILURES[reason] || 'The DeepSeek voice is not available right now'); if (reason === 409) setAgain(n => n + 1); },
+      onFail: reason => { done(); setTryFailed(VOICE_FAILURES[reason] || VOICE_FAILURES.other); if (reason === 409) setAgain(n => n + 1); },
     });
   };
   useEffect(() => () => { if (serverVoice) serverVoice.stop(); }, []);
@@ -2577,41 +2648,55 @@ function VoiceChoice({ current, busy, save, openTranslator }) {
         </Box>
       )} />
   );
-  const deepseek = chosen.engine === 'deepseek';
+  const bailian = chosen.engine === 'bailian';
+  const tryButton = (
+    <Button id="h5-learn-voice-try" startIcon={<Icon name="learnSound" size={20} />} disabled={trying || state.reason === 'no_key'} onClick={tryIt}
+      data-playing={trying ? 'true' : undefined} sx={{ minHeight: 44 }}>{trying ? t('Playing…') : t('Try it')}</Button>
+  );
+  const voiceName = voice => tf(voice.gender === 'male' ? '{1} (male)' : '{1} (female)', voice.name);
   return (
-    <Box id="h5-learn-voice" data-engine={chosen.engine} data-ready={deepseek && state.ready !== null ? String(state.ready) : undefined} sx={{ py: 1 }}>
+    <Box id="h5-learn-voice" data-engine={chosen.engine} data-ready={bailian && state.ready !== null ? String(state.ready) : undefined} sx={{ py: 1 }}>
       <Typography variant="body1" id="h5-learn-voice-label" sx={{ mb: 0.5 }}>{t('Voice')}</Typography>
       <RadioGroup aria-labelledby="h5-learn-voice-label" name="h5-learn-voice-engine" value={chosen.engine}
         onChange={event => { if (event.target.value !== chosen.engine) { setTryFailed(''); save({ voice_engine: event.target.value }); } }}>
         {option('system', "This device's voices", 'The voices of this browser, in American English when it has one.')}
-        {option('deepseek', 'DeepSeek', 'Made by DeepSeek with the key of the translation service; each word or sentence is made once and kept on the server.')}
+        {chosen.bailian ? option('bailian', 'Bailian (Alibaba)', "Alibaba Cloud's own American and British voices, with a Bailian API key; each word or sentence is made once and kept on the server.") : null}
       </RadioGroup>
-      {deepseek ? (
-        <Box id="h5-learn-voice-deepseek" sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 1, pt: 1.5 }}>
-          {state.reason === 'no_key' ? <TranslatorNotice id="h5-learn-voice-no-key" onOpen={openTranslator} text="Set up the DeepSeek translation service first" /> : null}
+      {bailian ? (
+        <Box id="h5-learn-voice-bailian" sx={{ pl: 4, display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1.5 }}>
           {state.reason === 'unsupported' || state.reason === 'home_older'
-            ? <Typography id="h5-learn-voice-unsupported" variant="body2" color="text.secondary">{t("This engine has no DeepSeek voice yet. This device's voices read until it is updated.")}</Typography> : null}
+            ? <Typography id="h5-learn-voice-unsupported" variant="body2" color="text.secondary">{t("This engine has no Bailian voice yet. This device's voices read until it is updated.")}</Typography> : null}
           {state.reason === 'offline'
-            ? <Typography id="h5-learn-voice-offline" variant="body2" color="text.secondary">{t('The DeepSeek voice is on a normal computer, which cannot be reached right now')}</Typography> : null}
+            ? <Typography id="h5-learn-voice-offline" variant="body2" color="text.secondary">{t('The Bailian voice is on a normal computer, which cannot be reached right now')}</Typography> : null}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-            <TextField id="h5-learn-voice-id" select size="small" label={t('DeepSeek voice')} value={chosen.voice} disabled={busy}
-              onChange={event => { if (event.target.value !== chosen.voice) { setTryFailed(''); save({ voice_id: event.target.value }); } }} sx={{ minWidth: 180 }}>
-              <option value="stella">{t('Stella (female)')}</option>
-              <option value="tide">{t('Tide (male)')}</option>
+            <TextField id="h5-learn-voice-bailian-id" select size="small" label={t('Bailian voice')} value={chosen.bailianVoice} disabled={busy}
+              onChange={event => { if (event.target.value !== chosen.bailianVoice) { setTryFailed(''); save({ voice_id_bailian: event.target.value }); } }} sx={{ minWidth: 180 }}>
+              <optgroup label={t('American English')}>
+                {BAILIAN_VOICES.filter(voice => voice.accent === 'us').map(voice => <option key={voice.id} value={voice.id}>{voiceName(voice)}</option>)}
+              </optgroup>
+              <optgroup label={t('British English')}>
+                {BAILIAN_VOICES.filter(voice => voice.accent === 'uk').map(voice => <option key={voice.id} value={voice.id}>{voiceName(voice)}</option>)}
+              </optgroup>
             </TextField>
-            <Button id="h5-learn-voice-try" startIcon={<Icon name="learnSound" size={20} />} disabled={trying || state.reason === 'no_key'} onClick={tryIt}
-              data-playing={trying ? 'true' : undefined}>{trying ? t('Playing…') : t('Try it')}</Button>
+            <TextField id="h5-learn-voice-region" select size="small" label={t('Region')} value={chosen.region} disabled={busy}
+              onChange={event => { if (event.target.value !== chosen.region) { setTryFailed(''); save({ voice_region: event.target.value }); } }} sx={{ minWidth: 140 }}>
+              <option value="beijing">{t('Beijing')}</option>
+              <option value="singapore">{t('Singapore')}</option>
+            </TextField>
           </Box>
+          {state.reason !== 'unsupported' && state.reason !== 'home_older' && state.ready !== null
+            ? <BailianKey state={state} busy={busy} onSaved={next => { setTryFailed(''); voiceStatusChanged(next); }} /> : null}
+          <Box>{tryButton}</Box>
           {tryFailed ? <Typography id="h5-learn-voice-try-failed" variant="body2" color="error">{t(tryFailed)}</Typography> : null}
           <Typography id="h5-learn-voice-caption" variant="caption" component="p" color="text.secondary">
-            {t("DeepSeek's voices have their own accent, which may not be American. For a specific accent, choose This device's voices. DeepSeek has no speed control, so Slow plays its audio slower.")}
+            {t("Alibaba's own American voices (model qwen-audio-3.1-tts-flash). Their quality and delay are not checked here yet: if one does not sound as you expect, say so. The key and the workspace must belong to the chosen region. Slow asks Bailian for slower speech.")}
           </Typography>
         </Box>
       ) : null}
     </Box>
   );
 }
-function AudioSettings({ current, busy, save, openTranslator }) {
+function AudioSettings({ current, busy, save }) {
   const options = audioOptions(current);
   return (
     <>
@@ -2619,7 +2704,7 @@ function AudioSettings({ current, busy, save, openTranslator }) {
       <Card id="h5-learn-audio-card" sx={{ px: 2, py: 1 }}>
         {voiceOptions(current).known ? (
           <>
-            <VoiceChoice current={current} busy={busy} save={save} openTranslator={openTranslator} />
+            <VoiceChoice current={current} busy={busy} save={save} />
             <Divider sx={{ mx: -2 }} />
           </>
         ) : null}

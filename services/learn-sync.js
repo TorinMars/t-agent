@@ -62,7 +62,7 @@ function createLearnSync(options) {
   const {
     db, serviceLinks = null, request = null,
     loadCoach = null, // () => makes the English coach when nobody has used it here yet (it hands itself in by setCoach)
-    loadSpeech = null, // () => the DeepSeek voice of Learn (services/learn-speech.js), or null for none: a company computer's page asks it here
+    loadSpeech = null, // () => the Bailian voice of Learn (services/learn-speech.js), or null for none: a company computer's page asks it here
     identity, // () => { instance_id, name }
     owner = () => require('./single-user').ensureSingleUser().login,
     linkKeys, // { publicKey(), linkKey(peer, publicKey) }: the settings sync's key pair and link keys
@@ -677,14 +677,18 @@ function createLearnSync(options) {
       if (action === 'chat-update') { const { uid, ...change } = given; return chatter.update(name, uid, change); }
       return chatter.remove(name, given.uid);
     }
-    // The DeepSeek voice (services/learn-speech.js): made with this machine's DeepSeek key and kept in its cache. The service links carry JSON
-    // only, so the audio travels as base64 inside it; the company computer decodes it ("DeepSeek voice" in docs/design/learn-english-voice.md).
-    if (action === 'speech-status' || action === 'speech') {
+    // The Bailian voice (services/learn-speech.js): made with this machine's key and kept in its cache. The service links carry JSON only, so the
+    // audio travels as base64 inside it; the company computer decodes it. The key is saved here (the home's key) and never answered ("Bailian voice"
+    // in docs/design/learn-english-voice.md).
+    if (['speech-status', 'bailian-speech', 'bailian-key', 'bailian-key-remove'].includes(action)) {
       let voice = null;
       if (loadSpeech) { try { voice = loadSpeech(); } catch { voice = null; } }
       if (!voice) throw fault('NOT_FOUND', 404);
+      const given = isPlainObject(body) ? body : {};
       if (action === 'speech-status') return voice.status(name);
-      return voice.speak(name, isPlainObject(body) ? body : {}).then(audio => ({ type: 'audio/wav', audio: audio.toString('base64') }));
+      if (action === 'bailian-key') return voice.saveBailianKey(name, { api_key: given.api_key, workspace: given.workspace });
+      if (action === 'bailian-key-remove') return voice.removeBailianKey(name);
+      return voice.speak(name, { ...given, engine: 'bailian' }).then(audio => ({ type: 'audio/wav', audio: audio.toString('base64') }));
     }
     // The English coach (services/learn-coach.js): kept and answered here; the answers as one JSON (not streamed).
     if (action.startsWith('coach')) {

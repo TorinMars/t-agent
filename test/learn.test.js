@@ -19,8 +19,8 @@ const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'a
   new_per_day: 10, extra_new: { day: '', count: 0 },
   // The English coach's switches ("Views" and "Memory" in docs/design/learn-english-coach.md).
   coach_read_answers: true, coach_read_text: true, coach_memory: true, coach_economy: false, coach_engine: 'translator',
-  // The voice that reads ("DeepSeek voice" in docs/design/learn-english-voice.md).
-  voice_engine: 'system', voice_id: 'stella' };
+  // The voice that reads ("Bailian voice" in docs/design/learn-english-voice.md).
+  voice_engine: 'system', voice_id_bailian: 'Cindy_v3.1', voice_region: 'beijing' };
 const { createLearnRouter } = require('../routes/learn');
 const { STARTER_LISTS, STARTER_PER_DAY } = require('../services/learn-starter');
 const { TranslatorError } = require('../services/translator');
@@ -482,6 +482,23 @@ test('settings: defaults, checks, and the starter list imported once with its wo
   await call('PUT', '/settings', { starter: 'dev' });
   assert.equal((await call('GET', '/summary')).body.words, words.length, 'chosen again: the same words come back, none twice');
   assert.equal(db.prepare("SELECT COUNT(*) FROM learn_cards WHERE owner = 'me'").pluck().get(), words.length);
+});
+
+test('the removed DeepSeek voice: a stored choice reads as this device\'s voices, and a page of v2.169.0 that saves it is not refused', async t => {
+  const { service, db } = setup(t);
+  const call = await serve(t, service);
+  const key = require('../services/learn').settingsKey('me');
+  db.prepare('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)').run(key, JSON.stringify({ collect: true, voice_engine: 'deepseek', voice_id: 'tide' }));
+  const read = (await call('GET', '/settings')).body;
+  assert.equal(read.voice_engine, 'system', 'stored deepseek reads as system');
+  assert.equal('voice_id' in read, false, 'voice_id is gone');
+  const saved = await call('PUT', '/settings', { voice_engine: 'deepseek', voice_id: 'stella' });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.voice_engine, 'system');
+  assert.equal(JSON.parse(db.prepare('SELECT value FROM system_state WHERE key = ?').pluck().get(key)).voice_id, undefined, 'not stored again');
+  // Bailian is saved and read back; a voice of another model or an unknown region is refused.
+  assert.deepEqual(((await call('PUT', '/settings', { voice_engine: 'bailian', voice_id_bailian: 'Brian_v3.1', voice_region: 'singapore' })).body), { ...read, voice_engine: 'bailian', voice_id_bailian: 'Brian_v3.1', voice_region: 'singapore' });
+  for (const body of [{ voice_id_bailian: 'longanhuan_v3.1' }, { voice_region: 'virginia' }, { voice_engine: 'openai' }]) assert.equal((await call('PUT', '/settings', body)).status, 400, JSON.stringify(body));
 });
 
 test('owners are kept apart: cards, queues, answers, settings and summaries', async t => {

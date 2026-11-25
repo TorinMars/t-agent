@@ -249,9 +249,12 @@ function infoHandler(req, res) {
       // learn:coach: the English coach (/api/learn/coach, and /v1/learn-sync/coach* for a company computer's page; docs/design/learn-english-coach.md).
       // A page whose engine lacks it shows the old English chat.
       require('../services/learn-coach').CAPABILITY,
-      // learn:speech: the DeepSeek voice of Learn (GET /api/learn/speech and /speech/status, and /v1/learn-sync/speech* for a company computer's page;
-      // "DeepSeek voice" in docs/design/learn-english-voice.md). A page whose engine lacks it reads with the device's voices.
+      // learn:speech: a server voice of Learn (GET /api/learn/speech and /speech/status, and /v1/learn-sync/speech-status for a company computer's
+      // page; docs/design/learn-english-voice.md). A page whose engine lacks it reads with the device's voices.
       require('../services/learn-speech').CAPABILITY,
+      // learn:speech:bailian: that voice is Bailian's (/api/learn/speech/bailian-key, /v1/learn-sync/bailian-*; "Bailian voice" there). v2.169.0
+      // listed learn:speech for a DeepSeek voice that was removed.
+      require('../services/learn-speech').BAILIAN_CAPABILITY,
       // page-state:sync: GET|PUT /v1/page-state and POST /v1/page-state/pull (routes/page-state.js), the page state (recent sessions, remembered
       // choices) linked services keep as one set (link tokens only). Off with SETTINGS_SYNC_ENABLED=false.
       ...(require('../services/page-state').syncEnabled() ? [require('../services/page-state').CAPABILITY] : []),

@@ -1,13 +1,14 @@
-// The DeepSeek voice of the Learn page ("DeepSeek voice" in docs/design/learn-english-voice.md; learn-voice.mjs, VoiceChoice and useAudio in
-// Learn.jsx), in real Chromium with every route mocked. GET /api/learn/speech answers a tiny valid WAV (never DeepSeek); the page's audio element is
-// a recording stand-in (it records the source, playbackRate and preservesPitch, and ends after window.audioMs), and speechSynthesis records what it
-// reads. The engine has no coach (its GET answers 404), so the Learn home is there.
-// - 390x844 touch: Learn settings → Audio → Voice: This device's voices / DeepSeek as radios in a list row (44px), saved at once; for DeepSeek the
-//   voice select (Stella / Tide), Try it (the sample text, played with the chosen voice), the caption about the accent; no key: the notice with
-//   Open Settings, Try it off; an engine without the voice: said so.
-// - Playback with DeepSeek: a word card plays by itself with the repeat (the audio of the text requested once, the element played twice), Hear it
-//   plays at once from the loaded audio, Play slowly uses playbackRate 0.7 with the pitch kept, nothing is read by speechSynthesis; the
-//   autoplay-refused "Tap to play" works the same.
+// The Bailian voice of the Learn page ("Bailian voice" in docs/design/learn-english-voice.md; learn-voice.mjs, VoiceChoice, BailianKey and useAudio
+// in Learn.jsx), in real Chromium with every route mocked. GET /api/learn/speech answers a tiny valid WAV (never Alibaba); the page's audio element
+// is a recording stand-in (it records the source, playbackRate and preservesPitch, and ends after window.audioMs), and speechSynthesis records what
+// it reads. The engine has no coach (its GET answers 404), so the Learn home is there.
+// - 390x844 touch: Learn settings → Audio → Voice: This device's voices / Bailian (Alibaba) as radios in list rows (44px), saved at once (the
+//   removed DeepSeek voice is not offered); for Bailian the voice select (American, then British), the region, the key saved write-only ("Key
+//   saved", Remove; the key never on the page), Try it with the chosen voice and region; an engine without the voice: said so; a server without
+//   Bailian (v2.169.0): only this device's voices.
+// - Playback with Bailian: a word card plays by itself with the repeat (the audio of the text requested once, the element played twice), Hear it
+//   plays at once from the loaded audio, Play slowly asks Bailian for slow speech (speed=slow) and plays it at rate 1, nothing is read by
+//   speechSynthesis; the autoplay-refused "Tap to play" works the same.
 // - Fallback: the speech route failing (503): the card is read by this device's voice and one notice says so.
 // H5_SHOT_DIR=<dir> saves voice-*.png.
 const { chromium } = require('playwright');
@@ -32,8 +33,9 @@ const WORDS = [card(1, 'word', 'expire', ZH, 'lookup'), card(2, 'word', 'deploy'
 const SUMMARY = { due: 2, new_today: 0, done_today: 0, goal: 20, streak: 1, words: 2, sentences: 0, mistakes: 0, chats: 0, collecting: true, starter: 'dev' };
 const SETTINGS = {
   collect: true, daily_goal: 20, starter: 'dev', audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 1,
-  audio_speed: 'normal', audio_stop_on_typing: true, voice_engine: 'system', voice_id: 'stella',
+  audio_speed: 'normal', audio_stop_on_typing: true, voice_engine: 'system', voice_id_bailian: 'Cindy_v3.1', voice_region: 'beijing',
 };
+const READY = { bailian: { ready: true, reason: null, has_key: true, workspace: 'llm-browser', voices: [], regions: ['beijing', 'singapore'] } };
 // A WAV header and two samples of silence.
 function wav() {
   const data = Buffer.alloc(4);
@@ -46,13 +48,20 @@ function wav() {
 const pageErrors = [];
 
 function learnMock(options = {}) {
-  const mock = { settings: { ...SETTINGS, ...(options.settings || {}) }, status: options.status || { ready: true, reason: null, voices: ['stella', 'tide'] }, speechStatus: 200, requests: [], speech: [] };
+  const mock = { settings: { ...SETTINGS, ...(options.settings || {}) }, status: options.status || READY, speechStatus: 200, requests: [], speech: [] };
+  const bailianStatus = saved => ({ bailian: { ready: Boolean(saved), reason: saved ? null : 'no_key', has_key: Boolean(saved), workspace: saved ? saved.workspace : '', voices: [], regions: ['beijing', 'singapore'] } });
   mock.handle = (p, method, url, body) => {
     mock.requests.push({ method, path: p, search: url.search, body });
     if (p === '/api/learn/summary') return { ...SUMMARY };
     if (p === '/api/learn/settings' && method === 'GET') return mock.settings;
     if (p === '/api/learn/settings' && method === 'PUT') { mock.settings = { ...mock.settings, ...body }; return mock.settings; }
     if (p === '/api/learn/speech/status') return mock.status === 404 ? [404, { error: 'not mocked' }] : mock.status;
+    if (p === '/api/learn/speech/bailian-key' && method === 'PUT') {
+      if (!body || !/^llm-/.test(body.workspace || '')) return [400, { error: 'Enter the workspace ID of Bailian (llm-…), or paste its API host' }];
+      mock.status = bailianStatus({ workspace: body.workspace });
+      return mock.status;
+    }
+    if (p === '/api/learn/speech/bailian-key' && method === 'DELETE') { mock.status = bailianStatus(null); return mock.status; }
     if (p === '/api/learn/queue') return { cards: WORDS };
     if (p === '/api/learn/meaning') return { zh: ZH };
     const answer = p.match(/^\/api\/learn\/cards\/(\d+)\/answer$/);
@@ -118,8 +127,10 @@ async function openPage(browser, options = {}) {
       return route.fulfill({ contentType: TYPES[path.extname(p)] || 'text/plain', body: fs.readFileSync(file) });
     }
     if (p === '/api/learn/speech') {
-      mock.speech.push({ text: url.searchParams.get('text'), voice: url.searchParams.get('voice') });
-      if (mock.speechStatus !== 200) return json({ error: 'The DeepSeek voice is not available right now' }, mock.speechStatus);
+      const asked = { text: url.searchParams.get('text'), voice: url.searchParams.get('voice') };
+      for (const key of ['engine', 'region', 'speed']) if (url.searchParams.has(key)) asked[key] = url.searchParams.get(key);
+      mock.speech.push(asked);
+      if (mock.speechStatus !== 200) return json({ error: 'The Bailian voice is not available right now' }, mock.speechStatus);
       return route.fulfill({ status: 200, contentType: 'audio/wav', headers: { 'Cache-Control': 'private, max-age=604800' }, body: wav() });
     }
     if (p.startsWith('/api/learn/')) {
@@ -169,75 +180,26 @@ async function toLearn(page) {
 (async () => {
   const browser = await chromium.launch({ headless: true });
   try {
-    // ── Learn settings → Audio → Voice ──
     {
-      const { context, page, mock } = await openPage(browser);
-      await toLearn(page);
-      await page.locator('#h5-learn-settings').tap();
-      await page.locator('#h5-learn-voice').waitFor();
-      assert.equal(await page.locator('#h5-learn-voice-system').isChecked(), true, "this device's voices by default");
-      assert.equal(await page.locator('#h5-learn-voice-deepseek').count(), 1);
-      assert.equal(await page.locator('#h5-learn-voice-deepseek').isChecked(), false);
-      assert.equal(await page.locator('#h5-learn-voice-id').count(), 0, 'no DeepSeek voice choice for the system voices');
-      const rows = await page.locator('#h5-learn-voice label.MuiFormControlLabel-root').evaluateAll(list => list.map(el => Math.round(el.getBoundingClientRect().height)));
-      assert.ok(rows.length === 2 && rows.every(h => h >= 44), `44px rows (${rows})`);
-      await page.locator('#h5-learn-voice-deepseek').tap();
-      await waitFor(() => mock.puts().some(body => body.voice_engine === 'deepseek'), 'DeepSeek saved at once');
-      await page.locator('#h5-learn-voice-id').waitFor();
-      await page.locator('#h5-learn-voice[data-ready="true"]').waitFor();
-      assert.match(await text(page, '#h5-learn-voice-caption'), /may not be American/);
-      assert.match(await text(page, '#h5-learn-voice-caption'), /This device's voices/);
-      assert.deepEqual(await page.locator('#h5-learn-voice-id option').allTextContents(), ['Stella (female)', 'Tide (male)']);
-      assert.equal(await page.locator('#h5-learn-voice-id').inputValue(), 'stella');
-      await page.locator('#h5-learn-voice-id').selectOption('tide');
-      await waitFor(() => mock.puts().some(body => body.voice_id === 'tide'), 'the voice saved at once');
-      const tryBox = await page.locator('#h5-learn-voice-try').boundingBox();
-      assert.ok(tryBox.height >= 44, `Try it is a 44px target (${tryBox.height})`);
-      await shot(page, 'voice-settings.png');
-      await page.locator('#h5-learn-voice-try').tap();
-      await waitFor(async () => (await played(page)).length === 1, 'Try it plays');
-      assert.deepEqual(mock.speech, [{ text: TRY_TEXT, voice: 'tide' }], 'the sample, with the chosen voice');
-      await waitFor(async () => (await text(page, '#h5-learn-voice-try')) === 'Try it', 'back to Try it after the sample');
-      // Back to this device's voices: the DeepSeek choices go.
-      await page.locator('#h5-learn-voice-system').tap();
-      await waitFor(() => mock.puts().some(body => body.voice_engine === 'system'), 'system saved');
-      await page.locator('#h5-learn-voice-id').waitFor({ state: 'detached' });
-      // The other audio settings stay as they were.
-      assert.equal(await page.locator('#h5-learn-audio-repeat button[data-value="2"]').getAttribute('aria-pressed'), 'true');
-      await context.close();
-    }
-    // ── Without a DeepSeek key; an engine without the voice; a server without the setting ──
-    {
-      const { context, page, mock } = await openPage(browser, { settings: { voice_engine: 'deepseek' }, status: { ready: false, reason: 'no_key', voices: ['stella', 'tide'] } });
-      await toLearn(page);
-      await page.locator('#h5-learn-settings').tap();
-      await page.locator('#h5-learn-voice-no-key').waitFor();
-      assert.match(await text(page, '#h5-learn-voice-no-key'), /Set up the DeepSeek translation service first/);
-      assert.equal(await page.locator('#h5-learn-voice-try').isDisabled(), true, 'nothing to try without a key');
-      await shot(page, 'voice-no-key.png');
-      await page.locator('#h5-learn-voice-no-key #h5-learn-open-translator').tap();
-      await waitFor(async () => (await page.evaluate(() => window.H5UI.get().settingsOpen)) && !(await page.evaluate(() => window.H5UI.get().learnOpen)), 'Settings opened on the translation service');
-      assert.equal(mock.speech.length, 0);
-      await context.close();
-    }
-    {
-      const { context, page } = await openPage(browser, { settings: { voice_engine: 'deepseek' }, status: 404 });
+      // An engine without the voice route.
+      const { context, page } = await openPage(browser, { settings: { voice_engine: 'bailian' }, status: 404 });
       await toLearn(page);
       await page.locator('#h5-learn-settings').tap();
       await page.locator('#h5-learn-voice-unsupported').waitFor();
       await context.close();
     }
     {
-      const { context, page } = await openPage(browser, { settings: { voice_engine: undefined, voice_id: undefined } });
+      const { context, page } = await openPage(browser, { settings: { voice_engine: undefined, voice_id_bailian: undefined, voice_region: undefined } });
       await toLearn(page);
       await page.locator('#h5-learn-settings').tap();
       await page.locator('#h5-learn-audio-card').waitFor();
       assert.equal(await page.locator('#h5-learn-voice').count(), 0, 'an older server: no Voice row');
       await context.close();
     }
-    // ── Playback with DeepSeek: repeat, Hear it, Slowly, no speechSynthesis; then "Tap to play" ──
+    // ── Playback with Bailian: repeat, Hear it, Slowly (Bailian's own slow audio), no speechSynthesis; then "Tap to play" ──
+    const SPOKEN = speed => ({ text: 'expire', voice: 'Brian_v3.1', engine: 'bailian', region: 'beijing', speed });
     {
-      const { context, page, mock } = await openPage(browser, { settings: { voice_engine: 'deepseek', voice_id: 'tide' } });
+      const { context, page, mock } = await openPage(browser, { settings: { voice_engine: 'bailian', voice_id_bailian: 'Brian_v3.1' } });
       await toLearn(page);
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-meaning').waitFor();
@@ -248,7 +210,7 @@ async function toLearn(page) {
       const [first, second] = await played(page);
       assert.ok(second.at - first.at >= 1000, `the pause between repeats (${Math.round(second.at - first.at)} ms)`);
       assert.equal(first.src, second.src, 'the same audio');
-      assert.deepEqual(mock.spoken('expire'), [{ text: 'expire', voice: 'tide' }], 'the audio of the word requested once');
+      assert.deepEqual(mock.spoken('expire'), [SPOKEN('normal')], 'the audio of the word requested once');
       await waitFor(async () => (await page.locator('#h5-learn-hear[data-playing]').count()) === 0, 'idle after the repeats');
       // Hear it: from the loaded audio, no new request; typing skips the repeat as with this device's voices.
       await page.locator('#h5-learn-hear').tap();
@@ -256,15 +218,14 @@ async function toLearn(page) {
       await page.locator('#h5-learn-stop').tap();
       await page.waitForTimeout(1400);
       assert.equal((await played(page)).length, 3, 'Stop: no repeat');
-      // Play slowly: playbackRate 0.7 with the pitch kept.
+      // Play slowly: Bailian's slow audio (speed=slow), played at rate 1.
       await page.locator('#h5-learn-slow').tap();
       await waitFor(async () => (await played(page)).length === 4, 'Play slowly plays');
-      const slow = (await played(page))[3];
-      assert.deepEqual([slow.rate, slow.pitch], [0.7, true]);
-      assert.equal((await played(page))[0].rate, 1, 'normal speed otherwise');
-      assert.equal(mock.spoken('expire').length, 1, 'still one request');
+      assert.equal((await played(page))[3].rate, 1, "Bailian's slow audio is not slowed again");
+      assert.deepEqual(mock.spoken('expire'), [SPOKEN('normal'), SPOKEN('slow')], 'one request for each speed');
+      assert.notEqual((await played(page))[3].src, (await played(page))[0].src);
       assert.deepEqual(await spokenBySystem(page), [], "this device's voice read nothing");
-      await shot(page, 'voice-spell-deepseek.png');
+      await shot(page, 'voice-spell-bailian.png');
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
       // A browser that refuses sound before the first tap: "Tap to play", and the tap plays.
@@ -279,15 +240,98 @@ async function toLearn(page) {
       assert.deepEqual(await spokenBySystem(page), []);
       await context.close();
     }
+    // ── Bailian: the radio, the voice and region selects, the key saved and removed, Try it ──
+    const BAILIAN = { voice_id_bailian: 'Cindy_v3.1', voice_region: 'beijing' };
+    const bailianNoKey = { bailian: { ready: false, reason: 'no_key', has_key: false, workspace: '', voices: [], regions: ['beijing', 'singapore'] } };
+    const SECRET_KEY = 'sk-browser-test-not-a-real-key-123';
+    {
+      const { context, page, mock } = await openPage(browser, { settings: BAILIAN, status: bailianNoKey });
+      await toLearn(page);
+      await page.locator('#h5-learn-settings').tap();
+      await page.locator('#h5-learn-voice').waitFor();
+      assert.equal(await page.locator('#h5-learn-voice-system').isChecked(), true, "this device's voices by default");
+      assert.equal(await page.locator('#h5-learn-voice-bailian-id').count(), 0, 'no Bailian choices for the system voices');
+      const rows = await page.locator('#h5-learn-voice label.MuiFormControlLabel-root').evaluateAll(list => list.map(el => Math.round(el.getBoundingClientRect().height)));
+      assert.ok(rows.length === 2 && rows.every(h => h >= 44), `two 44px rows (${rows})`);
+      assert.equal(await page.locator('#h5-learn-voice-deepseek').count(), 0, 'the removed DeepSeek voice is not offered');
+      assert.match(await text(page, '#h5-learn-voice'), /Bailian \(Alibaba\)/);
+      await page.locator('#h5-learn-voice-bailian').tap();
+      await waitFor(() => mock.puts().some(body => body.voice_engine === 'bailian'), 'Bailian saved at once');
+      await page.locator('#h5-learn-voice-bailian-id').waitFor();
+      assert.equal(await page.locator('#h5-learn-voice-bailian-id').inputValue(), 'Cindy_v3.1', 'Cindy by default');
+      assert.deepEqual(await page.locator('#h5-learn-voice-bailian-id optgroup').evaluateAll(list => list.map(el => el.label)), ['American English', 'British English']);
+      assert.deepEqual(await page.locator('#h5-learn-voice-bailian-id optgroup').first().locator('option').allTextContents(),
+        ['Cindy (female)', 'Ava (female)', 'Abby (female)', 'Annie (female)', 'Beth (female)', 'Betty (female)', 'Cally (female)', 'Donna (female)', 'Andy (male)', 'Brian (male)', 'David (male)']);
+      assert.deepEqual(await page.locator('#h5-learn-voice-bailian-id optgroup').nth(1).locator('option').evaluateAll(list => list.map(el => el.value)), ['Emily_v3.1', 'Luna_v3.1', 'Eric_v3.1', 'Luca_v3.1']);
+      assert.deepEqual(await page.locator('#h5-learn-voice-region option').allTextContents(), ['Beijing', 'Singapore']);
+      assert.equal(await page.locator('#h5-learn-voice-region').inputValue(), 'beijing');
+      await page.locator('#h5-learn-voice-region').selectOption('singapore');
+      await waitFor(() => mock.puts().some(body => body.voice_region === 'singapore'), 'the region saved at once');
+      assert.match(await text(page, '#h5-learn-voice-caption'), /quality and delay are not checked/);
+      // No key yet: the form, and Try it off.
+      await page.locator('#h5-learn-voice-key-part[data-saved="false"]').waitFor();
+      assert.equal(await page.locator('#h5-learn-voice-try').isDisabled(), true, 'nothing to try without a key');
+      assert.equal(await page.locator('#h5-learn-voice-key').getAttribute('type'), 'password');
+      assert.equal(await page.locator('#h5-learn-voice-key-save').isDisabled(), true, 'Save waits for both fields');
+      await page.locator('#h5-learn-voice-workspace').fill('bad workspace');
+      await page.locator('#h5-learn-voice-key').fill(SECRET_KEY);
+      await page.locator('#h5-learn-voice-key-save').tap();
+      await page.locator('#h5-learn-voice-key-error').waitFor();
+      assert.match(await text(page, '#h5-learn-voice-key-error'), /workspace ID/);
+      await page.locator('#h5-learn-voice-workspace').fill('llm-browser');
+      const saveBox = await page.locator('#h5-learn-voice-key-save').boundingBox();
+      assert.ok(saveBox.height >= 44, `Save is a 44px target (${saveBox.height})`);
+      await shot(page, 'voice-bailian-key.png');
+      await page.locator('#h5-learn-voice-key-save').tap();
+      await page.locator('#h5-learn-voice-key-part[data-saved="true"]').waitFor();
+      const saved = mock.requests.filter(item => item.path === '/api/learn/speech/bailian-key' && item.method === 'PUT').at(-1).body;
+      assert.deepEqual(saved, { api_key: SECRET_KEY, workspace: 'llm-browser' });
+      assert.equal(await text(page, '#h5-learn-voice-key-saved'), 'Key saved');
+      assert.match(await text(page, '#h5-learn-voice-key-part'), /Workspace llm-browser/);
+      assert.equal((await page.content()).includes(SECRET_KEY), false, 'the key is not on the page any more');
+      const removeBox = await page.locator('#h5-learn-voice-key-remove').boundingBox();
+      assert.ok(removeBox.height >= 44, `Remove is a 44px target (${removeBox.height})`);
+      // Try it: the sample with Cindy in Singapore, at the normal speed.
+      await page.locator('#h5-learn-voice[data-ready="true"]').waitFor();
+      await page.locator('#h5-learn-voice-try').tap();
+      await waitFor(async () => (await played(page)).length === 1, 'Try it plays');
+      assert.deepEqual(mock.speech.at(-1), { text: TRY_TEXT, voice: 'Cindy_v3.1', engine: 'bailian', region: 'singapore', speed: 'normal' });
+      assert.equal((await played(page))[0].rate, 1);
+      await page.locator('#h5-learn-voice-bailian-id').selectOption('Ava_v3.1');
+      await waitFor(() => mock.puts().some(body => body.voice_id_bailian === 'Ava_v3.1'), 'the voice saved at once');
+      await shot(page, 'voice-bailian.png');
+      // Remove: the form again.
+      await page.locator('#h5-learn-voice-key-remove').tap();
+      await page.locator('#h5-learn-voice-key-part[data-saved="false"]').waitFor();
+      assert.ok(mock.requests.some(item => item.path === '/api/learn/speech/bailian-key' && item.method === 'DELETE'));
+      // Back to this device's voices: the Bailian choices go; the other audio settings stay as they were.
+      await page.locator('#h5-learn-voice-system').tap();
+      await waitFor(() => mock.puts().some(body => body.voice_engine === 'system'), 'system saved');
+      await page.locator('#h5-learn-voice-bailian-id').waitFor({ state: 'detached' });
+      assert.equal(await page.locator('#h5-learn-audio-repeat button[data-value="2"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(mock.puts().some(body => body.voice_id !== undefined), false, 'no DeepSeek voice id is sent');
+      await context.close();
+    }
+    {
+      // A server of v2.169.0 (no voice_id_bailian, its DeepSeek choice stored): only this device's voices, checked.
+      const { context, page } = await openPage(browser, { settings: { voice_engine: 'deepseek', voice_id: 'tide', voice_id_bailian: undefined, voice_region: undefined } });
+      await toLearn(page);
+      await page.locator('#h5-learn-settings').tap();
+      await page.locator('#h5-learn-voice').waitFor();
+      assert.equal(await page.locator('#h5-learn-voice-bailian').count(), 0);
+      assert.equal(await page.locator('#h5-learn-voice-deepseek').count(), 0);
+      assert.equal(await page.locator('#h5-learn-voice-system').isChecked(), true);
+      await context.close();
+    }
     // ── Fallback: the speech route fails, this device's voice reads, one notice ──
     {
-      const { context, page, mock } = await openPage(browser, { settings: { voice_engine: 'deepseek' } });
+      const { context, page, mock } = await openPage(browser, { settings: { voice_engine: 'bailian' } });
       mock.speechStatus = 503;
       await toLearn(page);
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-meaning').waitFor();
       await waitFor(async () => (await spokenBySystem(page)).includes('expire'), "this device's voice reads the word");
-      assert.equal(await notice(page), "The DeepSeek voice is not available right now. This device's voice reads instead.");
+      assert.equal(await notice(page), "The Bailian voice is not available right now. This device's voice reads instead.");
       await waitFor(async () => (await spokenBySystem(page)).filter(item => item === 'expire').length === 2, 'with the repeat', 4000);
       assert.equal((await played(page)).length, 0);
       assert.ok(mock.spoken('expire').length >= 1);
@@ -299,5 +343,5 @@ async function toLearn(page) {
   }
   const errors = pageErrors.filter(message => !/ResizeObserver loop/.test(message));
   assert.deepEqual(errors, [], 'no page errors');
-  console.log('Learn DeepSeek voice browser test passed');
+  console.log('Learn Bailian voice browser test passed');
 })().catch(error => { console.error(error); process.exit(1); });

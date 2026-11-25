@@ -10,14 +10,24 @@ const { clientCookieSameSite } = require('../lib/client-embedding');
 const config = require('../config');
 
 // `clientAuth` and `handover` are passed by test/sign-in-handover-e2e.test.js (two engines in one process); the server uses the defaults.
-function createAuthRouter({ clientAuth = getClientAuth, handover = () => require('../services/sign-in-handover').getSignInHandover() } = {}) {
+// `accessLog`: the access log (services/access-log.js) that records logins and binds the new session to its device; none in a test that has none.
+function createAuthRouter({ clientAuth = getClientAuth, handover = () => require('../services/sign-in-handover').getSignInHandover(), accessLog = () => require('../services/access-log').getAccessLog() } = {}) {
   const router = express.Router();
   router.use(require('../middleware/client-origin'));
 
-  function saveLogin(req, res, auth, callback) {
+  // The access log never stands in the way of a login: a failure there is only logged.
+  function record(action) {
+    try { const log = accessLog(); if (log) action(log); } catch (error) { console.warn(`Access log: ${error.message}`); }
+  }
+  function recordFailure(req, error) {
+    if (error && (error.message === 'AUTH_CODE_INVALID' || error.status === 429)) record(log => log.loginFailed(req, { limited: error.status === 429 }));
+  }
+
+  function saveLogin(req, res, auth, callback, detail = '') {
     req.session.regenerate(error => {
       if (error) return callback(error);
       req.session.clientAuth = auth;
+      record(log => log.loginOk(req, req.session, { detail }));
       req.session.user = ensureSingleUser();
       req.session.cookie.maxAge = SESSION_TTL;
       req.session.cookie.secure = isSecureClientCookie(req);
@@ -63,8 +73,8 @@ function createAuthRouter({ clientAuth = getClientAuth, handover = () => require
     try {
       const grant = auth.authenticate(req.body.code, req.ip);
       auth.setAccessMode('remote');
-      saveLogin(req, res, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/' })));
-    } catch (error) { errorResponse(res, error); }
+      saveLogin(req, res, grant, error => (error ? errorResponse(res, error) : res.json({ mode: 'remote', redirect: '/' })), 'Switched to authenticator access');
+    } catch (error) { recordFailure(req, error); errorResponse(res, error); }
   });
   for (const route of ['/', '/login', '/setup']) {
     router.get(route, (req, res) => {
@@ -92,8 +102,8 @@ function createAuthRouter({ clientAuth = getClientAuth, handover = () => require
       saveLogin(req, res, auth, error => {
         if (error) return errorResponse(res, error);
         res.json({ success: true, recovery_codes: recoveryCodes, redirect: safeReturnTo(req.body.return_to) });
-      });
-    } catch (error) { errorResponse(res, error); }
+      }, 'Authenticator bound');
+    } catch (error) { recordFailure(req, error); errorResponse(res, error); }
   });
 
   router.post('/login', (req, res) => {
@@ -102,8 +112,8 @@ function createAuthRouter({ clientAuth = getClientAuth, handover = () => require
       saveLogin(req, res, auth, error => {
         if (error) return errorResponse(res, error);
         res.json({ success: true, redirect: auth.recovery ? `${req.baseUrl}/setup?return_to=${encodeURIComponent(safeReturnTo(req.body.return_to))}` : safeReturnTo(req.body.return_to) });
-      });
-    } catch (error) { errorResponse(res, error); }
+      }, auth.recovery ? 'With a recovery code' : '');
+    } catch (error) { recordFailure(req, error); errorResponse(res, error); }
   });
 
   // POST <login path>/handover { token, nonce, return_to }: a login handed over by a linked engine (services/sign-in-handover.js; "One login for linked
@@ -119,7 +129,7 @@ function createAuthRouter({ clientAuth = getClientAuth, handover = () => require
     saveLogin(req, res, grant, error => {
       if (error) return errorResponse(res, error);
       res.json({ success: true, from: accepted.from.name, redirect: safeReturnTo(body.return_to) });
-    });
+    }, 'Handed over by a linked device');
   });
 
   // PUT /auth/settings — update the working path

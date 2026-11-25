@@ -24,6 +24,7 @@ The devices joined by service links keep one set of settings: a change on any of
 | `usage-record` | shared | `ui_usage_v1` (the "Record button use" switch of the usage data; the presses have their own sync, [usage-data.md](usage-data.md)) |
 | `usage-time-record` | shared | `usage_time_record_v1` (the "Record time" switch of the usage time; the rows have their own sync, [usage-time.md](usage-time.md)) |
 | `usage-memories-digest` | shared | `usage_memories_digest_v1` (the "Write a weekly digest" switch of the memories, [usage-time.md](usage-time.md)) |
+| `access-alerts` | shared | `access_alerts_v1` (the "Alert me about new devices" switch of the access log; the log itself stays on each machine, [access-log.md](access-log.md)) |
 | `workdir`, `access`, `authenticator`, `engine-name`, `widget-enabled`, `peer-fs`, `restart`, `rule-sync` | device | never synced: the working directory (`users.work_dir`), access mode and authenticator, the device name, the desktop window switch, peer file access, restart, and the rules sync role, state and its shared Claude settings choice |
 | `telegram` | telegram | the Telegram plugin keeps its settings and session on each device |
 

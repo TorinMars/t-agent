@@ -44,7 +44,7 @@ const SCOPES = Object.freeze({
   translate: 'shared', voice: 'shared', oss: 'shared', 'oss-agent-access': 'shared', 'agent-config': 'shared',
   'attention-summary': 'shared', 'attention-guide': 'shared', 'notify-rules': 'shared',
   'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'update-auto': 'shared', 'browser-sites': 'shared', 'usage-record': 'shared',
-  'usage-time-record': 'shared', 'usage-memories-digest': 'shared',
+  'usage-time-record': 'shared', 'usage-memories-digest': 'shared', 'access-alerts': 'shared',
   workdir: 'device', access: 'device', authenticator: 'device', 'engine-name': 'device', 'widget-enabled': 'device', 'peer-fs': 'device',
   restart: 'device', 'rule-sync': 'device',
   telegram: 'telegram',
@@ -590,6 +590,8 @@ function defaultRegistry({ db, sessionSecret }) {
     // The switches "Record time" and "Write a weekly digest" of the usage time and memories (services/usage-time.js); the rows have their own sync.
     entry('usage-time-record', () => require('./usage-time').recordSync),
     entry('usage-memories-digest', () => require('./usage-time').digestSync),
+    // The switch "Alert me about new devices" of the access log (services/access-log.js); the log itself stays on each machine.
+    entry('access-alerts', () => require('./access-log')),
   ];
 }
 

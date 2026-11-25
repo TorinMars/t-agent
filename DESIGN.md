@@ -49,6 +49,7 @@
 | [engine-names.md](docs/design/engine-names.md) | One name per Engine, kept by that Engine and shown everywhere. | 3 KB |
 | [entry-symmetry.md](docs/design/entry-symmetry.md) | The same page from any engine: devices in one order by name, "Create on" and the T-Attention engine from the last choice, labels without "This machine", mind maps in one list, and the audit of what still treats this machine specially. | 7 KB |
 | [failover-and-one-login.md](docs/design/failover-and-one-login.md) | One login for linked engines (a signed single-use hand-over through the service link), the offline view of the service worker with "Continue on <engine>", an offline engine's tasks kept dimmed, and the Mac app moving to a linked engine. | 10 KB |
+| [access-log.md](docs/design/access-log.md) | The access log of this machine (schema 27): device ids (`X-TA-Device`), the client address behind the SSH tunnel and the VPS proxy (`lib/client-ip.js`, `TRUSTED_PROXY`, the proxy note), the tables, detection and alerts (new device, new address, wrong codes) with their rate limits, signing a device out, the `/api/access` API, `access:log`, limits. | 10 KB |
 
 ### The page (`/` and `/h5`)
 

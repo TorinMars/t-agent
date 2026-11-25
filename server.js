@@ -190,6 +190,36 @@ app.use((req, res, next) => {
 });
 // In local-only / mode-not-chosen state, non-local requests always get 404; in local-only mode sessions from this machine are trusted automatically.
 app.use(createAccessGate({ getMode: () => getClientAuth().accessMode() }));
+// The access log (services/access-log.js, "Access log" in docs/design/access-log.md): which devices use this server and from where, on this machine
+// only. The client address of a request through the SSH tunnel or frp (a loopback peer) is the one the VPS's proxy appended, while a tunnel, frp or
+// a public page address is set up (TRUSTED_PROXY=auto) or TRUSTED_PROXY=on (lib/client-ip.js).
+let trustedProxyCache = { at: 0, value: false };
+function trustedProxy() {
+  if (config.trustedProxy !== 'auto') return config.trustedProxy === 'on';
+  if (Date.now() - trustedProxyCache.at < 30000) return trustedProxyCache.value;
+  let value = false;
+  try { value = Boolean(sshTunnelRouter.service.load().host); } catch { /* not set up */ }
+  try { value = value || Boolean(frpRouter.service.load().serverAddr); } catch { /* not set up */ }
+  try { value = value || Boolean(attentionNotify.getRules(attentionNotify.defaultOwner()).publicUrl); } catch { /* no rules */ }
+  trustedProxyCache = { at: Date.now(), value };
+  return value;
+}
+const accessLogService = require('./services/access-log');
+const accessLog = accessLogService.createAccessLog({
+  db, attention: () => attentionService, mode: () => getClientAuth().accessMode(), trusted: trustedProxy,
+  endSession: sid => app.locals.disconnectClientSession && app.locals.disconnectClientSession(sid),
+});
+accessLogService.setAccessLog(accessLog);
+accessLog.watchAttention(attentionService);
+accessLogService.startRetention(accessLog);
+// Every signed-in request: binds the session to its device, touches the device (at most every 10 minutes per address) and takes the login off a
+// session of a device that was signed out from Settings, before the login gate below, so such a request is treated as logged out.
+app.use((req, res, next) => {
+  try {
+    if (getClientAuth().authenticated(req.session)) accessLog.onRequest(req, req.session);
+  } catch (error) { console.warn(`Access log: ${error.message}`); }
+  next();
+});
 // When logged out only the login entrance and machine endpoints are open; everything else returns 404.
 app.use(createLoginGate({ loginPath: config.loginPath, isAuthenticated: session => getClientAuth().authenticated(session) }));
 
@@ -293,6 +323,8 @@ app.use('/api/settings-sync', require('./routes/settings-sync').createSettingsSy
 // The per-device settings of a linked device, read and written from this page (routes/device-settings.js).
 app.use('/api/device-settings', require('./routes/device-settings').createDeviceSettingsRouter());
 app.use('/api/remote-tokens', require('./routes/remote-tokens'));
+// Settings → Account and access → Devices and sign-ins (routes/access.js).
+app.use('/api/access', require('./routes/access').createAccessRouter({ service: () => accessLog, mode: () => getClientAuth().accessMode() }));
 app.use('/api/service-links', require('./routes/service-links'));
 // One login for linked engines (routes/sign-in-handover.js): the switch, the linked engines' addresses and the hand-over a page asks for.
 app.use('/api/sign-in-handover', require('./routes/sign-in-handover').createSignInHandoverRouter());
@@ -604,6 +636,15 @@ function browserUpgrade(req, socket, head, callback) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       return socket.destroy();
     }
+    // A terminal of a device signed out from Settings is refused like an expired session; an unbound session is bound to the `device` of the URL.
+    let outcome = 'none';
+    try { outcome = accessLog.onRequest(req, req.session); } catch (error) { console.warn(`Access log: ${error.message}`); }
+    if (outcome === 'blocked') {
+      req.session.save(() => {});
+      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      return socket.destroy();
+    }
+    if (outcome === 'bound') req.session.save(() => {});
     req.session.user = ensureSingleUser();
     callback(req.session.user);
   });

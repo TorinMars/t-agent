@@ -26,6 +26,9 @@ module.exports = {
   accessMode:   ['local', 'remote'].includes(process.env.ACCESS_MODE) ? process.env.ACCESS_MODE : '',
   // Explicit opt-in for trusted intranet HTTP; HTTPS cookies remain Secure.
   clientAllowHttp: process.env.CLIENT_ALLOW_HTTP === 'true',
+  // The access log's client address (lib/client-ip.js, "Client address" in docs/design/access-log.md): whether the address a proxy appends to a
+  // request from the loopback (the SSH tunnel, frp) is used. auto (default): while an SSH tunnel, frp or a public page address is set up; on; off.
+  trustedProxy: ['on', 'off'].includes(String(process.env.TRUSTED_PROXY || '').toLowerCase()) ? String(process.env.TRUSTED_PROXY).toLowerCase() : 'auto',
   clientFrameOrigins: require('./lib/client-embedding').parseFrameOrigins(process.env.CLIENT_FRAME_ORIGINS),
   // The only login entrance visible when logged out; every other address returns 404.
   loginPath: require('./lib/login-gate').resolveLoginPath(process.env.CLIENT_LOGIN_PATH, message => console.warn(message)),

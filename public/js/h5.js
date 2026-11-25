@@ -66,7 +66,9 @@
     setTimeout(() => { if (early.get(url) === answer) early.delete(url); }, EARLY_MS);
   }
   let earlySocket = null; // { source, taskId, terminalId, ws, events, timer }
-  const socketUrl = (from, taskId, id, takeover) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${from.wsPath}?taskId=${taskId}&terminalId=${encodeURIComponent(id)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}`;
+  const socketUrl = (from, taskId, id, takeover) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${from.wsPath}?taskId=${taskId}&terminalId=${encodeURIComponent(id)}${TerminalOwner.query(takeover)}${TerminalProtocol.query()}${deviceQuery()}`;
+  // The id of this browser for the access log ("Devices and sign-ins" in docs/design/page-files-and-settings.md); nothing without TALocalKeys.
+  const deviceQuery = () => { try { const keys = window.TALocalKeys; const id = keys && typeof keys.deviceId === 'function' ? keys.deviceId() : ''; return id ? `&device=${encodeURIComponent(id)}` : ''; } catch { return ''; } };
   function openEarlySocket(from, taskId, id) {
     const ws = new WebSocket(socketUrl(from, taskId, id, false));
     ws.binaryType = 'arraybuffer';

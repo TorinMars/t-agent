@@ -11,7 +11,7 @@ export const GROUPS = [
   { id: 'keyboard', title: 'Keyboard', description: 'How the page’s own keys feel on this device.', summary: 'Vibration on key taps' },
   { id: 'devices', title: 'Devices', description: 'Linked devices, how they connect, and what they share.', summary: 'Device list, linking, file access, rules sync' },
   { id: 'attention', title: 'T-Attention', description: 'Reminders, plugins and notifiers, the desktop window and CLI tokens.', summary: 'Reminders, plugins, desktop window, tokens' },
-  { id: 'account', title: 'Account and access', description: 'Who can reach this service and how they sign in.', summary: 'Access mode, authenticator' },
+  { id: 'account', title: 'Account and access', description: 'Who can reach this service, how they sign in, and which devices did.', summary: 'Access mode, authenticator, devices' },
   { id: 'usage-data', title: 'Usage data', description: 'Buttons used, where your time goes and what to remember. Kept on your own machines.', summary: 'Buttons, time, memories' },
 ];
 export const SETTINGS_GROUPS = GROUPS.map(group => group.id);
@@ -22,7 +22,7 @@ const SECTIONS = {
   voice: 'voice-translate', translate: 'voice-translate',
   'key-haptics': 'keyboard',
   link: 'devices', 'peer-fs': 'devices', 'sign-in': 'devices', 'rule-sync': 'devices', advanced: 'devices', connect: 'devices', remote: 'devices',
-  access: 'account', authenticator: 'account',
+  access: 'account', authenticator: 'account', 'access-devices': 'account', 'access-alerts': 'account',
   'usage-record': 'usage-data', 'usage-top': 'usage-data', 'usage-unused': 'usage-data', 'usage-store': 'usage-data',
   'usage-time': 'usage-data', 'usage-time-record': 'usage-data', 'usage-memories': 'usage-data', 'usage-digest': 'usage-data',
 };

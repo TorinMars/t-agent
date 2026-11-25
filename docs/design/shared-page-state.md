@@ -103,7 +103,7 @@ Every localStorage and sessionStorage key of the page and its chunks (`public/js
 | `h5-mindmap-draft:<map>` | local | browser | this browser's unsaved edits of a map (a crash copy); the saved map is on its service |
 | `h5-mindmap` | local, pane | browser | kept by mind map columns of v2.133 and v2.134: read only to drop them |
 | `ta-linked-engines` | local | cache-of-shared-state | this engine's name and the web addresses of its linked engines, for the offline page's "Continue on" while this engine is down (the server keeps them too) |
-| `ta-device-id` | local | browser | a random id of this browser, so the "Continue" hint and the drafts never offer this device its own session or text |
+| `ta-device-id` | local | browser | a random id of this browser: it names this device in the access log of Settings → Account and access, and keeps the "Continue" hint and the drafts from offering this device its own session or text |
 | `terminal-client-id` | session, pane | browser | names this tab as one terminal client |
 | `h5-auto-reloaded-versions` | session | browser | the auto-reload guard of this tab |
 | `ta-lang-applied` | session | browser | a language from another device is applied once per tab |

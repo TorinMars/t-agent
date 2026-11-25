@@ -17,8 +17,8 @@ const DEVICES = [
 test('each tab holds exactly its parts: Shared the shared ones and Telegram, a device tab the per-device ones, every tab the Environment table and the usage data', async () => {
   const { PARTS, partShown } = await load('settings-tabs.mjs');
   const inTab = scope => Object.keys(PARTS).filter(id => partShown(id, scope));
-  assert.deepEqual(inTab('shared'), ['oss', 'browser-sites', 'voice', 'translate', 'settings-sync', 'task-list-devices', 'environment', 'notifier-plugins', 'telegram', 'notify-rules', 'widget-language', 'attention-summary', 'usage-record', 'usage-top', 'usage-unused', 'usage-store', 'usage-time', 'usage-time-record', 'usage-memories', 'usage-digest']);
-  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'key-haptics', 'engine-name', 'link', 'peer-fs', 'sign-in', 'rule-sync', 'advanced', 'environment', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'usage-top', 'usage-unused', 'usage-store', 'usage-time', 'usage-time-record', 'usage-memories', 'usage-digest']);
+  assert.deepEqual(inTab('shared'), ['oss', 'browser-sites', 'voice', 'translate', 'settings-sync', 'task-list-devices', 'environment', 'notifier-plugins', 'telegram', 'notify-rules', 'widget-language', 'attention-summary', 'access-alerts', 'usage-record', 'usage-top', 'usage-unused', 'usage-store', 'usage-time', 'usage-time-record', 'usage-memories', 'usage-digest']);
+  assert.deepEqual(inTab('device'), ['workdir', 'agent-skills', 'browser-ext', 'key-haptics', 'engine-name', 'link', 'peer-fs', 'sign-in', 'rule-sync', 'advanced', 'environment', 'connect', 'remote', 'attention-guide', 'reminders', 'listeners', 'plugin-market', 'widget-enabled', 'attention-skill', 'cli-tokens', 'access', 'authenticator', 'access-devices', 'usage-top', 'usage-unused', 'usage-store', 'usage-time', 'usage-time-record', 'usage-memories', 'usage-digest']);
   assert.equal(inTab(null).length, Object.keys(PARTS).length, 'without tabs every part is drawn');
   assert.equal(partShown('something-new', 'shared'), true, 'an unknown part is never lost');
 });
@@ -26,7 +26,7 @@ test('each tab holds exactly its parts: Shared the shared ones and Telegram, a d
 test('a group with nothing in a tab is hidden there', async () => {
   const { groupShown } = await load('settings-tabs.mjs');
   const { SETTINGS_GROUPS } = await load('settings-target.mjs');
-  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'shared')), ['tasks-files', 'voice-translate', 'devices', 'attention', 'usage-data']);
+  assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'shared')), ['tasks-files', 'voice-translate', 'devices', 'attention', 'account', 'usage-data']);
   assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, 'device')), ['tasks-files', 'keyboard', 'devices', 'attention', 'account', 'usage-data']);
   assert.deepEqual(SETTINGS_GROUPS.filter(group => groupShown(group, null)), SETTINGS_GROUPS);
 });
@@ -35,7 +35,7 @@ test('opening a part from code moves to the tab that holds it; a group stays on 
   const { tabForTarget, PARTS } = await load('settings-tabs.mjs');
   const { settingsTarget } = await load('settings-target.mjs');
   // Every part id and alias of settings-target.mjs has a tab.
-  for (const id of ['workdir', 'oss', 'agent-skills', 'browser-ext', 'voice', 'translate', 'link', 'peer-fs', 'sign-in', 'rule-sync', 'advanced', 'connect', 'remote', 'access', 'authenticator', 'service-links', 'attention-skill']) {
+  for (const id of ['workdir', 'oss', 'agent-skills', 'browser-ext', 'voice', 'translate', 'link', 'peer-fs', 'sign-in', 'rule-sync', 'advanced', 'connect', 'remote', 'access', 'authenticator', 'access-devices', 'access-alerts', 'service-links', 'attention-skill']) {
     const target = settingsTarget(id);
     assert.ok(Object.hasOwn(PARTS, target.section), `${id} has a part`);
   }
@@ -47,7 +47,9 @@ test('opening a part from code moves to the tab that holds it; a group stays on 
   assert.equal(at('service-links', 'shared'), 'local');
   assert.equal(at('attention', '7'), '7', 'T-Attention has parts in every tab');
   assert.equal(at('attention', 'shared'), 'shared');
-  assert.equal(at('account', 'shared'), 'local', 'Account has nothing shared');
+  assert.equal(at('account', 'shared'), 'shared', 'Account has the shared alert switch');
+  assert.equal(at('access-devices', 'shared'), 'local', 'the access log is this device\'s own');
+  assert.equal(at('access-alerts', '7'), 'shared');
   assert.equal(at('voice-translate', 'local'), 'shared', 'Voice and translation has nothing per device');
   assert.equal(at('devices', '7'), '7');
   assert.equal(at('workdir', null), null, 'without tabs nothing moves');

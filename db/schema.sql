@@ -592,3 +592,40 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_at ON memories (at);
 CREATE INDEX IF NOT EXISTS idx_memories_seq ON memories (sync_seq);
 CREATE INDEX IF NOT EXISTS idx_memories_event ON memories (event, ref, at);
+
+-- Schema 27: the access log ("Access log" in docs/design/access-log.md; services/access-log.js). This machine only, never synced: which devices use
+-- this server and from where. No request bodies, tokens, codes, terminal text or raw User-Agent are stored. Events are kept 90 days.
+-- access_devices: one row per device id (the random id a browser sends in X-TA-Device; a label, never a credential).
+CREATE TABLE IF NOT EXISTS access_devices (
+  device_id   TEXT    PRIMARY KEY,
+  name        TEXT    NOT NULL DEFAULT '',          -- derived from the User-Agent at first sight: "iPhone · Safari", "T-Agent Mac App"
+  custom_name TEXT,                                 -- the person's own name for it (Rename), or NULL
+  first_seen  INTEGER NOT NULL,                     -- milliseconds since 1970
+  last_seen   INTEGER NOT NULL,
+  last_ip     TEXT    NOT NULL DEFAULT '',
+  confirmed   INTEGER NOT NULL DEFAULT 0,           -- 1: the person said "It was me", or it was learned silently (the first device, a login from before)
+  revoked_at  INTEGER,                              -- signed out from Settings at; its sessions were ended
+  alerted_at  INTEGER,                              -- the last alert about it (one per hour at most)
+  attention_id INTEGER                              -- the open T-Attention alert about it, closed by "It was me"
+);
+CREATE INDEX IF NOT EXISTS idx_access_devices_seen ON access_devices (last_seen);
+-- access_device_ips: the addresses a device was seen from (the "new address" rule).
+CREATE TABLE IF NOT EXISTS access_device_ips (
+  device_id  TEXT    NOT NULL,
+  ip         TEXT    NOT NULL,
+  first_seen INTEGER NOT NULL,
+  last_seen  INTEGER NOT NULL,
+  PRIMARY KEY (device_id, ip)
+);
+-- access_events: login_ok | login_failed | new_device | new_ip | revoked | blocked, with a short English detail.
+CREATE TABLE IF NOT EXISTS access_events (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  at        INTEGER NOT NULL,
+  device_id TEXT    NOT NULL DEFAULT '',
+  ip        TEXT    NOT NULL DEFAULT '',
+  kind      TEXT    NOT NULL,
+  detail    TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_access_events_at ON access_events (at);
+CREATE INDEX IF NOT EXISTS idx_access_events_ip ON access_events (ip, kind, at);
+CREATE INDEX IF NOT EXISTS idx_access_events_device ON access_events (device_id);

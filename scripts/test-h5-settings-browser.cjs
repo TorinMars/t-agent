@@ -47,6 +47,10 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
         if (url === '/api/remote-tokens/5' && method === 'DELETE') { state.tokens = []; return reply({ ok: true }); }
         if (url === '/auth/mode') return reply(state.modeReply || { error: 'AUTH_CODE_INVALID' }, state.modeReply ? 200 : 400);
         if (url === '/api/remote-servers') return reply([]);
+        // Devices and sign-ins (AccessLog.jsx, read when Account and access opens): one device, no events; scripts/test-h5-access-log-browser.cjs tests the part.
+        if (url === '/api/access/devices') return reply({ mode: state.mode, can_sign_out: true, current_device: 'abcdef123456', alerts: { enabled: true }, ip_note: null, devices: [{ id: 'abcdef123456', name: 'Chrome on macOS', custom_name: null, first_seen: 1764000000000, last_seen: 1764000000000, last_ip: '192.168.1.5', ips_seen_count: 1, confirmed: true, revoked_at: null, current: true, sessions: 1, loopback: false }] });
+        if (url.startsWith('/api/access/events')) return reply({ events: [], more: false });
+        if (url === '/api/access/settings') return reply({ access_alerts: true });
         if (url === '/api/peer-fs/settings' || url.startsWith('/api/rule-sync') || url === '/api/oss/agent-access' || url === '/api/agent-skills') return reply({ error: 'NOT_FOUND' }, 404); // an older server: those parts are not drawn
         throw new Error(`unexpected ${method} ${url}`);
       };
@@ -173,7 +177,7 @@ const html = fs.readFileSync(path.join(root, 'public/h5.html'), 'utf8').replace(
 
     // Access mode (in "Account and access"): external access is on; switching to local access only asks first, and a refused code is explained.
     await openGroup('account');
-    assert.deepEqual(await page.locator('#h5-set-account .h5-setting-subheading').allTextContents(), ['Access mode', 'Authenticator']);
+    assert.deepEqual(await page.locator('#h5-set-account .h5-setting-subheading').allTextContents(), ['Access mode', 'Authenticator', 'Devices and sign-ins', 'Recent events']);
     await page.waitForFunction(() => document.getElementById('h5-access-switch').textContent !== '');
     assert.equal(await page.locator('#h5-access-title').textContent(), 'Authenticator + allow external access');
     assert.match(await page.locator('#h5-access-hint').textContent(), /listens only on 127\.0\.0\.1/);

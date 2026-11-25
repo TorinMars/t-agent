@@ -146,3 +146,7 @@ Learning and reviewing through the coach are word spelling only (the user's rule
 ## Small changes are made at once (v2.165.4)
 
 The coach no longer waits for a tap on a small change. A proposal carries `auto: true` (`cleanProposal` in `services/learn-merge.js`) for a settings change and for cards added or given a new meaning; a removal, a reminder and a practice stay cards that wait for a tap. When her answer has settled (`settle` in `LearnCoach.jsx`) the page runs each open auto proposal once through the same `POST /coach/proposals/:id/run` as a tap, so the card shows "Changed" with the 10-second Undo, and a reload never runs it again (the state is stored `done`). The prompt tells her to say in one short sentence what she changed, never to ask first and never to apologise. The server itself changes nothing before the page runs it.
+
+## The coach is made at start (v2.167.2)
+
+A company computer's coach page asks its home through `GET /v1/learn-sync/coach` and `POST /v1/learn-sync/coach-<action>`; the home answers from `coach` of `services/learn-sync.js`, which `getLearnCoach()` hands in by `setCoach`. The coach was made only when the home's own page first asked, so after a restart a company computer got `404` and showed "The normal computer that keeps your learning data needs an update first" although the home was current. `server.js` now makes the coach at start (like the chats and the questions), and `engineHome` also makes it on the first coach request (`loadCoach`) when it is still missing.

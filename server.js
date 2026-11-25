@@ -786,6 +786,9 @@ server.listen(config.port, config.host, () => {
   require('./services/learn-ask').getLearnAsk();
   // The English chats of Learn (services/learn-chat.js): made now too, for the same reason.
   require('./services/learn-chat').getLearnChat();
+  // The English coach (services/learn-coach.js): made now too. Before, it was made when this engine's own page first asked, so a company computer's page asking
+  // right after a restart got a 404 and showed "needs an update first".
+  require('./services/learn-coach').getLearnCoach();
   // The shared page state follows the links from here on (services/page-state.js); without the settings sync it stays on this engine.
   if (config.settingsSyncEnabled) require('./services/page-state').getPageState().start();
   // Moves of tasks to other engines stopped by a crash are finished or undone, and the trash of moved folders is swept (services/task-move.js).

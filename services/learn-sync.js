@@ -61,6 +61,7 @@ const int = value => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
 function createLearnSync(options) {
   const {
     db, serviceLinks = null, request = null,
+    loadCoach = null, // () => makes the English coach when nobody has used it here yet (it hands itself in by setCoach)
     identity, // () => { instance_id, name }
     owner = () => require('./single-user').ensureSingleUser().login,
     linkKeys, // { publicKey(), linkKey(peer, publicKey) }: the settings sync's key pair and link keys
@@ -677,6 +678,8 @@ function createLearnSync(options) {
     }
     // The English coach (services/learn-coach.js): kept and answered here; the answers as one JSON (not streamed).
     if (action.startsWith('coach')) {
+      // The coach is made on first use: a home that nobody opened the coach on since it started has none yet, and a company computer's page must not read that as "older".
+      if (!coach && loadCoach) { try { loadCoach(); } catch { /* none: a 404 below */ } }
       if (!coach) throw fault('NOT_FOUND', 404);
       const given = isPlainObject(body) ? body : {};
       if (action === 'coach') return typeof coach.look === 'function' ? coach.look(name, { before: given.before, limit: given.limit, claude: given.claude }) : coach.view(name, { before: given.before, limit: given.limit });
@@ -989,6 +992,7 @@ function getLearnSync() {
     linkKeys: { publicKey: () => settingsSync.publicKey(), linkKey: (peer, publicKey) => settingsSync.linkKey(peer, publicKey) },
     tier: require('./device-tier').getDeviceTier(),
     enabled: syncEnabled,
+    loadCoach: () => require('./learn-coach').getLearnCoach(),
   });
   return singleton;
 }

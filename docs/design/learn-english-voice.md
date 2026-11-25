@@ -119,3 +119,7 @@ on a real iPhone are untested.
 ## The log names the reason (v2.170.1)
 
 A failed Bailian call logs `[learn-speech] Bailian: <status> (<reason>)`, for example `502 (network ENOTFOUND)` (the workspace host does not resolve), `502 (http 418)`, `502 (answer has no audio (keys: ...))`, `502 (audio is not wav)`, `422 (http 400 InvalidParameter)`. The reason is a short code: never the key, the text, the workspace id or a response body.
+
+## The audio address is upgraded to https (v2.170.2)
+
+The Beijing endpoint answers with `output.audio.url` as an `http://` address on Alibaba's storage (`dashscope-result-bj.oss-cn-beijing.aliyuncs.com`; seen with a real call, 200 and a WAV of 24 kHz). The service refused every non-https address, so every Bailian call ended as "not available right now" (502). An `http://` address of an `aliyuncs.com` host (no port) is now fetched over `https://` (the same signed address works there); any other host over http is still refused.

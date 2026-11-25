@@ -135,6 +135,9 @@ function bailianProvider(keys) {
         // The file of the answer (24 hours on Alibaba's storage): fetched now, without the key, only over https.
         let url;
         try { url = new URL(audio.url); } catch { return unavailable('audio url is broken'); }
+        // The answer names the file with an http:// address on Alibaba's storage (seen on the Beijing endpoint); the same address works over https, so an
+        // http address of an aliyuncs.com host is upgraded; any other host stays refused unless it is https already.
+        if (url.protocol === 'http:' && /(^|\.)aliyuncs\.com$/i.test(url.hostname) && !url.port) url.protocol = 'https:';
         if (url.protocol !== 'https:' || url.username || url.password) return unavailable('audio url is not plain https');
         let file;
         try { file = await fetchImpl(url.href, { signal }); } catch { return timedOut() ? tooLong() : unavailable('audio download failed'); }

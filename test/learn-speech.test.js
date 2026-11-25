@@ -97,6 +97,13 @@ test('base64 audio in the answer is taken as it is; a URL that is not https, or 
   const plain = make(t, { fetchOptions: { posts: [synthesis('http://example.test/a.wav')] } });
   await rejectsWith(plain.speech.speak('me', { text: 'Hello.', engine: 'bailian' }), 502, 'The Bailian voice is not available right now');
   assert.equal(plain.fetchImpl.calls.length, 1, 'an http:// link is never fetched');
+  // Alibaba names its storage file with an http:// address (seen on the Beijing endpoint): upgraded to https for an aliyuncs.com host only.
+  const alibaba = make(t, { fetchOptions: { posts: [synthesis('http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.wav?Signature=x')] } });
+  assert.ok((await alibaba.speech.speak('me', { text: 'Hello.', engine: 'bailian' })).length > 44);
+  assert.equal(alibaba.fetchImpl.calls[1].url, 'https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/a.wav?Signature=x', 'fetched over https');
+  const other = make(t, { fetchOptions: { posts: [synthesis('http://aliyuncs.com.evil.test/a.wav')] } });
+  await rejectsWith(other.speech.speak('me', { text: 'Hello.', engine: 'bailian' }), 502);
+  assert.equal(other.fetchImpl.calls.length, 1, 'another host over http is never fetched');
   const notWav = make(t, { fetchOptions: { gets: [{ status: 200, arrayBuffer: async () => bytes(Buffer.from('ID3 an mp3 or something else entirely, long enough')) }] } });
   await rejectsWith(notWav.speech.speak('me', { text: 'Hello.', engine: 'bailian' }), 502);
   assert.equal(fs.existsSync(notWav.dir) ? fs.readdirSync(notWav.dir).length : 0, 0, 'nothing cached');

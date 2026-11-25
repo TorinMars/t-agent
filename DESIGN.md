@@ -266,3 +266,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.168.0 Initial command when creating a terminal session
 > v2.168.1 Spelling: the letter boxes are grouped by syllable
 > v2.169.0 DeepSeek voice engine for Learn pronunciation
+> v2.170.0 Bailian voice engine (Cindy) for Learn pronunciation; the DeepSeek voice engine is removed

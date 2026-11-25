@@ -2014,6 +2014,8 @@
   let menuScope = null;
   // The optional name typed in the New session dialog. It is kept while moving between its lists (Claude session, Back) and names what is created.
   let newName = '';
+  // The initial command typed in the New session dialog ("Initial command" in docs/design/terminals.md): sent only with New Terminal, then cleared.
+  let newCommand = '';
   let menuCreate = -1; // the item that Enter in the name field runs in a sub-list (New Claude session, New Codex session, New OpenCode session)
   // The keyboard way of each item of the first list of the New session dialog (Claude session, Codex session, OpenCode session, New Terminal): Enter on the
   // highlighted choice makes a NEW session of that kind at once, where a press on a session kind opens its sub-list (`menuPick`, `NewSessionDialog`). null: not a choice.
@@ -2029,6 +2031,7 @@
     menuQuick = [];
     menuTask = null;
     newName = '';
+    newCommand = '';
     creating += 1;
     ui.set({ menu: null });
   }
@@ -2200,6 +2203,7 @@
   ui.actions.menuRun = index => { const run = menuRuns[index]; if (run && !(ui.get().menu || {}).busy) run(); }; // nothing more while a new terminal is being made
   ui.actions.menuCancel = closeTerminalMenu;
   ui.actions.menuName = value => { newName = String(value || ''); };
+  ui.actions.menuCommand = value => { newCommand = String(value || ''); };
   ui.actions.menuNameSubmit = () => { const run = menuRuns[menuCreate]; if (run) run(); };
   // Enter on the highlighted choice of the New session dialog (from the name field or from the choice itself): a new session of that kind, with the typed name.
   ui.actions.menuPick = index => { const run = menuQuick[index]; if (run && !(ui.get().menu || {}).busy) run(); };
@@ -2259,8 +2263,17 @@
   // label of the sub-list shown (Claude session: New Claude session, the earlier sessions, Back). The dialog names the task and, when it is not on this machine, its service.
   function showSessionMenu(sub, items) {
     const hit = resolveRef(menuTask);
-    const extra = { sub, taskTitle: hit ? hit.item.title : '', service: hit ? serviceOf(hit.from) : null, busy: false, error: '' };
+    const extra = { sub, taskTitle: hit ? hit.item.title : '', service: hit ? serviceOf(hit.from) : null, busy: false, error: '', startCommand: startCommandState(hit ? hit.from : source) };
     showMenu(tr(sub || 'New session'), items, { naming: true, extra });
+  }
+  // Whether the task's Engine can run an initial command (capability `terminal:initial-command`; this machine always can): { on, note }. An older Engine
+  // would open the terminal without running it, so the field is disabled with a note; while a remote Engine has not said what it can do, it is disabled
+  // without one (its `/info` is read and the list drawn again).
+  function startCommandState(from) {
+    if (from.key === 'local') return { on: true, note: '' };
+    const known = Array.isArray(from.capabilities);
+    const on = known && from.capabilities.includes('terminal:initial-command');
+    return { on, note: known && !on ? tr('This computer needs an update to run a command at start') : '' };
   }
   // The first list, in the order of the keyboard choices: Claude session (highlighted first), Codex session, OpenCode session, New Terminal. A press on a session
   // kind opens its sub-list; Enter on the highlighted one (`menuPick`) makes a new session of that kind at once, as "New Claude session" in the sub-list does.
@@ -2291,14 +2304,16 @@
     const menu = ui.get().menu;
     if (!menu || !menu.naming || menu.busy) return;
     const title = takeName();
+    const command = options.agent ? '' : newCommand.trim(); // only a plain terminal runs an initial command
     const run = (creating += 1);
     const patchMenu = patch => ui.set(state => ({ menu: state.menu && { ...state.menu, ...patch } }));
     patchMenu({ busy: true, error: '' });
     let made = false;
     let failure = null;
-    try { made = await createTerminal({ ...options, ...(title ? { title } : {}) }); } catch (error) { failure = error; }
+    try { made = await createTerminal({ ...options, ...(title ? { title } : {}), ...(command ? { command } : {}) }); } catch (error) { failure = error; }
     if (run !== creating) return; // the dialog was closed meanwhile (another task was selected, the task left the list)
     if (failure) { patchMenu({ busy: false, error: tr(`Could not create the terminal: ${failure.message}`) }); return; }
+    if (made && command && typeof ui.actions.startCommandUsed === 'function') ui.actions.startCommandUsed(command); // the Recent menu (start-commands.mjs)
     closeTerminalMenu();
     if (made) closeTasks();
   }
@@ -2312,6 +2327,7 @@
     else if (!expanded.has(own)) { expanded.add(own); renderTasks(); } // as for a task that is not selected: its sessions are listed, so the new one is seen there
     menuTask = own;
     newName = ''; // a new dialog starts with an empty name
+    newCommand = '';
     openSessionMenu();
   };
 

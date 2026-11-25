@@ -596,12 +596,49 @@ function assertTaskNotArchived(taskId) {
   if (require('../services/task-move').isMoving(taskId)) throw Object.assign(new Error('TASK_MOVING'), { statusCode: 409 });
 }
 
+// The initial command of a new plain terminal ("Initial command" in docs/design/terminals.md): `command` of POST …/terminals, typed into the shell as
+// if the person typed it, line by line, each line followed by Enter, so the shell stays interactive. CR LF and CR become LF, other control characters
+// (tab and LF kept) are dropped, the ends are trimmed; at most INITIAL_COMMAND_MAX characters. Answers the lines, or null when there is none.
+// The text is held in memory until the shell starts and never logged.
+const INITIAL_COMMAND_MAX = 4000;
+const INITIAL_QUIET_MS = 250; // after the shell's first output, this long without output: its prompt is drawn
+const INITIAL_WAIT_MS = 3000; // a shell that prints nothing (or keeps printing) gets the command after this long anyway
+function cleanInitialCommand(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') throw Object.assign(new Error('INVALID_INITIAL_COMMAND'), { statusCode: 400 });
+  const text = value.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').trim();
+  if (text.length > INITIAL_COMMAND_MAX) throw Object.assign(new Error('INITIAL_COMMAND_TOO_LONG'), { statusCode: 400 });
+  return text ? text.split('\n') : null;
+}
+
+// Types the initial command into a new shell once it is ready: its first output, then INITIAL_QUIET_MS of quiet (the prompt is drawn), with
+// INITIAL_WAIT_MS as the fallback for a shell that never goes quiet or prints nothing. Nothing is typed into a shell that ended or was replaced.
+function typeWhenReady(key, s, lines) {
+  let quiet = null;
+  let done = false;
+  const fire = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(quiet);
+    clearTimeout(fallback);
+    s.initialOutput = null;
+    if (sessions.get(key) !== s || s.exiting || !s.pty) return;
+    for (const line of lines) s.pty.write(`${line}\r`);
+  };
+  const unref = timer => { if (timer && timer.unref) timer.unref(); return timer; };
+  const fallback = unref(setTimeout(fire, INITIAL_WAIT_MS));
+  s.initialOutput = () => { clearTimeout(quiet); quiet = unref(setTimeout(fire, INITIAL_QUIET_MS)); };
+}
+
 // options.title: an optional name, validated like a rename and kept like one (title_custom); empty keeps the default "Terminal N" / "Claude N".
+// options.command: the initial command of a plain terminal (cleanInitialCommand); refused (400 INITIAL_COMMAND_NOT_A_TERMINAL) for any other kind.
 function createTerminal(taskId, options = {}) {
   assertTaskNotArchived(taskId);
   const id = require('crypto').randomUUID();
   const agent = options && options.agent;
   const named = cleanTitle(options && typeof options.title === 'string' ? options.title : '');
+  const initial = cleanInitialCommand(options ? options.command : null);
+  if (initial && (agent === 'notebook' || Object.hasOwn(AGENT_LABELS, agent))) throw Object.assign(new Error('INITIAL_COMMAND_NOT_A_TERMINAL'), { statusCode: 400 });
   if (agent === 'notebook') return createNotebook(taskId, id, named, options);
   let sessionId = options && options.session_id ? String(options.session_id) : null;
   let command = startupCommand(agent, sessionId);
@@ -613,6 +650,7 @@ function createTerminal(taskId, options = {}) {
   const title = named || (command ? `${AGENT_LABELS[agent]} ${count}` : `Terminal ${count}`);
   // The agent's options are added when the shell starts (getOrCreateSession), from the same switch reading as its environment.
   if (command) pendingStartup.set(sessionKey(taskId, id), { agent, command });
+  else if (initial) pendingStartup.set(sessionKey(taskId, id), { agent: null, command: null, initial });
   // The terminal keeps the task's working directory of this moment, whatever the task's directory becomes later.
   const task = db.prepare('SELECT work_dir FROM tasks WHERE id = ?').get(taskId);
   const workDir = (task && task.work_dir) || null;
@@ -898,7 +936,9 @@ function getOrCreateSession(ownerTaskId, workDir, dirWarning, id = 'default') {
   pty.onData(data => {
     s.activity?.noteOutput();
     emit(data);
+    if (s.initialOutput) s.initialOutput();
   });
+  if (pending && pending.initial) typeWhenReady(taskId, s, pending.initial); // the initial command of a new plain terminal
   // Also goes through the history buffer so replays do not re-enable mouse reporting.
   s.stopShellWatch = watchShellReturn(pty, shell, () => emit(RESET_INPUT_MODES));
   const turnEnd = createTurnEndWatch({ agentOf: () => terminalAgent(s), onTurnEnd: agent => agentTurnEnded(agent, { task_id: Number(ownerTaskId), terminal_id: id }) });
@@ -1720,4 +1760,4 @@ function shutdownTerminals() {
   try { if (notebookKernels) notebookKernels.shutdown(); } catch {}
 }
 
-module.exports = { terminalLaunch, terminalShell, onAgentTurnEnd, onActivityChanged, onTerminalInput, clockSnapshot, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };
+module.exports = { INITIAL_COMMAND_MAX, terminalLaunch, terminalShell, onAgentTurnEnd, onActivityChanged, onTerminalInput, clockSnapshot, onTerminalEnded, runningAgents, endAttentionToken, setNotebookKernels, notifyActivity, isNotebookRow, offerLink, terminalWorkDir, shutdownTerminals, setHookEndpoint, setAttentionTerminals, attentionEnv, reportHook, verifyHookToken, activitySnapshot, waitingKindSnapshot, subagentSnapshot, serveActivityStream, acknowledgeActivity, controlSession, handleWs, listTerminals, createTerminal, listAgentSessions, reopenCommand, renameTerminal, terminalCwd, assertTerminal, closeTaskTerminals, liveTerminalIds, updateIdleTerminals, setTerminalOrder, forgetTerminalOrder, isTerminalForeground, isLocalTerminal, presenceSnapshot, terminalInfo, sendToTerminal, liveTerminalActivity, promptState, sendPrompt, runScript, scriptTaskState, removeScriptTerminal };

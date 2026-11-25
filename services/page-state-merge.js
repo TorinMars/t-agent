@@ -37,7 +37,11 @@ const CLIENTS = new Set(['phone', 'computer', 'mac', 'home']);
 const DEVICE = /^[a-z0-9]{8,32}$/;
 // Keys whose value is a map of times ({ <kind>: { <name>: ms } }, the recency of saved commands): two versions are merged by the later time of each
 // name, so two devices that used different commands at the same time keep both.
-const TIME_MAPS = new Set(['ta-saved-commands-used']);
+// `ta-start-commands` is the Recent menu of the initial command of a new terminal ({ shell: { <command>: ms } }, "Initial command" in
+// docs/design/terminals.md): merged the same way, then cut to the TIME_MAP_CAPS newest commands of each kind (a tie by text), and further, oldest
+// first, while the value is longer than VALUE_MAX, so a merge never makes a value the page could not send.
+const TIME_MAPS = new Set(['ta-saved-commands-used', 'ta-start-commands']);
+const TIME_MAP_CAPS = { 'ta-start-commands': 10 };
 const MOVES_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
 const MOVES_MAX = 500;
 const COLUMN_PREFIX = 'h5-column:';
@@ -243,7 +247,7 @@ function trim(state, now) {
     .forEach(([id, entry]) => { out.recent[id] = entry; });
   const keys = Object.entries(state.keys).filter(([, entry]) => entry.value !== null || entry.at >= now - GONE_KEEP_MS);
   keys.sort(([a, x], [b, y]) => ((x.value === null) - (y.value === null)) || (y.at - x.at) || (a < b ? -1 : 1));
-  for (const [name, entry] of keys.slice(0, KEYS_MAX)) out.keys[name] = entry;
+  for (const [name, entry] of keys.slice(0, KEYS_MAX)) out.keys[name] = TIME_MAP_CAPS[name] ? { ...entry, value: capTimes(entry.value, TIME_MAP_CAPS[name]) } : entry;
   const moves = {};
   Object.entries(state.moves || {}).filter(([, move]) => move.at >= now - MOVES_KEEP_MS).sort(([a, x], [b, y]) => (y.at - x.at) || (a < b ? -1 : 1)).slice(0, MOVES_MAX)
     .forEach(([id, move]) => { moves[id] = move; });
@@ -263,6 +267,26 @@ function mergeTimes(a, b) {
     for (const name of [...new Set([...Object.keys(x), ...Object.keys(y)])].sort()) out[kind][name] = Math.max(Number.isFinite(x[name]) ? x[name] : 0, Number.isFinite(y[name]) ? y[name] : 0);
   }
   return out;
+}
+
+// A map of times cut to the `max` newest names of each kind, then (oldest first, over every kind) while its JSON is longer than VALUE_MAX. Deterministic;
+// anything that is not a map of times is left as it is.
+function capTimes(value, max) {
+  if (!isTimes(value)) return value;
+  const all = [];
+  for (const kind of Object.keys(value).sort()) {
+    Object.entries(value[kind]).sort(([a, x], [b, y]) => (y - x) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, max).forEach(([name, at]) => all.push([kind, name, at]));
+  }
+  all.sort(([, a, x], [, b, y]) => (y - x) || (a < b ? -1 : a > b ? 1 : 0));
+  const build = list => {
+    const out = {};
+    for (const kind of Object.keys(value).sort()) out[kind] = {};
+    for (const [kind, name, at] of list) out[kind][name] = at;
+    return out;
+  };
+  let kept = all;
+  while (kept.length && JSON.stringify(build(kept)).length > VALUE_MAX) kept = kept.slice(0, -1);
+  return build(kept);
 }
 
 // Both states merged and trimmed: { state, changed } (changed: the result differs from `local`).
@@ -341,5 +365,5 @@ function pageView(state) {
 
 module.exports = {
   RECENT_KEEP, GONE_KEEP_MS, GONE_MAX, KEYS_MAX, VALUE_MAX, INSTANCE, MOVES_KEEP_MS, MOVES_MAX,
-  stableJson, recentId, cleanState, cleanRecent, later, newestAt, trim, merge, changeState, moveState, pageView, repoint, movedTo, draftKey,
+  stableJson, recentId, cleanState, cleanRecent, later, newestAt, trim, merge, capTimes, changeState, moveState, pageView, repoint, movedTo, draftKey,
 };

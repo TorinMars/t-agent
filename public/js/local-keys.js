@@ -30,6 +30,7 @@
     ['h5-attention-add-on', 'local', 'cache-of-shared-state', 'the engine a new T-Attention task goes to', false],
     ['h5-create-on', 'local', 'cache-of-shared-state', 'the machine "Create on" starts with (new task, new mind map): the one chosen last', false],
     ['ta-saved-commands-used', 'local', 'cache-of-shared-state', 'the recency of saved commands', false],
+    ['ta-start-commands', 'local', 'cache-of-shared-state', 'the recent initial commands of a new terminal (the Recent menu of the New session dialog)', false],
     ['h5-mindmap-list-folded', 'local', 'cache-of-shared-state', 'the folded list of the Mind maps tab', false],
     ['word-translate', 'local', 'cache-of-shared-state', 'tap to translate on or off', false],
     ['ta-lang', 'local', 'cache-of-shared-state', 'the language, read before the first paint (its cookie tells the server)', false],

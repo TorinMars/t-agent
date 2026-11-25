@@ -192,6 +192,9 @@ function infoHandler(req, res) {
       // terminal:notebook: POST /v1/tasks/:id/terminals takes agent 'notebook' (a Shell notebook), GET /v1/tasks/:id/agent-sessions?agent=notebook lists
       // the task folder's .ipynb files, and /v1/tasks/:id/notebooks/:tid/... runs it (routes/notebooks.js, docs/design/shell-notebook.md).
       'terminal:notebook',
+      // terminal:initial-command: POST /v1/tasks/:id/terminals takes `command` for a plain terminal, typed into its shell once it is ready ("Initial
+      // command" in docs/design/terminals.md). An older Engine ignores the field, so the page and the proxy offer it only for an Engine with this.
+      'terminal:initial-command',
       // fs:read-any: GET /v1/fs/content and /v1/fs/image read a file at any path (read only, as the terminal user).
       'fs:read-any',
       // files:raw: GET /v1/tasks/:id/files/raw and /v1/fs/raw stream a PDF, audio or video file with Range support.

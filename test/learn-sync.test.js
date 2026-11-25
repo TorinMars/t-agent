@@ -136,9 +136,11 @@ test('merge: what a peer sends is checked; norm is computed here, never taken fr
   // The audio settings travel with them; a value this version does not know is left out (the default here), never an error.
   assert.deepEqual(merge.settingsFromPeer({ collect: true, audio_repeat: 5, audio_speed: 'slow', audio_words: false, audio_pause: 9, audio_sentences_at: 'later' }, { dev: {} }),
     { collect: true, audio_repeat: 5, audio_speed: 'slow', audio_words: false });
-  // The voice ("DeepSeek voice" in docs/design/learn-english-voice.md) too; an unknown engine or voice is left out.
-  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'deepseek', voice_id: 'tide' }, { dev: {} }), { voice_engine: 'deepseek', voice_id: 'tide' });
-  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'cloud', voice_id: 'echo' }, { dev: {} }), {});
+  // The voice ("Bailian voice" in docs/design/learn-english-voice.md) too; an unknown engine or voice is left out.
+  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'bailian', voice_id_bailian: 'Ava_v3.1', voice_region: 'singapore' }, { dev: {} }), { voice_engine: 'bailian', voice_id_bailian: 'Ava_v3.1', voice_region: 'singapore' });
+  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'cloud', voice_id_bailian: 'echo', voice_region: 'mars' }, { dev: {} }), {});
+  // A peer of v2.169.0 may send the removed DeepSeek voice: read as this device's voices, its voice_id dropped, never an error.
+  assert.deepEqual(merge.settingsFromPeer({ voice_engine: 'deepseek', voice_id: 'tide' }, { dev: {} }), { voice_engine: 'system' });
 });
 
 // ---- Schema 13 -> 14 ----
@@ -298,15 +300,20 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
         return { content: text, toolCalls: [] };
       },
     });
-    // The DeepSeek voice with a stub (never DeepSeek itself): a tiny WAV that names the engine and the text; `speechFails` makes it refuse.
+    // The Bailian voice with a stub (never Alibaba itself): a tiny WAV that names the engine and the text; `speechFails` makes it refuse.
+    // The Bailian key of the stub is kept in `side.bailianKey` (a test only ever sees has_key).
     side.speechCalls = [];
+    side.bailianKey = null;
+    const speechStatus = () => ({ bailian: { ready: Boolean(side.bailianKey), reason: side.bailianKey ? null : 'no_key', has_key: Boolean(side.bailianKey), workspace: side.bailianKey ? side.bailianKey.workspace : '' } });
     side.speech = {
-      status: () => ({ ready: true, reason: null, voices: ['stella', 'tide'] }),
+      status: speechStatus,
       speak: async (owner, body) => {
         side.speechCalls.push(body);
-        if (side.speechFails) throw new LearnError('DeepSeek could not read this text', 422);
-        return tinyWav(`${name}:${body.voice}:${body.text}`);
+        if (side.speechFails) throw new LearnError('Bailian could not read this text', 422);
+        return tinyWav(`${name}:${body.engine}:${body.voice}:${body.text}`);
       },
+      saveBailianKey: (owner, body) => { side.bailianKey = { apiKey: body.api_key, workspace: body.workspace }; return speechStatus(); },
+      removeBailianKey: () => { side.bailianKey = null; return speechStatus(); },
     };
     const app = express();
     app.use(express.json({ limit: '32mb' }));
@@ -965,38 +972,58 @@ function tinyWav(label) {
   return Buffer.concat([head, data]);
 }
 
-test('the DeepSeek voice on a company computer is made on its home: the audio comes over the link as base64 and is served as WAV', async t => {
+test('the Bailian voice on a company computer: the key is saved on the home and never comes back, the audio is made there', async t => {
   const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
   K.tier.setCompany(true);
   await T.sync.syncAll();
   await K.sync.syncAll();
-  assert.equal(K.sync.cacheOnly(), true);
-  assert.deepEqual((await K.page('GET', '/learn/speech/status')).body, { ready: true, reason: null, voices: ['stella', 'tide'] }, "the home's status");
-  const response = await fetch(`${K.base}/api/learn/speech?${new URLSearchParams({ text: '  Deploy   it. ', voice: 'tide' })}`);
+  const secret = 'sk-bailian-link-SECRET-42';
+  const saved = await K.page('PUT', '/learn/speech/bailian-key', { api_key: secret, workspace: 'llm-home' });
+  assert.equal(saved.status, 200);
+  assert.equal(JSON.stringify(saved.body).includes(secret), false, 'the key is never answered');
+  assert.deepEqual(T.bailianKey, { apiKey: secret, workspace: 'llm-home' }, 'saved on the home');
+  assert.deepEqual(K.bailianKey, null, 'never on the company computer');
+  assert.equal((await K.page('GET', '/learn/speech/status')).body.bailian.workspace, 'llm-home');
+  const response = await fetch(`${K.base}/api/learn/speech?${new URLSearchParams({ text: 'Ship it.', engine: 'bailian', voice: 'Cindy_v3.1', region: 'beijing', speed: 'slow' })}`);
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get('content-type'), 'audio/wav');
-  assert.match(response.headers.get('cache-control'), /^private/);
-  const audio = Buffer.from(await response.arrayBuffer());
-  assert.equal(audio.subarray(44).toString('utf8'), 'T:tide:Deploy it.', 'made on the home, the text checked first');
-  assert.deepEqual(T.speechCalls, [{ text: 'Deploy it.', voice: 'tide' }]);
-  assert.deepEqual(K.speechCalls, [], 'never made on the company computer');
-  assert.ok(K.requests.includes('GET /v1/learn-sync/speech'), JSON.stringify(K.requests));
-  // The choice of the voice is shared like the other learning settings: made on the home from here, read back here.
-  assert.equal((await K.page('PUT', '/learn/settings', { voice_engine: 'deepseek', voice_id: 'tide' })).status, 200);
-  assert.deepEqual([(await T.page('GET', '/learn/settings')).body.voice_engine, (await K.page('GET', '/learn/settings')).body.voice_id], ['deepseek', 'tide']);
+  assert.equal(Buffer.from(await response.arrayBuffer()).subarray(44).toString('utf8'), 'T:bailian:Cindy_v3.1:Ship it.');
+  assert.deepEqual(T.speechCalls.at(-1), { text: 'Ship it.', engine: 'bailian', voice: 'Cindy_v3.1', region: 'beijing', speed: 'slow' });
+  assert.ok(K.requests.includes('GET /v1/learn-sync/bailian-speech'), JSON.stringify(K.requests));
+  // The choice is shared like the other learning settings.
+  assert.equal((await K.page('PUT', '/learn/settings', { voice_engine: 'bailian', voice_id_bailian: 'Ava_v3.1', voice_region: 'singapore' })).status, 200);
+  const homeSettings = (await T.page('GET', '/learn/settings')).body;
+  assert.deepEqual([homeSettings.voice_engine, homeSettings.voice_id_bailian, homeSettings.voice_region, homeSettings.voice_id], ['bailian', 'Ava_v3.1', 'singapore', undefined]);
+  assert.equal((await K.page('PUT', '/learn/settings', { voice_id_bailian: 'longanhuan_v3.1' })).status, 400, 'a voice of another model is refused');
+  assert.equal((await K.page('DELETE', '/learn/speech/bailian-key')).status, 200);
+  assert.equal(T.bailianKey, null, 'removed on the home');
   // A refusal of the home keeps its status and message; a text refused here never reaches the home.
   T.speechFails = true;
   const refused = await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'Deploy it.' })}`);
-  assert.deepEqual([refused.status, refused.body.error], [422, 'DeepSeek could not read this text']);
+  assert.deepEqual([refused.status, refused.body.error], [422, 'Bailian could not read this text']);
+  const calls = T.speechCalls.length;
   assert.equal((await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'x'.repeat(501) })}`)).status, 400);
-  assert.equal(T.speechCalls.length, 2);
+  assert.equal(T.speechCalls.length, calls);
   // A home without the voice (an older version) and a home that is away.
   T.speech = null;
-  assert.equal((await K.page('GET', '/learn/speech/status')).body.reason, 'home_older');
+  assert.equal((await K.page('GET', '/learn/speech/status')).body.bailian.reason, 'home_older');
   assert.equal((await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'Deploy it.' })}`)).status, 409);
   setOnline(K, 'T', false);
-  assert.equal((await K.page('GET', '/learn/speech/status')).body.reason, 'offline');
+  assert.equal((await K.page('GET', '/learn/speech/status')).body.bailian.reason, 'offline');
   assert.equal((await K.page('GET', `/learn/speech?${new URLSearchParams({ text: 'Deploy it.' })}`)).status, 503);
+});
+
+test('a page of v2.169.0 that saves the removed DeepSeek voice: this device\'s voices on every linked engine, nothing refused (a peer that sends it: settingsFromPeer above)', async t => {
+  const { T, K } = await makeNetwork(t, ['T', 'K'], { links: [['T', 'K']] });
+  assert.equal((await T.page('PUT', '/learn/settings', { voice_engine: 'bailian' })).status, 200);
+  await T.sync.syncAll();
+  await K.sync.syncAll();
+  assert.equal((await K.page('GET', '/learn/settings')).body.voice_engine, 'bailian');
+  // K's page is of v2.169.0 and chooses DeepSeek: read as this device's voices, and that newer choice reaches T.
+  assert.equal((await K.page('PUT', '/learn/settings', { voice_engine: 'deepseek', voice_id: 'tide' })).status, 200);
+  await K.sync.syncAll();
+  await T.sync.syncAll();
+  assert.equal((await T.page('GET', '/learn/settings')).body.voice_engine, 'system');
+  assert.equal((await K.page('GET', '/learn/settings')).body.voice_engine, 'system');
 });
 
 test('a home whose coach is made on first use still answers a company computer (no 404 that reads as "older" right after a restart)', async t => {

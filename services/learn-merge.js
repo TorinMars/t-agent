@@ -15,7 +15,7 @@
 // context, the ones here are kept ("A sentence for every word" in docs/design/learn-english.md).
 const {
   normalize, checkEnglish, KINDS, SOURCES, MODES, AUDIO_SETTINGS, CHECKED_SETTINGS, MISTAKE_TAGS, MAX_EXPECTED, LEVELS, MAX_PICK_CONTEXT, MAX_LEVEL_LABEL, MAX_LEVEL_REASON,
-  MAX_ZH: MAX_CARD_ZH, KEPT_SETTINGS, storedParts, checkTip, cleanExtraNew,
+  MAX_ZH: MAX_CARD_ZH, KEPT_SETTINGS, storedParts, checkTip, cleanExtraNew, retiredVoice,
 } = require('./learn');
 const { GRADES } = require('./learn-review');
 const { cleanPhonetic } = require('./phonetics');
@@ -582,9 +582,11 @@ function moveFromPeer(raw, sender) {
 const moveToPeer = (row, me) => ({ kind: row.kind, norm: row.norm, moved_to: row.moved_to, at: row.at, by: row.by || me });
 
 // The learning settings of a peer (system_state learn_v1:<owner>), checked: { collect, daily_goal, starter }, or throws INVALID_SYNC_VALUE.
-function settingsFromPeer(value, starterLists) {
+function settingsFromPeer(given, starterLists) {
   const invalid = () => { throw Object.assign(new Error('INVALID_SYNC_VALUE'), { statusCode: 400 }); };
-  if (value === null) return null;
+  if (given === null) return null;
+  // A peer of v2.169.0 may send the removed DeepSeek voice: read as this device's voices (services/learn.js retiredVoice).
+  const value = retiredVoice(given);
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const out = {};
   if (value.collect !== undefined) { if (typeof value.collect !== 'boolean') invalid(); out.collect = value.collect; }

@@ -39,6 +39,7 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `ui_usage_v1` | system_state | shared | settings sync, group usage-record: the "Record button use" switch of the usage data | `services/ui-events.js` |
 | `usage_time_record_v1` | system_state | shared | settings sync, group usage-time-record: the "Record time" switch of the usage time | `services/usage-time.js` |
 | `usage_memories_digest_v1` | system_state | shared | settings sync, group usage-memories-digest: the "Write a weekly digest" switch of the memories | `services/usage-time.js` |
+| `learn-voice:<owner>` | system_state | shared | settings sync, group learn-voice (encrypted): the Bailian key and workspace id of the Learn voice | `services/learn-voice-keys.js` |
 | `access_alerts_v1` | system_state | shared | settings sync, group access-alerts: the "Alert me about new devices" switch of the access log | `services/access-log.js` |
 | `page_state_v1:<owner>` | system_state | shared | the shared page state sync | `services/page-state.js` |
 | `task_order_v1` | system_state | shared | the shared task order sync, last writer wins | `services/task-order.js` |

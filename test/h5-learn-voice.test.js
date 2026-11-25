@@ -1,6 +1,6 @@
-// The voice engines of the Learn page (scripts/h5-shell/learn-voice.mjs; "DeepSeek voice" in docs/design/learn-english-voice.md) with a fake fetch
-// and a fake audio element: the settings, the audio of a text fetched once, a play synchronous when it is loaded, Slow as playbackRate with the
-// pitch kept, a refusal, the fallback to this device's voice with the notice, and the player of learn-audio.mjs waiting for the audio to load.
+// The voice engines of the Learn page (scripts/h5-shell/learn-voice.mjs; "Bailian voice" in docs/design/learn-english-voice.md) with a fake fetch
+// and a fake audio element: the settings, the audio of a text fetched once, a play synchronous when it is loaded, Slow as Bailian's own slow audio,
+// a refusal, the fallback to this device's voice with the notice, and the player of learn-audio.mjs waiting for the audio to load.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -40,16 +40,30 @@ function rig({ status = 200, refuse = null, gate = null } = {}) {
   return { fetched, el, fetchImpl, makeAudio: () => el, createUrl: () => `blob:${n += 1}`, revoked: [] };
 }
 
-test('the settings: the engine and the voice, and whether the server knows them', async () => {
+const CHOICE = { engine: 'bailian', bailianVoice: 'Brian_v3.1', region: 'beijing' };
+const url = (text, { voice = 'Brian_v3.1', region = 'beijing', speed = 'normal' } = {}) => `/api/learn/speech?${new URLSearchParams({ text, engine: 'bailian', voice, region, speed })}`;
+
+test('the settings: the engine, the voice and region, and whether the server knows them; the removed DeepSeek reads as this device', async () => {
   const { voiceOptions, voiceState, speechUrl } = await load();
-  assert.deepEqual(voiceOptions({}), { known: false, engine: 'system', voice: 'stella' });
-  assert.deepEqual(voiceOptions({ voice_engine: 'deepseek', voice_id: 'tide' }), { known: true, engine: 'deepseek', voice: 'tide' });
-  assert.deepEqual(voiceOptions({ voice_engine: 'cloud', voice_id: 'echo' }), { known: true, engine: 'system', voice: 'stella' });
-  assert.deepEqual(voiceState(null), { ready: null, reason: null });
-  assert.deepEqual(voiceState({ unsupported: true }), { ready: false, reason: 'unsupported' });
-  assert.deepEqual(voiceState({ ready: false, reason: 'no_key' }), { ready: false, reason: 'no_key' });
-  assert.deepEqual(voiceState({ ready: true, reason: null }), { ready: true, reason: null });
-  assert.equal(speechUrl('  Run  the tests. ', 'tide'), '/api/learn/speech?text=Run+the+tests.&voice=tide');
+  const base = { bailian: false, bailianVoice: 'Cindy_v3.1', region: 'beijing' };
+  assert.deepEqual(voiceOptions({}), { known: false, engine: 'system', ...base });
+  assert.deepEqual(voiceOptions({ voice_engine: 'deepseek', voice_id: 'tide' }), { known: true, engine: 'system', ...base }, 'the removed DeepSeek voice');
+  assert.deepEqual(voiceOptions({ voice_engine: 'cloud' }), { known: true, engine: 'system', ...base });
+  // Bailian, once the server knows it (v2.169.0 has no voice_id_bailian: Bailian is not offered and this device reads).
+  assert.deepEqual(voiceOptions({ voice_engine: 'bailian', voice_id_bailian: 'Ava_v3.1', voice_region: 'singapore' }),
+    { known: true, bailian: true, engine: 'bailian', bailianVoice: 'Ava_v3.1', region: 'singapore' });
+  assert.equal(voiceOptions({ voice_engine: 'bailian' }).engine, 'system');
+  assert.deepEqual(voiceOptions({ voice_engine: 'bailian', voice_id_bailian: 'longanhuan_v3.1', voice_region: 'mars' }), { known: true, bailian: true, engine: 'bailian', bailianVoice: 'Cindy_v3.1', region: 'beijing' });
+  const none = { hasKey: false, workspace: '' };
+  assert.deepEqual(voiceState(null), { ready: null, reason: null, ...none });
+  assert.deepEqual(voiceState({ unsupported: true }), { ready: false, reason: 'unsupported', ...none });
+  assert.deepEqual(voiceState({ ready: false, reason: 'failed' }), { ready: false, reason: 'failed', ...none });
+  assert.deepEqual(voiceState({ ready: true, reason: null, voices: ['stella', 'tide'] }), { ready: false, reason: 'unsupported', ...none }, 'a server of v2.169.0');
+  assert.deepEqual(voiceState({ bailian: { ready: true, reason: null, has_key: true, workspace: 'llm-a' } }), { ready: true, reason: null, hasKey: true, workspace: 'llm-a' });
+  assert.deepEqual(voiceState({ bailian: { ready: false, reason: 'no_key', has_key: false } }), { ready: false, reason: 'no_key', ...none });
+  assert.deepEqual(voiceState({ bailian: { ready: false, reason: 'home_older' } }), { ready: false, reason: 'home_older', ...none });
+  assert.equal(speechUrl('  Run  the tests. ', CHOICE), url('Run the tests.'));
+  assert.equal(speechUrl('Run.', { ...CHOICE, bailianVoice: 'David_v3.1', region: 'singapore' }, true), '/api/learn/speech?text=Run.&engine=bailian&voice=David_v3.1&region=singapore&speed=slow');
 });
 
 test('fetchVoiceStatus: the answer, 404 is an engine without the voice, a failure is not ready', async () => {
@@ -60,16 +74,16 @@ test('fetchVoiceStatus: the answer, 404 is an engine without the voice, a failur
   assert.deepEqual(await fetchVoiceStatus(async () => { throw new Error('offline'); }), { ready: false, reason: 'failed' });
 });
 
-test('DeepSeek: the audio of a text is fetched once; a loaded one plays at once, Slow with playbackRate and the pitch kept', async () => {
-  const { createServerVoice, SLOW_RATE, SILENCE } = await load();
+test('the audio of a text is fetched once; a loaded one plays at once; Slow is its own slow audio, played at 1', async () => {
+  const { createServerVoice, SILENCE } = await load();
   const r = rig();
   const voice = createServerVoice(r);
-  voice.preload('expire', 'tide');
-  voice.preload('expire', 'tide');
+  voice.preload('expire', CHOICE);
+  voice.preload('expire', CHOICE);
   await tick();
-  assert.deepEqual(r.fetched, ['/api/learn/speech?text=expire&voice=tide'], 'one request for the text');
+  assert.deepEqual(r.fetched, [url('expire')], 'one request for the text');
   const calls = [];
-  const handlers = { voice: 'tide', onStart: () => calls.push('start'), onEnd: () => calls.push('end'), onError: e => calls.push(`error:${e}`), onLoading: () => calls.push('loading'), onReady: () => calls.push('ready'), onFail: e => calls.push(`fail:${e}`) };
+  const handlers = { choice: CHOICE, onStart: () => calls.push('start'), onEnd: () => calls.push('end'), onError: e => calls.push(`error:${e}`), onLoading: () => calls.push('loading'), onReady: () => calls.push('ready'), onFail: e => calls.push(`fail:${e}`) };
   assert.equal(voice.speakOnce('expire', handlers), true);
   assert.deepEqual(calls, ['start'], 'preloaded: played inside the call (the tap), no loading');
   assert.equal(r.el.plays.at(-1).rate, 1);
@@ -77,10 +91,16 @@ test('DeepSeek: the audio of a text is fetched once; a loaded one plays at once,
   r.el.finish();
   assert.deepEqual(calls, ['start', 'end']);
   assert.equal(voice.speaking(), false);
+  calls.length = 0;
   voice.speakOnce('expire', { ...handlers, slow: true });
-  assert.deepEqual(r.el.plays.at(-1), { src: 'blob:1', rate: SLOW_RATE, pitch: true });
-  assert.equal(r.el.defaultPlaybackRate, SLOW_RATE, 'kept when the source loads');
-  assert.equal(r.fetched.length, 1, 'still one request');
+  await tick(); await tick();
+  assert.equal(r.fetched.at(-1), url('expire', { speed: 'slow' }), 'the slow audio is asked for');
+  assert.deepEqual(r.el.plays.at(-1), { src: 'blob:2', rate: 1, pitch: false }, 'never slowed again here');
+  calls.length = 0;
+  voice.speakOnce('expire', handlers);
+  assert.deepEqual(calls, ['start']);
+  assert.equal(r.el.plays.at(-1).src, 'blob:1');
+  assert.equal(r.fetched.length, 2, 'each audio fetched once');
   // A text not loaded yet: loading, a moment of silence (it unlocks the element on iOS), then ready and the play.
   calls.length = 0;
   voice.speakOnce('deploy', handlers);
@@ -88,7 +108,7 @@ test('DeepSeek: the audio of a text is fetched once; a loaded one plays at once,
   assert.equal(r.el.plays.at(-1).src, SILENCE);
   await tick(); await tick();
   assert.deepEqual(calls, ['loading', 'ready', 'start']);
-  assert.equal(r.el.plays.at(-1).src, 'blob:2');
+  assert.equal(r.el.plays.at(-1).src, 'blob:3');
   // Stop: nothing of the stopped play is heard or reported afterwards.
   voice.stop();
   assert.equal(r.el.paused, true);
@@ -97,7 +117,7 @@ test('DeepSeek: the audio of a text is fetched once; a loaded one plays at once,
   assert.deepEqual(calls, []);
 });
 
-test('DeepSeek: a refused play is "not-allowed"; a failed request or audio that cannot play is onFail; no key and no route stay for the page load', async () => {
+test('a refused play is "not-allowed"; a failed request or audio that cannot play is onFail; no key and no route stay for the page load', async () => {
   const { createServerVoice } = await load();
   const refused = rig({ refuse: 'NotAllowedError' });
   const voice = createServerVoice(refused);
@@ -142,23 +162,23 @@ test('DeepSeek: a refused play is "not-allowed"; a failed request or audio that 
   assert.deepEqual(mediaFails, ['media']);
 });
 
-test('the engine: this device or DeepSeek as chosen now; a DeepSeek failure is read by this device with one notice', async () => {
+test('the engine: this device or Bailian as chosen now; a Bailian failure is read by this device with one notice', async () => {
   const { createServerVoice, createVoiceEngine } = await load();
   const r = rig({ status: 503 });
   const server = createServerVoice(r);
   const system = { said: [], speakOnce(text, options) { this.said.push(text); options.onStart && options.onStart(); return true; }, cancel() { this.cancels = (this.cancels || 0) + 1; }, speaking: () => false };
-  let chosen = { engine: 'system', voice: 'stella' };
+  let chosen = { engine: 'system' };
   const notices = [];
   const engine = createVoiceEngine({ system, server, choice: () => chosen, onNotice: reason => notices.push(reason) });
   engine.speakOnce('expire', {});
   engine.preload('expire');
   assert.deepEqual(system.said, ['expire']);
   assert.equal(r.fetched.length, 0, 'this device: nothing fetched');
-  chosen = { engine: 'deepseek', voice: 'tide' };
+  chosen = CHOICE;
   const calls = [];
   engine.speakOnce('deploy', { onLoading: () => calls.push('loading'), onReady: () => calls.push('ready'), onStart: () => calls.push('start') });
   await tick(); await tick();
-  assert.deepEqual(r.fetched, ['/api/learn/speech?text=deploy&voice=tide']);
+  assert.deepEqual(r.fetched, [url('deploy')]);
   assert.deepEqual(notices, [503]);
   assert.deepEqual(system.said, ['expire', 'deploy'], 'read by this device instead');
   assert.deepEqual(calls, ['loading', 'ready', 'start']);
@@ -170,6 +190,59 @@ test('the engine: this device or DeepSeek as chosen now; a DeepSeek failure is r
   mute.speakOnce('merge', { onEnd: () => ends.push('end') });
   await tick(); await tick();
   assert.deepEqual(ends, ['end']);
+});
+
+test('the engine with Bailian: the voice, region and speed of the choice; the Speed setting preloads the slow audio; a missing key stays for the page load', async () => {
+  const { createServerVoice, createVoiceEngine } = await load();
+  const r = rig({ status: url => (url.includes('engine=bailian') && url.includes('text=Locked') ? 409 : 200) });
+  const server = createServerVoice(r);
+  const system = { said: [], speakOnce(text) { this.said.push(text); return true; }, cancel() {}, speaking: () => false };
+  let chosen = { engine: 'bailian', bailianVoice: 'Cindy_v3.1', region: 'beijing', slow: false };
+  const notices = [];
+  const engine = createVoiceEngine({ system, server, choice: () => chosen, onNotice: (reason, name) => notices.push(`${name}:${reason}`) });
+  engine.preload('expire');
+  await tick();
+  assert.deepEqual(r.fetched, ['/api/learn/speech?text=expire&engine=bailian&voice=Cindy_v3.1&region=beijing&speed=normal']);
+  engine.speakOnce('expire', {});
+  assert.equal(r.el.plays.at(-1).rate, 1);
+  // Slow: Bailian makes it slow (speed=slow), so it plays at 1.
+  engine.speakOnce('expire', { slow: true });
+  await tick(); await tick();
+  assert.equal(r.fetched.at(-1), '/api/learn/speech?text=expire&engine=bailian&voice=Cindy_v3.1&region=beijing&speed=slow');
+  assert.equal(r.el.plays.at(-1).rate, 1, 'never slowed twice');
+  // The Speed setting slow: the preload asks for the slow audio.
+  chosen = { ...chosen, slow: true };
+  engine.preload('deploy');
+  await tick();
+  assert.equal(r.fetched.at(-1), '/api/learn/speech?text=deploy&engine=bailian&voice=Cindy_v3.1&region=beijing&speed=slow');
+  // 409: its plays read on this device from now on.
+  engine.speakOnce('Locked', {});
+  await tick(); await tick();
+  assert.deepEqual(notices, ['bailian:409']);
+  assert.equal(server.down('bailian'), 409);
+  const before = r.fetched.length;
+  engine.speakOnce('Another', {});
+  assert.equal(r.fetched.length, before, 'no request while Bailian is down');
+  assert.deepEqual(system.said, ['Locked', 'Another']);
+  server.setDown(null);
+  assert.equal(server.down(), null);
+  engine.speakOnce('Another', {});
+  await tick();
+  assert.equal(r.fetched.at(-1), '/api/learn/speech?text=Another&engine=bailian&voice=Cindy_v3.1&region=beijing&speed=normal', 'asked again once the key is there');
+});
+
+test('saveBailianKey: PUT with the key and the workspace, DELETE to remove, the server message on a refusal', async () => {
+  const { saveBailianKey, BAILIAN_KEY_URL } = await load();
+  const calls = [];
+  const answer = (status, body) => async (url, init) => { calls.push({ url, init }); return { ok: status === 200, status, json: async () => body }; };
+  assert.deepEqual(await saveBailianKey({ api_key: 'k', workspace: 'llm-a' }, answer(200, { bailian: { has_key: true } })), { bailian: { has_key: true } });
+  assert.equal(calls[0].url, BAILIAN_KEY_URL);
+  assert.equal(calls[0].init.method, 'PUT');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { api_key: 'k', workspace: 'llm-a' });
+  await saveBailianKey(null, answer(200, {}));
+  assert.equal(calls[1].init.method, 'DELETE');
+  await assert.rejects(saveBailianKey({ api_key: 'k', workspace: '!' }, answer(400, { error: 'Enter the workspace ID of Bailian (llm-…), or paste its API host' })),
+    error => error.status === 400 && /workspace ID/.test(error.message));
 });
 
 test('the player waits for the audio to load before it watches for a refusal or a lost end', async () => {

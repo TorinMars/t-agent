@@ -44,7 +44,7 @@ const SCOPES = Object.freeze({
   translate: 'shared', voice: 'shared', oss: 'shared', 'oss-agent-access': 'shared', 'agent-config': 'shared',
   'attention-summary': 'shared', 'attention-guide': 'shared', 'notify-rules': 'shared',
   'notifier-plugins': 'shared', 'widget-language': 'shared', 'task-list-devices': 'shared', 'update-auto': 'shared', 'browser-sites': 'shared', 'usage-record': 'shared',
-  'usage-time-record': 'shared', 'usage-memories-digest': 'shared', 'access-alerts': 'shared',
+  'usage-time-record': 'shared', 'usage-memories-digest': 'shared', 'access-alerts': 'shared', 'learn-voice': 'shared',
   workdir: 'device', access: 'device', authenticator: 'device', 'engine-name': 'device', 'widget-enabled': 'device', 'peer-fs': 'device',
   restart: 'device', 'rule-sync': 'device',
   telegram: 'telegram',
@@ -592,6 +592,8 @@ function defaultRegistry({ db, sessionSecret }) {
     entry('usage-memories-digest', () => require('./usage-time').digestSync),
     // The switch "Alert me about new devices" of the access log (services/access-log.js); the log itself stays on each machine.
     entry('access-alerts', () => require('./access-log')),
+    // The Bailian key of the Learn voice (services/learn-voice-keys.js), encrypted like the translator's keys; set in Learn settings, not on this page.
+    entry('learn-voice', () => require('./learn-voice-keys'), { secret: true }),
   ];
 }
 

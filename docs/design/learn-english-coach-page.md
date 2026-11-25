@@ -90,13 +90,14 @@ shows the translator notice (on load only when `can_answer` is false: with Claud
 - **Exercise per card** (`seriesExercise`): `spell`, `review` (the step of a Review plan; title "Daily review") and `retest` spell a word, a sentence gets Fill the gap; `fill` takes a sentence, or a word
   inside its own `context` (the word is the gap, `exerciseCard` gives the exercise the sentence with `card.gap`; the answer stays the word card's),
   else the word is spelled; `dictation` only where the page can speak, else the step is left out. Build the sentence stays hidden.
+- **Word practice**: the proposal labels direct spelling, sentence gaps or study followed by spelling. In a gap for a word card, the sentence is masked and the answer is graded against the word card. A card without usable context is spelled directly. The `study` step shows each word, meaning and available pronunciation before the spelling step. It advances with Next word or Start spelling and does not post an answer or count toward the graded result. The `direct_spell` step uses the letter-by-letter exercise without a sentence.
 - **Misses come back** (`seriesAnswer`): a card missed outside the retest goes into the retest step when the plan has one (each card once; the
   server's retest card list is not used: the page decides from the answers); without a retest it is added once after the last step's items. A
   retest with nothing missed is skipped.
 - **Header**: the exercise's title ("Spell the word", "Fill the gap", "Dictation", "Final retest"); on a phone one line with "Step 2 of 4 ·
   from your chat" in caption size and the counter "7 / 9" at the end ("from your chat" alone for a one-step plan), the back arrow named "Back to
   chat" (no separate "Back to chat when done" chip; "Compact practice on a phone" in [learn-spell-practice.md](learn-spell-practice.md)); on a
-  computer "Step 2 of 4 · 7 / 9 · from your chat"; the progress bar is the share answered.
+  computer "Step 2 of 4 · 7 / 9 · from your chat"; the progress bar counts completed preview items and answered exercises.
 - **Leaving** (back arrow, the back button, Escape: `leaveView` in Learn calls the series) asks nothing; the answers are kept. Leaving or the end
   returns to the coach with `{ kind: 'chat', result, planKind }`; the coach posts `practice-result` once (`seriesResult`: `plan_id`,
   `message_uid`, `proposal_id` and `kind` of the plan card, `steps: [{ mode, total, done, right }]` in items, `total` / `done` / `right` in different

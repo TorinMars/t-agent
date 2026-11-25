@@ -53,7 +53,7 @@ export function metaOf(message) {
 }
 
 // What a proposal is, from its `kind` and its fields: 'plan' | 'settings' | 'cards' | 'reminder' | 'memory' | null.
-const PLAN_KINDS = new Set(['practice', 'plan', 'today_spelling', 'review', 'mistakes_series', 'more_new_words', 'dictation', 'fill_gap']);
+const PLAN_KINDS = new Set(['practice', 'plan', 'today_spelling', 'review', 'mistakes_series', 'more_new_words', 'dictation', 'fill_gap', 'word_practice']);
 export function proposalType(proposal) {
   if (!isObject(proposal)) return null;
   const kind = String(proposal.kind || '');
@@ -74,11 +74,12 @@ export function planOf(proposal) {
   return {
     kind: String(plan.kind && plan.kind !== 'practice' && plan.kind !== 'plan' ? plan.kind : proposal.practice || proposal.kind || ''),
     title: String(plan.title || ''), steps, words: Math.max(0, Number(plan.words) || 0), minutes: Math.max(0, Number(plan.minutes) || 0), notes: String(plan.notes || ''),
+    ...(plan.kind === 'word_practice' ? { plain: Math.max(0, Number(plan.plain) || 0) } : {}),
   };
 }
 
 // The line of a step in a plan card (English dictionary keys).
-export const STEP_LABELS = { spell: 'Spell each word', review: 'Review the cards that are due', fill: 'Fill the gap inside a sentence', dictation: 'Dictation', retest: 'A final retest of the words you missed again' };
+export const STEP_LABELS = { spell: 'Spell each word', direct_spell: 'Spell each word', study: 'Study the words', review: 'Review the cards that are due', fill: 'Fill the gap inside a sentence', dictation: 'Dictation', retest: 'A final retest of the words you missed again' };
 // The plan card's caption: "25 words · about 8 minutes" as [template, ...values].
 export function planCaption(plan) {
   const words = plan.words === 1 ? ['1 word'] : ['{1} words', plan.words];

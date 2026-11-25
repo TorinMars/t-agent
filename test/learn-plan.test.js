@@ -27,10 +27,32 @@ function setup(t) {
   const clock = { now: NOW - 10 * DAY };
   const learn = createLearn({ db, now: () => clock.now, timeZone: 'UTC', lookupWord: null, lookupPhonetic: () => '' });
   learn.saveSettings('me', { starter: null });
-  return { db, clock, learn, plan: createLearnPlan({ db, learn }) };
+  return { db, clock, learn, plan: createLearnPlan({ db, learn, now: () => clock.now }) };
 }
 const add = (ctx, kind, en) => ctx.learn.addCard('me', { kind, en, zh: ZH }).card;
 const wrong = (ctx, card, times) => { for (let index = 0; index < times; index += 1) { ctx.clock.now += 60_000; ctx.learn.answer('me', card.id, { mode: 'spell', grade: 'again', correct: false, answer: 'x' }); } };
+
+test('word selection ranks by error rate and fills the new-word selection within the allowance', t => {
+  const ctx = setup(t);
+  const rare = add(ctx, 'word', 'receive');
+  const frequent = add(ctx, 'word', 'deploy');
+  const perfect = add(ctx, 'word', 'archive');
+  const fresh = add(ctx, 'word', 'merge');
+  add(ctx, 'sentence', 'We should merge the branch.');
+  wrong(ctx, frequent, 2);
+  wrong(ctx, rare, 1);
+  for (const card of [frequent, frequent, perfect]) ctx.learn.answer('me', card.id, { mode: 'spell', grade: 'good', correct: true });
+  ctx.clock.now = NOW;
+  const select = (source, count) => ctx.plan.selectWords('me', { source, count }).map(row => row.id);
+  assert.deepEqual(select('highest_error_rate'), [rare.id, frequent.id]);
+  assert.deepEqual(select('new'), [fresh.id]);
+  assert.deepEqual(select('highest_error_rate', 1), [rare.id]);
+  const newToday = Array.from({ length: 6 }, (_, index) => add(ctx, 'word', `word${String.fromCharCode(97 + index)}`));
+  ctx.learn.saveSettings('me', { new_per_day: 5 });
+  assert.deepEqual(select('new', 20), [fresh, ...newToday.slice(0, 4)].map(card => card.id));
+  ctx.learn.updateCard('me', rare.id, { suspended: true });
+  assert.deepEqual(select('highest_error_rate'), [frequent.id]);
+});
 
 test('an empty database: every plan is empty (no steps, no words), so no Start button is offered', async t => {
   const ctx = setup(t);

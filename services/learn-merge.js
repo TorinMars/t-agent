@@ -18,6 +18,7 @@ const {
   MAX_ZH: MAX_CARD_ZH, KEPT_SETTINGS, storedParts, checkTip, cleanExtraNew, retiredVoice,
 } = require('./learn');
 const { GRADES } = require('./learn-review');
+const { checkGenerated } = require('./learn-sentences');
 const { cleanPhonetic } = require('./phonetics');
 
 const CONTENT = ['en', 'zh', 'phonetic', 'parts', 'tip', 'source', 'context', 'context_zh', 'context_source', 'suspended'];
@@ -351,10 +352,11 @@ const convoUid = value => value === COACH_UID || CHAT_UID.test(value);
 const PROPOSAL_ID = /^[A-Za-z0-9-]{8,64}$/;
 const PROPOSAL_KINDS = ['practice', 'settings', 'cards', 'reminder'];
 const PROPOSAL_STATES = ['open', 'done', 'cancelled', 'undone'];
-// The coach offers word spelling only (today's spelling, review, mistakes, new words); `dictation` and `fill_gap` stay readable for plans saved before.
-const OFFER_KINDS = ['today_spelling', 'review', 'mistakes_series', 'more_new_words'];
+// `dictation` and `fill_gap` stay readable for plans saved before.
+const OFFER_KINDS = ['today_spelling', 'review', 'mistakes_series', 'more_new_words', 'word_practice'];
 const PLAN_KINDS = [...OFFER_KINDS, 'dictation', 'fill_gap'];
-const STEP_MODES = ['spell', 'fill', 'dictation', 'retest', 'review'];
+const WORD_METHODS = ['spell', 'sentence_gap', 'study_then_spell'];
+const STEP_MODES = ['spell', 'fill', 'dictation', 'retest', 'review', 'direct_spell', 'study'];
 // The screens of Learn a coach answer can open with a button (the tool open_screen; "Screens the coach opens" in docs/design/learn-english-coach.md).
 // The screens the coach may open now: practice is word spelling only; the other modes stay readable for answers saved before (`READABLE_SCREENS`).
 const COACH_SCREENS = ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'spell'];
@@ -388,15 +390,36 @@ const cardRefOf = raw => {
 const ids = (value, max) => (Array.isArray(value) ? value.filter(id => Number.isSafeInteger(id) && id > 0).slice(0, max) : []);
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+function cleanPracticeExamples(raw, words) {
+  if (!Array.isArray(raw)) return [];
+  const allowed = new Map(words.map(word => [normalize(word), word]));
+  const examples = [];
+  for (const value of raw.slice(0, MAX_BATCH)) {
+    if (!value || typeof value.word !== 'string' || typeof value.sentence !== 'string' || typeof value.zh !== 'string') continue;
+    const key = normalize(value.word);
+    const word = allowed.get(key);
+    if (!word) continue;
+    const checked = checkGenerated(JSON.stringify({ sentence: value.sentence, zh: value.zh }), { word });
+    if (!checked.ok) continue;
+    allowed.delete(key);
+    examples.push({ word, sentence: checked.en, zh: checked.zh });
+  }
+  return examples;
+}
+
 // A plan of a practice series (services/learn-plan.js buildPlan), checked, or null.
 function cleanPlan(raw) {
   if (!raw || typeof raw !== 'object' || !PLAN_KINDS.includes(raw.kind)) return null;
+  if (raw.kind === 'word_practice' && (!WORD_METHODS.includes(raw.method) || !Array.isArray(raw.words_list))) return null;
   const steps = (Array.isArray(raw.steps) ? raw.steps : []).slice(0, 6).filter(step => step && STEP_MODES.includes(step.mode))
     .map(step => ({ mode: step.mode, card_ids: ids(step.card_ids, 200) }));
+  const words = Array.isArray(raw.words_list) ? raw.words_list.filter(word => typeof word === 'string' && word.trim()).slice(0, MAX_BATCH).map(word => oneLine(word, 40)) : null;
   return {
     kind: raw.kind, title: oneLine(raw.title, 80), steps, words: count(raw.words) ? Math.min(raw.words, 500) : 0, minutes: count(raw.minutes) ? Math.min(raw.minutes, 600) : 0,
     notes: oneLine(raw.notes, 300), ...(count(raw.count) && raw.count > 0 ? { count: Math.min(raw.count, 50) } : {}),
-    ...(Array.isArray(raw.words_list) ? { words_list: raw.words_list.filter(word => typeof word === 'string' && word.trim()).slice(0, MAX_BATCH).map(word => oneLine(word, 40)) } : {}),
+    ...(raw.kind === 'word_practice' ? { method: raw.method, plain: count(raw.plain) ? Math.min(raw.plain, MAX_BATCH) : 0 } : {}),
+    ...(words ? { words_list: words } : {}),
+    ...(raw.kind === 'word_practice' && raw.method === 'sentence_gap' ? { examples: cleanPracticeExamples(raw.examples, words) } : {}),
   };
 }
 
@@ -616,7 +639,7 @@ module.exports = {
   reportBody, reportFromPeer, reportToPeer, reportWins, chatFromPeer, chatToPeer, MAX_QUESTION, MAX_CHAT_TEXT,
   cleanMeta, convoTitle, convoDeleted, convoFromPeer, convoToPeer, mergeConvo, convoMessageFromPeer, convoMessageToPeer, parseMeta,
   MAX_CONVO_QUESTION, MAX_CONVO_ANSWER, MAX_CONVO_TITLE, MAX_META_CARDS, MAX_META_MISTAKES, MAX_MISTAKE_TAG,
-  COACH_UID, COACH_SCREENS, READABLE_SCREENS, PROPOSAL_KINDS, PROPOSAL_STATES, PLAN_KINDS, OFFER_KINDS, STEP_MODES, COACH_CHANGES, MAX_NOTE, MAX_SUMMARY, MAX_BATCH, cleanChanges, cleanPlan, cleanProposal, cleanPractice,
+  COACH_UID, COACH_SCREENS, READABLE_SCREENS, PROPOSAL_KINDS, PROPOSAL_STATES, PLAN_KINDS, OFFER_KINDS, STEP_MODES, WORD_METHODS, COACH_CHANGES, MAX_NOTE, MAX_SUMMARY, MAX_BATCH, cleanChanges, cleanPlan, cleanProposal, cleanPractice, cleanPracticeExamples,
   cleanCoachMeta, mergeCoachMeta, looksSecret, noteUntil, noteText, noteFromPeer, noteToPeer, noteWins, summaryFromPeer, summaryToPeer, mergeSummary,
   CONTENT, STATE, PICKED, FIELDS, KEPT_SETTINGS, CONTEXT_SOURCES,
 };

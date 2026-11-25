@@ -41,7 +41,7 @@ import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
 import { ChatView, EarlierChats } from './LearnChat.jsx';
 import { CoachSettings, CoachView, useCoachSupport } from './LearnCoach.jsx';
 import { screenView } from './learn-coach.mjs';
-import { createSeries, exerciseCard, seriesAnswer, seriesCurrent, seriesDone, seriesProgress, seriesResult } from './learn-series.mjs';
+import { createSeries, exerciseCard, seriesAnswer, seriesCurrent, seriesDone, seriesProgress, seriesResult, seriesStudy } from './learn-series.mjs';
 import { ProgressView } from './LearnProgress.jsx';
 import { gradeIntervals } from './learn-progress.mjs';
 import { PRACTICE_FLASH_MS, PRACTICE_ROUND_MS, practiceChange, practiceClearFlash, practiceNewRound, practiceSlots, practiceStart, practiceText } from './learn-practice.mjs';
@@ -944,7 +944,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
 // (learn-series.mjs decides the exercise of each card, the progress and the misses that come back at the end). The header: the exercise's title and
 // "Step 2 of 4 · from your chat" small and "7 / 9", all on one line on a phone; the back arrow (named "Back to chat" there) leaves (the answers are
 // kept) and the end returns by itself, both to the coach with the result.
-const SERIES_TITLES = { spell: 'Spell the word', review: 'Daily review', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
+const SERIES_TITLES = { spell: 'Spell the word', direct_spell: 'Spell the word', study: 'Study the words', review: 'Daily review', fill: 'Fill the gap', dictation: 'Dictation', retest: 'Final retest' };
 function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settings, leaveRef, onEnd, onDone }) {
   const audio = useAudio(settings, speech, ui);
   const [run, setRun] = useState(() => createSeries(series.plan, { tts: speech.tts }));
@@ -958,6 +958,7 @@ function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settin
   const end = stopped => {
     if (ended.current) return;
     ended.current = true;
+    audio.stop();
     const now = runRef.current;
     void onDone();
     // Nothing answered: nothing to tell her.
@@ -970,7 +971,10 @@ function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settin
   const done = seriesDone(run);
   useEffect(() => { if (done) end(false); }, [done]); // eslint-disable-line react-hooks/exhaustive-deps -- once at the end
   const current = seriesCurrent(run);
-  const card = current ? exerciseCard(current.card, current.exercise) : null;
+  const original = current?.card;
+  const mode = current?.mode;
+  const exercise = current?.exercise;
+  const card = useMemo(() => exerciseCard(original, exercise, mode), [original, exercise, mode]);
   const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, detail = null }) => {
     if (busyRef.current || !current) return;
     busyRef.current = true;
@@ -994,18 +998,40 @@ function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settin
   };
   const skip = () => { register.current = null; setRun(now => seriesAnswer(now, { skipped: true })); };
   const progress = seriesProgress(run);
+  const titleMode = series.planKind === 'word_practice' && mode === 'fill' && exercise === 'spell' ? 'spell' : mode;
   const frame = {
-    phone, title: t(SERIES_TITLES[current ? current.mode : 'spell']), onBack: () => end(!seriesDone(runRef.current)), backLabel: t('Back to chat'),
-    counter: `${progress.at} / ${progress.of}`, step: progress.steps > 1 ? tf('Step {1} of {2}', progress.step, progress.steps) : '', source: t('from your chat'), wideSource: true,
+    phone, title: t(SERIES_TITLES[titleMode || 'spell']), onBack: () => end(!seriesDone(runRef.current)), backLabel: t('Back to chat'),
+    counter: `${progress.at} / ${progress.of}`, step: progress.steps > 1 ? tf('Step {1} of {2}', progress.step, progress.steps) : '',
+    source: series.planKind === 'word_practice' ? '' : t('from your chat'), wideSource: true,
     progress: progress.share,
   };
   if (!current) return <ViewFrame {...frame}><Typography variant="body2" color="text.secondary" id="h5-learn-series-ending">{t('Back to the chat…')}</Typography></ViewFrame>;
-  const Exercise = EXERCISES[current.exercise];
+  const Exercise = mode === 'direct_spell' || (mode === 'fill' && exercise === 'spell') ? SpellExercise : EXERCISES[exercise];
   return (
     <Box id="h5-learn-series" data-step={current.mode} data-exercise={current.exercise} sx={{ display: 'contents' }}>
-      <Exercise key={`${current.step}-${current.at}`} ui={ui} card={card} cards={[card]} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
-        onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={current.exercise} />
+      {current.mode === 'study'
+        ? <StudyWord key={current.at} card={card} frame={frame} audio={audio} tts={speech.tts}
+            last={progress.at === progress.of} onNext={() => { audio.stop(); setRun(seriesStudy); }} />
+        : <Exercise key={`${current.step}-${current.at}`} ui={ui} card={card} cards={[card]} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
+            onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={exercise} />}
     </Box>
+  );
+}
+
+function StudyWord({ card, frame, audio, tts, last, onNext }) {
+  const meaning = useMeaning(card, card.en);
+  return (
+    <ViewFrame {...frame}>
+      <Card sx={{ p: 2, display: 'grid', gap: 1 }}>
+        <WordLine word={card.en} phonetic={meaning.phonetic} />
+        {meaning.zh ? <Typography variant="body1">{meaning.zh}</Typography> : null}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {tts ? <AudioButton audio={audio} text={card.en} /> : null}
+          <Box sx={{ flex: 1 }} />
+          <Button variant="contained" onClick={onNext}>{t(last ? 'Start spelling' : 'Next word')}</Button>
+        </Box>
+      </Card>
+    </ViewFrame>
   );
 }
 
@@ -1217,14 +1243,14 @@ const actionsRow = children => <Box className="h5-learn-actions" sx={{ display: 
 // The buttons that play or help (Hear it, Play, Slow, Show first letter, Hint) never take the focus from the answer field, so the caret stays where it
 // was: the press is cancelled (no focus moves, as with the terminal's keys) and, should a browser move the focus anyway, a pointer press gives it back
 // to the field that had it. A button reached with Tab keeps its focus.
-const keepFocus = field => ({
+const keepFocus = field => field ? ({
   onMouseDown: event => event.preventDefault(),
   onPointerDown: event => { event.currentTarget.dataset.field = document.activeElement === field.current ? '1' : ''; },
   onClickCapture: event => {
     const el = field.current;
     if (event.detail > 0 && el && event.currentTarget.dataset.field === '1' && document.activeElement !== el) el.focus({ preventScroll: true });
   },
-});
+}) : {};
 
 // "Ask about this question" (LearnAsk.jsx): the text button Ask at the end of the card's button row (it keeps the field's focus like the other helper
 // buttons) and the sheet or side panel it opens. `answer()`: the person's answer; `expected`: what is asked for when it is not the card's English

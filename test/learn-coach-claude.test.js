@@ -19,7 +19,7 @@ const { createLearnCoach } = require('../services/learn-coach');
 const engine = require('../services/learn-coach-claude');
 
 const NOW = Date.UTC(2026, 10, 24, 4, 0, 0);
-const COACH_TOOLS = ['learn_schema', 'learn_sql', 'propose_practice', 'propose_settings', 'propose_cards', 'propose_reminder', 'remember', 'open_screen'].map(name => `mcp__coach__${name}`);
+const COACH_TOOLS = ['learn_schema', 'learn_sql', 'select_practice_words', 'propose_practice', 'propose_settings', 'propose_cards', 'propose_reminder', 'remember', 'open_screen'].map(name => `mcp__coach__${name}`);
 const meta = (value = {}) => `\n<<meta>>${JSON.stringify({ cards: [], mistakes: [], journal: false, suggestions: [], ...value })}`;
 
 function database(t) {

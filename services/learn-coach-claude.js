@@ -94,7 +94,8 @@ function shapes(z) {
   return {
     learn_schema: {},
     learn_sql: { query: z.string() },
-    propose_practice: { kind: z.string(), words: z.array(z.union([z.number(), z.string()])).optional(), count: z.number().optional() },
+    select_practice_words: { source: z.string(), words: z.array(z.union([z.number(), z.string()])).optional(), query: z.string().optional(), count: z.number().optional() },
+    propose_practice: { kind: z.string(), method: z.string().optional(), examples: z.array(z.any()).optional(), words: z.array(z.union([z.number(), z.string()])).optional(), count: z.number().optional() },
     propose_settings: { changes: z.record(z.string(), z.any()) },
     propose_cards: { add: z.array(z.any()).optional(), update: z.array(z.any()).optional(), remove: z.array(z.any()).optional() },
     propose_reminder: { time: z.string(), days: z.array(z.number()).optional(), text: z.string() },

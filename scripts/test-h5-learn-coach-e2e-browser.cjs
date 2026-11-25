@@ -302,7 +302,7 @@ async function phoneRun(browser, server, fake) {
   await say(page, "Give me today's spelling practice", touch);
   const sent = fake.requests.slice(mark).filter(item => item.kind === 'tools');
   assert.equal(sent.length, 2, 'two rounds: the tool call, then the answer');
-  assert.deepEqual(toolsOf(sent[0]), ['learn_schema', 'learn_sql', 'propose_practice', 'propose_settings', 'propose_cards', 'propose_reminder', 'remember', 'open_screen'], 'the tools list');
+  assert.deepEqual(toolsOf(sent[0]), ['learn_schema', 'learn_sql', 'select_practice_words', 'propose_practice', 'propose_settings', 'propose_cards', 'propose_reminder', 'remember', 'open_screen'], 'the tools list');
   assert.equal(sent[0].body.tool_choice, 'auto');
   assert.equal(sent[0].auth, 'Bearer dummy-test-key');
   assert.equal(sent[0].body.model, 'fake-model');
@@ -664,6 +664,40 @@ async function wideRun(browser, server, fake) {
     await page.locator('.h5-learn-coach-divider[data-stopped="true"]').last().waitFor(WAIT);
     await page.locator('.h5-learn-chat-msg[data-role="assistant"]', { hasText: 'Stopped on the computer.' }).waitFor(WAIT);
   } else fake.queue.shift();
+  // Use the same word in a sentence gap and then in ungraded study followed by direct spelling.
+  const practice = () => lastAnswer(page).locator('.h5-learn-coach-card[data-type="plan"]').locator('.h5-learn-coach-start');
+  fake.queue.push(
+    { tools: [['select_practice_words', { source: 'selected', words: ['receive'] }]] },
+    { tools: [['propose_practice', { kind: 'word_practice', method: 'sentence_gap', examples: [
+      { word: 'receive', sentence: 'Did you receive the package this morning?', zh: '\u4f60\u4eca\u65e9\u6536\u5230\u5305\u88f9\u4e86\u5417\uff1f' },
+    ] }]] },
+    { content: answerText('Here is a sentence gap.') },
+  );
+  await say(page, 'Give me a sentence gap for receive', touch);
+  await practice().click();
+  await page.locator('#h5-learn-series[data-exercise="fill"]').waitFor(WAIT);
+  assert.match(await page.locator('.h5-learn-gap').innerText(), /Did you\s+the package this morning/);
+  assert.ok(!(await page.locator('#h5-learn-series').innerText()).includes('Did you receive'));
+  fake.queue.push({ content: answerText('Sentence gap done.') });
+  assert.equal(await answerCard(page, one, 'receive', touch), true);
+  await lastAnswer(page).getByText('Sentence gap done.').waitFor(WAIT);
+
+  fake.queue.push(
+    { tools: [['select_practice_words', { source: 'previous' }]] },
+    { tools: [['propose_practice', { kind: 'word_practice', method: 'study_then_spell' }]] },
+    { content: answerText('Study it first, then spell it.') },
+  );
+  await say(page, 'Use the same word and show it before spelling', touch);
+  await practice().click();
+  await page.locator('#h5-learn-series[data-step="study"]').getByText('receive', { exact: true }).waitFor(WAIT);
+  const graded = one.of('POST', /\/cards\/\d+\/answer$/).length;
+  await page.getByRole('button', { name: 'Start spelling' }).click();
+  await page.locator('#h5-learn-series[data-step="direct_spell"] #h5-learn-spell-input').waitFor(WAIT);
+  assert.equal(one.of('POST', /\/cards\/\d+\/answer$/).length, graded);
+  fake.queue.push({ content: answerText('Spelling after study is done.') });
+  assert.equal(await answerCard(page, one, 'receive', touch), true);
+  await lastAnswer(page).getByText('Spelling after study is done.').waitFor(WAIT);
+
   // Earlier chats in the pane, read-only; Close returns to the coach.
   await page.locator('#h5-learn-coach-more').click();
   await page.locator('#h5-learn-coach-earlier').click();

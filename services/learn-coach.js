@@ -21,7 +21,7 @@ const merge = require('./learn-merge');
 const { modelError } = require('./learn-ask');
 const { splitMeta, metaFilter, checkQuestion, META } = require('./learn-chat');
 const coachSql = require('./learn-coach-sql');
-const { createLearnPlan } = require('./learn-plan');
+const { createLearnPlan, WORD_SOURCES, hasPracticeContext } = require('./learn-plan');
 const claudeEngine = require('./learn-coach-claude');
 
 const COACH = syncStore.COACH_UID;
@@ -62,8 +62,12 @@ const TOOLS = [
     parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
   },
   {
-    name: 'propose_practice', description: 'Offer a practice as a card with a Start button. The server builds it from the real queue and tells you its numbers. Practice here is WORD SPELLING only. kind: today_spelling | review (spell the words that are due) | mistakes_series (spell the wrong words, then retest them) | more_new_words (raises today\'s new words when tapped). words: card ids or English words to limit it to; count: how many.',
-    parameters: { type: 'object', properties: { kind: { type: 'string', enum: merge.OFFER_KINDS }, words: { type: 'array', items: { type: ['integer', 'string'] } }, count: { type: 'integer' } }, required: ['kind'] },
+    name: 'select_practice_words', description: 'Choose existing word cards independently of the exercise. today: due words then new words; due: due reviewed words; new: unstudied words within the daily allowance; highest_error_rate: highest fraction of wrong answers; selected: exact word texts or card ids in words, or a read-only query returning one id column from coach_cards for custom filters; previous: reuse the selection from the previous word practice. coach_cards has id, kind, en, source, state, due and created_at. Join coach_answers on card_id for correct and at. Use learn_schema when you need more columns. count: maximum words (default 10, or all from the previous selection).',
+    parameters: { type: 'object', properties: { source: { type: 'string', enum: [...WORD_SOURCES, 'previous'] }, words: { type: 'array', items: { type: ['integer', 'string'] } }, query: { type: 'string' }, count: { type: 'integer' } }, required: ['source'] },
+  },
+  {
+    name: 'propose_practice', description: 'Offer a practice card with Start. For kind word_practice, first call select_practice_words, then choose spell (direct spelling), sentence_gap (spell the word in context), or study_then_spell (see the words and meanings first). For sentence_gap supply examples for the words listed in missing_sentences: each is {word, sentence, zh}, with the exact word once in a natural sentence of 6 to 16 words and its Chinese translation. For more_new_words, Start raises today\'s allowance. The older presets today_spelling, review and mistakes_series are available when word selection is disabled.',
+    parameters: { type: 'object', properties: { kind: { type: 'string', enum: merge.OFFER_KINDS }, method: { type: 'string', enum: merge.WORD_METHODS }, examples: { type: 'array', items: { type: 'object', properties: { word: { type: 'string' }, sentence: { type: 'string' }, zh: { type: 'string' } }, required: ['word', 'sentence', 'zh'] } }, words: { type: 'array', items: { type: ['integer', 'string'] } }, count: { type: 'integer' } }, required: ['kind'] },
   },
   {
     name: 'propose_settings', description: `Change learning settings: the app applies it as soon as your answer ends (with Undo), so tell the person what you changed. Allowed keys: ${merge.COACH_CHANGES.join(', ')} (new_per_day is 5, 10, 15, 20 or 30; desired_retention 0.85, 0.9 or 0.95).`,
@@ -88,7 +92,7 @@ const TOOLS = [
 ];
 const TOOL_DEFS = TOOLS.map(tool => ({ type: 'function', function: tool }));
 const STATUS = {
-  learn_schema: 'Looking at your answers', learn_sql: 'Looking at your answers', propose_practice: 'Making a practice plan', propose_settings: 'Preparing a change',
+  learn_schema: 'Looking at your answers', learn_sql: 'Looking at your answers', select_practice_words: 'Making a practice plan', propose_practice: 'Making a practice plan', propose_settings: 'Preparing a change',
   propose_cards: 'Preparing a change', propose_reminder: 'Preparing a change', remember: 'Saving a note',
 };
 // The screens open_screen offers at most once per answer (a button each).
@@ -119,11 +123,11 @@ function systemPrompt({ level = null, notes = [], summary = '', tools = true, se
     lines.push(
       'Tools: chat, translation, grammar and rewriting need NO lookup. Look up data (learn_schema, learn_sql) only when the question is about the person\'s own learning; prefer one well-made query over many.',
       'Small changes are made at once: when the person asks to change a setting or add or edit a card, the app applies the change after your answer, with an Undo button. Briefly say what you prepared. Removing cards, reminders and practice are offered as cards the person taps; ask before a big change (many cards, a removal).',
-      'Built-in practice plans are word spelling only. Use propose_practice when the person wants a built-in spelling or review session, and describe it with the numbers returned. If the queue is empty, say so and offer a relevant next option. For another exercise, help in chat when possible. For a request that needs a feature you do not have (such as audio dictation), explain that briefly and offer an alternative suited to the person\'s goal.',
+      'Build word practice in two steps. First call select_practice_words to match the requested words, count or filters. For custom filters, use source selected with a query returning word card ids in the requested order. Then call propose_practice with kind word_practice and the requested method. If they ask to keep the same words and change the method, use source previous. Default to direct spelling when they did not specify a method. Describe the actual plan and mention any sentence gaps that will use direct spelling. If no words match, say so and offer a relevant next option. For other exercises, help in chat when possible.',
       `Use remember for lasting facts about the person (at most ${MAX_NOTES} notes; when they are full, suggest merging).${settings.coach_memory === false ? ' The person switched memory off: do not use remember.' : ''}`,
       'The app has no menu of its own screens: the person reaches Mistakes, Progress, their material, Learn settings, "How learning works" and the plain practice modes only through you. When they ask to see or open one ("show my mistakes", "open settings", "how does learning work", "my progress"), call open_screen with it and say in one line what they will find there; offer one with open_screen after a talk about their weak spots or progress when it helps.',
     );
-    if (settings.coach_read_answers === false) lines.push('The person does not let you read their learning answers: only coach_settings has rows.');
+    if (settings.coach_read_answers === false) lines.push('The person does not let you read their learning answers: only coach_settings has rows, and select_practice_words is unavailable. Offer the preset practice plans when useful.');
     else if (settings.coach_read_text === false) lines.push('The person does not let you read their journal and chats: coach_journal and coach_messages are empty.');
   } else {
     lines.push(
@@ -175,7 +179,7 @@ function createLearnCoach({
   now = Date.now, timeZone, runQuery = coachSql.runQuery, buildSnapshot = coachSql.buildSnapshot, plan = null,
   rateLimit = RATE_LIMIT, rateWindowMs = RATE_WINDOW_MS, toolPhaseMs = TOOL_PHASE_MS, timeoutMs = MODEL_TIMEOUT_MS, undoMs = UNDO_MS,
 }) {
-  const planner = plan || createLearnPlan({ db, learn });
+  const planner = plan || createLearnPlan({ db, learn, now });
   const running = new Set(); // owners with an answer being written
   const recent = new Map(); // owner -> send times in the window
   const toolsOff = new Set(); // `${provider}|${model}` that refused tools (for the process)
@@ -377,18 +381,41 @@ function createLearnCoach({
     const { owner, current } = ctx;
     if (name === 'learn_schema') return coachSql.schemaText({ readAnswers: current.coach_read_answers, readText: current.coach_read_text });
     if (name === 'learn_sql') return runQuery(await ctx.snapshot(), args.query);
+    if (name === 'select_practice_words') {
+      ctx.practiceWords = null;
+      if (current.coach_read_answers === false) return { error: 'Word selection needs permission to read learning data' };
+      const previous = args.source === 'previous';
+      const last = previous && allMessages(owner).findLast(row => row.role === 'assistant'
+        && merge.parseMeta(row.meta)?.proposals?.some(proposal => proposal.plan?.kind === 'word_practice'));
+      const saved = last && merge.parseMeta(last.meta).proposals.findLast(proposal => proposal.plan?.kind === 'word_practice');
+      let words = previous ? saved?.plan.words_list : args.words;
+      if (args.query !== undefined) {
+        if (args.source !== 'selected' || args.words !== undefined) return { error: 'For a custom query use source selected and omit words' };
+        const result = await runQuery(await ctx.snapshot(), args.query);
+        if (result.error) return result;
+        if (result.columns.length !== 1 || result.columns[0] !== 'id') return { error: 'Return one column named id with word card ids' };
+        words = result.rows.map(row => row[0]).filter(id => Number.isSafeInteger(id) && id > 0);
+      }
+      ctx.practiceWords = planner.selectWords(owner, { source: previous ? 'selected' : args.source, words, count: args.count ?? (previous ? merge.MAX_BATCH : null) });
+      return {
+        words: ctx.practiceWords.map(row => row.en), count: ctx.practiceWords.length,
+        missing_sentences: ctx.practiceWords.filter(row => !hasPracticeContext(row)).map(row => ({ word: row.en, zh: cut(row.zh, 100) })),
+      };
+    }
     if (name === 'propose_practice') {
       if (!merge.OFFER_KINDS.includes(args.kind)) return { error: `kind must be one of ${merge.OFFER_KINDS.join(', ')}` };
       const words = Array.isArray(args.words) ? args.words.slice(0, merge.MAX_BATCH) : null;
       const count = Number.isInteger(args.count) ? args.count : null;
-      const built = await planner.buildPlan(owner, args.kind, { words, count });
+      const selected = args.kind === 'word_practice';
+      if (selected && !ctx.practiceWords) return { error: 'Choose the words with select_practice_words first' };
+      const built = selected ? planner.buildWordPlan(args.method, ctx.practiceWords, args.examples) : await planner.buildPlan(owner, args.kind, { words, count });
       if (!built.words) return { empty: true, note: 'Nothing to practise in this plan now: do not offer it; say so and offer something else.' };
       // The words named are kept by their text (card ids differ on each engine).
-      const named = words ? db.prepare('SELECT en FROM learn_cards WHERE owner = ? AND id IN (SELECT value FROM json_each(?))').pluck()
+      const named = words && !selected ? db.prepare('SELECT en FROM learn_cards WHERE owner = ? AND id IN (SELECT value FROM json_each(?))').pluck()
         .all(owner, JSON.stringify(built.steps.flatMap(step => step.card_ids))) : null;
       const proposal = merge.cleanProposal({ id: crypto.randomUUID(), kind: 'practice', state: 'open', plan: { ...built, ...(named ? { words_list: named } : {}), ...(count ? { count } : {}) } });
       ctx.proposals.push(proposal);
-      return { proposal_id: proposal.id, title: built.title, words: built.words, minutes: built.minutes, steps: built.steps.map(step => ({ mode: step.mode, cards: step.card_ids.length })), notes: built.notes };
+      return { proposal_id: proposal.id, title: built.title, words: built.words, minutes: built.minutes, steps: built.steps.map(step => ({ mode: step.mode, cards: step.card_ids.length })), notes: built.notes, ...(selected ? { direct_spelling_fallback: built.plain } : {}) };
     }
     if (name === 'propose_settings') {
       const changes = merge.cleanChanges(args.changes);
@@ -537,6 +564,7 @@ function createLearnCoach({
           // What the failed turn proposed is dropped (the notes it saved stay, with their Undo); the usage starts again.
           ctx.proposals.length = 0;
           ctx.screens.length = 0;
+          ctx.practiceWords = null;
           texts.length = 0;
           meta = null;
           for (const field of Object.keys(usage)) delete usage[field];

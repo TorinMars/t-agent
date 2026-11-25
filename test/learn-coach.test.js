@@ -212,7 +212,7 @@ test('the prompt is cache friendly: two requests in a row share the system messa
   assert.deepEqual(one.options.tools, two.options.tools, 'the same tools');
 });
 
-test('the coach can adapt chat exercises with or without tools while built-in practice stays spelling only', () => {
+test('the coach can adapt chat exercises with or without tools', () => {
   for (const tools of [true, false]) {
     const prompt = coachModule.systemPrompt({ tools });
     assert.match(prompt, /Follow the person's current request for English learning/);
@@ -223,8 +223,46 @@ test('the coach can adapt chat exercises with or without tools while built-in pr
     assert.match(prompt, /Follow the person's requested focus or feedback format/);
     assert.doesNotMatch(prompt, /offer the spelling practice that is closest/);
   }
-  assert.match(coachModule.systemPrompt({ tools: true }), /Built-in practice plans are word spelling only/);
+  assert.match(coachModule.systemPrompt({ tools: true }), /First call select_practice_words.*Then call propose_practice/);
   assert.doesNotMatch(coachModule.systemPrompt({ tools: false }), /Small changes are made at once/);
+});
+
+test('select words before building the practice and reuse the same selection in a later turn', async t => {
+  const script = [
+    { toolCalls: [call('propose_practice', { kind: 'word_practice', method: 'spell' })] },
+    { toolCalls: [call('select_practice_words', {
+      source: 'selected', query: "SELECT id FROM coach_cards WHERE kind = 'word' AND source = 'manual' ORDER BY en DESC", count: 2,
+    })] },
+    { toolCalls: [call('propose_practice', { kind: 'word_practice', method: 'sentence_gap', examples: [
+      { word: 'receive', sentence: 'Did you receive the package this morning?', zh: ZH },
+      { word: 'deploy', sentence: 'We deploy the code before we deploy the update.', zh: ZH },
+    ] })] },
+    { content: ['Here is the first practice.', meta()] },
+    { toolCalls: [call('select_practice_words', { source: 'previous' })] },
+    { toolCalls: [call('propose_practice', { kind: 'word_practice', method: 'study_then_spell' })] },
+    { content: ['Study these words first.', meta()] },
+  ];
+  const ctx = setup(t, { script: (request, index) => script[index] });
+  for (const en of ['receive', 'deploy', 'archive']) ctx.learn.addCard('me', { kind: 'word', en, zh: ZH });
+  ctx.learn.addCard('me', { kind: 'sentence', en: 'We can test this.', zh: ZH });
+  const first = await ctx.coach.send('me', { text: 'Take the last two manual words alphabetically and give me sentence gaps.' });
+  assert.match(ctx.provider.requests[1].messages.at(-1).content, /Choose the words/);
+  const gap = first.message.meta.proposals[0];
+  assert.deepEqual(gap.plan.words_list, ['receive', 'deploy']);
+  assert.equal(gap.plan.plain, 1);
+  const gapRun = await ctx.coach.startPlan('me', { message_uid: first.message.uid, proposal_id: gap.id });
+  assert.deepEqual(gapRun.plan.steps[0].cards.map(card => [card.en, card.context]), [
+    ['receive', 'Did you receive the package this morning?'], ['deploy', ''],
+  ]);
+  assert.equal(ctx.db.prepare("SELECT context FROM learn_cards WHERE kind = 'word' AND en = 'receive'").pluck().get(), '');
+  const second = await ctx.coach.send('me', { text: 'Use these same words but let me study them first.' });
+  const study = second.message.meta.proposals[0];
+  assert.deepEqual(study.plan.words_list, gap.plan.words_list);
+  const started = await ctx.coach.startPlan('me', { message_uid: second.message.uid, proposal_id: study.id });
+  assert.deepEqual(started.plan.steps.map(step => [step.mode, step.cards.map(card => card.en)]), [
+    ['study', ['receive', 'deploy']], ['direct_spell', ['receive', 'deploy']],
+  ]);
+  assert.equal(ctx.db.prepare('SELECT COUNT(*) FROM learn_reviews').pluck().get(), 0);
 });
 
 test('proposals: settings, cards (a removal on its own card), a reminder; run, cancel, run twice, Undo within 10 s and not after', async t => {

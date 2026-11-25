@@ -1,6 +1,5 @@
 // The practice plans of the English coach ("Practice plans" in docs/design/learn-english-coach.md): what a plan card offers and what its Start runs.
-// A plan is built from the REAL queues of services/learn.js (queue, mistakeRows): this file only picks and orders cards that those give, so the
-// numbers on a card are the server's, never the model's, and the scheduling rules stay in one place.
+// Word practice selects cards first and applies a method to that selection. Saved preset plans still use the queues of services/learn.js.
 //
 // buildPlan(owner, kind, { words?, count? }) -> { kind, title, steps: [{ mode, card_ids }], words, minutes, notes } (steps without cards are left out;
 // words: the different cards in it). Kinds:
@@ -8,22 +7,26 @@
 // - review: the review queue.
 // - more_new_words: the next `count` (5) new words; the allowance is raised only when the person starts it (startPlan with `raise`).
 // - dictation, fill_gap: the dictation and fill queues (sentences).
-// - mistakes_series: the Mistakes queue as a series: 1 spell each wrong word (the most often wrong first), 2 fill the gap in the sentences (wrong
-//   sentences and the person's sentences with a wrong word), 3 dictation of those sentences, or, without sentences, the worst words again, 4 a final
-//   retest (the page keeps only the words missed again in the series).
+// - mistakes_series: spell wrong words, most often wrong first, then retest words missed in the series.
 // `words` (card ids or English texts) narrows a plan to those cards ("Practise the 3 I missed").
 const { normalize } = require('./learn');
+const { wholeWordPlaces } = require('./learn-sentences');
+const { WORD_METHODS, cleanPracticeExamples } = require('./learn-merge');
 
 const KINDS = ['today_spelling', 'review', 'mistakes_series', 'more_new_words', 'dictation', 'fill_gap'];
-const SECONDS = { spell: 20, review: 12, fill: 30, dictation: 40, retest: 15 };
+const WORD_SOURCES = ['today', 'due', 'new', 'highest_error_rate', 'selected'];
+const SECONDS = { spell: 20, direct_spell: 20, study: 10, review: 12, fill: 30, dictation: 40, retest: 15 };
 const TITLES = {
+  word_practice: 'Word practice',
   today_spelling: "Today's spelling", review: 'Review', mistakes_series: 'Your mistakes', more_new_words: 'New words', dictation: 'Dictation', fill_gap: 'Fill the gap',
 };
 const MAX_CARDS = 50;
 
 class PlanError extends Error { constructor(message, statusCode = 400) { super(message); this.statusCode = statusCode; } }
 
-function createLearnPlan({ db, learn }) {
+const hasPracticeContext = row => wholeWordPlaces(row.context, row.en).length === 1;
+
+function createLearnPlan({ db, learn, now = Date.now }) {
   const limitOf = (count, fallback) => (Number.isInteger(count) && count >= 1 ? Math.min(count, MAX_CARDS) : fallback);
   // The owner's cards named by `words` (ids or English texts, a word card before a sentence card of the same text), in that order.
   function namedCards(owner, words) {
@@ -49,6 +52,49 @@ function createLearnPlan({ db, learn }) {
   // The ids among `ids` that are word cards.
   const wordIds = (owner, ids) => (ids.length ? db.prepare(`SELECT id FROM learn_cards WHERE owner = ? AND kind = 'word' AND id IN (${ids.map(() => '?').join(',')})`).pluck().all(owner, ...ids) : []);
   const queueIds = async (owner, mode, limit, extra) => (await learn.queue(owner, mode, limit, extra ? { extra } : {})).cards.map(card => card.id);
+
+  function selectWords(owner, { source, words, count }) {
+    if (!WORD_SOURCES.includes(source)) throw new PlanError('Unknown word source');
+    const take = limitOf(count, 10);
+    const settings = learn.settings(owner);
+    const at = now();
+    const newLeft = learn.pace(owner, settings, at).new_left;
+    const visible = "c.owner = @owner AND c.kind = 'word' AND c.suspended = 0 AND NOT (c.source = 'starter' AND c.reps = 0 AND @starter IS NULL)";
+    const params = { owner, starter: settings.starter, at, take };
+    const newWords = limit => db.prepare(`SELECT c.* FROM learn_cards c WHERE ${visible} AND c.reps = 0 ORDER BY c.due_at, c.id LIMIT @take`)
+      .all({ ...params, take: Math.min(limit, newLeft) });
+    if (source === 'new') return newWords(take);
+    if (source === 'selected') {
+      const selected = [];
+      let newRemaining = newLeft;
+      for (const row of namedCards(owner, words) || []) {
+        if (row.kind !== 'word') continue;
+        if (!row.reps) {
+          if (!newRemaining || (row.source === 'starter' && settings.starter === null)) continue;
+          newRemaining -= 1;
+        }
+        selected.push(row);
+        if (selected.length === take) break;
+      }
+      return selected;
+    }
+    if (source === 'highest_error_rate') return db.prepare(`SELECT c.* FROM learn_cards c JOIN learn_reviews r ON r.card_id = c.id AND r.owner = c.owner
+      WHERE ${visible} GROUP BY c.id HAVING SUM(r.correct = 0) > 0
+      ORDER BY AVG(r.correct = 0) DESC, SUM(r.correct = 0) DESC, MAX(CASE WHEN r.correct = 0 THEN r.at END) DESC, c.id LIMIT @take`).all(params);
+    const due = db.prepare(`SELECT c.* FROM learn_cards c WHERE ${visible} AND c.reps > 0 AND c.due_at <= @at ORDER BY c.due_at, c.id LIMIT @take`).all(params);
+    return source === 'today' ? [...due, ...newWords(take - due.length)] : due;
+  }
+
+  function buildWordPlan(method, rows, rawExamples) {
+    if (!WORD_METHODS.includes(method)) throw new PlanError('Unknown word practice method');
+    const card_ids = rows.map(row => row.id);
+    const modes = method === 'study_then_spell' ? ['study', 'direct_spell'] : [method === 'sentence_gap' ? 'fill' : 'direct_spell'];
+    const missing = method === 'sentence_gap' ? rows.filter(row => !hasPracticeContext(row)).map(row => row.en) : [];
+    const examples = cleanPracticeExamples(rawExamples, missing);
+    return finish('word_practice', modes.map(mode => ({ mode, card_ids })), '', {
+      method, words_list: rows.map(row => row.en), plain: missing.length - examples.length, examples,
+    });
+  }
 
   // The wrong answers of each card (all of them), for the order of a mistakes series.
   function wrongCounts(owner) {
@@ -107,14 +153,25 @@ function createLearnPlan({ db, learn }) {
   async function startPlan(owner, saved, { id, raise = false } = {}) {
     if (saved.kind === 'more_new_words' && raise) learn.addNewWords(owner, { count: saved.count || 5 });
     let plan;
-    if (saved.kind === 'more_new_words' && raise) {
+    if (saved.kind === 'word_practice') {
+      // Use the selection shown in the proposal. Names resolve to local word cards after sync.
+      const rows = selectWords(owner, { source: 'selected', words: saved.words_list, count: MAX_CARDS });
+      plan = buildWordPlan(saved.method, rows, saved.examples);
+    } else if (saved.kind === 'more_new_words' && raise) {
       // The new words the raised allowance gives now.
       const cards = (await learn.queue(owner, 'spell', 100)).cards.filter(card => card.is_new).slice(0, saved.count || 5);
       plan = finish('more_new_words', [{ mode: 'spell', card_ids: cards.map(card => card.id) }], '', { count: saved.count || 5 });
     } else plan = await buildPlan(owner, saved.kind, { words: saved.words_list && saved.words_list.length ? saved.words_list : null, count: saved.count || null });
     const steps = [];
+    const examples = new Map((plan.examples || []).map(example => [example.word, example]));
+    const selectedCards = plan.kind === 'word_practice' && plan.steps.length
+      ? await learn.practiceCards(owner, plan.steps[0].card_ids) : null;
     for (const step of plan.steps) {
-      const cards = await learn.practiceCards(owner, step.card_ids);
+      let cards = selectedCards || await learn.practiceCards(owner, step.card_ids);
+      if (examples.size && step.mode === 'fill') cards = cards.map(card => {
+        const example = examples.get(card.en);
+        return example ? { ...card, context: example.sentence, context_zh: example.zh, context_source: 'generated' } : card;
+      });
       if (cards.length) steps.push({ mode: step.mode, cards });
     }
     if (!steps.length) return { empty: true };
@@ -122,7 +179,7 @@ function createLearnPlan({ db, learn }) {
     return { plan: { id, kind: plan.kind, title: plan.title, steps, words, minutes: plan.minutes }, stale: words !== saved.words };
   }
 
-  return { buildPlan, startPlan };
+  return { selectWords, buildWordPlan, buildPlan, startPlan };
 }
 
-module.exports = { createLearnPlan, KINDS, TITLES, PlanError };
+module.exports = { createLearnPlan, KINDS, TITLES, PlanError, WORD_SOURCES, hasPracticeContext };

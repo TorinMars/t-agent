@@ -48,6 +48,27 @@ function mistakesPlan() {
   };
 }
 
+test('studying a preview advances the series without recording an answer or showing the sentence in direct spelling', async () => {
+  const { createSeries, exerciseCard, seriesAnswer, seriesStudy, seriesCurrent, seriesProgress, seriesResult } = await series();
+  const cards = [word(1, 'receive', { context: 'Did you receive it?', context_zh: 'translated context' }), word(2, 'separate')];
+  let state = createSeries({ id: 'p1', steps: [{ mode: 'study', cards }, { mode: 'direct_spell', cards }] });
+  assert.equal(seriesAnswer(state, { correct: true }), state);
+  state = seriesStudy(state);
+  assert.equal(seriesCurrent(state).card.id, 2);
+  assert.equal(seriesProgress(state).share, 0.25);
+  assert.equal(seriesResult(state).done, 0);
+  state = seriesStudy(state);
+  const current = seriesCurrent(state);
+  assert.equal(current.exercise, 'spell');
+  const shown = exerciseCard(current.card, current.exercise, current.mode);
+  assert.deepEqual([shown.id, shown.en, shown.context, shown.context_zh], [1, 'receive', '', '']);
+  assert.equal(seriesProgress(state).share, 0.5);
+  state = seriesAnswer(state, { correct: true, answer: 'receive' });
+  const result = seriesResult(state);
+  assert.deepEqual([result.done, result.total, result.right], [1, 2, 1]);
+  assert.deepEqual(result.steps, [{ mode: 'direct_spell', total: 2, done: 1, right: 1 }]);
+});
+
 test('a series runs its steps in order; dictation is left out without speech output; the misses come back in the retest; the result counts words', async () => {
   const { createSeries, seriesCurrent, seriesAnswer, seriesProgress, seriesDone, seriesResult } = await series();
   let state = createSeries(mistakesPlan(), { tts: false, now: 1000 });

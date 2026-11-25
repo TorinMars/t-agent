@@ -293,7 +293,14 @@ async function makeNetwork(t, names, { links: pairs, pageSize = 200, capabilitie
       converse: async () => `Folded on ${name}.`,
       converseTools: async (owner, system, messages, options) => {
         side.coachQuestions.push(messages);
-        const last = messages[messages.length - 1].content;
+        const current = messages.findLast(item => item.role === 'user').content;
+        const last = messages.at(-1).content;
+        if (/Make a gap/.test(current)) {
+          if (messages.at(-1).role === 'user') return { content: '', toolCalls: [{ id: 'call_1', name: 'select_practice_words', arguments: '{"source":"selected","words":["receive"]}' }] };
+          if (messages.at(-1).tool_call_id === 'call_1') return { content: '', toolCalls: [{ id: 'call_2', name: 'propose_practice', arguments: JSON.stringify({
+            kind: 'word_practice', method: 'sentence_gap', examples: [{ word: 'receive', sentence: 'Did you receive the package this morning?', zh: ZH }],
+          }) }] };
+        }
         if (/practise/.test(last) && !messages.some(item => item.role === 'tool')) return { content: '', toolCalls: [{ id: 'call_1', name: 'propose_practice', arguments: '{"kind":"today_spelling"}' }] };
         const text = `Coached on ${name}.\n<<meta>>{"cards":[],"mistakes":[],"suggestions":[]}`;
         if (options.onDelta) options.onDelta(text);
@@ -770,6 +777,16 @@ test('the English coach: a company computer talks to it on its home (one JSON), 
   const localIds = K.db.prepare("SELECT id FROM learn_cards WHERE owner = 'me' ORDER BY id").pluck().all();
   assert.deepEqual(started.body.plan.steps[0].cards.map(card => card.id).sort(), localIds.sort());
   assert.ok(started.body.plan.steps[0].cards.every(card => card.next), 'as GET /queue gives them');
+
+  const gap = await K.page('POST', '/learn/coach/send', { text: 'Make a gap with receive' });
+  const [gapProposal] = gap.body.message.meta.proposals;
+  const gapStarted = await K.page('POST', '/learn/coach/plans/start', { message_uid: gap.body.message.uid, proposal_id: gapProposal.id });
+  assert.equal(gapStarted.status, 200, JSON.stringify(gapStarted.body));
+  const [gapCard] = gapStarted.body.plan.steps[0].cards;
+  assert.deepEqual([gapCard.id, gapCard.context, gapCard.context_zh], [
+    K.db.prepare("SELECT id FROM learn_cards WHERE en = 'receive'").pluck().get(), 'Did you receive the package this morning?', ZH,
+  ]);
+  assert.equal(K.db.prepare("SELECT context FROM learn_cards WHERE en = 'receive'").pluck().get(), '');
 
   // Notes and the summary are kept on the home.
   T.db.prepare("INSERT INTO learn_coach_notes (owner, uid, text, created_at, updated_at, sync_seq) VALUES ('me', 'note-00001', 'Prefers short answers', 1, 1, 0)").run();

@@ -629,7 +629,7 @@ function ProposalCard({ proposal, settings, busy, states, undos, working, errors
             <Icon name={PLAN_ICONS[plan.kind] || 'learnSpell'} size={20} />
           </Box>
           <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-            <Typography variant="subtitle2" component="p" noWrap className="h5-learn-coach-plan-title" translate="no">{plan.title || t('Practice')}</Typography>
+            <Typography variant="subtitle2" component="p" noWrap className="h5-learn-coach-plan-title" translate="no">{plan.kind === 'word_practice' ? t(plan.steps.length === 1 ? STEP_LABELS[plan.steps[0].mode] || 'Word practice' : 'Word practice') : plan.title || t('Practice')}</Typography>
             <Typography variant="caption" component="p" noWrap color="text.secondary" className="h5-learn-coach-plan-caption"><Parts parts={planCaption(plan)} /></Typography>
           </Box>
           <Button variant="contained" className="h5-learn-coach-start" disabled={busy || running} onClick={() => onStart(proposal)} sx={{ flexShrink: 0, minHeight: 44 }}>{t('Start')}</Button>
@@ -640,6 +640,7 @@ function ProposalCard({ proposal, settings, busy, states, undos, working, errors
           </Box>
         ) : null}
         {plan.notes ? <Typography variant="body2" color="text.secondary" translate="no" className="h5-learn-coach-plan-notes">{plan.notes}</Typography> : null}
+        {plan.plain > 0 ? <Typography variant="body2" color="text.secondary"><Fmt template="Words without a sentence use direct spelling ({1})." values={[plan.plain]} /></Typography> : null}
         {empty[id] ? <Typography variant="body2" color="text.secondary" className="h5-learn-coach-plan-empty">{t('Nothing left of this practice')}</Typography> : null}
         {error}
       </Card>

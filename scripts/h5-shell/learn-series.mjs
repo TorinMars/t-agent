@@ -5,7 +5,7 @@
 import { findWholeWord, SENTENCE_EXERCISE } from './learn-model.mjs';
 
 // `review` is the step of a Review plan (services/learn-plan.js): a word is spelled, a sentence gets the sentence exercise, as in a Review session.
-export const SERIES_MODES = ['spell', 'review', 'fill', 'dictation', 'retest'];
+export const SERIES_MODES = ['spell', 'direct_spell', 'study', 'review', 'fill', 'dictation', 'retest'];
 
 // A word card asked inside its own sentence in a Fill the gap step: its `context` with the word as the gap ({ word, before, after }), or null when
 // the word is not in its context as a whole word.
@@ -16,7 +16,9 @@ export function contextGap(card) {
   if (!context || !word) return null;
   const at = findWholeWord(context, word);
   if (at < 0) return null;
-  return { word: context.slice(at, at + word.length), before: context.slice(0, at), after: context.slice(at + word.length) };
+  const after = context.slice(at + word.length);
+  if (findWholeWord(after, word) >= 0) return null;
+  return { word: context.slice(at, at + word.length), before: context.slice(0, at), after };
 }
 
 // The exercise a card gets in a step (null: the card is left out of this step): Spell, Review and the retest spell a word and give a sentence the
@@ -25,6 +27,7 @@ export function contextGap(card) {
 export function seriesExercise(card, mode, { tts = false } = {}) {
   if (!card) return null;
   const sentence = card.kind === 'sentence';
+  if (mode === 'study' || mode === 'direct_spell') return sentence ? null : mode === 'study' ? 'study' : 'spell';
   if (mode === 'dictation') return tts ? 'dictation' : null;
   if (mode === 'fill') return sentence || contextGap(card) ? 'fill' : 'spell';
   if (mode === 'spell' || mode === 'review' || mode === 'retest') return sentence ? SENTENCE_EXERCISE : 'spell';
@@ -33,10 +36,11 @@ export function seriesExercise(card, mode, { tts = false } = {}) {
 
 // The card an exercise is shown with: a word in a Fill the gap step becomes its sentence with a fixed gap (`gap`, read by the exercise), the id stays
 // the word card's, so the answer is the word card's answer.
-export function exerciseCard(card, exercise) {
+export function exerciseCard(card, exercise, mode) {
+  if (card && (mode === 'direct_spell' || (mode === 'fill' && exercise === 'spell'))) return { ...card, context: '', context_zh: '' };
   if (exercise !== 'fill' || !card || card.kind === 'sentence') return card;
   const gap = contextGap(card);
-  return gap ? { ...card, en: String(card.context).trim(), kind: 'sentence', gap } : card;
+  return gap ? { ...card, en: String(card.context).trim(), zh: card.context_zh || card.zh, context: '', kind: 'sentence', gap } : card;
 }
 
 const item = (card, mode, exercise, again = false) => ({ card, mode, exercise, again });
@@ -88,7 +92,9 @@ const shownSteps = state => state.steps.filter((step, index) => step.items.lengt
 export function seriesProgress(state) {
   const shown = shownSteps(state);
   const items = state.steps.reduce((sum, step) => sum + step.items.length, 0);
-  const share = items ? Math.min(1, state.answers.length / items) : 1;
+  const studied = state.steps.reduce((sum, step, index) => sum + (step.mode !== 'study' ? 0
+    : index < state.step ? step.items.length : index === state.step ? state.at : 0), 0);
+  const share = items ? Math.min(1, (studied + state.answers.length) / items) : 1;
   if (seriesDone(state)) {
     const last = shown[shown.length - 1];
     return { step: shown.length, steps: shown.length, at: last ? last.items.length : 0, of: last ? last.items.length : 0, share: 1 };
@@ -99,11 +105,16 @@ export function seriesProgress(state) {
 
 const sameCard = (a, b) => String(a && a.id) === String(b && b.id);
 
+export function seriesStudy(state) {
+  if (seriesCurrent(state)?.mode !== 'study') return state;
+  return { ...state, ...skipEmpty({ steps: state.steps, step: state.step, at: state.at + 1 }) };
+}
+
 // One answer (or a skip: `skipped: true`) to the current item: kept, then the next item. A card missed outside the retest comes back once at the end
 // of the series: into the retest step when the plan has one (each card once), else after the last step's items (each card once).
 export function seriesAnswer(state, { correct = false, answer = '', skipped = false } = {}) {
   const current = seriesCurrent(state);
-  if (!current) return state;
+  if (!current || current.mode === 'study') return state;
   const steps = state.steps.map(step => ({ ...step, items: [...step.items] }));
   const answers = [...state.answers, { card: current.card, mode: current.mode, exercise: current.exercise, again: current.again, step: current.step, correct: Boolean(correct) && !skipped, skipped: Boolean(skipped), answer: String(answer || '') }];
   if (!correct && !skipped && current.mode !== 'retest' && !current.again) {
@@ -125,7 +136,7 @@ export function seriesAnswer(state, { correct = false, answer = '', skipped = fa
 // `kind` name the plan card it came from (the server titles the result by it).
 export function seriesResult(state, { messageUid = '', proposalId = '', kind = '', stopped = false, now = Date.now() } = {}) {
   const key = card => String(card && card.id);
-  const planned = new Set(state.steps.filter(step => step.mode !== 'retest').flatMap(step => step.items.filter(one => !one.again).map(one => key(one.card))));
+  const planned = new Set(state.steps.filter(step => step.mode !== 'retest' && step.mode !== 'study').flatMap(step => step.items.filter(one => !one.again).map(one => key(one.card))));
   const first = state.answers.filter(one => one.mode !== 'retest' && !one.again);
   const answered = new Set(first.map(one => key(one.card)));
   const wrong = new Set(first.filter(one => !one.correct).map(one => key(one.card)));
@@ -137,7 +148,7 @@ export function seriesResult(state, { messageUid = '', proposalId = '', kind = '
   const steps = state.steps.map((step, index) => {
     const mine = state.answers.filter(one => one.step === index);
     return { mode: step.mode, total: step.items.length, done: mine.length, right: mine.filter(one => one.correct).length };
-  });
+  }).filter(step => step.mode !== 'study');
   return {
     plan_id: state.planId,
     message_uid: messageUid,

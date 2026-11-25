@@ -6,8 +6,9 @@ The design document is split (2026-11-18): `DESIGN.md` is a small index (topic t
 
 ## Learn coach conversation flexibility (in development)
 
-- The coach prompt uses current requests and stated learning preferences to guide text exercises and feedback. Built-in practice plans still use word spelling. The rolling summary preserves updated preferences.
-- The targeted coach, Claude, memory and plan tests cover the prompt and existing plan rules with mock providers. Live model replies still need checking with a real example of the rigid behavior.
+- The coach prompt uses current requests and stated learning preferences to guide text exercises and feedback. The rolling summary preserves updated preferences.
+- Word practice selects cards before it builds an exercise. It supports new or due words, highest error rate, exact selections and custom read-only filters. The same ordered words can be reused with direct spelling, sentence gaps or an ungraded preview followed by spelling.
+- Existing plans still load. New plans store selected word text and validated example sentences in the proposal, so linked engines use their own card ids. The targeted tests and the coach browser test pass with mock providers. Live model interpretation of natural-language filters is unverified.
 
 ## Saved terminal start commands (branch fix/start-command-persist)
 

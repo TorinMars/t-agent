@@ -434,14 +434,27 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
     await fresh();
     const answer = await coachPost('plan-start', body);
     if (!answer || !answer.plan) return answer;
+    const { normalize } = require('../services/learn');
     const steps = [];
     for (const step of answer.plan.steps || []) {
       const refs = (step.cards || []).map(card => ({ kind: card.kind, en: card.en }));
       const { cards } = learn().findCards(owner(req), { refs });
-      const local = await learn().practiceCards(owner(req), cards.map(card => card.id));
+      let local = await learn().practiceCards(owner(req), cards.map(card => card.id));
+      if (answer.plan.kind === 'word_practice' && step.mode === 'fill') {
+        // Plan examples belong to the home's proposal and may not be present on either engine's card.
+        const byWord = new Map(step.cards.map(card => [normalize(card.en), card]));
+        local = local.map(card => {
+          const home = byWord.get(normalize(card.en));
+          return home ? { ...card, context: home.context, context_zh: home.context_zh, context_source: home.context_source } : card;
+        });
+      }
       if (local.length) steps.push({ mode: step.mode, cards: local });
     }
     if (!steps.length) return { empty: true };
+    if (answer.plan.kind === 'word_practice') {
+      const words = new Set(steps.flatMap(step => step.cards.map(card => card.id))).size;
+      return { ...answer, stale: answer.stale || words !== answer.plan.words, plan: { ...answer.plan, steps, words } };
+    }
     return { ...answer, plan: { ...answer.plan, steps } };
   }));
   router.get('/coach/notes', handle(req => (cacheOnly() ? coachPost('notes', {}) : coacher().notes(owner(req)))));

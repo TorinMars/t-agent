@@ -265,3 +265,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.167.2 The English coach is made at start: a company computer no longer reads a restarted home as older
 > v2.168.0 Initial command when creating a terminal session
 > v2.168.1 Spelling: the letter boxes are grouped by syllable
+> v2.169.0 DeepSeek voice engine for Learn pronunciation

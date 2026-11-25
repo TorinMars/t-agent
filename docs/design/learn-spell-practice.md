@@ -104,3 +104,22 @@ coach's series), so the card keeps room while the page's letter keyboard is open
 ## Letter boxes by syllable (v2.168.1)
 
 The underlines of the sentence layout's gap are grouped by the word's syllables (`gapLayout(word, parts)` in `learn-model.mjs`, `SentenceGap` in `Learn.jsx`): the `parts` of `partsOf` (the card's own from the translator when they give the word back, else the rough vowel-group split) put a wider space (0.7em, 0.4em for a long word) before each part after the first; the gap stays within 12em. `data-parts` has the count of parts and `data-part-start` marks the first underline of each part. Every spelled word has it, not only a leech word; the plain Spell layout has no letter boxes, so it is unchanged.
+
+## Backfill of older words
+
+On the computer that keeps your Learn data, run these commands from the matching T-Agent checkout. The script uses the usual data directory
+(`TAGENT_HOME` or `T_AGENT_DATA_DIR`), the single user and that user's translation model.
+
+```sh
+node scripts/learn-sentences-backfill.js
+node scripts/learn-sentences-backfill.js --apply
+```
+
+The first command previews the groups, cards and a few words. The second asks before saving. Use `--limit N` for a smaller batch,
+`--delay-ms N` to change the pause between model calls (800 ms by default), `--owner NAME` to choose a different owner, or `--yes`
+to skip the prompt. The script puts cards still being learned or due ahead of other learned cards. It keeps the original sentence on
+the keeper. You can stop and rerun it. The three-failure cutoff leaves unfinished cards for a later run.
+
+The script uses SQLite's guarded card update and the normal Learn sync stamps. A preview can run alongside the server. Stop the server
+for apply so the two processes do not allocate overlapping Learn sync change numbers. After the server starts again, linked peers get
+the new sentences at the next Learn sync.

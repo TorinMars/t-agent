@@ -15,10 +15,11 @@
 // - When: in the background after a pick (the cards it put into a sentence, at most AFTER_PICK a batch), and the cards that already share one
 //   lazily: the hourly check spends a budget of PER_DAY cards a day on this engine (system_state `learn_sentences_day_v1:<owner>`), newest first.
 //   Never on a company computer, never without a configured translator, never while a queue is read.
-const { checkEnglish, collapse, normalize, MAX_PICK_CONTEXT } = require('./learn');
+const { checkEnglish, collapse, normalize, MAX_PICK_CONTEXT, settingsVersionKey, levelKey } = require('./learn');
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
 const { readState, writeState } = require('./settings-sync-store');
+const { setTimeout: sleep } = require('node:timers/promises');
 
 const MIN_WORDS = 6;
 const MAX_WORDS = 16;
@@ -147,17 +148,19 @@ function createLearnSentences({
   const usable = name => Boolean(converse) && !isCompany() && Boolean(isConfigured(name));
 
   // Word cards asked inside one of the person's own translated sentences (context_source '' and the context is a translation sentence card).
-  const ownSentenceCards = name => db.prepare(`SELECT w.id, w.en, w.zh, w.context, w.created_at, w.content_at FROM learn_cards w WHERE w.owner = ? AND w.kind = 'word'
+  const ownSentenceCards = (name, includeSchedule = false) => db.prepare(`SELECT w.id, w.en, w.zh, w.context, w.created_at, w.content_at
+    ${includeSchedule ? ', w.due_at, w.interval_days, w.fsrs_stability, w.fsrs_difficulty, w.last_correct' : ''}
+    FROM learn_cards w WHERE w.owner = ? AND w.kind = 'word'
     AND w.suspended = 0 AND w.context <> '' AND w.context_source = '' AND EXISTS (SELECT 1 FROM learn_cards s WHERE s.owner = w.owner AND s.kind = 'sentence'
     AND s.source = 'translation' AND s.en = w.context)`).all(name);
 
   // The model asked for one card: { en, zh } or null after two bad answers. A failure of the model throws.
-  async function ask(name, item) {
+  async function ask(name, item, call = converse) {
     const current = level(name);
     const { system, user } = buildSentencePrompt({ word: item.card.en, meaning: item.card.zh, level: current ? current.level : '', avoid: item.avoid });
     const messages = [{ role: 'user', content: user }];
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const raw = await converse(name, system, messages, { timeoutMs, temperature: 0.7 });
+      const raw = await call(name, system, messages, { timeoutMs, temperature: 0.7 });
       const checked = checkGenerated(raw, { word: item.card.en, avoid: item.avoid, original: item.card.context });
       if (checked.ok) return checked;
       messages.push({ role: 'assistant', content: String(raw || '').slice(0, 2000) }, { role: 'user', content: `That does not follow the rules: ${checked.reason}. Try again.` });
@@ -174,29 +177,87 @@ function createLearnSentences({
     return info.changes > 0;
   }
 
+  // "Backfill of older words" in docs/design/learn-spell-practice.md.
+  function backfillPlan(name, limit) {
+    const at = now();
+    const rightOf = db.prepare('SELECT COUNT(*) FROM learn_reviews WHERE card_id = ? AND correct = 1').pluck();
+    const items = needingSentence(ownSentenceCards(name, true)).map(item => ({
+      ...item, learned: review.isKnown(item.card, rightOf.get(item.card.id)),
+    }));
+    const priority = item => !item.learned || item.card.due_at <= at ? 0 : 1;
+    return items.sort((a, b) => priority(a) - priority(b)).slice(0, limit);
+  }
+
+  function backfillPreview(name, { limit = Infinity } = {}) {
+    const items = backfillPlan(name, limit);
+    const learned = items.filter(item => item.learned).length;
+    return {
+      groups: new Set(items.map(item => item.card.context)).size, cards: items.length,
+      learned, learning: items.length - learned, examples: items.slice(0, 5).map(item => item.card.en),
+    };
+  }
+
   // One pass: the cards needing a sentence (only the cards of `ids` when given), at most `limit`, newest first.
-  // `spend`: count each card handled against the day's budget. Returns { done, none, failed }.
-  async function pass(name, { ids = null, limit, spend }) {
-    const out = { done: 0, none: 0, failed: false };
-    let items = needingSentence(ownSentenceCards(name));
+  // `spend`: count each card handled against the day's budget. Backfill supplies its own order and progress reporting.
+  async function pass(name, { ids = null, limit, spend, backfill = null }) {
+    const out = backfill ? { done: 0, none: 0, failed: 0, skipped: 0, stop: null } : { done: 0, none: 0, failed: false };
+    let items = backfill ? backfillPlan(name, limit) : needingSentence(ownSentenceCards(name));
     if (ids) items = items.filter(item => ids.has(item.card.id));
-    for (const item of items.slice(0, limit)) {
-      if (!usable(name)) break;
+    items = items.slice(0, limit);
+    let consecutiveFailures = 0;
+    let called = false;
+    const call = backfill ? async (...args) => {
+      if (called && backfill.sleepMs) await sleep(backfill.sleepMs);
+      called = true;
+      return converse(...args);
+    } : converse;
+    const report = (item, status, length = 0) => backfill.onProgress({ word: item.card.en, status, length });
+    let observedVersions = false;
+    for (const item of items) {
+      if (!usable(name)) {
+        if (backfill) out.stop = 'unavailable';
+        break;
+      }
       if (spend && budgetLeft(readState(db, dayStateKey(name)), review.dayKey(now(), timeZone), perDay) <= 0) break;
       let result;
-      try { result = await ask(name, item); } catch (error) {
+      try { result = await ask(name, item, call); } catch (error) {
+        if (backfill) {
+          out.failed += 1;
+          report(item, 'failed');
+          consecutiveFailures += 1;
+          if (consecutiveFailures < 3) continue;
+          out.stop = 'model-failures';
+          break;
+        }
         out.failed = true;
         log.warn(`[learn-sentences] an example sentence failed: ${String((error && error.message) || 'failed').slice(0, 160)}`);
         break;
       }
-      if (!store(item, result)) continue;
+      consecutiveFailures = 0;
+      if (backfill && !observedVersions) {
+        // The server's sync initialization observes these versions as well as card and review rows.
+        for (const key of [settingsVersionKey(name), levelKey(name)]) {
+          const version = readState(db, key);
+          if (version) {
+            syncStore.observeSeq(db, version.seq);
+            syncStore.observe(db, version.at);
+          }
+        }
+        observedVersions = true;
+      }
+      if (!store(item, result)) {
+        if (backfill) report(item, 'skipped');
+        continue;
+      }
       if (result) out.done += 1; else out.none += 1;
+      if (backfill) report(item, result ? 'done' : 'none', result ? result.en.length : 0);
       if (spend) {
         const day = review.dayKey(now(), timeZone);
         const state = readState(db, dayStateKey(name));
         writeState(db, dayStateKey(name), { day, count: perDay - budgetLeft(state, day, perDay) + 1 });
       }
     }
+    if (backfill) out.skipped = items.length - out.done - out.none - out.failed;
     return out;
   }
   function queue(name, work) {
@@ -217,9 +278,12 @@ function createLearnSentences({
     if (budgetLeft(readState(db, dayStateKey(name)), review.dayKey(now(), timeZone), perDay) <= 0) return Promise.resolve(null);
     return queue(name, () => pass(name, { limit: perDay, spend: true }));
   }
+  function backfill(name, { limit = Infinity, sleepMs = 800, onProgress = () => {} } = {}) {
+    return queue(name, () => pass(name, { limit, spend: false, backfill: { sleepMs, onProgress } }));
+  }
   // For tests and for stop: waits until no pass is going.
   async function settle() { while (running.size) await Promise.all([...running.values()]).catch(() => {}); }
-  return { afterPick, daily, settle, pending: name => needingSentence(ownSentenceCards(name)) };
+  return { afterPick, daily, backfill, backfillPreview, settle, pending: name => needingSentence(ownSentenceCards(name)) };
 }
 
 module.exports = {

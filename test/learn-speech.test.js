@@ -164,28 +164,31 @@ test('429 and 5xx are tried once more; a second refusal is "Bailian is busy"', a
   assert.equal(busy.fetchImpl.calls.length, 2, 'only one retry');
 });
 
-test("Bailian's errors are clear messages; nothing is cached, and the key and the text never reach the log", async t => {
+test("Bailian's errors are clear messages; nothing is cached, and the key and the text never reach the log (which names the reason)", async t => {
   const cases = [
-    [failure(401, 'InvalidApiKey'), 409, BAILIAN_NO_KEY],
-    [failure(403, 'AccessDenied'), 409, BAILIAN_NO_KEY],
-    [failure(404, 'ModelNotFound'), 409, BAILIAN_NO_KEY],
-    [failure(400, 'InvalidApiKey'), 409, BAILIAN_NO_KEY],
-    [failure(400, 'InvalidParameter'), 422, 'Bailian could not read this text'],
-    [failure(400, 'DataInspectionFailed'), 422, 'Bailian could not read this text'],
-    [failure(400, 'Arrearage'), 402, 'Bailian refused: the account has an overdue payment'],
-    [failure(418), 502, 'The Bailian voice is not available right now'],
-    [{ status: 200, json: async () => { throw new Error('bad json'); } }, 502, 'The Bailian voice is not available right now'],
-    [async () => { throw new TypeError('getaddrinfo ENOTFOUND llm-abc123.cn-beijing.maas.aliyuncs.com'); }, 502, 'Bailian cannot be reached right now'],
+    [failure(401, 'InvalidApiKey'), 409, BAILIAN_NO_KEY, 'http 401'],
+    [failure(403, 'AccessDenied'), 409, BAILIAN_NO_KEY, 'http 403'],
+    [failure(404, 'ModelNotFound'), 409, BAILIAN_NO_KEY, 'http 404'],
+    [failure(400, 'InvalidApiKey'), 409, BAILIAN_NO_KEY, 'http 400 InvalidApiKey'],
+    [failure(400, 'InvalidParameter'), 422, 'Bailian could not read this text', 'http 400 InvalidParameter'],
+    [failure(400, 'DataInspectionFailed'), 422, 'Bailian could not read this text', 'http 400 DataInspectionFailed'],
+    [failure(400, 'Arrearage'), 402, 'Bailian refused: the account has an overdue payment', 'http 400 Arrearage'],
+    [failure(418), 502, 'The Bailian voice is not available right now', 'http 418'],
+    [{ status: 200, json: async () => { throw new Error('bad json'); } }, 502, 'The Bailian voice is not available right now', 'answer is not json'],
+    [async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); }, 502, 'Bailian cannot be reached right now', 'network ENOTFOUND'],
+    [async () => { throw new TypeError('getaddrinfo ENOTFOUND llm-abc123.cn-beijing.maas.aliyuncs.com'); }, 502, 'Bailian cannot be reached right now', 'network error'],
   ];
-  for (const [answer, status, message] of cases) {
+  for (const [answer, status, message, reason] of cases) {
     const { speech, logs, dir } = make(t, { fetchOptions: { posts: [answer] } });
     await rejectsWith(speech.speak('me', { text: 'A private sentence.', engine: 'bailian' }), status, message);
     assert.equal(fs.existsSync(dir) ? fs.readdirSync(dir).length : 0, 0, `${status} ${message}: nothing cached`);
-    assert.deepEqual(logs, [`[learn-speech] Bailian: ${status}`]);
+    assert.deepEqual(logs, [`[learn-speech] Bailian: ${status} (${reason})`]);
+    assert.ok(!logs.join('').includes('private sentence') && !logs.join('').includes('llm-abc123'), 'neither the text nor the workspace host in the log');
   }
   // A download that fails.
   const broken = make(t, { fetchOptions: { gets: [failure(403)] } });
   await rejectsWith(broken.speech.speak('me', { text: 'Hello.', engine: 'bailian' }), 502);
+  assert.deepEqual(broken.logs, ['[learn-speech] Bailian: 502 (audio download http 403)']);
 });
 
 test('a call that takes longer than the timeout is cancelled: "took too long"', async t => {

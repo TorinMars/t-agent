@@ -98,9 +98,10 @@ function bailianProvider(keys) {
       return saved && saved.apiKey && saved.workspace ? { key: saved.apiKey, workspace: saved.workspace } : null;
     },
     async call({ key, workspace }, { text, voice, region, speed }, { fetchImpl, signal, timedOut }) {
-      const unavailable = () => speechError('The Bailian voice is not available right now', 502);
-      const tooLong = () => speechError('Bailian took too long to read this text', 504);
-      const busy = () => speechError('Bailian is busy, try again in a moment', 503);
+      // `reason` goes to the log only (never to the person, never the key or the text): what failed, as a short code.
+      const unavailable = reason => ({ error: speechError('The Bailian voice is not available right now', 502), reason });
+      const tooLong = () => ({ error: speechError('Bailian took too long to read this text', 504), reason: 'timeout' });
+      const busy = reason => ({ retry: true, error: speechError('Bailian is busy, try again in a moment', 503), reason });
       let res;
       try {
         res = await fetchImpl(bailianEndpoint(workspace, region), {
@@ -109,21 +110,23 @@ function bailianProvider(keys) {
           body: JSON.stringify({ model: BAILIAN_MODEL, input: { text, voice, format: 'wav', sample_rate: SAMPLE_RATE, rate: SPEEDS[speed] } }),
           signal,
         });
-      } catch {
+      } catch (error) {
         // A workspace id that names no host ends here too (the name does not resolve).
-        return { error: timedOut() ? tooLong() : speechError('Bailian cannot be reached right now', 502) };
+        if (timedOut()) return tooLong();
+        const code = String((error && ((error.cause && error.cause.code) || error.code)) || 'error').replace(/[^A-Za-z0-9_]/g, '').slice(0, 30);
+        return { error: speechError('Bailian cannot be reached right now', 502), reason: `network ${code}` };
       }
-      if (res.status === 429 || res.status >= 500) return { retry: true, error: busy() };
-      if (res.status === 401 || res.status === 403 || res.status === 404) return { error: speechError(BAILIAN_NO_KEY, 409) };
+      if (res.status === 429 || res.status >= 500) return busy(`http ${res.status}`);
+      if (res.status === 401 || res.status === 403 || res.status === 404) return { error: speechError(BAILIAN_NO_KEY, 409), reason: `http ${res.status}` };
       if (res.status === 400) {
         const code = await errorCode(res);
-        if (code === 'InvalidApiKey') return { error: speechError(BAILIAN_NO_KEY, 409) };
-        if (code === 'Arrearage') return { error: speechError('Bailian refused: the account has an overdue payment', 402) };
-        return { error: speechError('Bailian could not read this text', 422) };
+        if (code === 'InvalidApiKey') return { error: speechError(BAILIAN_NO_KEY, 409), reason: 'http 400 InvalidApiKey' };
+        if (code === 'Arrearage') return { error: speechError('Bailian refused: the account has an overdue payment', 402), reason: 'http 400 Arrearage' };
+        return { error: speechError('Bailian could not read this text', 422), reason: `http 400 ${code || 'no code'}` };
       }
-      if (res.status !== 200) return { error: unavailable() };
+      if (res.status !== 200) return unavailable(`http ${res.status}`);
       let answer;
-      try { answer = await res.json(); } catch { return { error: timedOut() ? tooLong() : unavailable() }; }
+      try { answer = await res.json(); } catch { return timedOut() ? tooLong() : unavailable('answer is not json'); }
       const audio = answer && answer.output && answer.output.audio;
       let buffer = null;
       if (audio && typeof audio.data === 'string' && audio.data) {
@@ -131,16 +134,19 @@ function bailianProvider(keys) {
       } else if (audio && typeof audio.url === 'string') {
         // The file of the answer (24 hours on Alibaba's storage): fetched now, without the key, only over https.
         let url;
-        try { url = new URL(audio.url); } catch { return { error: unavailable() }; }
-        if (url.protocol !== 'https:' || url.username || url.password) return { error: unavailable() };
+        try { url = new URL(audio.url); } catch { return unavailable('audio url is broken'); }
+        if (url.protocol !== 'https:' || url.username || url.password) return unavailable('audio url is not plain https');
         let file;
-        try { file = await fetchImpl(url.href, { signal }); } catch { return { error: timedOut() ? tooLong() : unavailable() }; }
-        if (file.status === 429 || file.status >= 500) return { retry: true, error: busy() };
-        if (file.status !== 200) return { error: unavailable() };
+        try { file = await fetchImpl(url.href, { signal }); } catch { return timedOut() ? tooLong() : unavailable('audio download failed'); }
+        if (file.status === 429 || file.status >= 500) return busy(`audio download http ${file.status}`);
+        if (file.status !== 200) return unavailable(`audio download http ${file.status}`);
         buffer = await readAudio(file);
-        if (!buffer) return { error: timedOut() ? tooLong() : unavailable() };
+        if (!buffer) return timedOut() ? tooLong() : unavailable('audio download is empty or too large');
+      } else {
+        return unavailable(`answer has no audio (keys: ${Object.keys(answer && typeof answer === 'object' ? answer : {}).slice(0, 6).join(',').replace(/[^A-Za-z0-9_,]/g, '')})`);
       }
-      if (!buffer || buffer.length > MAX_AUDIO_BYTES || !isWav(buffer)) return { error: unavailable() };
+      if (!buffer || buffer.length > MAX_AUDIO_BYTES) return unavailable('audio is empty or too large');
+      if (!isWav(buffer)) return unavailable('audio is not wav');
       return { audio: buffer };
     },
   };
@@ -226,7 +232,7 @@ function createLearnSpeech({
     }
     if (result.error) {
       // The status only: never the text (the person's sentence) or the key.
-      log.warn(`[learn-speech] ${provider.label}: ${result.error.statusCode}`);
+      log.warn(`[learn-speech] ${provider.label}: ${result.error.statusCode}${result.reason ? ` (${result.reason})` : ''}`);
       throw result.error;
     }
     return result.audio;

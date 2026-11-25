@@ -115,3 +115,7 @@ v2.169.0; a card's repeat with one request per text, Hear it, Play slowly as Bai
 **Not verified**: no real Bailian call was made (fetch is mocked everywhere), so the real audio, the American accent of Cindy, the latency and the
 real cost are unknown; whether `dashscope.aliyuncs.com` would also serve this model is not documented and not tried; autoplay and the silent unlock
 on a real iPhone are untested.
+
+## The log names the reason (v2.170.1)
+
+A failed Bailian call logs `[learn-speech] Bailian: <status> (<reason>)`, for example `502 (network ENOTFOUND)` (the workspace host does not resolve), `502 (http 418)`, `502 (answer has no audio (keys: ...))`, `502 (audio is not wav)`, `422 (http 400 InvalidParameter)`. The reason is a short code: never the key, the text, the workspace id or a response body.

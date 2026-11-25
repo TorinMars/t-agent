@@ -377,7 +377,9 @@ test('a chain A-B-C: a map made on A reaches C through B, and C\'s edit comes ba
   A.requests.length = 0;
   await A.sync.syncPeer(A.peers.find(peer => peer.name === 'D'));
   // A's own timer may still be talking to B in the background: only what went to D counts.
-  assert.deepEqual(A.requests.filter(line => / D /.test(line)), ['GET D /v1/info']);
+  // (its own timer may have asked D once more: what counts is that nothing but /v1/info was sent.)
+  const toD = A.requests.filter(line => / D /.test(line));
+  assert.ok(toD.length >= 1 && toD.every(line => line === 'GET D /v1/info'), `only /v1/info goes to D: ${JSON.stringify(toD)}`);
   assert.deepEqual((await A.page('GET')).body.sync.older, [D.instanceId]);
   assert.equal((await D.maps.list()).length, 0);
 });

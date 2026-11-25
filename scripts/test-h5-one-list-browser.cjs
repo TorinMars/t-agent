@@ -241,6 +241,7 @@ async function testTwoServices(browser, wide) {
   await page.waitForFunction(() => document.getElementById('h5-task-name').textContent === 'Alpha' && document.getElementById('h5-task-service')?.textContent === 'VPS');
   assert.equal(await page.locator('#h5-new-session-task').textContent(), 'Alpha', `${label}: the New session dialog names the row's task`);
   assert.equal(await page.locator('#h5-new-session-service').textContent(), 'VPS', `${label}: and its service`);
+  await page.locator('#h5-start-command-note', { hasText: 'This computer needs an update to run a command at start' }).waitFor();
   await t.press(page.locator('#h5-new-session #h5-term-menu-actions button', { hasText: 'New Terminal' }));
   await page.locator('#h5-new-session').waitFor({ state: 'detached' });
   if (!wide) await page.locator('#h5-tasks').waitFor({ state: 'hidden' }); // creating a terminal closes the sheet of a phone

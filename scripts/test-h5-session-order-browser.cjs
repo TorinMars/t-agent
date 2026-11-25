@@ -348,7 +348,7 @@ async function testMouse(browser) {
   assert.equal(t.puts(world).length, count, `${label}: a click saves nothing`);
   // The "⋯" is not a grip: a press on it opens the menu.
   await t.menu('Alpha', 'Two');
-  assert.deepEqual(await t.items(), ['Copy text', 'Rename', 'Start command…', 'Remember this', 'Reopen', 'Move up', 'Move down', 'Restart in the working directory', 'Delete session'], `${label}: the actions of a middle session`);
+  assert.deepEqual(await t.items(), ['Copy text', 'Rename', 'Remember this', 'Reopen', 'Move up', 'Move down', 'Restart in the working directory', 'Delete session'], `${label}: the actions of a middle agent session`);
   await page.keyboard.press('Escape');
   assert.deepEqual(world.pageErrors, [], `${label}: no page errors`);
   await context.close();

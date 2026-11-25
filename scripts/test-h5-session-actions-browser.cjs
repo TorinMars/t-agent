@@ -167,7 +167,7 @@ async function checkOtherTask(env, h, { wide, remote, label }) {
   // This machine sorts sessions (Move up / Move down where the row can go); the mocked remote Engine does not say 'terminals:order'.
   const moves = steps => (remote ? [] : steps);
   assert.deepEqual(await h.actions.allTextContents(), ['Rename', 'Start command…', 'Remember this', 'Open', ...moves(['Move down']), RESTART, 'Delete session'], `${label}: terminal actions`);
-  assert.deepEqual(await h.actions.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, false, ...moves([false]), true, true], `${label}: the same danger style`);
+  assert.deepEqual(await h.actions.evaluateAll(nodes => nodes.map(node => node.classList.contains('danger'))), [false, false, false, false, ...moves([false]), true, true], `${label}: only restart and delete use the danger style`);
   await h.closeMenu();
 
   // ── Cancel in the confirmation sends nothing and names the session and the task ──

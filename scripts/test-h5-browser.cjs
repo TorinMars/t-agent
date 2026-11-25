@@ -190,7 +190,13 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 1 && window.sockets[0].readyState === 1);
     assert.ok(calls.includes('GET /api/tasks/1/terminals'));
-    assert.match(await page.evaluate(() => new URL(window.sockets[0].url).search), /^\?taskId=1&terminalId=h5-default&clientId=[\w-]+&proto=2$/);
+    const connection = await page.evaluate(() => ({
+      params: Object.fromEntries(new URL(window.sockets[0].url).searchParams),
+      device: window.TALocalKeys.deviceId(),
+    }));
+    assert.match(connection.params.clientId, /^[\w-]+$/);
+    assert.match(connection.device, /^[\w-]+$/);
+    assert.deepEqual(connection.params, { taskId: '1', terminalId: 'h5-default', clientId: connection.params.clientId, proto: '2', device: connection.device });
     assert.equal(await page.evaluate(() => window.sockets[0].url.startsWith('ws://h5.test/terminal/ws')), true);
     // The screen stays on while a task is open, so the phone does not sleep during the session.
     await page.waitForFunction(() => window.locks.held === 1);
@@ -1513,6 +1519,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-tasks .h5-task-row:has(.h5-task-item[aria-current="true"]) .h5-task-more').tap();
     await page.locator('#h5-session-menu-actions [role="menuitem"]', { hasText: 'New session' }).tap();
     assert.equal(await page.locator('#h5-new-name-input').inputValue(), '', 'a new New session dialog starts with an empty name');
+    await page.locator('#h5-start-command-toggle').waitFor();
     await page.locator('#h5-term-menu-actions button', { hasText: 'New Terminal' }).tap();
     await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => window.sockets.length === 2);
@@ -1706,7 +1713,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const more = page.locator('#h5-tasks .h5-terminal-row').nth(1).locator('.h5-terminal-more');
     await more.tap();
     await page.locator('#h5-session-menu').waitFor({ state: 'visible' });
-    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Remember this', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete session'], 'the open terminal also offers Copy text (and, as the last of its task, Move up)');
+    assert.deepEqual(await page.locator('#h5-session-menu [role="menuitem"]').allTextContents(), ['Copy text', 'Rename', 'Start command…', 'Remember this', 'Reopen', 'Move up', 'Restart in the working directory', 'Delete session'], 'the open plain terminal offers Copy text and Start command, and the last terminal can move up');
     await page.locator('#h5-session-menu [role="menuitem"]', { hasText: 'Rename' }).tap();
     await page.locator('#h5-term-rename-input').fill('Build logs');
     await page.locator('#h5-term-rename button').tap(); // the field is in place of the row (the popup closed at "Rename"); Save does not blur it

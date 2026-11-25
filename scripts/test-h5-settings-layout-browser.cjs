@@ -211,7 +211,8 @@ async function testPhone(browser, width) {
   await assertSwitches(page, ['h5-attention-sound'], 'T-Attention');
 
   await openGroup(page, 'account');
-  assert.deepEqual(await page.locator('#h5-set-account .h5-setting-subheading').allTextContents(), ['Access mode', 'Authenticator']);
+  assert.deepEqual(await page.locator('#h5-set-account h3.h5-setting-subheading').allTextContents(), ['Access mode', 'Authenticator', 'Devices and sign-ins']);
+  await page.locator('#h5-access-events-title', { hasText: 'Recent events' }).waitFor();
   await assertFits(page, `${width} Account and access`);
 
   // Back: the back arrow, Escape and the phone's back button go from a group's page to the list, then close Settings.
@@ -283,7 +284,7 @@ async function testWide(browser) {
     'voice-translate': ['Voice input', 'Translation'],
     keyboard: ['Vibration on key taps'],
     devices: ['Environment', 'Link a device', 'Rules and skills sync', 'Advanced'],
-    account: ['Access mode', 'Authenticator'],
+    account: ['Access mode', 'Authenticator', 'Devices and sign-ins'],
     'usage-data': ['Most used \u00b7 last 30 days', 'Not used in 30 days', 'Data'],
   };
   for (const [id, headings] of Object.entries(expected)) {

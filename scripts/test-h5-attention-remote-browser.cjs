@@ -259,10 +259,10 @@ async function testPhone(browser) {
   assert.equal(await notice(page).textContent(), 'Needs you: Pick a region (K01) — eu or us?');
   await row(page, 'remote:7:30').waitFor();
   assert.equal(await page.locator('#h5-attention').getAttribute('aria-label'), 'Attention (3)');
-  // One of this machine names its engine too (more than one engine is listed); an equal id on the other engine is not touched.
+  // A completed sub-task changes its row without a reminder. The remote task with the same id is untouched.
   await page.evaluate(change => window.emitOn('/api/attention/stream', change), { kind: 'updated', item: { ...LOCAL_ITEMS()[3], status: 'review', attention_reason: 'Look at it', updated_at: '2026-11-06T00:00:00Z' }, previous: LOCAL_ITEMS()[3], event: { actor: 'claude', type: 'status' } });
-  await notice(page).filter({ hasText: 'Changelog' }).waitFor();
-  assert.equal(await notice(page).textContent(), 'Review: Changelog (Air) — Look at it');
+  await page.locator('#h5-attention-body .h5-attention-row[data-key="local:11"][data-status="review"]').waitFor();
+  assert.equal(await notice(page).filter({ hasText: 'Changelog' }).count(), 0);
   assert.equal(await row(page, 'remote:7:11').getAttribute('data-status'), 'todo');
 
   // The row buttons go to K01.

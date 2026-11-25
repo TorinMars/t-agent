@@ -92,9 +92,9 @@ async function main(args) {
     if (db.pragma('user_version', { simple: true }) !== dataHome.codeSchemaVersion()) {
       throw new Error('The database schema does not match this checkout. Run the script with the T-Agent version that opened this database.');
     }
-    const { STATE_KEY } = require('../services/single-user');
-    const state = key => db.prepare('SELECT value FROM system_state WHERE key = ?').get(key);
-    const owner = options.owner || state(STATE_KEY)?.value || config.singleUserId || 'local';
+    // (The keys are written out here, as the state-key registry test wants: 'single_user_id' of services/single-user.js and the translator's key.)
+    const saved = db.prepare('SELECT value FROM system_state WHERE key = ?').get('single_user_id');
+    const owner = options.owner || saved?.value || config.singleUserId || 'local';
     console.info(`Owner: ${JSON.stringify(owner)}`);
     const { createLearnSync } = require('../services/learn-sync');
     const tier = require('../services/device-tier').createDeviceTier({ db });
@@ -103,7 +103,8 @@ async function main(args) {
     const learn = sync.service();
     // Read the same key as config.sessionSecret without the getter's first-start
     // file creation and data-directory preparation.
-    const translator = state(`translator:${owner}`) && !isCompany()
+    const translatorSaved = db.prepare('SELECT value FROM system_state WHERE key = ?').get(`translator:${owner}`);
+    const translator = translatorSaved && !isCompany()
       ? require('../services/translator').createTranslator({ db, sessionSecret: readFileSync(secretPath, 'utf8').trim() })
       : { isConfigured: () => false };
     return await runBackfill(options, { db, owner, translator, level: name => learn.level(name), isCompany });

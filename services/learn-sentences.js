@@ -15,7 +15,8 @@
 // - When: in the background after a pick (the cards it put into a sentence, at most AFTER_PICK a batch), and the cards that already share one
 //   lazily: the hourly check spends a budget of PER_DAY cards a day on this engine (system_state `learn_sentences_day_v1:<owner>`), newest first.
 //   Never on a company computer, never without a configured translator, never while a queue is read.
-const { checkEnglish, collapse, normalize, MAX_PICK_CONTEXT, settingsVersionKey, levelKey } = require('./learn');
+const learnModule = require('./learn'); // (read as `learnModule.<key builder>`: the state-key registry test follows that form)
+const { checkEnglish, collapse, normalize, MAX_PICK_CONTEXT } = learnModule;
 const syncStore = require('./learn-sync-store');
 const review = require('./learn-review');
 const { readState, writeState } = require('./settings-sync-store');
@@ -236,13 +237,14 @@ function createLearnSentences({
       consecutiveFailures = 0;
       if (backfill && !observedVersions) {
         // The server's sync initialization observes these versions as well as card and review rows.
-        for (const key of [settingsVersionKey(name), levelKey(name)]) {
-          const version = readState(db, key);
-          if (version) {
-            syncStore.observeSeq(db, version.seq);
-            syncStore.observe(db, version.at);
-          }
-        }
+        // (Each key read on its own: the state-key registry test follows a key builder, not a loop variable.)
+        const observeVersion = version => {
+          if (!version) return;
+          syncStore.observeSeq(db, version.seq);
+          syncStore.observe(db, version.at);
+        };
+        observeVersion(readState(db, learnModule.settingsVersionKey(name)));
+        observeVersion(readState(db, learnModule.levelKey(name)));
         observedVersions = true;
       }
       if (!store(item, result)) {

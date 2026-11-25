@@ -181,13 +181,24 @@ export function sentenceGap(card) {
 }
 
 // The gap of Spell's sentence layout shows how many letters the word has: one short underline per character of the word as written in the sentence
-// ("Spell the word inside its sentence" in docs/design/learn-english-page.md). Returns { count, segment, space } (sizes in em of the sentence's
-// type): segments of 0.5em 0.2em apart, narrowed for a long word so the gap stays at most 12em (it never wraps, and fits a phone's line).
-export function gapLayout(word) {
-  const count = Math.max(1, [...String(word || '')].length);
+// ("Spell the word inside its sentence" in docs/design/learn-english-page.md), grouped by the word's syllables: `parts` (the pieces that joined give the
+// word) put a wider space before the first letter of each part after the first. Returns { count, segment, space, groupSpace, breaks } (sizes in em of
+// the sentence's type; `breaks`: the letter positions that start a part after the first): segments of 0.5em 0.2em apart, a part gap of 0.7em, narrowed
+// for a long word so the gap stays at most 12em (it never wraps, and fits a phone's line).
+export function gapLayout(word, parts = null) {
+  const letters = [...String(word || '')];
+  const count = Math.max(1, letters.length);
+  const breaks = [];
+  if (Array.isArray(parts) && parts.length > 1 && parts.join('') === letters.join('')) {
+    let at = 0;
+    for (const part of parts.slice(0, -1)) { at += [...part].length; if (at > 0 && at < count) breaks.push(at); }
+  }
   const space = count > 12 ? 0.12 : 0.2;
-  const segment = Math.max(0.15, Math.min(0.5, (12 - space * (count - 1)) / count));
-  return { count, segment: Number(segment.toFixed(3)), space };
+  const groupSpace = breaks.length ? (count > 12 ? 0.4 : 0.7) : space;
+  const gaps = count - 1 - breaks.length;
+  const used = space * Math.max(0, gaps) + groupSpace * breaks.length;
+  const segment = Math.max(0.15, Math.min(0.5, (12 - used) / count));
+  return { count, segment: Number(segment.toFixed(3)), space, groupSpace, breaks };
 }
 
 // "11-21 09:00" in the browser's time zone ('' for a missing or broken time).

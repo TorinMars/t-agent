@@ -100,3 +100,7 @@ coach's series), so the card keeps room while the page's letter keyboard is open
   `learn-practice-wrong-key.png`, `learn-practice-desktop.png`, `learn-practice-ime.png`. Unit: `test/h5-learn-practice.test.js` (the row's state,
   apostrophes, hyphens and phrases, `textChanges`, the composition letters for Pinyin / Sogou / WeType-like input, `cleanTyped`, the Mac bridge,
   `exerciseKey` in the row).
+
+## Letter boxes by syllable (v2.168.1)
+
+The underlines of the sentence layout's gap are grouped by the word's syllables (`gapLayout(word, parts)` in `learn-model.mjs`, `SentenceGap` in `Learn.jsx`): the `parts` of `partsOf` (the card's own from the translator when they give the word back, else the rough vowel-group split) put a wider space (0.7em, 0.4em for a long word) before each part after the first; the gap stays within 12em. `data-parts` has the count of parts and `data-part-start` marks the first underline of each part. Every spelled word has it, not only a leech word; the plain Spell layout has no letter boxes, so it is unchanged.

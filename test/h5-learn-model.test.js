@@ -196,8 +196,8 @@ test('Spell asks a word inside its sentence only with the Chinese of the sentenc
 
 test('the gap of the sentence layout has one underline per letter, at most 12em wide; a generated sentence uses the same whole-word rule as the server', async () => {
   const { gapLayout, sentenceGap, findWholeWord } = await load();
-  assert.deepEqual(gapLayout('expires'), { count: 7, segment: 0.5, space: 0.2 });
-  assert.deepEqual(gapLayout("don't"), { count: 5, segment: 0.5, space: 0.2 }, 'an apostrophe has its place too, like the letter slots');
+  assert.deepEqual(gapLayout('expires'), { count: 7, segment: 0.5, space: 0.2, groupSpace: 0.2, breaks: [] });
+  assert.deepEqual(gapLayout("don't"), { count: 5, segment: 0.5, space: 0.2, groupSpace: 0.2, breaks: [] }, 'an apostrophe has its place too, like the letter slots');
   for (const length of [1, 9, 12, 13, 20, 40]) {
     const { count, segment, space } = gapLayout('a'.repeat(length));
     assert.equal(count, length);
@@ -205,6 +205,15 @@ test('the gap of the sentence layout has one underline per letter, at most 12em 
     assert.ok(segment >= 0.15);
   }
   assert.equal(gapLayout('').count, 1);
+  // By syllables: a wider space before each part after the first; parts that do not give the word back are ignored; the gap stays within 12em.
+  const grouped = gapLayout('intermittent', ['in', 'ter', 'mit', 'tent']);
+  assert.deepEqual(grouped.breaks, [2, 5, 8]);
+  assert.equal(grouped.groupSpace, 0.7);
+  assert.ok(grouped.segment * grouped.count + 0.2 * (grouped.count - 1 - 3) + 0.7 * 3 <= 12.001, 'at most 12em');
+  assert.deepEqual(gapLayout('table', ['ta', 'bl']).breaks, [], 'parts that do not give the word back');
+  assert.deepEqual(gapLayout('cat', ['cat']).breaks, [], 'one part: no break');
+  const long = gapLayout('internationalization', ['in', 'ter', 'na', 'tion', 'al', 'i', 'za', 'tion']);
+  assert.ok(long.segment * long.count + long.space * (long.count - 1 - long.breaks.length) + long.groupSpace * long.breaks.length <= 12.001, 'a long word stays within 12em');
   // A card with an example sentence of its own: asked inside it like a sentence of the person's.
   const generated = { id: 2, kind: 'word', en: 'deploy', context: 'Our team will deploy the new plan next week.', context_zh: '\u4f8b\u53e5', context_source: 'generated' };
   assert.equal(sentenceGap(generated).word, 'deploy');

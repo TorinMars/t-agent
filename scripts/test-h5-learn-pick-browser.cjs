@@ -211,6 +211,14 @@ async function openSettings(page) {
       const segments = await page.locator('#h5-learn-gap .h5-learn-gap-letter').evaluateAll(list => list.map(el => { const box = el.getBoundingClientRect(); return { x: box.x, y: box.y, w: box.width }; }));
       assert.ok(segments.every(item => item.y === segments[0].y && item.w >= 6), 'the underlines on one line');
       assert.ok(segments.every((item, at) => at === 0 || item.x > segments[at - 1].x + segments[at - 1].w), 'a space between the underlines');
+      // By syllables: a wider space before each part after the first (expires: more than one part), the same count of letters.
+      const parts = Number(await page.locator('#h5-learn-gap').getAttribute('data-parts'));
+      assert.ok(parts >= 2, `the underlines are grouped by syllables (${parts} parts)`);
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-letter[data-part-start="true"]').count(), parts - 1);
+      const gaps = segments.slice(1).map((item, at) => item.x - (segments[at].x + segments[at].w));
+      const wide = Math.max(...gaps);
+      const narrow = Math.min(...gaps);
+      assert.ok(wide > narrow + 2, `a part gap is wider than a letter gap (${wide} vs ${narrow})`);
       assert.equal(await page.locator('#h5-learn-gap').getAttribute('aria-label'), 'blank, 7 letters');
       assert.equal(await color(page, '#h5-learn-gap .h5-learn-gap-letter', 'borderBottomColor'), await page.locator('#h5-learn-from-translation').evaluate(el => getComputedStyle(el).color), 'the gap and the chip in the primary colour');
       assert.equal(await text(page, '#h5-learn-sentence-zh'), ZH_SENTENCE);

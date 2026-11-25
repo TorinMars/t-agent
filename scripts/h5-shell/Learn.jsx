@@ -1654,7 +1654,7 @@ function SpellExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
       {cloze ? (
         <Prompt label={t('Fill in the word')} badge={generated ? <Chip size="small" id="h5-learn-example-sentence" label={t('example sentence')} sx={CHIP_SX} />
           : <Chip size="small" id="h5-learn-from-translation" label={t('your translation')} sx={CHIP_SX} />} footer={result ? ask.row : helpers}>
-          <SentenceWithGap cloze={cloze} result={result} compact={compact} />
+          <SentenceWithGap cloze={cloze} result={result} compact={compact} card={card} />
           <ClampText clamp={compact} field={input} variant="body2" color="text.secondary" component="p" lang="zh" translate="no" id="h5-learn-sentence-zh" sx={{ mt: 1, overflowWrap: 'break-word' }}>{cloze.zh}</ClampText>
           <Divider sx={{ my: 1.5 }} />
           {result ? (
@@ -1870,24 +1870,28 @@ function PartsExercise({ ui, card, frame, phone, keys, tts, busy, register, onAn
 // The small "your translation" chip of the sentence layout: the primary colour on its 12% tint (MD2 chip, caption type).
 const CHIP_SX = theme => ({ height: 20, typography: 'caption', fontWeight: 'fontWeightMedium', color: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.12), '& .MuiChip-label': { px: 1 } });
 // The gap where the word goes: one primary underline per letter (gapLayout), on one line; read out as "blank, N letters".
-function SentenceGap({ word }) {
-  const { count, segment, space } = gapLayout(word);
+function SentenceGap({ word, parts = null }) {
+  const { count, segment, space, groupSpace, breaks } = gapLayout(word, parts);
+  const starts = new Set(breaks);
   return (
-    <Box component="span" id="h5-learn-gap" role="img" data-letters={count} aria-label={tf('blank, {1} letters', count)}
+    <Box component="span" id="h5-learn-gap" role="img" data-letters={count} data-parts={breaks.length + 1} aria-label={tf('blank, {1} letters', count)}
       sx={{ display: 'inline-flex', columnGap: `${space}em`, mx: 0.25, verticalAlign: '-0.15em', whiteSpace: 'nowrap' }}>
-      {Array.from({ length: count }, (_, at) => <Box key={at} component="span" className="h5-learn-gap-letter" sx={{ display: 'inline-block', width: `${segment}em`, height: 0, borderBottom: 2, borderColor: 'primary.main' }} />)}
+      {Array.from({ length: count }, (_, at) => (
+        <Box key={at} component="span" className="h5-learn-gap-letter" data-part-start={starts.has(at) ? 'true' : undefined}
+          sx={{ display: 'inline-block', width: `${segment}em`, height: 0, borderBottom: 2, borderColor: 'primary.main', ...(starts.has(at) ? { ml: `${Math.max(0, groupSpace - space)}em` } : {}) }} />
+      ))}
     </Box>
   );
 }
 // The sentence of Spell's sentence layout, in the h6 size (subtitle1 while the page's keyboard is open on a phone): a primary underline per letter where the word goes; after Check the word in it (the success colour
 // when right, the error colour when wrong: the right word either way).
-function SentenceWithGap({ cloze, result, compact = false }) {
+function SentenceWithGap({ cloze, result, compact = false, card = null }) {
   const tone = result && result.correct ? 'success.light' : 'error.light';
   return (
     <Typography variant={compact ? 'subtitle1' : 'h6'} component="p" lang="en" translate="no" id="h5-learn-sentence" sx={{ mt: 1, fontWeight: 'fontWeightRegular', lineHeight: 1.6, overflowWrap: 'break-word' }}>
       {cloze.before}
       {result ? <Box component="span" id="h5-learn-sentence-word" data-correct={result.correct ? 'true' : 'false'} sx={{ color: tone, fontWeight: 'fontWeightMedium', borderBottom: 2, borderColor: tone }}>{cloze.word}</Box>
-        : <SentenceGap word={cloze.word} />}
+        : <SentenceGap word={cloze.word} parts={partsOf(card && String(card.en || '').trim().toLowerCase() === String(cloze.word).toLowerCase() ? card : { en: cloze.word })} />}
       {cloze.after}
     </Typography>
   );

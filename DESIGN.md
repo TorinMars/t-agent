@@ -268,3 +268,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.169.0 DeepSeek voice engine for Learn pronunciation
 > v2.170.0 Bailian voice engine (Cindy) for Learn pronunciation; the DeepSeek voice engine is removed
 > v2.170.1 Bailian voice: the log names why a call failed
+> v2.170.2 Bailian voice works: the audio address (http on aliyuncs.com) is fetched over https

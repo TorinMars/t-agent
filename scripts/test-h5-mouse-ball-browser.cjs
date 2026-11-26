@@ -317,6 +317,31 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.match((await copied())[3], /^line \d/, 'its Copy writes the selection');
     await notices();
 
+    // ── A paragraph that a program wrapped itself (hard line breaks at the width) is copied as one line ──
+    const gw = await grid();
+    const words = 'She worked hard to accomplish her goal before the deadline and then wrote down every step so that nobody else would have to guess how it was done'.split(' ');
+    const wrapped = [];
+    let current = '';
+    for (const word of words) {
+      if (current && current.length + 1 + word.length > gw.cols) { wrapped.push(current); current = word; } else current = current ? `${current} ${word}` : word;
+    }
+    wrapped.push(current);
+    assert.ok(wrapped.length >= 3, `the paragraph wraps over several rows (${wrapped.length})`);
+    await emit(`\x1b[2J\x1b[H\r\n\r\n\r\n\r\n${wrapped.join('\r\n')}\r\n$ `); // from row 4: the first rows are the zone where a held button scrolls
+    await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; }); // the earlier checks left the view scrolled back
+    await page.waitForTimeout(200);
+    const firstRow = 4;
+    const lastRow = firstRow + wrapped.length - 1;
+    await touch('touchStart', dock.x, dock.y);
+    await glide(dock, fingerFor(at(gw, 0, firstRow)));
+    await page.waitForTimeout(800);
+    await glide(fingerFor(at(gw, 0, firstRow)), fingerFor(at(gw, wrapped.at(-1).length, lastRow)));
+    await touch('touchEnd');
+    await page.waitForFunction(() => window.copied.length === 5);
+    assert.equal((await copied())[4], words.join(' '), 'the rows the program cut are one line again, with one space at each break');
+    await notices();
+    await dockedAgain(dock);
+
     // ── No horizontal overflow; off again removes the ball; a reload keeps the choice ──
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
     await page.reload(); // the phone opens the terminal it showed

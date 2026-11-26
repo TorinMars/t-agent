@@ -105,6 +105,7 @@ export const initialState = () => ({
   empty: 'Choose a task to open its phone terminal', // what the terminal area says when there is no terminal; null when one is shown
   emptyCreate: false, // the terminal area also offers a button that opens the task's New session dialog (the task has no terminal)
   mods: {},
+  mouseBall: false, // the mouse ball of the phone terminal is on for this device (h5.js `setMouseBall`, MouseBall.jsx)
   osk: false, // the terminal on-screen keyboard (Osk.jsx) is shown; the "Terminal keyboard" button of row 2 toggles it (h5.js `toggleKeyboard`)
   learnKeys: false, // the Learn page's own keyboard (Learn.jsx `useLearnKeys`) is shown: the phone's bottom navigation steps aside
   learnCoach: false, // the English coach chat (LearnCoach.jsx `Coach`) is open on a phone: the bottom navigation steps aside, its back arrow returns

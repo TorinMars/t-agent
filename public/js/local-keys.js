@@ -21,6 +21,7 @@
     ['h5-terminal-width', 'local', 'hardware', 'fit or a fixed width: depends on the size of this screen', true],
     ['h5-terminal-wide-cols', 'local', 'hardware', 'the fixed terminal width of this screen', true],
     ['h5-terminal-width-noted', 'local', 'hardware', 'a one-time hint about the gesture of this device (long press or right click)', false],
+    ['h5-mouse-ball', 'local', 'hardware', 'the mouse ball of the phone terminal on or off: a touch screen without a mouse wants it, one with a trackpad or a pen may not', false],
     ['h5-sidebar-collapsed', 'local', 'cache-of-shared-state', 'the folded task sidebar (a column keeps its own, which stays in this browser)', true],
     ['h5-recent-sessions', 'local', 'cache-of-shared-state', 'the Recent list kept before the shared page state: read once to import it, then removed', false],
     ['h5-task-list-tab', 'local', 'cache-of-shared-state', 'the chosen tab of the task list', false],

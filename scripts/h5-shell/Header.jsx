@@ -31,7 +31,7 @@ const HEADER = state => {
   return {
     wide: state.wide, sidebarCollapsed: state.sidebarCollapsed, tasksOpen: state.tasksOpen, taskName: state.taskName, sourceLabel: state.sourceLabel,
     sessionName: state.sessionName, terminalWidth: state.terminalWidth, pane: state.pane, tag: shown ? shown.device : null,
-    hasTarget: Boolean(state.shownTarget), agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot), notebook: state.notebook,
+    hasTarget: Boolean(state.shownTarget), mouseBall: state.mouseBall, agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot), notebook: state.notebook,
     typing: state.keyboard === 'draft' && Boolean(state.softKeyboard),
   };
 };
@@ -134,7 +134,7 @@ export function Header({ ui }) {
         ) : null}
         {wide && state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <PlanUsageButton ui={ui} phone={!wide} />
-        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} />
+        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} ball={state.mouseBall} />
       </Toolbar>
     </AppBar>
   );
@@ -249,9 +249,11 @@ function StateWord({ ui }) {
 // On a phone, while a terminal is shown (`width`, h5.js `state.terminalWidth`), the terminal width comes first (`#h5-term-width`, "Terminal width:
 // 160 columns" with a ›, its icon in the primary colour while Wide): it replaces this menu with the width choices (`WidthMenu` with its Back row, at the
 // same place), since the bar has no room for the computer's switch.
+// After it, on a phone with a terminal, "Mouse ball" (`#h5-mouse-ball-switch`, a switch in its row, `ball`: on for this device; h5.js `setMouseBall`,
+// docs/design/page-terminal-mouse-ball.md). A tap turns it on or off and closes the menu, so the ball shows at once.
 // While a terminal session is shown (`remember`), "Remember this" (a note with the time, the task and the session; h5.js `rememberShown`) comes
 // before Refresh the page ("Remember this" in docs/design/usage-time-page.md).
-function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false }) {
+function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false, ball = false }) {
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
   const [widthOpen, setWidthOpen] = useState(false);
@@ -278,6 +280,13 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, rememb
             <ListItemIcon sx={wideNow ? { color: 'primary.light' } : undefined}><Icon name="columnWidth" size={20} /></ListItemIcon>
             <ListItemText>{widthLabel(widthItem)}</ListItemText>
             <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.secondary', ml: 2 }}><Icon name="treeChevron" size={16} /></Box>
+          </MenuItem>
+        ) : null}
+        {widthItem ? (
+          <MenuItem id="h5-mouse-ball-switch" role="menuitemcheckbox" aria-checked={ball} onClick={() => { setOpen(false); ui.actions.setMouseBall(!ball); }} sx={{ minHeight: 44 }}>
+            <ListItemIcon><Icon name="mouseBall" size={20} /></ListItemIcon>
+            <ListItemText>{t('Mouse ball')}</ListItemText>
+            <Box component="span" aria-hidden="true" data-on={ball || undefined} sx={SWITCH} />
           </MenuItem>
         ) : null}
         {notebook ? NOTEBOOK_ITEMS.map(([name, text, iconName]) => (
@@ -313,6 +322,12 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, rememb
   );
 }
 
+// The look of an MD2 switch (a 34 x 14 track, a 20px thumb; on: the primary colour) drawn by one span: MUI's Switch is not in the first screen.
+const SWITCH = theme => ({
+  position: 'relative', flex: '0 0 auto', ml: 2, width: 34, height: 14, borderRadius: 7, bgcolor: alpha(theme.palette.common.white, 0.3),
+  '&::after': { content: '""', position: 'absolute', top: -3, left: 0, width: 20, height: 20, borderRadius: '50%', bgcolor: 'grey.300', boxShadow: 1, transition: 'left 150ms' },
+  '&[data-on]': { bgcolor: alpha(theme.palette.primary.main, 0.5), '&::after': { left: 14, bgcolor: 'primary.main' } },
+});
 const WIDE_CHOICES = [200, 500, 1000, 2000]; // public/js/terminal-gestures.js `WIDE_CHOICES`
 // The current width in words: the phone's menu item and the computer's switch say it ("Terminal width: 160 columns").
 const widthLabel = width => (width.mode === 'wide' ? t(`Terminal width: ${width.cols} columns`) : t('Terminal width: Fit to screen'));

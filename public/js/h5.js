@@ -42,7 +42,7 @@
   // In a pane of the multi-column view (scripts/h5-shell/pane.mjs) what this view shows is kept per pane (`pane:<id>:h5-...`); the keys in SHARED_KEYS stay
   // one for the device. See "Pane mode" in docs/design/page-shell-and-columns.md for the list.
   const PANE = window.H5Pane || null;
-  const SHARED_KEYS = new Set(['terminal-width-noted']);
+  const SHARED_KEYS = new Set(['terminal-width-noted', 'mouse-ball']);
   const storeKey = key => (PANE && !SHARED_KEYS.has(key) ? PANE.key(`h5-${key}`) : `h5-${key}`);
   // Through the registry of browser storage (public/js/local-keys.js), where each of these keys is declared with its reason.
   const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false };
@@ -4042,6 +4042,25 @@
     const cell = cellAt(s, event.clientX, event.clientY);
     if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
+  // ── Mouse ball (docs/design/page-terminal-mouse-ball.md; scripts/h5-shell/MouseBall.jsx, a chunk of its own) ──
+  // On or off for this device (localStorage `h5-mouse-ball`, a property of the hardware in the hand: a phone without a mouse wants it, a tablet with
+  // a trackpad may not). The ball asks for the shown terminal at each touch: its xterm, its screen and the copy path of the double tap (the same
+  // notice, the same refusal bar), or null while no terminal is shown (empty, the chat over it, the copy view, a notebook).
+  ui.set({ mouseBall: store.get('mouse-ball') === 'on' });
+  ui.actions.setMouseBall = on => { store.set('mouse-ball', on ? 'on' : null); ui.set({ mouseBall: Boolean(on) }); };
+  ui.actions.mouseBallTarget = () => {
+    const s = session;
+    if (!s || s.disposed || s.el.hidden || !agentView.hidden || ui.get().copyText !== null) return null;
+    const screen = s.el.querySelector('.xterm-screen');
+    if (!screen) return null;
+    return {
+      term: s.term,
+      el: s.el,
+      screen,
+      copy: text => s.clipboard?.copy(text), // call it inside the lift (pointerup): the write needs the user activation
+      hookSelection: () => hookSelection(s), // new output clears the highlight, as after a double tap
+    };
+  };
   // ── Links opened by programs (docs/design/open-links.md; routes/open-link.js and offerLink in routes/terminal.js) ──
   // A program in a terminal opened a web link; the server offers it to this page as { type: 'open-link', id, url, agent }. The page takes it
   // only when that terminal is in the foreground (the one shown, the page visible and used lately: the presence rule) and answers

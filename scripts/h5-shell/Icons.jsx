@@ -164,6 +164,8 @@ export const DRAWN = {
   chevronDown: 'M6 9l6 6 6-6',
   // Shell notebook (the session kind's mark, scripts/notebook/ and the session tiles): a lab flask, its neck and a liquid line. The library's
   // experiment icon has bubbles that blur at 18px; this one stays clear on the tiles and the 20px header.
+  // Mouse ball (the ball over the phone terminal and its item in the header's More menu): a mouse pointer arrow. The library has no plain pointer.
+  mouseBall: 'M7 3v14l3.5-3.2 2.5 5.8 2.3-1-2.5-5.8h4.7z',
   notebook: 'M9 3h6 M10 3v6.2L4.8 18.4A1.8 1.8 0 0 0 6.4 21h11.2a1.8 1.8 0 0 0 1.6-2.6L14 9.2V3 M7.2 15h9.6',
 };
 

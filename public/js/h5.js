@@ -4872,6 +4872,17 @@
       const rest = query.toString();
       try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays; nothing else changes */ }
     }
+    // Or with a link to the details of a T-Attention task (?openAttention=<engine>:<id>, the desktop window's click on a task when no page took it): the
+    // T-Attention panel opens with that task's edit view once the lists are known (`openAttention({ item })`; Attention.jsx waits for a task that is not
+    // listed yet, and a task that is not there, or a value that is not a key, leaves the panel shown). Taken out of the address at once, like openTerminal;
+    // the page goes on underneath as without it.
+    const attentionAsked = !PANE && query.has('openAttention');
+    const attentionLink = /^(local|remote:[1-9]\d{0,14}):[1-9]\d{0,14}$/.exec(query.get('openAttention') || '');
+    if (query.has('openAttention')) {
+      query.delete('openAttention');
+      const rest = query.toString();
+      try { history.replaceState(history.state, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash}`); } catch { /* the address stays */ }
+    }
     // Or with a link into Learn (?learn=coach, the coach's reminder in T-Attention; ?learn=mistakes, progress … a screen of Learn, LEARN_VIEWS):
     // Learn opens on it. Taken out of the address at once, like openTerminal.
     if (query.has('learn')) {
@@ -4890,7 +4901,7 @@
     }
     renderTasks(); // "Loading…"
     // A phone with nothing to bring back opens on the task sheet at once; that does not wait for the lists.
-    if (!link && !terminalAsked && !(savedId > 0) && !isWide()) ui.set({ tasksOpen: true, wide: false });
+    if (!link && !terminalAsked && !attentionAsked && !(savedId > 0) && !isWide()) ui.set({ tasksOpen: true, wide: false });
     const reads = new Map([[LOCAL, loadSource(LOCAL)]]);
     if (assumed !== LOCAL) reads.set(assumed, loadSource(assumed));
     void loadLinks(); // the "⋯" of a task needs it, the list does not wait for it
@@ -4903,6 +4914,7 @@
     for (const from of listedSources()) if (!reads.has(from)) reads.set(from, loadSource(from));
     renderTasks();
     syncFeeds();
+    if (attentionAsked && ui.actions.openAttention) ui.actions.openAttention({ item: attentionLink ? attentionLink[0] : null });
     // While the multi-column view is shown (Columns.jsx) the link goes to the focused column (else the first) and the hidden normal view still brings
     // back its remembered task below.
     if (link && columnsShown()) ui.actions.openInColumn({ sourceKey: LOCAL.key, taskId: Number(link[1]), conversationId: link[2] });
@@ -4929,6 +4941,6 @@
       if (found) selectTask(found.from, found.item, null, { remember: found.from === assumed });
     }
     // A wide screen always has the sidebar. A phone opens the sheet only when no task is shown, and not over Settings opened meanwhile.
-    if (isWide() || (!task && !ui.get().settingsOpen)) openTasks();
+    if (isWide() || (!task && !ui.get().settingsOpen && !attentionAsked)) openTasks();
   })();
 })();

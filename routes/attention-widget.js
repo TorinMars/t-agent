@@ -19,7 +19,8 @@
 // /notices, /activity and /prefs answer as before, for a window older than /tick; GET /items reads every part again each time.
 //
 // POST /open-terminal (Open session): tells the open T-Agent page of this machine seen last to show a terminal in place and asks the browser extension
-// to bring its tab to the front, instead of opening a new tab (see the route; services/page-channel.js).
+// to bring its tab to the front, instead of opening a new tab (see the route; services/page-channel.js). POST /open-item (a click on a task row or on
+// the bubble of a task) does the same for the task's details on the page (its `?openAttention=<key>` link).
 //
 // Scheduled and recurring tasks ("Scheduled and recurring tasks (window side)" in docs/design/attention-desktop-window.md): an item of an engine with
 // schedules carries `schedule`, `then_action`, `next_at`, `schedule_state`, `runs`, `last_fired_at`, `last_done_at`, `schedule_text` as its owner
@@ -897,6 +898,31 @@ function createAttentionWidgetRoutes({
     if (typeof taskId !== 'string' || !TAGENT_TASK.test(taskId)) throw invalid('task_id must be a task id');
     if (typeof body.terminal_id !== 'string' || !TAGENT_TERMINAL.test(body.terminal_id)) throw invalid('terminal_id must be a terminal id');
     const told = pageChannel().openTerminal({ engine: body.engine, task_id: taskId, terminal_id: body.terminal_id });
+    const delivered = told && told.delivered === 1 ? 1 : 0;
+    const focused = delivered === 1 && typeof told.origin === 'string' && told.origin ? await revealTab(told.origin) : false;
+    res.json({ delivered, focused });
+  }));
+
+  // A click on a task row of the window (or on a task's bubble): the same as Open session, for the task's details. { key } -> { delivered, focused }.
+  // The page shows its T-Attention panel with that task's edit view (attention-feed.mjs `open-item`, as its `?openAttention=<key>` link does). An
+  // unknown key, a device that is not connected or a task its owner says is not there is 404 (the window then opens the link, which shows the panel);
+  // a task the kept list has is not read again, and an owner that does not answer in time does not hold it (the page finds out itself).
+  async function itemExists(key) {
+    const text = `${key.engine}:${key.id}`;
+    if (memo && memo.list.items.some(item => item.key === text)) return true;
+    const engine = engineOf(key.engine);
+    try { return Boolean(await within(Promise.resolve().then(() => engine.get(key.id)), readTimeoutMs)); }
+    catch (error) {
+      if (error instanceof AttentionError && error.statusCode === 404) return false;
+      return true;
+    }
+  }
+  api.post('/open-item', parseJson, handle(async (req, res) => {
+    const body = objectBody(req);
+    const key = typeof body.key === 'string' ? parseItemKey(body.key) : null;
+    if (!key) throw invalid("key must be an item key ('local:<id>' or 'remote:<id>:<id>')");
+    if (!(await itemExists(key))) throw new WidgetError('NOT_FOUND', 'Task not found', 404);
+    const told = pageChannel().openItem({ key: `${key.engine}:${key.id}` });
     const delivered = told && told.delivered === 1 ? 1 : 0;
     const focused = delivered === 1 && typeof told.origin === 'string' && told.origin ? await revealTab(told.origin) : false;
     res.json({ delivered, focused });

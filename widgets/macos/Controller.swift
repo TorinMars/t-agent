@@ -79,6 +79,7 @@ final class WidgetController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let dropHighlight = NSView()  // behind the title of the section a drop would change the status to
     let dropHint = NSTextField(labelWithString: "")
     var pressedRow: String?  // set from mouse down to mouse up; holds the panel and the refresh
+    var clickedRow: String?  // the row a plain press went to, while no form is open: its release opens the task's details
     var rowDragActive = false
     var drop: DropDecision = .noChange
     var moveInFlight = false { didSet { syncActionButtons() } }

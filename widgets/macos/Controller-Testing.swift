@@ -106,6 +106,18 @@ extension WidgetController {
         return root.hitTest(root.superview?.convert(point, from: nil) ?? point)
     }
 
+    /// A plain click on a row (a mouse down and up without movement, delivered in-process to what the panel's hit test
+    /// gives at the row's left part). False when the press does not reach the row.
+    @discardableResult
+    func testClickRow(_ key: String) -> Bool {
+        guard let row = rowViews[key], let root = detail.contentView else { return false }
+        let point = row.convert(NSPoint(x: 40, y: row.bounds.midY), to: nil)
+        guard let taken = root.hitTest(root.superview?.convert(point, from: nil) ?? point) as? TaskRowView, taken === row else { return false }
+        row.mouseDown(with: mouseEvent(.leftMouseDown, point))
+        row.mouseUp(with: mouseEvent(.leftMouseUp, point))
+        return true
+    }
+
     func testPressButton(_ key: String, _ action: RowAction) -> Bool {
         guard let button = rowViews[key]?.actionButtons.first(where: { $0.rowAction == action }) else { return false }
         button.performClick(nil)

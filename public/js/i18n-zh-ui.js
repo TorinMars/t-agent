@@ -1667,6 +1667,8 @@ I18n.add({
   "Link": "链接",
   "Link label": "链接名称",
   "Open link": "打开链接",
+  "Open details": "打开详情",
+  "Click to open details": "点按打开详情",
   "https://… or /path": "https://… 或 /路径",
   "Shown instead of the address": "代替地址显示的文字",
   "Linked": "已链接",

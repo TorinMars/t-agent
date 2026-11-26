@@ -16,6 +16,8 @@ extension WidgetController {
     }
 
     func rowPressed(_ key: String) {
+        // A release without a drag opens the task's details (rowReleased); never while a form or confirmation is open.
+        clickedRow = overlay == nil ? key : nil
         // While an action is out the list is about to change, so a drop computed on it could be wrong.
         guard !moveInFlight, actionRows.isEmpty else { return }
         cancelHide()
@@ -23,8 +25,13 @@ extension WidgetController {
         refreshGeneration += 1  // a response already on its way must not rebuild the row under the pointer
     }
 
-    func rowReleased() {
+    /// The press ended without a drag (TaskRowView calls onDragEnd instead after one): a plain click shows the task's
+    /// details on the T-Agent page (openItemPage). Its buttons take their own presses, and a control-click opens the menu.
+    func rowReleased(_ key: String) {
+        let clicked = clickedRow == key && overlay == nil
+        clickedRow = nil
         pressedRow = nil
+        if clicked { openItemPage(key) }
         hideIfPointerOutside()
     }
 
@@ -279,7 +286,9 @@ extension WidgetController {
             entry.identifier = NSUserInterfaceItemIdentifier(action.rawValue)
             return entry
         }
-        return makeMenu((hasLink ? [item(L("Open link"), #selector(openLinkItemClicked(_:)))] : [])
+        // Details first: what a click on the row does. Open session stays the only way to the conversation.
+        return makeMenu([item(L("Details"), #selector(openDetailsItemClicked(_:)))]
+                        + (hasLink ? [item(L("Open link"), #selector(openLinkItemClicked(_:)))] : [])
                         + (hasSession ? [item(sessionTitle, #selector(openSessionItemClicked(_:)))] : [])
                         + actions
                         + [item(L("Edit"), #selector(editItemClicked(_:))), item(L("Delete"), #selector(deleteItemClicked(_:)))])

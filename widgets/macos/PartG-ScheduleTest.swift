@@ -223,9 +223,9 @@ func runScheduleSelfTest(_ check: (String, Bool) -> Void) {
     check("rows: a failed script has Open terminal and Run again", all("local:49") == [.terminal, .runAgain, .handled]
           && window.testButton("local:49", .terminal)?.label == "Open terminal")
     check("rows: a waiting prompt opens its session", all("remote:7:47") == [.session])
-    check("menu: Send now, Open terminal and Run again", window.testMenuTitles("remote:7:41") == ["Open session", "Send now", "Handled", "Edit", "Delete", "Quit"]
-          && window.testMenuTitles("local:49") == ["Open terminal", "Run again", "Handled", "Edit", "Delete", "Quit"])
-    check("VoiceOver: the custom actions", window.testRowView("remote:7:41")?.accessibilityCustomActions()?.map { $0.name } == ["Open session", "Send now", "Handled"])
+    check("menu: Send now, Open terminal and Run again", window.testMenuTitles("remote:7:41") == ["Details", "Open session", "Send now", "Handled", "Edit", "Delete", "Quit"]
+          && window.testMenuTitles("local:49") == ["Details", "Open terminal", "Run again", "Handled", "Edit", "Delete", "Quit"])
+    check("VoiceOver: the custom actions", window.testRowView("remote:7:41")?.accessibilityCustomActions()?.map { $0.name } == ["Open session", "Send now", "Handled", "Open details"])
     sent = []
     _ = window.testPressButton("remote:7:41", .sendNow)
     check("Send now posts run-now", calls("POST") == ["/api/attention/widget/items/remote:7:41/run-now {}"])
@@ -300,8 +300,10 @@ func runScheduleSelfTest(_ check: (String, Bool) -> Void) {
     window.testClearNotices()
     window.testShowNotices([firingNotice("scheduled", item("local:45"), engine: nil)])
     opened = []
+    sent = []
     _ = window.testBubbleAction(.open)
-    check("bubble: Open opens the T-Agent page for a task without a link or session", opened == ["http://127.0.0.1:3999/"])
+    check("bubble: Open opens the task's details, like a click on the bubble", calls("POST") == ["/api/attention/widget/open-item {\"key\":\"local:45\"}"]
+          && opened.isEmpty)
     window.testClearNotices()
 
     // The form.

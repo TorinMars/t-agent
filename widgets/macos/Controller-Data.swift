@@ -196,13 +196,15 @@ extension WidgetController {
         startBubbleTimer()
     }
 
-    /// Opens the task's link, else its session, else the notice's target, else the T-Agent page (bubbleOpen), and
+    /// Opens the task's details (openItemPage), else the notice's target, else the T-Agent page (bubbleOpen), and
     /// closes it. Not while a reply is being typed, so a stray click cannot lose it.
     private func bubbleClicked() {
         guard let notice = noticeQueue.current, !bubbleReply.active else { return }
         let target = bubbleOpen(notice, item: bubbleItem(notice), base: api.base)
         dismissNotice()
-        if let session = target.session {
+        if let key = target.item {
+            openItemPage(key)  // an open T-Agent page shows the task's details, as a click on its row does
+        } else if let session = target.session {
             openTerminalPage(session)  // an open T-Agent page switches to it, as with Open session
         } else if let url = target.url {
             openPage(url)  // a page of this T-Agent in T-Agent.app when it is installed; other links in the browser

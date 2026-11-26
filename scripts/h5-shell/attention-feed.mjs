@@ -13,7 +13,9 @@
 // The top page opens this machine's stream with `?tab=1`: the server then counts it as an open page of this machine (services/page-channel.js) that
 // the desktop window's Open session can switch in place. Its first event is `hello` { stream }; the page reports when it is seen (shown or focused) with
 // POST /api/attention/stream/seen { stream }, and `open-terminal` { engine, task_id, terminal_id } shows that terminal as the `?openTerminal=` link does
-// (h5.js ui.actions.openTerminalLink). The stream stays open while the page is hidden, so a background tab is switched too.
+// (h5.js ui.actions.openTerminalLink); `open-item` { key } (a click on a task of the desktop window) shows that task's details here, as the
+// `?openAttention=<key>` link of h5.js does: `openAttention({ item: key })`, and Attention.jsx waits for a task that is not listed yet (`focus`). The
+// stream stays open while the page is hidden, so a background tab is switched too.
 // Read copies (docs/design/attention-copies.md): this machine's list and stream (`copies=1`) also carry the read copies it keeps of every linked engine
 // that has them (`copies: { items, owners }`), so those engines need no list read or stream of their own, and their items stay listed while they are
 // offline ("<engine> is offline · as of <time>", `attention.offline`). A copy is tagged with its owner's engine key (the task list's `remote:<id>`, or
@@ -266,14 +268,14 @@ export function startAttentionFeed(ui, { t = text => text, api, EventSourceImpl,
         pageStream = data && typeof data.stream === 'string' ? data.stream : null;
         if (document.visibilityState === 'visible') reportSeen();
       });
-      es.addEventListener('open-terminal', message => {
-        if (entry.es !== es) return;
+      // The desktop window: a terminal (Open session) or a task's details (a click on a task).
+      const on = (name, run) => es.addEventListener(name, message => {
         let data = null;
         try { data = JSON.parse(message.data); } catch { return; }
-        const open = ui.actions.openTerminalLink;
-        if (!data || typeof open !== 'function') return;
-        void Promise.resolve(open({ sourceKey: String(data.engine || ''), taskId: Number(data.task_id), terminalId: String(data.terminal_id || '') })).catch(() => {});
+        if (entry.es === es && data) void Promise.resolve().then(() => run(data)).catch(() => {});
       });
+      on('open-terminal', data => ui.actions.openTerminalLink({ sourceKey: String(data.engine || ''), taskId: Number(data.task_id), terminalId: String(data.terminal_id || '') }));
+      on('open-item', data => ui.actions.openAttention({ item: String(data.key) }));
     }
     // Every (re)connection reads the list again: changes made while it was away are not replayed.
     es.addEventListener('open', () => {

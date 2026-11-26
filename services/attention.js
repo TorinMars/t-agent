@@ -566,6 +566,8 @@ function createAttentionService({ db, now = () => new Date(), timeZone = schedul
       let kept = null;
       try { kept = scheduling.normalizeSchedule(raw, { tz: previous.tz, starts: previous.starts }); } catch { kept = null; } // checked again below
       if (kept && JSON.stringify(kept) === beforeText) return beforeText;
+      // Only the length (duration, all day) changed: the zone and first day stay too.
+      if (kept && scheduling.sameTiming(kept, previous)) return JSON.stringify(kept);
     }
     const tz = zone();
     const fresh = scheduleCall(() => scheduling.normalizeSchedule(raw, { tz, starts: scheduling.dateText(scheduling.localDateOf(now().getTime(), tz)) }));
@@ -703,7 +705,9 @@ function createAttentionService({ db, now = () => new Date(), timeZone = schedul
     const at = iso(atMs);
     // Schedules: a new or cleared schedule, or a status change of a scheduled item (scheduleStart, scheduleStatus).
     let recurringDone = false;
-    if (changes.schedule !== undefined) {
+    // A change of only the length (duration, all day) is not a new schedule: the times, the runs and the state stay.
+    const lengthOnly = changes.schedule !== undefined && scheduling.sameTiming(parseJson(changes.schedule), parseJson(before.schedule));
+    if (changes.schedule !== undefined && !lengthOnly) {
       Object.assign(changes, scheduleStart(changes.schedule, changes.status !== undefined ? changes.status : before.status, atMs));
     } else if (changes.status !== undefined) {
       const { recurringDone: done = false, ...more } = scheduleStatus(before, changes.status, at, atMs);

@@ -3,6 +3,8 @@
 //
 // - A schedule is { kind: 'once', at: 'YYYY-MM-DDTHH:mm', tz } or { kind: 'repeat', rule: { freq, days?, day?, interval?, time }, starts?, ends?, tz };
 //   a yearly rule is { freq: 'yearly', calendar: 'solar' | 'lunar', month, day, leap?, occasion?, year?, time } (lunar dates: lib/lunar.js).
+//   Either kind may last: `duration` (whole minutes from its time, ending on the same day) or `all_day: true` (the whole day), at the end of the
+//   schedule; firing is always at the start time (endOf gives the end).
 //   Wall times are local to `tz` (the IANA zone of the owner engine when it was saved). normalizeSchedule validates a body value and returns the
 //   canonical form (fixed key order, no empty parts, `ends: never` left out), so the same schedule sent again compares equal and changes nothing.
 // - Time zones and daylight saving time: a wall time is turned into an instant with Intl (localToUtc). A wall time that does not exist (the clock
@@ -16,6 +18,10 @@ const lunar = require('../lib/lunar');
 const CAPABILITY = 'attention:schedule';
 // attention:yearly: the rule freq 'yearly' (birthdays and anniversaries, solar or lunar). A page offers it only on an engine that lists it.
 const YEARLY_CAPABILITY = 'attention:yearly';
+// attention:duration: schedule.duration and schedule.all_day ("Duration and all day" in docs/design/attention-schedules.md). An older engine refuses
+// them as unknown fields, so a page offers them only on an engine that lists it.
+const DURATION_CAPABILITY = 'attention:duration';
+const DURATION_MAX = 24 * 60 - 1; // minutes
 const FREQS = Object.freeze(['daily', 'weekdays', 'weekly', 'monthly', 'every', 'yearly']);
 const CALENDARS = Object.freeze(['solar', 'lunar']);
 const OCCASIONS = Object.freeze(['birthday', 'anniversary']);
@@ -131,12 +137,29 @@ function yearlyRule(raw) {
   return rule;
 }
 
+// The length of a schedule (its duration in minutes, or all day), added at the end of `out`. time: 'HH:mm', the start (rule.time or the time of
+// `at`). A timed item must end on the day it starts: at midnight at the latest, in the schedule's wall clock.
+function lengthOf(value, time, out) {
+  const allDay = given(value.all_day) ? value.all_day : false;
+  if (typeof allDay !== 'boolean') throw invalid('schedule.all_day must be true or false');
+  if (given(value.duration)) {
+    if (allDay) throw invalid('A schedule that lasts all day has no duration (schedule.duration)');
+    if (!Number.isInteger(value.duration) || value.duration < 1 || value.duration > DURATION_MAX) throw invalid(`schedule.duration must be a number of minutes from 1 to ${DURATION_MAX}`);
+    const [hh, mm] = time.split(':').map(Number);
+    const left = 24 * 60 - (hh * 60 + mm);
+    if (value.duration > left) throw invalid(`A schedule must end on the day it starts: from ${time} it can last at most ${left} minutes`);
+    out.duration = value.duration;
+  }
+  if (allDay) out.all_day = true;
+  return out;
+}
+
 // A schedule body value -> the canonical schedule, or null (none). `tz`: the zone used when the value names none; `starts`: the first day of an
 // "every N days" rule that names none (the anchor its days are counted from).
 function normalizeSchedule(value, { tz, starts } = {}) {
   if (value === undefined || value === null || value === '') return null;
   if (!isPlainObject(value)) throw invalid('schedule must be a JSON object');
-  only(value, ['kind', 'at', 'rule', 'starts', 'ends', 'tz'], 'schedule');
+  only(value, ['kind', 'at', 'rule', 'starts', 'ends', 'tz', 'duration', 'all_day'], 'schedule');
   const zone = given(value.tz) ? value.tz : tz;
   if (!validZone(zone)) throw invalid('schedule.tz must be an IANA time zone, for example Asia/Taipei');
   if (value.kind === 'once') {
@@ -144,7 +167,7 @@ function normalizeSchedule(value, { tz, starts } = {}) {
     if (typeof value.at !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value.at) || !validDate(value.at.slice(0, 10)) || !validTime(value.at.slice(11))) {
       throw invalid('schedule.at must be a date and time in the form YYYY-MM-DDTHH:mm');
     }
-    return { kind: 'once', at: value.at, tz: zone };
+    return lengthOf(value, value.at.slice(11), { kind: 'once', at: value.at, tz: zone });
   }
   if (value.kind !== 'repeat') throw invalid("schedule.kind must be 'once' or 'repeat'");
   if (given(value.at)) throw invalid('A repeating schedule has a rule, not a time (at)');
@@ -201,7 +224,7 @@ function normalizeSchedule(value, { tz, starts } = {}) {
     }
   }
   out.tz = zone;
-  return out;
+  return lengthOf(value, rule.time, out);
 }
 
 // then_action body value -> null (remind me: the default), { kind: 'prompt', task_id, terminal_id, text } (a session of the owner engine) or
@@ -383,6 +406,25 @@ function occurrencesIn(schedule, fromDate, toDate) {
   return out;
 }
 
+// The end of the occurrence that starts at startMs (a time nextOccurrence gave): its time plus the duration on the same wall-clock day, the next
+// midnight of the zone for an all-day schedule, null for one without a length. A missing wall time (daylight saving) moves forward like a start.
+function endOf(schedule, startMs) {
+  if (!schedule || !Number.isFinite(startMs) || !validZone(schedule.tz)) return null;
+  const day = wallOf(startMs, schedule.tz);
+  if (schedule.all_day) return localToUtc(day.y, day.m, day.d + 1, 0, 0, schedule.tz);
+  if (!Number.isInteger(schedule.duration)) return null;
+  const time = schedule.kind === 'once' ? String(schedule.at || '').slice(11) : (schedule.rule && schedule.rule.time);
+  if (!validTime(time)) return null;
+  const [hh, mm] = time.split(':').map(Number);
+  return Math.max(startMs, localToUtc(day.y, day.m, day.d, hh, mm + schedule.duration, schedule.tz));
+}
+// The same schedule apart from its length (duration, all day): a change of only the length keeps the times it fires at.
+function sameTiming(a, b) {
+  if (!a || !b) return false;
+  const timing = ({ duration, all_day: allDay, ...rest }) => JSON.stringify(rest);
+  return timing(a) === timing(b);
+}
+
 // HH:mm of an instant in a zone (the busy note of a prompt).
 const clockIn = (ms, tz) => { const w = wallOf(ms, tz); return `${pad(w.hh)}:${pad(w.mm)}`; };
 
@@ -392,11 +434,23 @@ function dayList(days) {
   if (names.length === 1) return names[0];
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
+// "for 1 hour 30 minutes", "for 45 minutes", "for 2 hours", or "all day".
+function lengthText(schedule) {
+  if (schedule.all_day) return 'all day';
+  if (!Number.isInteger(schedule.duration)) return null;
+  const hours = Math.floor(schedule.duration / 60);
+  const minutes = schedule.duration % 60;
+  const words = [];
+  if (hours) words.push(hours === 1 ? '1 hour' : `${hours} hours`);
+  if (minutes) words.push(minutes === 1 ? '1 minute' : `${minutes} minutes`);
+  return `for ${words.join(' ')}`;
+}
 // "Every Monday at 09:00", "Once on 2026-12-01 at 10:00", "Every year on 11-15 at 09:00", "Every year on lunar month 10, day 7 at 09:00" ("lunar leap
-// month 6"), parts after " · ": "birthday" or "anniversary", "starting <date>", "until <date>", "ends after <n> times".
+// month 6"), parts after " · ": "birthday" or "anniversary", the length ("for 1 hour 30 minutes", "all day"), "starting <date>", "until <date>",
+// "ends after <n> times".
 function describe(schedule) {
   if (!schedule) return null;
-  if (schedule.kind === 'once') return `Once on ${schedule.at.slice(0, 10)} at ${schedule.at.slice(11)}`;
+  if (schedule.kind === 'once') return [`Once on ${schedule.at.slice(0, 10)} at ${schedule.at.slice(11)}`, lengthText(schedule)].filter(Boolean).join(' · ');
   const { rule } = schedule;
   let head;
   if (rule.freq === 'daily' || (rule.freq === 'every' && rule.interval === 1) || (rule.freq === 'weekly' && rule.days.length === 7)) head = `Every day at ${rule.time}`;
@@ -408,6 +462,7 @@ function describe(schedule) {
   else head = `Every ${rule.interval} days at ${rule.time}`;
   const parts = [head];
   if (rule.occasion) parts.push(rule.occasion); // "birthday" or "anniversary"
+  if (lengthText(schedule)) parts.push(lengthText(schedule));
   if (schedule.starts) parts.push(`starting ${schedule.starts}`);
   if (schedule.ends && schedule.ends.kind === 'on') parts.push(`until ${schedule.ends.date}`);
   if (schedule.ends && schedule.ends.kind === 'after') parts.push(schedule.ends.count === 1 ? 'ends after 1 time' : `ends after ${schedule.ends.count} times`);
@@ -435,7 +490,7 @@ function preview(value, nowMs, { tz } = {}) {
 const systemZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } };
 
 module.exports = {
-  CAPABILITY, YEARLY_CAPABILITY, FREQS, CALENDARS, OCCASIONS, RANGE_DAYS, DAY_NAMES, PROMPT_MAX, SCRIPT_MAX, SCRIPT_TIMEOUT_DEFAULT, SCRIPT_TIMEOUT_MAX, ScheduleError,
-  normalizeSchedule, normalizeThenAction, nextOccurrence, occurrencesBetween, occurrencesIn, upcoming, describe, preview,
+  CAPABILITY, YEARLY_CAPABILITY, DURATION_CAPABILITY, DURATION_MAX, FREQS, CALENDARS, OCCASIONS, RANGE_DAYS, DAY_NAMES, PROMPT_MAX, SCRIPT_MAX, SCRIPT_TIMEOUT_DEFAULT, SCRIPT_TIMEOUT_MAX, ScheduleError,
+  normalizeSchedule, normalizeThenAction, nextOccurrence, occurrencesBetween, occurrencesIn, upcoming, describe, preview, endOf, sameTiming,
   localToUtc, localDateOf, dateText, clockIn, validZone, systemZone,
 };

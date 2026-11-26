@@ -615,6 +615,11 @@ test('schedules: --at, --every with --time, --starts, --ends, --prompt with --se
       [['add', 'x', '--every', 'daily', '--time', '09:00', '--ends', 'soon'], /--ends must be a date/],
       [['add', 'x', '--prompt', 'Run it'], /--prompt needs --session/],
       [['update', '1', '--no-schedule', '--at', '2026-12-01T10:00'], /--no-schedule cannot be used/],
+      [['add', 'x', '--duration', '30'], /--duration is part of the schedule: add --at or --every/],
+      [['update', '1', '--all-day'], /--all-day is part of the schedule/],
+      [['add', 'x', '--at', '2026-12-01T10:00', '--duration', '30', '--all-day'], /--duration or --all-day, not both/],
+      [['add', 'x', '--at', '2026-12-01T10:00', '--duration', 'an hour'], /--duration needs minutes or hours and minutes/],
+      [['add', 'x', '--at', '2026-12-01T23:30', '--duration', '1h'], /from 23:30 it can last at most 30 minutes/],
     ]) {
       const result = await run(args, { env });
       assert.equal(result.code, 1, args.join(' '));
@@ -642,6 +647,15 @@ test('schedules: --at, --every with --time, --starts, --ends, --prompt with --se
     assert.deepEqual([monthly.schedule.rule, monthly.schedule.ends, monthly.then_action], [{ freq: 'monthly', day: 15, time: '08:00' }, { kind: 'on', date: '2027-03-31' }, null]);
     assert.equal((await run(['update', '2', '--every', 'every:3d', '--time', '07:00'], { env })).code, 0);
     assert.equal(server.service.get(2).schedule.rule.interval, 3);
+    const meeting = await run(['add', 'Review', '--every', 'weekly:mon', '--time', '14:00', '--duration', '1h30m', '--json'], { env });
+    assert.equal(meeting.code, 0, meeting.stderr);
+    assert.deepEqual([JSON.parse(meeting.stdout).schedule.duration, JSON.parse(meeting.stdout).schedule_text], [90, 'Every Monday at 14:00 \u00b7 for 1 hour 30 minutes']);
+    const holiday = await run(['add', 'Holiday', '--at', '2026-12-25T08:00', '--all-day'], { env });
+    assert.match(holiday.stdout, /\n  Once on 2026-12-25 at 08:00 \u00b7 all day \u00b7 next 12-25 08:00\n$/);
+    const minutes = await run(['update', String(JSON.parse(meeting.stdout).id), '--every', 'weekly:mon', '--time', '14:00', '--duration', '45', '--json'], { env });
+    assert.deepEqual([JSON.parse(minutes.stdout).schedule.duration, JSON.parse(minutes.stdout).runs], [45, 0]);
+    const previewed = await run(['preview', '--every', 'daily', '--time', '09:00', '--duration', '2h'], { env });
+    assert.match(previewed.stdout, /^Every day at 09:00 \u00b7 for 2 hours\n/);
     const cleared = await run(['update', '1', '--no-schedule', '--json'], { env });
     assert.equal(cleared.code, 0, cleared.stderr);
     assert.deepEqual([JSON.parse(cleared.stdout).schedule, JSON.parse(cleared.stdout).next_at], [null, null]);

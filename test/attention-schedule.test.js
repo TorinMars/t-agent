@@ -209,6 +209,65 @@ test('occurrencesIn: the days of once and every repeat in a range, with starts, 
   assert.deepEqual(s.occurrencesIn(null, '2026-11-01', '2026-11-30'), []);
 });
 
+// ---- Duration and all day ("Duration and all day" in docs/design/attention-schedules.md) ----
+test('a duration or all day: validated, the end on the same day, canonical at the end of the schedule, the same when sent again', () => {
+  const once = s.normalizeSchedule({ all_day: false, duration: 90, tz: TPE, at: '2026-12-01T10:00', kind: 'once' });
+  assert.equal(JSON.stringify(once), '{"kind":"once","at":"2026-12-01T10:00","tz":"Asia/Taipei","duration":90}');
+  assert.equal(JSON.stringify(s.normalizeSchedule(once)), JSON.stringify(once), 'idempotent');
+  const weekly = repeat({ freq: 'weekly', days: [1], time: '09:00' }, { all_day: true, ends: { kind: 'after', count: 3 }, duration: null });
+  assert.equal(JSON.stringify(weekly), '{"kind":"repeat","rule":{"freq":"weekly","days":[1],"time":"09:00"},"ends":{"kind":"after","count":3},"tz":"Asia/Taipei","all_day":true}');
+  assert.equal(JSON.stringify(s.normalizeSchedule(weekly)), JSON.stringify(weekly), 'idempotent');
+  assert.equal(JSON.stringify(repeat({ freq: 'daily', time: '09:00' }, { all_day: false })), '{"kind":"repeat","rule":{"freq":"daily","time":"09:00"},"tz":"Asia/Taipei"}', 'all_day false is left out');
+  // Up to midnight exactly: 23:00 for 60 minutes is accepted, 61 is not; the same for a repeat's rule.time.
+  assert.equal(s.normalizeSchedule({ kind: 'once', at: '2026-12-01T23:00', duration: 60 }, { tz: TPE }).duration, 60);
+  assert.equal(repeat({ freq: 'daily', time: '00:00' }, { duration: s.DURATION_MAX }).duration, 1439);
+  const refuses = (value, pattern) => assert.throws(() => s.normalizeSchedule(value, { tz: TPE, starts: '2026-11-20' }), error => error instanceof s.ScheduleError && pattern.test(error.message), JSON.stringify(value));
+  refuses({ kind: 'once', at: '2026-12-01T23:00', duration: 61 }, /^A schedule must end on the day it starts: from 23:00 it can last at most 60 minutes$/);
+  refuses({ kind: 'repeat', rule: { freq: 'daily', time: '22:30' }, duration: 120 }, /from 22:30 it can last at most 90 minutes/);
+  refuses({ kind: 'once', at: '2026-12-01T10:00', duration: 0 }, /schedule.duration must be a number of minutes from 1 to 1439/);
+  refuses({ kind: 'once', at: '2026-12-01T00:00', duration: 1440 }, /from 1 to 1439/);
+  refuses({ kind: 'once', at: '2026-12-01T10:00', duration: 1.5 }, /from 1 to 1439/);
+  refuses({ kind: 'once', at: '2026-12-01T10:00', duration: '90' }, /from 1 to 1439/);
+  refuses({ kind: 'once', at: '2026-12-01T10:00', duration: 30, all_day: true }, /lasts all day has no duration/);
+  refuses({ kind: 'repeat', rule: { freq: 'daily', time: '09:00' }, all_day: 'yes' }, /all_day must be true or false/);
+  refuses({ kind: 'repeat', rule: { freq: 'daily', time: '09:00', duration: 30 } }, /schedule.rule has an unknown field: duration/);
+  assert.ok(s.sameTiming(once, s.normalizeSchedule({ kind: 'once', at: '2026-12-01T10:00', all_day: true }, { tz: TPE })), 'only the length differs');
+  assert.ok(!s.sameTiming(once, s.normalizeSchedule({ kind: 'once', at: '2026-12-01T11:00', duration: 90 }, { tz: TPE })));
+});
+
+test('firing stays at the start; endOf is the start plus the duration on the wall clock, the next midnight for all day, null without a length', () => {
+  const now = at('2026-11-20T00:00:00Z');
+  const meeting = repeat({ freq: 'daily', time: '09:00' }, { duration: 90 });
+  const start = s.nextOccurrence(meeting, now);
+  assert.equal(iso(start), '2026-11-20T01:00:00.000Z', 'the same time as without a duration');
+  assert.deepEqual(s.upcoming(meeting, now, 2), s.upcoming(repeat({ freq: 'daily', time: '09:00' }), now, 2));
+  assert.deepEqual(s.occurrencesIn(meeting, '2026-11-20', '2026-11-21'), ['2026-11-20', '2026-11-21'], 'days only');
+  assert.equal(iso(s.endOf(meeting, start)), '2026-11-20T02:30:00.000Z');
+  assert.equal(iso(s.endOf(s.normalizeSchedule({ kind: 'once', at: '2026-12-01T23:00', duration: 60 }, { tz: TPE }), at('2026-12-01T15:00:00Z'))), '2026-12-01T16:00:00.000Z', 'midnight');
+  const holiday = repeat({ freq: 'yearly', calendar: 'solar', month: 12, day: 25, time: '08:00' }, { all_day: true });
+  assert.equal(iso(s.endOf(holiday, s.nextOccurrence(holiday, now))), '2026-12-25T16:00:00.000Z', 'the next midnight in Taipei');
+  assert.equal(s.endOf(repeat({ freq: 'daily', time: '09:00' }), start), null);
+  assert.equal(s.endOf(null, start), null);
+  // New York, 2027-03-14: 01:00 for 120 minutes ends at 03:00 on the wall clock, one real hour later (02:00 to 03:00 does not exist).
+  const spring = repeat({ freq: 'daily', time: '01:00' }, { duration: 120 }, NY);
+  const springStart = s.nextOccurrence(spring, at('2027-03-14T00:00:00Z'));
+  assert.deepEqual([iso(springStart), iso(s.endOf(spring, springStart))], ['2027-03-14T06:00:00.000Z', '2027-03-14T07:00:00.000Z']);
+});
+
+test('the sentence of a length', () => {
+  const once = extra => s.describe(s.normalizeSchedule({ kind: 'once', at: '2026-12-01T10:00', ...extra }, { tz: TPE }));
+  assert.equal(once({ duration: 90 }), 'Once on 2026-12-01 at 10:00 · for 1 hour 30 minutes');
+  assert.equal(once({ duration: 45 }), 'Once on 2026-12-01 at 10:00 · for 45 minutes');
+  assert.equal(once({ duration: 1 }), 'Once on 2026-12-01 at 10:00 · for 1 minute');
+  assert.equal(once({ duration: 60 }), 'Once on 2026-12-01 at 10:00 · for 1 hour');
+  assert.equal(once({ duration: 121 }), 'Once on 2026-12-01 at 10:00 · for 2 hours 1 minute');
+  assert.equal(once({ all_day: true }), 'Once on 2026-12-01 at 10:00 · all day');
+  assert.equal(s.describe(repeat({ freq: 'yearly', month: 11, day: 15, occasion: 'birthday', time: '09:00' }, { all_day: true, ends: { kind: 'on', date: '2030-12-31' } })),
+    'Every year on 11-15 at 09:00 · birthday · all day · until 2030-12-31');
+  assert.equal(s.preview({ kind: 'repeat', rule: { freq: 'daily', time: '09:00' }, duration: 30 }, at('2026-11-20T00:00:00Z'), { tz: TPE }).text, 'Every day at 09:00 · for 30 minutes');
+  assert.match(s.preview({ kind: 'once', at: '2026-12-01T23:30', duration: 45 }, 0, { tz: TPE }).error, /at most 30 minutes/);
+});
+
 test('the sentences, notes and messages read as whole Chinese sentences', () => {
   const sandbox = { TALocalKeys: { get: () => 'zh', set() {} } };
   sandbox.window = sandbox;
@@ -223,11 +282,18 @@ test('the sentences, notes and messages read as whole Chinese sentences', () => 
     'A weekly rule needs at least one day (schedule.rule.days, Monday = 1)', 'schedule has an unknown field: colour',
     'Every year on 11-15 at 09:00 \u00b7 birthday', 'Every year on lunar month 10, day 7 at 09:00', 'Every year on lunar leap month 6, day 1 at 09:00 \u00b7 anniversary',
     'There is no day 30 in month 2', 'This date does not come in the next 100 years',
+    'Once on 2026-12-01 at 10:00 \u00b7 for 1 hour 30 minutes', 'Every day at 09:00 \u00b7 all day \u00b7 until 2027-01-31',
+    'A schedule must end on the day it starts: from 23:00 it can last at most 60 minutes', 'A schedule that lasts all day has no duration (schedule.duration)',
   ]) {
     const zh = t(text);
     assert.ok(HAN.test(zh), `${text} -> ${zh}`);
     assert.doesNotMatch(zh.replace(/schedule\.rule\.days|colour/g, ''), /\b(Every|at|until|ends|times|Monday|Script|session)\b/, `${text} -> ${zh}`);
   }
   assert.equal(t('Every Monday and Thursday at 09:00'), '\u6bcf\u5468\u4e00\u548c\u5468\u56db 09:00');
+  // Each length reads as its own template (the longest fixed text wins, so "for {1} minutes" never takes "1 hour 30").
+  for (const [text, zh] of [['for 1 minute', '1 \u5206\u949f'], ['for 45 minutes', '45 \u5206\u949f'], ['for 1 hour', '1 \u5c0f\u65f6'], ['for 3 hours', '3 \u5c0f\u65f6'],
+    ['for 1 hour 1 minute', '1 \u5c0f\u65f6 1 \u5206\u949f'], ['for 1 hour 30 minutes', '1 \u5c0f\u65f6 30 \u5206\u949f'], ['for 2 hours 1 minute', '2 \u5c0f\u65f6 1 \u5206\u949f'],
+    ['for 2 hours 15 minutes', '2 \u5c0f\u65f6 15 \u5206\u949f']]) assert.equal(t(text), `\u6301\u7eed ${zh}`, text);
+  assert.equal(t('all day'), '\u5168\u5929');
   assert.equal(t('Every year on lunar leap month 6, day 1 at 09:00'), '\u6bcf\u5e74\u519c\u5386\u95f06\u67081\u65e5 09:00', 'the leap template, not the plain one');
 });

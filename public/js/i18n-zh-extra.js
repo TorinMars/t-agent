@@ -52,6 +52,15 @@ I18n.add({
   'until {1}': '至 {1}',
   'ends after 1 time': '共 1 次',
   'ends after {1} times': '共 {1} 次',
+  'for 1 minute': '持续 1 分钟',
+  'for {1} minutes': '持续 {1} 分钟',
+  'for 1 hour': '持续 1 小时',
+  'for {1} hours': '持续 {1} 小时',
+  'for 1 hour 1 minute': '持续 1 小时 1 分钟',
+  'for 1 hour {1} minutes': '持续 1 小时 {1} 分钟',
+  'for {1} hours 1 minute': '持续 {1} 小时 1 分钟',
+  'for {1} hours {2} minutes': '持续 {1} 小时 {2} 分钟',
+  'all day': '全天',
 
   // ---- New session dialog: a session kind the task's engine cannot run yet (h5.js showSessionKinds) ----
   '{1} needs an update first': '{1} 需要先更新',

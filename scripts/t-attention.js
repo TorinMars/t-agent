@@ -23,10 +23,10 @@ const GROUPS = [
 ];
 const STATUS_LABELS = { todo: 'To do', working: 'Working', waiting_user: 'Needs you', review: 'Review', done: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
 const VALUE_FLAGS = new Set(['url', 'token', 'title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'note', 'q', 'limit', 'timeout', 'name', 'kind', 'parent', 'custom-status', 'result', 'before', 'after', 'source',
-  'at', 'every', 'time', 'starts', 'ends', 'prompt', 'session', 'script', 'script-file', 'task', 'timeout-min']);
-const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge', 'top', 'bottom', 'tree', 'dry-run', 'no-schedule']);
+  'at', 'every', 'time', 'starts', 'ends', 'duration', 'prompt', 'session', 'script', 'script-file', 'task', 'timeout-min']);
+const BOOL_FLAGS = new Set(['json', 'all', 'help', 'no-check', 'no-hooks', 'yes', 'purge', 'top', 'bottom', 'tree', 'dry-run', 'no-schedule', 'all-day']);
 // Schedules ("Scheduled and recurring tasks" in docs/design/attention-schedules.md): add and update take these; update also --no-schedule.
-const SCHEDULE_FLAGS = ['at', 'every', 'time', 'starts', 'ends', 'prompt', 'session', 'script', 'script-file', 'task', 'timeout-min'];
+const SCHEDULE_FLAGS = ['at', 'every', 'time', 'starts', 'ends', 'duration', 'all-day', 'prompt', 'session', 'script', 'script-file', 'task', 'timeout-min'];
 // The flags of the "Then" part (the action at the time); the others are the "When" part, the only ones `preview` takes.
 const ACTION_FLAGS = ['prompt', 'session', 'script', 'script-file', 'task', 'timeout-min'];
 const WHEN_FLAGS = SCHEDULE_FLAGS.filter(name => !ACTION_FLAGS.includes(name));
@@ -51,7 +51,7 @@ const FIELD_FLAGS = { title: 'title', notes: 'notes', priority: 'priority', due:
 const ITEM_FLAGS = ['title', 'notes', 'priority', 'due', 'status', 'ref', 'reason', 'link', 'label', 'parent', 'custom-status', 'result'];
 const LISTENER_HOOK = path.resolve(__dirname, '..', 'plugins', 'listeners', 'claude', 'hook.js');
 
-// --at, --every, --time, --starts, --ends, --prompt, --session, --script / --script-file, --task and --timeout-min -> the schedule and then_action of
+// --at, --every, --time, --starts, --ends, --duration, --all-day, --prompt, --session, --script / --script-file, --task and --timeout-min -> the schedule and then_action of
 // the body (the server checks them again and adds its time zone). --no-schedule clears the schedule; --prompt '' or --script '' goes back to a reminder.
 // A script can be set only with a token the person made in Settings: a terminal's own token gets 403 SCRIPT_NEEDS_PERSON from the server.
 function scheduleFrom(flags, { update = false } = {}) {
@@ -60,11 +60,16 @@ function scheduleFrom(flags, { update = false } = {}) {
   if (flags['no-schedule'] && WHEN_FLAGS.some(has)) throw new UsageError('--no-schedule cannot be used with --at or --every');
   if (has('at') && has('every')) throw new UsageError('Give --at (once) or --every (repeats), not both');
   for (const name of ['time', 'starts', 'ends']) if (has(name) && !has('every')) throw new UsageError(`--${name} is for a repeating task: add --every`);
+  for (const name of ['duration', 'all-day']) if (has(name) && !has('at') && !has('every')) throw new UsageError(`--${name} is part of the schedule: add --at or --every`);
+  if (has('duration') && has('all-day')) throw new UsageError('Give --duration or --all-day, not both');
+  const length = {};
+  if (has('duration')) length.duration = durationMinutes(flags.duration);
+  if (has('all-day')) length.all_day = true;
   if (flags['no-schedule']) body.schedule = null;
   if (has('at')) {
     const at = String(flags.at).trim().replace(' ', 'T');
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(at)) throw new UsageError(`--at needs a date and time like 2026-12-01T10:00: ${flags.at}`);
-    body.schedule = { kind: 'once', at };
+    body.schedule = { kind: 'once', at, ...length };
   }
   if (has('every')) {
     const spec = String(flags.every).trim().toLowerCase();
@@ -90,7 +95,7 @@ function scheduleFrom(flags, { update = false } = {}) {
       else if (/^\d{4}-\d{2}-\d{2}$/.test(ends)) schedule.ends = { kind: 'on', date: ends };
       else throw new UsageError(`--ends must be a date (YYYY-MM-DD), after:N or never: ${flags.ends}`);
     }
-    body.schedule = schedule;
+    body.schedule = Object.assign(schedule, length);
   }
   const scripted = has('script') || has('script-file') || has('task') || has('timeout-min');
   if (scripted && (has('prompt') || has('session'))) throw new UsageError('Give --prompt (send to a session) or --script (run a script), not both');
@@ -108,6 +113,16 @@ function scheduleFrom(flags, { update = false } = {}) {
     }
   }
   return body;
+}
+
+// --duration 90, 90m, 1h30m (or 1h30) or 2h -> minutes (the server checks the range and that it ends on the same day).
+function durationMinutes(value) {
+  const text = String(value).trim().toLowerCase();
+  const match = /^(?:(\d{1,2})h)?(?:(\d{1,4})m?)?$/.exec(text);
+  if (!match || (match[1] === undefined && match[2] === undefined)) {
+    throw new UsageError(`--duration needs minutes or hours and minutes like 90, 45m, 2h or 1h30m: ${value}`);
+  }
+  return Number(match[1] || 0) * 60 + Number(match[2] || 0);
 }
 
 // --script T or --script-file F, --task <id>, --timeout-min N -> { kind: 'script', ... } (or a reminder again for --script '' on update).
@@ -220,6 +235,10 @@ Schedule (add, update)
     |every:3d --time 09:00  repeats (done puts it back
                             for the next time)
   --starts YYYY-MM-DD  --ends YYYY-MM-DD|after:N|never
+  --duration 1h30m | --all-day
+                            how long it lasts (minutes,
+                            45m, 2h, 1h30m; it ends the
+                            same day) or the whole day
   --prompt T --session <task>:<terminal>
                             then type T into that
                             session (default: remind)

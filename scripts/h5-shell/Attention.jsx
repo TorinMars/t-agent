@@ -39,9 +39,13 @@ import {
   linkParts, safeLink, sessionOf, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
   WEEKDAYS, applyChange, momentOf, momentTokens, tagItem, thenOf, timedSections,
 } from './attention-model.mjs';
-import { FREQUENCIES, OCCASIONS, hasSchedule, retryActions, scheduleForm, scheduleFromForm, schedulePatch, scriptTerminal, sessionTasks, targetName, yearlyOn, rowLine } from './attention-schedule.mjs';
+import {
+  DURATIONS, FREQUENCIES, MIDNIGHT_ERROR, OCCASIONS, durationApplies, durationChoice, durationFromEnd, durationOn, formEnd, hasSchedule, retryActions, scheduleForm, scheduleFromForm,
+  schedulePatch, scriptTerminal, sessionTasks, targetName, yearlyOn, rowLine,
+} from './attention-schedule.mjs';
 import { MONTHS, lunarParts } from './calendar-model.mjs';
 import { AttentionCalendar } from './AttentionCalendar.jsx';
+import { AttentionSearch } from './AttentionSearch.jsx';
 import { DIALOG_RADIUS, TOUCH } from './theme.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
@@ -583,7 +587,8 @@ const ENDS_CHOICES = [['never', 'Never'], ['on', 'On a date'], ['after', 'After 
 // "Next time: Mon 11-24 09:00 · Every Monday at 09:00": the owner engine's preview of the schedule in the form (`POST <engine>/schedule/preview`, 300 ms
 // after the last change), or what the form still lacks. An engine that cannot preview (an older one, a read copy) shows nothing.
 function useSchedulePreview(engine, form) {
-  const made = form.when === undefined || form.when === 'none' ? null : scheduleFromForm({ ...form, then: 'remind' });
+  // The times only: an engine without `attention:duration` would refuse the length, and the preview does not depend on it.
+  const made = form.when === undefined || form.when === 'none' ? null : scheduleFromForm({ ...form, then: 'remind', duration: '', allDay: false, endError: '' });
   const body = made && !made.error ? JSON.stringify(made.schedule) : '';
   const [answer, setAnswer] = useState(null);
   useEffect(() => {
@@ -639,11 +644,63 @@ export function YearlyFields({ ids, values, put, occasion }) {
   );
 }
 
+// Duration, Ends at and All day ("Duration and all day" in docs/design/page-attention-calendar.md): the Duration select (Not set, 15 min ... 3 hours,
+// Custom… with a minutes field) and the "Ends at" time follow each other; an end that is not after the start (it would be after midnight) is refused
+// with a line under them, and so is a start and duration that pass midnight. "All day" is a checkbox (the form is saved with a button): it hides the
+// time, the duration and the end (the reminder keeps its time, 09:00 for a new one).
+export function DurationFields({ form, setForm }) {
+  const put = patch => setForm(current => ({ ...current, ...patch }));
+  const choice = durationChoice(form);
+  const derived = formEnd(form);
+  const end = form.endInput != null ? form.endInput : derived || '';
+  const error = form.allDay ? '' : form.endError || (derived === null ? MIDNIGHT_ERROR : '');
+  return (
+    <Box id="h5-attention-duration-row" sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      {form.allDay ? null : (
+        <Box sx={PAIR}>
+          <TextField
+            id="h5-attention-duration" select label={t('Duration')} size="small" value={choice} slotProps={{ select: { native: true } }}
+            onChange={event => { const value = event.target.value; put(value === 'custom' ? { durationCustom: true, duration: form.duration || '60', endInput: null, endError: '' } : { durationCustom: false, duration: value, endInput: null, endError: '' }); }}
+          >
+            {DURATIONS.map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
+          </TextField>
+          <TextField
+            id="h5-attention-ends-at" label={t('Ends at')} size="small" type="time" value={end} slotProps={{ inputLabel: { shrink: true } }}
+            onChange={event => {
+              const value = event.target.value;
+              if (!value) { put({ duration: '', durationCustom: false, endInput: null, endError: '' }); return; }
+              const made = durationFromEnd(form, value);
+              put(made.error ? { endInput: value, endError: made.error } : { duration: made.duration, durationCustom: !DURATIONS.some(entry => entry.value === made.duration), endInput: null, endError: '' });
+            }}
+          />
+        </Box>
+      )}
+      {!form.allDay && choice === 'custom' ? (
+        <TextField
+          id="h5-attention-duration-minutes" label={t('Minutes')} size="small" type="number" value={form.duration} sx={{ maxWidth: 200 }}
+          onChange={event => put({ duration: event.target.value, endInput: null, endError: '' })} slotProps={{ htmlInput: { min: 1, max: 1439, inputMode: 'numeric' } }}
+        />
+      ) : null}
+      {error ? <Box id="h5-attention-duration-error" role="alert" sx={{ typography: 'body2', color: 'error.light' }}>{t(error)}</Box> : null}
+      <FormControlLabel
+        id="h5-attention-all-day-row" sx={{ mx: 0, '& .MuiCheckbox-root': { ml: -1 } }}
+        control={<Checkbox size="small" sx={{ [TOUCH]: { p: '12px' } }} checked={Boolean(form.allDay)} onChange={event => put({ allDay: event.target.checked, endInput: null, endError: '' })} slotProps={{ input: { id: 'h5-attention-all-day' } }} />}
+        label={t('All day')}
+      />
+    </Box>
+  );
+}
+
 // `fixed`: the New event dialog (AttentionCalendar.jsx) chose Once or Repeats with its own chips, so the When toggle is left out. `yearly`: the item's
-// engine takes yearly rules (`yearlyOn`); "Every year" is offered then, or when the item already has one.
-export function ScheduleFields({ form, setForm, item, state, fixed = false, yearly = false }) {
+// engine takes yearly rules (`yearlyOn`); "Every year" is offered then, or when the item already has one. `duration`: the engine takes a duration and
+// all day (`durationOn`); the Duration row is shown then (or when the item already has one), for Once and for a repeat that is no birthday.
+export function ScheduleFields({ form, setForm, item, state, fixed = false, yearly = false, duration = false }) {
   const engine = engineOf(item);
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
+  // A new start moves the end with it (the duration stays); a refused end typed before is dropped.
+  const setStart = key => event => setForm(current => ({ ...current, [key]: event.target.value, endInput: null, endError: '' }));
+  const timing = (duration || Boolean(form.duration) || Boolean(form.allDay)) && durationApplies(form);
+  const allDay = timing && form.allDay;
   const put = (key, value) => setForm(current => ({ ...current, [key]: value }));
   const preview = useSchedulePreview(engine, form);
   const tasks = useSessionTasks(state, engine, form.when !== 'none' && form.then === 'prompt');
@@ -665,17 +722,19 @@ export function ScheduleFields({ form, setForm, item, state, fixed = false, year
       {form.when === 'once' ? (
         <Box sx={PAIR}>
           <TextField id="h5-attention-once-date" label={t('Date')} size="small" type="date" value={form.onceDate} onChange={set('onceDate')} slotProps={{ inputLabel: { shrink: true } }} />
-          <TextField id="h5-attention-once-time" label={t('Time')} size="small" type="time" value={form.onceTime} onChange={set('onceTime')} slotProps={{ inputLabel: { shrink: true } }} />
+          {allDay ? null : <TextField id="h5-attention-once-time" label={t('Time')} size="small" type="time" value={form.onceTime} onChange={setStart('onceTime')} slotProps={{ inputLabel: { shrink: true } }} />}
         </Box>
       ) : null}
+      {form.when === 'once' && timing ? <DurationFields form={form} setForm={setForm} /> : null}
       {form.when === 'repeat' ? (
         <>
           <Box sx={PAIR}>
             <TextField id="h5-attention-repeat-freq" select label={t('Repeats')} size="small" value={form.freq} onChange={set('freq')} slotProps={{ select: { native: true } }}>
               {FREQUENCIES.filter(entry => entry.value !== 'yearly' || yearly || form.freq === 'yearly').map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
             </TextField>
-            <TextField id="h5-attention-repeat-time" label={t('At')} size="small" type="time" value={form.time} onChange={set('time')} slotProps={{ inputLabel: { shrink: true } }} />
+            {allDay ? null : <TextField id="h5-attention-repeat-time" label={t('At')} size="small" type="time" value={form.time} onChange={setStart('time')} slotProps={{ inputLabel: { shrink: true } }} />}
           </Box>
+          {timing ? <DurationFields form={form} setForm={setForm} /> : null}
           {form.freq === 'weekly' ? (
             <ToggleButtonGroup
               id="h5-attention-repeat-days" value={form.days} aria-label={t('Days of the week')} onChange={(event, value) => put('days', value.map(Number).sort((a, b) => a - b))}
@@ -856,7 +915,7 @@ function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui,
           <Box id="h5-attention-edit-reason" sx={{ p: 2, borderRadius: 1, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], ...BODY, whiteSpace: 'pre-wrap' }}><Linked text={item.attention_reason} /></Box>
         ) : null}
         <Field id="h5-attention-edit-name" label="Title" value={form.title} onChange={set('title')} htmlInput={{ maxLength: 300 }} />
-        {timed ? <ScheduleFields form={form} setForm={setForm} item={item} state={state} yearly={yearlyOn(state.sources, engineOf(item)) === true} /> : null}
+        {timed ? <ScheduleFields form={form} setForm={setForm} item={item} state={state} yearly={yearlyOn(state.sources, engineOf(item)) === true} duration={durationOn(state.sources, engineOf(item)) === true} /> : null}
         <Field id="h5-attention-edit-notes" label="Notes" value={form.notes} onChange={set('notes')} multiline minRows={3} maxRows={12} htmlInput={{ maxLength: 20000 }} />
         {/* The link: an http(s) address or a page path of this app; the server checks it (a refusal shows its message in the error line). */}
         <Field
@@ -1170,6 +1229,7 @@ export function AttentionPanel({ state, ui }) {
   const [showClosed, setShowClosed] = useState(false);
   const [editing, setEditing] = useState(null); // the id of the task in the edit view
   const [rejecting, setRejecting] = useState(null); // the task whose Reject asks for a reason
+  const [searching, setSearching] = useState(false); // the search view is open
   const [busy, setBusy] = useState(() => new Set()); // the ids with a row button on its way (one at a time per task)
   const busyRef = useRef(new Set());
   const collapsedText = useShared(COLLAPSED_KEY);
@@ -1250,7 +1310,7 @@ export function AttentionPanel({ state, ui }) {
     const timer = setTimeout(drop, Math.max(0, focusSince.current.at + FOCUS_WAIT_MS - Date.now()));
     return () => clearTimeout(timer);
   }, [open, attention.focus, items, attention.engines]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!open) { setEditing(null); setRejecting(null); } }, [open]);
+  useEffect(() => { if (!open) { setEditing(null); setRejecting(null); setSearching(false); } }, [open]);
   const item = editing == null ? null : items.find(entry => keyOf(entry) === editing);
   // The task went away: deleted, or its engine left the list (then nothing is said: it was not deleted).
   useEffect(() => {
@@ -1347,7 +1407,7 @@ export function AttentionPanel({ state, ui }) {
   const counts = attention.status === 'ready' && items.length ? t(`Needs you: ${needCount} · Open: ${openCount}`) : '';
   const contents = (
     <>
-      <Box component="header" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 56, pl: side ? 2 : 0.5, pr: side ? 1 : 2, borderBottom: 1, borderColor: 'divider' }}>
+      <Box component="header" sx={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 56, pl: side ? 2 : 0.5, pr: 1, borderBottom: 1, borderColor: 'divider' }}>
         {side ? null : <IconButton id="h5-attention-close" {...named(t('Back'))} onClick={close}><Icon name="back" size={22} /></IconButton>}
         <Box sx={{ flex: '1 1 auto', minWidth: 0, pl: side ? 0 : 0.5 }}>
           <Typography id="h5-attention-title" variant="h6" component="h2" translate="no" noWrap sx={{ lineHeight: 1.3 }}>T-Attention</Typography>
@@ -1356,6 +1416,8 @@ export function AttentionPanel({ state, ui }) {
             <Box component="span" id="h5-attention-state" sx={{ color: 'warning.light' }}>{live ? '' : `${counts ? ' · ' : ''}${t('Not live: reconnecting…')}`}</Box>
           </Typography>
         </Box>
+        {/* Search: the same items in both views ("Search" in docs/design/page-attention-calendar.md). */}
+        <IconButton id="h5-attention-search" {...named(t('Search'))} onClick={() => setSearching(true)}><Icon name="search" size={22} /></IconButton>
         {side ? <IconButton id="h5-attention-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton> : null}
       </Box>
       {/* List | Calendar: one exclusive toggle under the header, full width on a phone. */}
@@ -1382,6 +1444,7 @@ export function AttentionPanel({ state, ui }) {
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
         sessionOf={sessionFor} shownOf={shownOf} jump={jump} hint={side && items.some(entry => !['done', 'failed', 'cancelled'].includes(entry.status) && sessionFor(entry))}
       />}
+      {searching ? <AttentionSearch items={items} wide={side} tagOf={tagOf} onOpen={key => { setSearching(false); setEditing(key); }} onClose={() => setSearching(false)} /> : null}
       {rejectItem ? <RejectDialog key={keyOf(rejectItem)} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}
       {/* onLeave: the user goes to a terminal or a file from the context card; the edit view closes, and on a phone the sheet too. */}
       {item ? (

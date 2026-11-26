@@ -106,6 +106,11 @@ export const lunarOfDate = date => lunar.lunarOf(date);
 // no schedule) | null (none: the "No date" list, or a closed item).
 export function kindOf(item) {
   if (!item || CLOSED_STATUSES.includes(item.status)) return null;
+  return eventKind(item);
+}
+// The kind of an item whatever its status (the search lists finished items too): as `kindOf`, null for no date at all.
+export function eventKind(item) {
+  if (!item) return null;
   const schedule = scheduleOf(item);
   if (schedule && schedule.kind === 'once') return 'once';
   if (schedule && schedule.kind === 'repeat') {
@@ -118,7 +123,9 @@ export function kindOf(item) {
 // The agenda's order of the kinds after the timed events: the birthdays and anniversaries (all day), then the to-dos.
 const KIND_RANK = { once: 0, repeat: 0, birthday: 1, anniversary: 1, todo: 2 };
 // A Map 'YYYY-MM-DD' -> [event] of the days from `from` to `to` (both included; at most 400 days, as `occurrencesIn`). An event is { key, item, kind,
-// date, time ('HH:mm' or null), years (the occasion's number on that day, or null), lunar (the rule's lunar date for a lunar rule, else null) }.
+// date, time ('HH:mm' or null), years (the occasion's number on that day, or null), lunar (the rule's lunar date for a lunar rule, else null),
+// duration (whole minutes, `schedule.duration`, or null: drawn 1 hour long), allDay (true for a to do, a birthday, an anniversary and a schedule with
+// `all_day`: the all-day row of the week and day views; then `time` is null) }.
 // The days are those of the schedule's own zone and the time its wall time there (the owner engine's), as the edit view shows them.
 export function calendarEvents(items, from, to) {
   const out = new Map();
@@ -128,15 +135,17 @@ export function calendarEvents(items, from, to) {
     const kind = kindOf(item);
     if (!kind) continue;
     if (kind === 'todo') {
-      if (item.due_date >= from && item.due_date <= to) put({ key: keyOf(item), item, kind, date: item.due_date, time: null, years: null, lunar: null });
+      if (item.due_date >= from && item.due_date <= to) put({ key: keyOf(item), item, kind, date: item.due_date, time: null, years: null, lunar: null, duration: null, allDay: true });
       continue;
     }
     const schedule = scheduleOf(item);
     const rule = schedule.rule || {};
-    const time = schedule.kind === 'once' ? String(schedule.at || '').slice(11, 16) || null : kind === 'birthday' || kind === 'anniversary' ? null : rule.time || null;
+    const allDay = kind === 'birthday' || kind === 'anniversary' || schedule.all_day === true;
+    const time = allDay ? null : schedule.kind === 'once' ? String(schedule.at || '').slice(11, 16) || null : rule.time || null;
+    const duration = !allDay && Number.isInteger(schedule.duration) && schedule.duration > 0 ? schedule.duration : null;
     const lunarRule = rule.freq === 'yearly' && rule.calendar === 'lunar' ? { month: rule.month, day: rule.day, leap: Boolean(rule.leap) } : null;
     for (const date of scheduleRules.occurrencesIn(schedule, from, to)) {
-      put({ key: keyOf(item), item, kind, date, time, years: rule.freq === 'yearly' ? yearsOn(rule, date) : null, lunar: lunarRule });
+      put({ key: keyOf(item), item, kind, date, time, years: rule.freq === 'yearly' ? yearsOn(rule, date) : null, lunar: lunarRule, duration, allDay: allDay || !time });
     }
   }
   for (const list of out.values()) list.sort(compareEvents);

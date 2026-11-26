@@ -14,7 +14,7 @@ import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 import { shallowEqual } from './store.mjs';
 // Drawn from chunks that are loaded when first opened (lazy-screens.jsx).
 import {
-  AttentionPanel, CopyScreen, DesignSheet, FileTreeSheet, LearnScreen, PasteScreen, RetainScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen, UploadScreen, StartCommandDialog,
+  AttentionPanel, CopyScreen, DesignSheet, MouseBallScreen, FileTreeSheet, LearnScreen, PasteScreen, RetainScreen, SettingsDrawer, SwitcherScreen, TaskDialogScreen, UploadScreen, StartCommandDialog,
 } from './lazy-screens.jsx';
 
 // A sheet or dialog that is closed when the page starts is not drawn at all until it is opened the first time (the first render of the page is
@@ -50,6 +50,8 @@ const START_COMMAND_KEYS = ['startCommandDialog'];
 const NEW_TASK_KEYS = ['newTaskOpen', 'sources', 'creatingTask'];
 const NOTICE_KEYS = ['notice'];
 const LEARN_KEYS = ['learnOpen', 'learnTarget', 'wide', 'pane', 'input', 'hasKeyboard'];
+// The mouse ball (MouseBall.jsx): whether it is on here, and what covers or replaces the terminal.
+const BALL_KEYS = ['mouseBall', 'input', 'wide', 'pane', 'empty', 'notebook', 'copyText', 'mindmapOpen', 'learnOpen'];
 const SWITCHER_KEYS = ['switcher']; // the open switcher reads the rest itself (Switcher.jsx), so closed it draws nothing on an activity push
 // What the page itself needs: the layout flags and which sheets and dialogs are open.
 const OPEN = state => ({
@@ -129,6 +131,8 @@ export function App({ ui }) {
       <Lazy open={open.newTask}><Part ui={ui} keys={NEW_TASK_KEYS} part={NewTaskDialog} /></Lazy>
       {/* The session switcher of the single view, over the terminal (Switcher.jsx; opened by the switch button, `#h5-cycle`). */}
       <Lazy open={open.switcher}><Part ui={ui} keys={SWITCHER_KEYS} part={SwitcherScreen} /></Lazy>
+      {/* Over the phone terminal while it is on for this device (lazy-screens.jsx `MouseBallScreen`; nothing is loaded while it is off). */}
+      <Part ui={ui} keys={BALL_KEYS} part={MouseBallScreen} />
       <ColumnStrip ui={ui} />
       <Part ui={ui} keys={NOTICE_KEYS} part={Notice} />
     </ThemeProvider>

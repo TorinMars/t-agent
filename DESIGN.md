@@ -272,3 +272,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.171.0 Terminal start command is kept and re-sent after every restart; one-off backfill script for older multi-word cards
 > v2.171.1 State keys of the backfill script read in checkable form
 > v2.172.0 The English coach selects new, due, highest-error-rate or custom-filtered words. Practise the same selection with direct spelling, sentence gaps or study followed by spelling.
+> v2.172.1 Learn schedules and grades reviews by word. Sentences supply examples, and pronunciation requests mixable playback on supported browsers.

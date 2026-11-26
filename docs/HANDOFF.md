@@ -4,10 +4,10 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 
 The design document is split (2026-11-18): `DESIGN.md` is a small index (topic table, cross-cutting rules, development notes, "Recent versions"), and the text of each area is in its own file under `docs/design/` (for example `terminals.md`, `page-task-list.md`, `attention-notifiers.md`). Open only the files of your area; never read them all.
 
-## Word-only review and phone audio (in development)
+## Word-only review and phone audio (v2.172.1)
 
 - Active Learn queues, grades, due counts, allowance, progress, mistakes and coach data are word-only. Existing sentence text and historical answers stay stored. Examples with repeated targets are left out of single-blank exercises.
-- Pronunciation requests mixable audio when the browser supports the Audio Session API. The previous type is restored when playback ends. The targeted unit tests and both Learn browser scripts passed. Background music playback on a physical phone still needs checking.
+- Pronunciation requests mixable audio when the browser supports the Audio Session API. The previous type is restored when playback ends. The full release suite passed all 3,089 checks. Background music playback on a physical phone still needs checking.
 
 ## Learn coach conversation flexibility (v2.172.0)
 

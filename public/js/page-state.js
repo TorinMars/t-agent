@@ -25,7 +25,7 @@
   const CACHE_KEY = 'ta-page-state';
   const IMPORTED_KEY = 'ta-page-state-imported'; // the parts of this browser's old state already sent: 'keys', 'codec', 'recent'
   const MOVED = [
-    'h5-task-list-tab', 'h5-columns', 'h5-sidebar-collapsed', 'h5-design-outline', 'h5-attention-collapsed', 'h5-attention-add-on', 'h5-attention-view', 'h5-create-on',
+    'h5-task-list-tab', 'h5-columns', 'h5-sidebar-collapsed', 'h5-design-outline', 'h5-attention-collapsed', 'h5-attention-add-on', 'h5-attention-view', 'h5-attention-cal-view', 'h5-create-on',
     'ta-saved-commands-used', 'h5-mindmap-list-folded', 'word-translate', 'ta-lang', 'ta-start-commands',
   ];
   // Kept on the server as JSON (not as the text the browser keeps), so the server can merge it: the recency of saved commands, per command, and the

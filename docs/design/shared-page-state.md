@@ -86,6 +86,7 @@ Every localStorage and sessionStorage key of the page and its chunks (`public/js
 | `h5-attention-collapsed` | local | cache-of-shared-state | the collapsed T-Attention parents (by instance id on the server) |
 | `h5-attention-add-on` | local | cache-of-shared-state | the engine a new T-Attention task goes to (an instance id on the server) |
 | `h5-attention-view` | local | cache-of-shared-state | the T-Attention view: the list or the calendar (`list` / `calendar`) |
+| `h5-attention-cal-view` | local | cache-of-shared-state | the view of the T-Attention calendar (`year` / `month` / `week` / `day`; month when unset); the chosen day is kept only while the page is loaded |
 | `h5-create-on` | local | cache-of-shared-state | the machine "Create on" starts with for a new task or mind map: the one chosen last (an instance id on the server) |
 | `h5-design-outline` | local | cache-of-shared-state | the outline column of the file sheet |
 | `ta-saved-commands-used` | local | cache-of-shared-state | the recency of saved commands (merged per command on the server) |

@@ -218,6 +218,9 @@ function infoHandler(req, res) {
       // attention:yearly: the yearly rule (freq 'yearly': birthdays and anniversaries, solar or lunar dates). An older engine refuses that freq, so a
       // page offers yearly items only on an engine that lists this.
       require('../services/attention-schedule').YEARLY_CAPABILITY,
+      // attention:duration: schedule.duration (minutes from its time, on the same day) and schedule.all_day. An older engine refuses them as unknown
+      // fields, so a page offers a length only on an engine that lists this.
+      require('../services/attention-schedule').DURATION_CAPABILITY,
       // notify:relay: GET /v1/attention/notify-relay/status, PUT /sender, POST / and /test, the one Telegram sender of linked devices (link tokens only).
       // A linked service without it keeps sending by itself and is never chosen as the sender.
       require('../services/attention-relay').CAPABILITY,

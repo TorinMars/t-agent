@@ -69,8 +69,8 @@
 | [shell-notebook-page.md](docs/design/shell-notebook-page.md) | The page side of shell notebooks: the session kind and its sub-list, the view over the terminal area (`scripts/notebook/`, lazy `notebook-ui.js`), the session header and menu, the task list line, cells, long cells that fold (Show all, Z), keys, the code editor, text cells, ops and the stream, SGR output and long outputs, Download .ipynb. | 16 KB |
 | [page-dialogs.md](docs/design/page-dialogs.md) | The one dialog pattern of the page (title, content, actions, widths, full screen, Enter / Escape, errors) and the sheet headers. | 5 KB |
 | [plan-usage-page.md](docs/design/plan-usage-page.md) | Plan usage in the session header: the Claude and Codex plan windows (5 hours, 7 days) as eight thin bars before More, their states, which engine is shown, when the page reads `agent-usage`, the details (popover on a computer, bottom sheet on a phone) with reset times, the pace line and the other engines by account. | 10 KB |
-| [page-attention.md](docs/design/page-attention.md) | T-Attention on the page: one design on both layouts, the panel, rows, edit view, every engine in one list, plugins, marketplace, first-run guide. | 55 KB |
-| [page-attention-calendar.md](docs/design/page-attention-calendar.md) | T-Attention calendar view: the List or Calendar toggle, the Sunday-first month with once, repeating, birthday, anniversary and to-do events, lunar dates and year numbers, the day agenda and Coming up, New event (birthdays and anniversaries, solar or lunar, the capability gate), "Every year" in the edit view and the list row. | 11 KB |
+| [page-attention.md](docs/design/page-attention.md) | T-Attention on the page: one design on both layouts, the panel, rows, edit view, every engine in one list, plugins, marketplace, first-run guide. | 56 KB |
+| [page-attention-calendar.md](docs/design/page-attention-calendar.md) | T-Attention calendar view: the List or Calendar toggle, the Sunday-first month with once, repeating, birthday, anniversary and to-do events, lunar dates and year numbers, the day agenda and Coming up, New event (birthdays and anniversaries, solar or lunar, the capability gate), "Every year" in the edit view and the list row; the Year, Month, Week and Day views (large phone cells, the time grid with durations and overlaps, swipes, the year with its day panel), the search, and the Duration / Ends at / All day fields. | 23 KB |
 | [page-ui-icons.md](docs/design/page-ui-icons.md) | The icon library, self-drawn icons and the mapping table of every icon (update it when you add an icon). | 20 KB |
 | [page-bundles-and-tests.md](docs/design/page-bundles-and-tests.md) | How the page bundles and lazy chunks are built, bundle size and touch targets, the page tests. | 11 KB |
 | [toast.md](docs/design/toast.md) | The global notice function and how the page shows notices. | 3 KB |
@@ -95,8 +95,8 @@
 
 | File | What is in it | Size |
 | --- | --- | --- |
-| [attention-cli-and-listener.md](docs/design/attention-cli-and-listener.md) | The `t-attention` command, the Claude listener plugin, plugin overview and settings, easy listener install, the plugin marketplace, the agent skills. | 58 KB |
-| [attention-schedules.md](docs/design/attention-schedules.md) | T-Attention scheduled and recurring tasks: the schedule data, yearly birthdays and anniversaries (solar or lunar), the page's occurrences, daylight saving time, the timer on the owner, remind / send a prompt / run a script, run now, preview, the CLI flags. | 18 KB |
+| [attention-cli-and-listener.md](docs/design/attention-cli-and-listener.md) | The `t-attention` command, the Claude listener plugin, plugin overview and settings, easy listener install, the plugin marketplace, the agent skills. | 61 KB |
+| [attention-schedules.md](docs/design/attention-schedules.md) | T-Attention scheduled and recurring tasks: the schedule data, yearly birthdays and anniversaries (solar or lunar), duration and all day, the page's occurrences, daylight saving time, the timer on the owner, remind / send a prompt / run a script, run now, preview, the CLI flags. | 21 KB |
 | [attention-copies.md](docs/design/attention-copies.md) | T-Attention read copies on every linked engine: the copy sync, an offline owner "as of", queued and refused actions, no double notification. | 10 KB |
 | [attention-notifiers.md](docs/design/attention-notifiers.md) | Telling the user on another channel: rules, the wait before a message, one Telegram sender, direct messages, Telegram, email, the desktop bubble. | 43 KB |
 | [attention-desktop-window.md](docs/design/attention-desktop-window.md) | The native macOS window: launch, auth, API and merge rules, notices, panel look, live activity, settings, page link to a terminal. | 34 KB |
@@ -283,3 +283,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.174.1 Mouse ball copy joins the rows of a line the program wrapped
 > v2.174.2 Fill the gap: letters grouped by syllable, sentences read when the card opens by default
 > v2.174.3 Mouse ball drives the program's own mouse selection when mouse reporting is on
+> v2.175.0 Attention calendar: year, month, week and day views, search, schedule duration and all day

@@ -120,6 +120,24 @@ test('the item JSON carries the schedule fields; run now fires a reminder and se
   assert.equal((await call('POST', `${local}/api/attention/abc/run-now`, {})).status, 404);
 });
 
+test('a duration is saved and read back over the API, /v1 and the proxy; one that passes midnight is a 400', async () => {
+  const meeting = { ...weekly, duration: 90 };
+  const saved = await call('POST', `${local}/api/attention`, { title: 'Weekly review', schedule: meeting }, bearer(cliToken));
+  assert.equal(saved.status, 201);
+  assert.equal(saved.body.schedule.duration, 90);
+  assert.equal(saved.body.schedule_text, 'Every Monday at 09:00 \u00b7 for 1 hour 30 minutes');
+  const read = await call('GET', `${local}/api/attention/${saved.body.id}`, undefined, bearer(cliToken));
+  assert.deepEqual(read.body.item.schedule, saved.body.schedule);
+  const allDay = await call('PATCH', `${local}/api/attention/${saved.body.id}`, { schedule: { ...weekly, all_day: true } }, bearer(cliToken));
+  assert.deepEqual([allDay.status, allDay.body.schedule.all_day, allDay.body.schedule.duration, allDay.body.schedule_text], [200, true, undefined, 'Every Monday at 09:00 \u00b7 all day']);
+  const late = await call('POST', `${local}/api/attention`, { title: 'Late', schedule: { kind: 'once', at: '2026-12-01T23:30', duration: 45 } }, bearer(cliToken));
+  assert.deepEqual([late.status, late.body.error, late.body.message], [400, 'VALIDATION_FAILED', 'A schedule must end on the day it starts: from 23:30 it can last at most 30 minutes']);
+  const preview = await call('POST', `${engine}/v1/attention/schedule/preview`, { schedule: meeting }, engineAuth);
+  assert.equal(preview.body.text, 'Every Monday at 09:00 \u00b7 for 1 hour 30 minutes');
+  const remote = await call('POST', `${proxy}/api/remote-servers/${ids.engine}/attention`, { title: 'Remote meeting', schedule: { kind: 'once', at: '2026-12-01T10:00', duration: 30 } });
+  assert.deepEqual([remote.status, remote.body.schedule.duration, remote.body.schedule_text], [201, 30, 'Once on 2026-12-01 at 10:00 \u00b7 for 30 minutes']);
+});
+
 test('a script: the page and a CLI token made in Settings may set it; a terminal\'s own token gets 403 SCRIPT_NEEDS_PERSON but may mark it done', async () => {
   const script = { kind: 'script', task_id: 1, script: 'npm test' };
   const byAgent = await call('POST', `${local}/api/attention`, { title: 'Agent script', then_action: script }, bearer(terminalToken));
@@ -140,6 +158,7 @@ test('/v1/attention and the proxy: preview and run now are forwarded; an older e
   const capabilities = (await call('GET', `${engine}/v1/info`, undefined, engineAuth)).body.capabilities;
   assert.ok(capabilities.includes('attention:schedule'));
   assert.ok(capabilities.includes('attention:yearly'), 'yearly birthdays and anniversaries');
+  assert.ok(capabilities.includes('attention:duration'), 'schedule.duration and schedule.all_day');
   for (const target of ['/v1/attention/schedule/preview', '/v1/attention/12/run-now']) assert.equal(checkTunnelTarget(target), target);
   const v1 = await call('POST', `${engine}/v1/attention/schedule/preview`, { schedule: weekly }, engineAuth);
   assert.deepEqual([v1.status, v1.body.text], [200, 'Every Monday at 09:00']);

@@ -20,6 +20,50 @@ export function yearlyOn(sources, engine) {
   if (!source || !Array.isArray(source.capabilities)) return null;
   return source.capabilities.includes(YEARLY_CAPABILITY);
 }
+// A length (`schedule.duration`, whole minutes 1 to 1439) and "All day" (`schedule.all_day`) only on an engine that lists this capability ("Duration
+// and all day" in docs/design/attention-schedules.md); without it the form has neither and the items show as before.
+export const DURATION_CAPABILITY = 'attention:duration';
+const capabilityOn = (sources, engine, name) => {
+  if (engine === 'local') return true;
+  const source = (Array.isArray(sources) ? sources : []).find(entry => entry && entry.key === engine);
+  if (!source || !Array.isArray(source.capabilities)) return null;
+  return source.capabilities.includes(name);
+};
+export const durationOn = (sources, engine) => capabilityOn(sources, engine, DURATION_CAPABILITY);
+// The choices of the Duration select, in minutes ('' keeps none: the calendar draws it 1 hour long; 'custom' shows a minutes field).
+export const DURATIONS = [
+  { value: '', label: 'Not set' }, { value: '15', label: '15 min' }, { value: '30', label: '30 min' }, { value: '45', label: '45 min' },
+  { value: '60', label: '1 hour' }, { value: '90', label: '1.5 hours' }, { value: '120', label: '2 hours' }, { value: '180', label: '3 hours' },
+  { value: 'custom', label: 'Custom…' },
+];
+const PRESET_MINUTES = new Set(DURATIONS.map(entry => entry.value).filter(value => value && value !== 'custom'));
+// The Duration select's value for the form: the preset, 'custom' (a length of its own, or chosen), or '' (none).
+export const durationChoice = form => (form.durationCustom ? 'custom' : !form.duration ? '' : PRESET_MINUTES.has(String(form.duration)) ? String(form.duration) : 'custom');
+export const MIDNIGHT_ERROR = 'It would end after midnight: choose an earlier end or a shorter duration';
+const minutesOfTime = time => { const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(time || '')); return match ? Number(match[1]) * 60 + Number(match[2]) : null; };
+// The start of the form's event ('HH:mm' of Once or of the rule).
+export const formStart = form => (form.when === 'once' ? form.onceTime : form.time);
+// "Ends at" from the start and the duration: 'HH:mm' ('00:00' for midnight itself, the latest end the engine takes), '' (no duration or no start),
+// or null (it would end after midnight: refused).
+export function formEnd(form) {
+  const start = minutesOfTime(formStart(form));
+  const length = Number(form.duration);
+  if (start === null || !form.duration || !Number.isInteger(length) || length < 1) return '';
+  const end = start + length;
+  return end > 24 * 60 ? null : `${pad2(Math.floor(end / 60) % 24)}:${pad2(end % 60)}`;
+}
+// "Ends at" changed: the duration it gives ({ duration: '90' }), or { error } when the end is not after the start (it would be after midnight);
+// 00:00 is midnight at the end of the day.
+export function durationFromEnd(form, end) {
+  const start = minutesOfTime(formStart(form));
+  const typed = minutesOfTime(end);
+  const at = typed === 0 ? 24 * 60 : typed;
+  if (start === null || at === null) return { error: 'Choose a time' };
+  if (at <= start) return { error: MIDNIGHT_ERROR };
+  return { duration: String(at - start) };
+}
+// Whether the Duration row applies to the form: Once, or a repeat that is not a birthday or an anniversary (those are all day by nature).
+export const durationApplies = form => form.when === 'once' || (form.when === 'repeat' && !(form.freq === 'yearly' && (form.occasion === 'birthday' || form.occasion === 'anniversary')));
 // The occasions of a yearly rule ("What it is" in the edit view), the first is none.
 export const OCCASIONS = [{ value: '', label: 'A yearly reminder' }, { value: 'birthday', label: 'Birthday' }, { value: 'anniversary', label: 'Anniversary' }];
 const FREQ_VALUES = new Set(FREQUENCIES.map(entry => entry.value));
@@ -98,6 +142,9 @@ export function scheduleForm(item, now = new Date()) {
     then: then.kind, session: then.kind === 'prompt' ? sessionValue(then.task_id, then.terminal_id) : '', prompt: then.kind === 'prompt' ? String(then.text || '') : '',
     scriptTask: then.kind === 'script' && then.task_id != null ? String(then.task_id) : '', script: then.kind === 'script' ? String(then.script || '') : '',
     timeoutMin: String((then.kind === 'script' && then.timeout_min) || 30),
+    // Duration and All day ('' and false for a schedule without them, which the calendar draws 1 hour long).
+    duration: schedule && Number.isInteger(schedule.duration) ? String(schedule.duration) : '', durationCustom: false,
+    allDay: Boolean(schedule && schedule.all_day === true),
   };
 }
 
@@ -162,6 +209,16 @@ export function scheduleFromForm(form) {
       schedule.ends = { kind: 'after', count };
     }
   }
+  if (durationApplies(form)) {
+    if (form.allDay) schedule.all_day = true;
+    else if (form.endError) return { error: form.endError };
+    else if (String(form.duration ?? '').trim() !== '') {
+      const length = inRange(form.duration, 1, 1439);
+      if (length === null) return { error: 'The duration is 1 to 1439 minutes' };
+      if (formEnd({ ...form, duration: String(length) }) === null) return { error: MIDNIGHT_ERROR };
+      schedule.duration = length;
+    }
+  }
   if (form.then === 'script') {
     if (!form.scriptTask) return { error: 'Choose the task the script runs in' };
     const script = String(form.script || '').trim();
@@ -183,7 +240,7 @@ export function scheduleFromForm(form) {
 // Two schedules (or actions) compared by what they mean: the zone, an end of "never" and the fields the server adds are left out, the days sorted.
 function sameSchedule(schedule) {
   if (!schedule) return null;
-  if (schedule.kind === 'once') return { kind: 'once', at: String(schedule.at || '').slice(0, 16) };
+  if (schedule.kind === 'once') return { kind: 'once', at: String(schedule.at || '').slice(0, 16), ...(schedule.all_day === true ? { all_day: true } : Number.isInteger(schedule.duration) ? { duration: schedule.duration } : {}) };
   const rule = schedule.rule || {};
   const out = { kind: 'repeat', freq: rule.freq, time: rule.time };
   if (rule.freq === 'weekly') out.days = [...new Set((rule.days || []).map(Number))].sort((a, b) => a - b);
@@ -194,6 +251,8 @@ function sameSchedule(schedule) {
     out.year = Number.isInteger(rule.year) ? rule.year : null;
   }
   if (schedule.starts) out.starts = schedule.starts;
+  if (schedule.all_day === true) out.all_day = true;
+  else if (Number.isInteger(schedule.duration)) out.duration = schedule.duration;
   const ends = schedule.ends || {};
   if (ends.kind === 'on') out.ends = `on ${ends.date}`;
   if (ends.kind === 'after') out.ends = `after ${Number(ends.count)}`;
@@ -256,9 +315,33 @@ const TIME_PARTS = new Set(['next', 'due now', 'no next time']);
 export function rowLine(item, options = {}) {
   const line = scheduleLine(item, options);
   const schedule = line && scheduleOf(item);
-  if (!schedule || schedule.kind !== 'repeat' || !schedule.rule || schedule.rule.freq !== 'yearly') return line;
+  if (!schedule) return line;
+  if (schedule.kind !== 'repeat' || !schedule.rule || schedule.rule.freq !== 'yearly') return withRange(line, schedule);
   const rest = line.parts.slice(1).filter(part => !TIME_PARTS.has(part[0]));
   return { ...line, parts: [...yearlyParts(item, schedule, options.now || new Date()), ...rest] };
+}
+// A schedule with a duration or all day: the time of the rule (a repeat) or of the next time (once) is a range ("Weekdays 10:30–11:30",
+// "Once · Mon 12-01 10:00–11:30") or "all day" ("Every day all day", "Once · Mon 12-01 all day").
+const CLOCK_RE = /(^|\s)(\d{2}):(\d{2})$/;
+function rangeTokens(tokens, schedule) {
+  const index = tokens.findIndex(token => token && typeof token === 'object' && token.raw != null && CLOCK_RE.test(token.raw));
+  if (index < 0) return tokens;
+  const raw = tokens[index].raw;
+  const out = [...tokens];
+  if (schedule.all_day === true) {
+    const rest = raw.replace(CLOCK_RE, '').trim();
+    out.splice(index, 1, ...(rest ? [{ raw: rest }] : []), 'all day');
+    return out;
+  }
+  const match = CLOCK_RE.exec(raw);
+  const end = Number(match[2]) * 60 + Number(match[3]) + schedule.duration;
+  out[index] = { raw: `${raw}\u2013${end >= 24 * 60 ? '24:00' : `${pad2(Math.floor(end / 60))}:${pad2(end % 60)}`}` };
+  return out;
+}
+function withRange(line, schedule) {
+  if (schedule.all_day !== true && !Number.isInteger(schedule.duration)) return line;
+  const at = schedule.kind === 'once' ? 1 : 0; // once: the next time; a repeat: its rule
+  return { ...line, parts: line.parts.map((part, index) => (index === at ? rangeTokens(part, schedule) : part)) };
 }
 // The rule in a few words for the calendar's agenda: `ruleTokens`, but "Every year" and its time for a yearly rule.
 export const yearlyWords = schedule => ['Every year', { raw: String((schedule.rule || {}).time || '') }];

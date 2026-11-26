@@ -30,6 +30,7 @@
     ['h5-attention-collapsed', 'local', 'cache-of-shared-state', 'the collapsed T-Attention parents', false],
     ['h5-attention-add-on', 'local', 'cache-of-shared-state', 'the engine a new T-Attention task goes to', false],
     ['h5-attention-view', 'local', 'cache-of-shared-state', 'the T-Attention view: the list or the calendar', false],
+    ['h5-attention-cal-view', 'local', 'cache-of-shared-state', 'the view of the T-Attention calendar: year, month, week or day', false],
     ['h5-create-on', 'local', 'cache-of-shared-state', 'the machine "Create on" starts with (new task, new mind map): the one chosen last', false],
     ['ta-saved-commands-used', 'local', 'cache-of-shared-state', 'the recency of saved commands', false],
     ['ta-start-commands', 'local', 'cache-of-shared-state', 'the recent initial commands of a new terminal (the Recent menu of the New session dialog)', false],

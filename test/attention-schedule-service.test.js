@@ -63,6 +63,35 @@ test('saving a schedule computes next_at in the zone, sets waiting and opens a c
   fails(() => service.create({ title: 'x', schedule: daily(), bogus: 1, then_action: { kind: 'prompt', text: 'hi' } }), 'VALIDATION_FAILED');
 });
 
+test('a duration or all day is saved and read back; a change of only the length keeps the time, the runs and the state; a new time starts again', () => {
+  const { service, seen, at } = setup();
+  const item = service.create({ title: 'Review', schedule: daily('09:00', { duration: 90 }) });
+  assert.deepEqual(item.schedule, { kind: 'repeat', rule: { freq: 'daily', time: '09:00' }, tz: 'Asia/Taipei', duration: 90 });
+  assert.deepEqual([item.schedule_text, item.next_at], ['Every day at 09:00 \u00b7 for 1 hour 30 minutes', '2026-11-20T01:00:00.000Z']);
+  assert.deepEqual(service.get(item.id).schedule, item.schedule, 'read back');
+  const count = seen.length;
+  service.update(item.id, { schedule: daily('09:00', { duration: 90, all_day: false }) });
+  assert.equal(seen.length, count, 'the same length sent back is no change');
+  at('2026-11-20T01:00:00.000Z');
+  service.fireDue();
+  const fired = service.get(item.id);
+  assert.deepEqual([fired.schedule_state, fired.runs, fired.next_at], ['due', 1, '2026-11-21T01:00:00.000Z']);
+  // The engine's zone changed meanwhile: a length-only change keeps the stored zone too.
+  const allDay = service.update(item.id, { schedule: daily('09:00', { all_day: true }) });
+  assert.deepEqual(allDay.schedule, { kind: 'repeat', rule: { freq: 'daily', time: '09:00' }, tz: 'Asia/Taipei', all_day: true });
+  assert.deepEqual([allDay.schedule_state, allDay.runs, allDay.next_at, allDay.schedule_text], ['due', 1, '2026-11-21T01:00:00.000Z', 'Every day at 09:00 \u00b7 all day']);
+  const moved = service.update(item.id, { schedule: daily('10:00', { all_day: true }) });
+  assert.deepEqual([moved.schedule_state, moved.runs, moved.next_at], ['waiting', 0, '2026-11-20T02:00:00.000Z'], 'a new time is a new schedule');
+  // A once item that already fired and is done: a new length does not open it or fire it again.
+  const call = service.create({ title: 'Call', schedule: { kind: 'once', at: '2026-11-20T08:00', duration: 30 } });
+  service.fireDue();
+  service.update(call.id, { status: 'done' });
+  const longer = service.update(call.id, { schedule: { kind: 'once', at: '2026-11-20T08:00', duration: 60 } });
+  assert.deepEqual([longer.status, longer.next_at, longer.schedule_state, longer.runs, longer.schedule.duration], ['done', null, null, 1, 60]);
+  fails(() => service.create({ title: 'x', schedule: { kind: 'once', at: '2026-11-20T23:30', duration: 45 } }), 'VALIDATION_FAILED', 400);
+  fails(() => service.update(item.id, { schedule: daily('09:00', { duration: 30, all_day: true }) }), 'VALIDATION_FAILED', 400);
+});
+
 test('a once item in the past is due at once; the firing is stored before it is published, fires once and is never fired again by another service on the same database', () => {
   const file = path.join(dataDir, 'restart.sqlite');
   const first = setup({ file });

@@ -405,11 +405,31 @@ async function toTerminal(page) {
       const word = sentence.slice(gap.before.length, sentence.length - gap.after.length);
       assert.ok(/^[a-z]+$/i.test(word), `the gap is one word: ${word}`);
       assert.equal(await active(page), 'h5-learn-gap-input');
+      // With the default audio settings the whole sentence is read when the card appears.
+      await waitFor(() => page.evaluate(s => window.spoken.some(item => item.text === s), sentence), 'Fill the gap reads the sentence at the start by default');
+      // The gap is a letter slot per letter, grouped by syllable (partsOf), as in Spell's sentence layout; typed letters show in their slots.
+      const { partsOf } = await import(path.join(root, 'scripts/h5-shell/learn-grade.mjs'));
+      const fillParts = partsOf({ en: word });
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-letters'), String(word.length));
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-letter').count(), word.length);
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-parts'), String(fillParts.length));
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-letter[data-part-start="true"]').count(), fillParts.length - 1);
+      const gapLetters = () => page.locator('#h5-learn-gap .h5-learn-gap-letter').evaluateAll(list => list.map(el => el.textContent).join(''));
+      assert.equal(await gapLetters(), '', 'empty slots');
+      await page.locator('#h5-learn-first').click();
+      assert.equal(await gapLetters(), word[0], 'Show first letter fills the first slot');
+      assert.equal(await active(page), 'h5-learn-gap-input', 'Show first letter leaves the focus in the gap');
+      await page.keyboard.press('Backspace');
       await page.locator('#h5-learn-hear').click();
       assert.equal(await active(page), 'h5-learn-gap-input', 'Hear it leaves the focus in the gap');
-      await page.locator('#h5-learn-gap-input').fill(word.toUpperCase());
+      await page.keyboard.type(word.slice(0, -1));
+      assert.equal(await gapLetters(), word.slice(0, -1), 'the hardware keyboard types into the slots');
+      await page.locator('#h5-learn-gap-input').fill(word.toUpperCase() + 'xyz');
+      assert.equal(await page.locator('#h5-learn-gap-input').inputValue(), word.toUpperCase(), 'no more letters than slots');
       await page.keyboard.press('Enter');
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor();
+      assert.equal(await page.locator('#h5-learn-gap').getAttribute('data-correct'), 'true');
+      assert.equal(await gapLetters(), word, 'the right word in the slots after Check');
       await page.keyboard.press('3');
       await waitFor(() => mock.posts(/\/answer$/).length === 7, 'the fill answer');
       assert.deepEqual(lastAnswer(mock), { id: '10', mode: 'fill', grade: 'good', correct: true, answer: word.toUpperCase() });
@@ -707,7 +727,9 @@ async function toTerminal(page) {
       assert.equal(await page.locator('#h5-learn-gap-input').getAttribute('inputmode'), 'none');
       await page.locator('#h5-learn-keys[data-kind="letters"]').waitFor({ state: 'visible' });
       const phoneWord = phoneGap(SENTENCES[0]).word;
-      await tapKeys(page, phoneWord);
+      await tapKeys(page, phoneWord.slice(0, -1));
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-letter').evaluateAll(list => list.map(el => el.textContent).join('')), phoneWord.slice(0, -1), 'the page keys type into the slots');
+      await tapKeys(page, phoneWord.slice(-1));
       assert.equal(await active(page), 'h5-learn-gap-input', 'the keys never take the focus');
       await shot(page, 'learn-phone-fill.png');
       await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor({ timeout: 2000 });
@@ -887,7 +909,7 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-back').tap();
       await page.locator('#h5-learn-mode').waitFor({ state: 'hidden' });
 
-      // Fill the gap: the sentence plays after the answer by default, never before (it would give the answer away).
+      // Fill the gap with "After the answer" chosen (set above): the sentence plays after the answer, never before.
       const sentence = SENTENCES[0].en;
       const { gapFor } = await import(path.join(root, 'scripts/h5-shell/learn-model.mjs'));
       await page.locator('#h5-learn-mode-fill').tap();
@@ -1004,6 +1026,22 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-mode-spell').tap();
       await page.locator('#h5-learn-tap-play').waitFor({ timeout: 4000 });
       assert.equal(await page.locator('#h5-learn-hear').count(), 0);
+      await page.evaluate(() => { window.refuseSpeech = false; });
+      await page.locator('#h5-learn-tap-play').tap();
+      await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
+      await context.close();
+    }
+    // Fill the gap reads its sentence at the start by default, so a refused start offers "Tap to play" there too (once a page: a fresh one).
+    {
+      const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+      mock.translator = true;
+      await toTerminal(page);
+      await page.evaluate(() => { window.refuseSpeech = true; });
+      await page.locator('#h5-bnav-learn').tap();
+      await page.locator('#h5-learn-mode-fill').tap();
+      await page.locator('#h5-learn-gap-input').waitFor();
+      await page.locator('#h5-learn-tap-play').waitFor({ timeout: 4000 });
+      assert.ok(await page.evaluate(s => window.spoken.some(item => item.text === s), SENTENCES[0].en), 'the whole sentence was asked for at the start');
       await page.evaluate(() => { window.refuseSpeech = false; });
       await page.locator('#h5-learn-tap-play').tap();
       await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();

@@ -416,10 +416,10 @@ test('two linked services: cards, answers and settings made on each side reach t
   B.sync.start();
   await A.page('POST', '/learn/cards', word('rollback'));
   await until(() => cardsOf(B).some(card => card.norm === 'rollback'), 'the push after a local change');
-  await A.page('PUT', '/learn/settings', { daily_goal: 33, audio_repeat: 3, audio_sentences_at: 'start' });
+  await A.page('PUT', '/learn/settings', { daily_goal: 33, audio_repeat: 3, audio_sentences_at: 'after' });
   await until(async () => (await B.page('GET', '/learn/settings')).body.daily_goal === 33, 'settings pushed');
   const audioOnB = (await B.page('GET', '/learn/settings')).body;
-  assert.deepEqual([audioOnB.audio_repeat, audioOnB.audio_sentences_at], [3, 'start'], 'the audio settings are shared too');
+  assert.deepEqual([audioOnB.audio_repeat, audioOnB.audio_sentences_at], [3, 'after'], 'the audio settings are shared too');
   // Nothing loops: once both agree, rounds stop sending rows.
   await settle(200);
   const before = A.requests.length + B.requests.length;

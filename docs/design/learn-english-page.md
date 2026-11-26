@@ -112,7 +112,13 @@
   - Dictation: the sentence is read on start; Play and Slow (0.65); type it; the Chinese shows after Check.
   - Say it: the sentence and its Chinese, Hear it, a microphone (`#h5-learn-mic`) that fills an editable box; see "Speech".
   - Fill the gap: one content word taken out (`gapFor`, the same for a card), typed into the gap; Show first letter; Hear it counts as help. The
-    gap word's length is known, so it checks by itself at the last letter like Spell.
+    gap word's length is known, so it checks by itself at the last letter like Spell. The gap (`#h5-learn-gap`, `GapSlots` in `Learn.jsx`, since
+    2026-11-27) is a primary underline per letter grouped by syllable like Spell's sentence layout (`gapLayout` with `partsOf` of the gap word, the
+    card's own parts when the card is that word; `data-letters`, `data-parts`, `data-part-start`; see "Letter boxes by syllable" in
+    [learn-spell-practice.md](learn-spell-practice.md)), each slot one monospace letter wide (0.62em); the typed letters show in their slots (a
+    hidden field over them, `#h5-learn-gap-input`, takes the page keyboard and a hardware keyboard, at most as many letters as slots), the next slot
+    on a faint primary tint; after Check the slots show the right word in the success colour (right) or the error colour (wrong). Before, the gap
+    was one plain underlined field.
 - **Words and wrapping**: a word with its transcription after it (`WordLine`: the Spell feedback `#h5-learn-feedback-phonetic`, the material list, Mistakes;
   `translate="no"`, `lang="en-US-fonipa"`, no wrap inside it). Text uses `overflow-wrap: break-word`, so a word breaks only when it alone is wider
   than the line, and sentences wrap between words.
@@ -363,7 +369,9 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
   repeats 1 s 2 s 3 s, Speed Slow / Normal, Stop when I start typing. Switches and MUI toggle button groups in list rows, each saved at once.
 - When a card plays by itself (`autoPlays` in `learn-audio.mjs`): a word (Spell, a word in Review or Mistakes) when it appears, with the repeat, and
   once more after the answer (a word asked inside its sentence plays that whole sentence instead, Hear it too; see "Spell the word"); Dictation always at the start (listening is the task); Say it the model at the start; Fill the
-  gap (Build while shown) and a sentence in Review as chosen (after the answer by default, because hearing it first gives the answer away).
+  gap (Build while shown) and a sentence in Review as chosen: by default the whole sentence when the card appears, the answer included (the
+  person's decision of 2026-11-26; `audio_sentences_at` 'start' since 2026-11-27, before 'after'); "After the answer" stays a choice. A person
+  who saved the choice keeps it.
 - The player (`createPlayer`, pure, with fake timers in `test/h5-learn-audio.test.js`; one per session, `useAudio` / `useCardAudio` in `Learn.jsx`)
   reads with `speakOnce` (learn-speech.mjs) and waits for each reading's end, then the pause. While it plays, Hear it / Play shows "Playing 1 of 2"
   with a Stop text button (`#h5-learn-stop`); pressing Hear it / Play plays again with the same repeat (Slow too, slowly). Typing (a key, the page's
@@ -469,7 +477,7 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
   cancels it, the key bubble (character, place, clamped at both edges, above the top row, gone on pointerup / pointercancel, none for Backspace)
   with one `navigator.vibrate` per press and none for a held Backspace's repeats, the focus kept; a short answer waits, Backspace in the pause
   cancels, the last letter checks by itself, the transcription with the word, the word once more after the answer; Fill the gap checks at its last
-  letter and plays after the answer; every Audio setting saved by its `PUT`, then "When the card appears" and Slow
+  letter and, with "After the answer" chosen, plays after the answer; every Audio setting saved by its `PUT`, then "When the card appears" and Slow
   playing Fill the gap at the start slowly; a 16-letter word on one line at 390px and in 8 + 8 at 320px; "Tap to play" when speech is refused; a computer
   checking at the last letter with its keys. `scripts/test-h5-osk-browser.cjs` checks the bubble and the ticks on the terminal's keyboard.
   `H5_SHOT_DIR` saves screenshots.

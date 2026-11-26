@@ -39,7 +39,7 @@ export function audioOptions(settings) {
   return {
     words: pick('audio_words', [true, false], true),
     sentences: pick('audio_sentences', [true, false], true),
-    sentencesAt: pick('audio_sentences_at', ['after', 'start'], 'after'),
+    sentencesAt: pick('audio_sentences_at', ['after', 'start'], 'start'),
     repeat: pick('audio_repeat', [1, 2, 3, 5], 2),
     pauseMs: pick('audio_pause', [1, 2, 3], 2) * 1000,
     slow: pick('audio_speed', ['normal', 'slow'], 'normal') === 'slow',
@@ -49,7 +49,8 @@ export function audioOptions(settings) {
 
 // When an exercise plays by itself: a list of 'start' (when the card appears) and 'after' (after the answer). A word: at the start and once more
 // after the answer. Dictation always at the start (listening is the task); Say it plays the model at the start; Build, Fill the gap and a sentence in
-// Review follow `sentencesAt`, because hearing the sentence first would give the answer away.
+// Review follow `sentencesAt`: by default the whole sentence when the card appears, answer included (the person's choice of 2026-11-26); "After the
+// answer" in Learn settings keeps it for after Check.
 export function autoPlays(exercise, options) {
   if (exercise === 'spell') return options.words ? ['start', 'after'] : [];
   if (exercise === 'dictation') return ['start'];

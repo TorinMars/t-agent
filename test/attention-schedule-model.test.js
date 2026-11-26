@@ -123,6 +123,7 @@ test('the form echoes a saved schedule and starts from sensible defaults for a t
   assert.deepEqual(fresh, {
     when: 'none', onceDate: '2026-11-21', onceTime: '09:00', freq: 'weekly', time: '09:00', days: [5], day: '20', interval: '2', starts: '2026-11-20',
     endsKind: 'never', endsDate: '', endsCount: '10', then: 'remind', session: '', prompt: '', scriptTask: '', script: '', timeoutMin: '30',
+    calendar: 'solar', month: '11', yearDay: '20', leap: false, occasion: '', year: '',
   });
   const scripted = scheduleForm(item(5, 'todo', { schedule: WEEKDAYS, then_action: { kind: 'script', task_id: '4', script: './backup.sh', timeout_min: 45 } }), NOW);
   assert.deepEqual([scripted.then, scripted.scriptTask, scripted.script, scripted.timeoutMin], ['script', '4', './backup.sh', '45']);

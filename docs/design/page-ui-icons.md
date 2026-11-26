@@ -62,6 +62,8 @@
 | Open folder (file tree) | folder-open | 4766847 | `folderOpen` |
 | File (file tree) | file | 4766478 | `file` |
 | Folder chevron (file tree) | right | 4767011 | `treeChevron`, 14px, turned 90 degrees when the folder is open |
+| Previous / next month (T-Attention calendar) | right | 4767011 | `treeChevron`, 18px, turned 180 degrees for previous |
+| New event (T-Attention calendar, the phone's floating button) | plus | (as Add) | `add`, 24px, in an MD2 `Fab` |
 | Reload (file tree header) | reload | 4765852 | `reload` |
 | Back to files (file viewer opened from the tree) | arrowleft | 4767022 | `back` in `Icons.jsx`, the same path as the Left key |
 | Outline (design document sheet) | ordered list | 4767061 | `outline` in `Icons.jsx`; numbered lines read as a table of contents (`unordered list` is already the saved commands) |

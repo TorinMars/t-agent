@@ -1,5 +1,6 @@
 // The open T-Agent pages of this machine that can be told to show a terminal in place ("Open session" of the desktop window, POST
-// /api/attention/widget/open-terminal in routes/attention-widget.js). Kept only in memory.
+// /api/attention/widget/open-terminal in routes/attention-widget.js) or the details of a T-Attention task (a click on a task row of the desktop
+// window, POST /api/attention/widget/open-item). Kept only in memory.
 //
 // A page registers through the stream it already keeps open: the session stream of T-Attention, GET /api/attention/stream?tab=1 (routes/attention.js,
 // scripts/h5-shell/attention-feed.mjs). Only a top-level page asks with tab=1 (the columns of the multi-column view open no stream), and the route
@@ -7,7 +8,7 @@
 // The stream stays open while the page is hidden, so a background tab can be switched too.
 //
 // The page says when it was last seen: on connect when it is visible, and again when it becomes visible or gets the focus (POST
-// /api/attention/stream/seen). openTerminal tells exactly one page: the one seen last; among pages never seen, the one that connected last.
+// /api/attention/stream/seen). openTerminal and openItem tell exactly one page: the one seen last; among pages never seen, the one that connected last.
 const crypto = require('node:crypto');
 
 function createPageChannel({ now = Date.now, randomId = () => crypto.randomBytes(12).toString('base64url') } = {}) {
@@ -45,12 +46,12 @@ function createPageChannel({ now = Date.now, randomId = () => crypto.randomBytes
     return best;
   }
 
-  // Tells one page to open this terminal: { delivered: 1, origin } or { delivered: 0, origin: null } when no page is open (or its write fails).
-  function openTerminal({ engine, task_id: taskId, terminal_id: terminalId }) {
+  // Sends one event to the page seen last: { delivered: 1, origin } or { delivered: 0, origin: null } when no page is open (or its write fails).
+  function tell(event, data) {
     const best = latest();
     if (!best) return { delivered: 0, origin: null };
     try {
-      best.stream.write('open-terminal', { engine, task_id: String(taskId), terminal_id: terminalId });
+      best.stream.write(event, data);
     } catch {
       streams.delete(best.id);
       return { delivered: 0, origin: null };
@@ -58,7 +59,17 @@ function createPageChannel({ now = Date.now, randomId = () => crypto.randomBytes
     return { delivered: 1, origin: best.stream.origin };
   }
 
-  return { add, remove, seen, openTerminal, size: () => streams.size };
+  // Tells one page to open this terminal (event `open-terminal`).
+  function openTerminal({ engine, task_id: taskId, terminal_id: terminalId }) {
+    return tell('open-terminal', { engine, task_id: String(taskId), terminal_id: terminalId });
+  }
+
+  // Tells one page to show the details of this T-Attention task (event `open-item` { key }, the key as the page tags items: '<engine>:<id>').
+  function openItem({ key }) {
+    return tell('open-item', { key: String(key) });
+  }
+
+  return { add, remove, seen, openTerminal, openItem, size: () => streams.size };
 }
 
 let shared = null;

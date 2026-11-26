@@ -68,6 +68,7 @@ const REASON_COLOR = { waiting_user: 'warning.light', review: 'info.light', fail
 const PRIORITY_COLOR = { high: 'error.light', medium: 'warning.light', low: 'text.secondary' };
 
 const INDENT_PX = 16; // one level of sub-tasks
+const FOCUS_WAIT_MS = 10000; // how long a task asked for from outside (`focus`) may take to be listed before nothing waits for it
 const CIRCLE_X = 26; // the middle of the circle from the left edge of a row (its 44px button after 4px)
 const ROW_SX = { userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' };
 const ACTION_SX = { minWidth: 0, px: 1, py: 0.25, minHeight: 32 };
@@ -1154,12 +1155,23 @@ export function AttentionPanel({ state, ui }) {
     const parsed = typeof ref === 'number' ? { engine: 'local', id: ref } : parseKey(ref);
     return items.find(entry => keyOf(entry) === ref) || (parsed ? items.find(entry => entry.id === parsed.id && engineOf(entry) === parsed.engine) : null) || null;
   };
-  // Opened for one task: its edit view.
+  // Opened for one task: its edit view. A task that is not listed yet opens when it comes; once its engine's list has answered (or its copies are there),
+  // or after FOCUS_WAIT_MS (a connected service is listed only after its capabilities were read), nothing waits any more and the panel stays as it is
+  // (the desktop window's click on a task that is gone, "Task details from the desktop window" in docs/design/page-attention.md).
+  const focusSince = useRef(null); // { key, at }
   useEffect(() => {
-    if (!open || attention.focus == null) return;
-    const found = find(attention.focus);
-    if (found) { setEditing(keyOf(found)); ui.set(s => ({ attention: { ...s.attention, focus: null } })); }
-  }, [open, attention.focus, items]); // eslint-disable-line react-hooks/exhaustive-deps
+    const wanted = attention.focus;
+    if (!open || wanted == null) return undefined;
+    const found = find(wanted);
+    const drop = () => ui.set(s => (s.attention && s.attention.focus === wanted ? { attention: { ...s.attention, focus: null } } : null));
+    if (found) { setEditing(keyOf(found)); drop(); return undefined; }
+    if (!focusSince.current || focusSince.current.key !== wanted) focusSince.current = { key: wanted, at: Date.now() };
+    const parsed = parseKey(wanted);
+    const owner = parsed && (Array.isArray(attention.engines) ? attention.engines : []).find(engine => engine.key === parsed.engine);
+    if (owner && (owner.ready || owner.copy)) { drop(); return undefined; }
+    const timer = setTimeout(drop, Math.max(0, focusSince.current.at + FOCUS_WAIT_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [open, attention.focus, items, attention.engines]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!open) { setEditing(null); setRejecting(null); } }, [open]);
   const item = editing == null ? null : items.find(entry => keyOf(entry) === editing);
   // The task went away: deleted, or its engine left the list (then nothing is said: it was not deleted).

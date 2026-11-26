@@ -257,7 +257,8 @@ function createAttentionRoutes({ service, summary = null, plugins = null, instal
   // A token's stream ends when the token is revoked.
   // `?tab=1` from a top-level page of this machine (the browser session, fromThisMachine, a Referer without `pane`): the stream is also a page of
   // services/page-channel.js. Its first event is `hello` { stream: <id> }, and it may get `open-terminal` { engine, task_id, terminal_id } (the desktop
-  // window's Open session); the page reports when it is seen with POST /stream/seen. Any other stream is only the change stream.
+  // window's Open session) and `open-item` { key } (a click on a task of the desktop window: that task's details); the page reports when it is seen
+  // with POST /stream/seen. Any other stream is only the change stream.
   router.get('/stream', (req, res) => {
     const tokenId = req.attentionAuth.kind === 'token' ? req.attentionAuth.id : null;
     const isPage = tokenId === null && req.attentionAuth.kind === 'session' && req.query.tab === '1' && Boolean(isLocal(req)) && !fromPane(req);

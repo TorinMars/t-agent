@@ -388,7 +388,8 @@ func makeRowSpinner() -> NSProgressIndicator {
     return spinner
 }
 
-/// One task row in the detail panel: a press followed by movement drags it, a plain click does nothing. Its icon
+/// One task row in the detail panel: a press followed by movement drags it, a plain click opens the task's details on the
+/// T-Agent page (onRelease; VoiceOver's press, onOpen). Its icon
 /// buttons show all the time when `actionsAlwaysShown` (the Needs you section, or VoiceOver running), else only while
 /// the pointer is over the row. Hidden or not, every action stays in the row's context menu and in its accessibility
 /// custom actions, so it is reachable without a mouse.
@@ -399,6 +400,7 @@ final class TaskRowView: NSView {
     var onDragMove: (NSEvent) -> Void = { _ in }
     var onDragEnd: () -> Void = {}
     var onRelease: () -> Void = {}
+    var onOpen: () -> Void = {}
     var contextMenu: () -> NSMenu? = { nil }
     var actionsAlwaysShown = true { didSet { updateActionVisibility() } }
     /// Shown in place of the row's action buttons while its request is out (setPending); nil for a row without actions.
@@ -457,6 +459,11 @@ final class TaskRowView: NSView {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { contextMenu() }
+
+    override func accessibilityPerformPress() -> Bool {
+        onOpen()
+        return true
+    }
 
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.control) {  // control-click is a right click; not a drag

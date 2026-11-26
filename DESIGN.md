@@ -275,3 +275,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.172.0 The English coach selects new, due, highest-error-rate or custom-filtered words. Practise the same selection with direct spelling, sentence gaps or study followed by spelling.
 > v2.172.1 Learn schedules and grades reviews by word. Sentences supply examples, and pronunciation requests mixable playback on supported browsers.
 > v2.172.2 Study step plays the word and its example sentence by itself; practice map and Learn page docs
+> v2.172.3 Clicking a task in the floating window opens its details; only Open session goes to the conversation

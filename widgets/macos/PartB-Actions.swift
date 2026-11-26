@@ -62,22 +62,26 @@ func bubbleActions(_ notice: WidgetNotice, item: WidgetItem?) -> [RowAction] {
     return actions.contains(.handled) && item.session?.canReply == true ? actions + [.reply] : actions
 }
 
-/// What a click on the bubble opens, and its tooltip: the task's link (the notice's target, which the server made from
-/// it), else the task's session, else the notice's target, else the T-Agent page. `session` is the session's page path
-/// when that is what it opens (it then goes through openTerminalPage, like Open session).
-func bubbleOpen(_ notice: WidgetNotice, item: WidgetItem?, base: String) -> (url: URL?, tooltip: String, session: String?) {
+/// What a click on the bubble opens, and its tooltip: for a notice of a task the list has (the window's own notices of a
+/// task), that task's details on the T-Agent page, as a click on its row does (`item` is its key: it goes through
+/// openItemPage); the link and the session stay on the bubble's buttons and the row. Any other notice opens its target,
+/// else the T-Agent page. `session` is a session's page path when that is what it opens (through openTerminalPage).
+func bubbleOpen(_ notice: WidgetNotice, item: WidgetItem?, base: String) -> (url: URL?, tooltip: String, session: String?, item: String?) {
     let ownTask = notice.kind == "item" || scheduleNoticeKinds.contains(notice.kind)  // Part G: the window's own notices of a task
-    if ownTask, !notice.key.isEmpty, let item = item, item.key == notice.key {
-        if !item.link.isEmpty {
-            if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil) }
-            if let url = linkTarget(item.link, base: base) { return (url, url.absoluteString, nil) }
-        }
-        if !item.openPath.isEmpty, let url = linkTarget(item.openPath, base: base) {
-            return (url, L("Open session"), item.openPath)
-        }
+    if ownTask, !notice.key.isEmpty, let item = item, item.key == notice.key, let path = itemPagePath(item.key),
+       let url = linkTarget(path, base: base) {
+        return (url, L("Open details"), nil, item.key)
     }
-    if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil) }
-    return (URL(string: base + "/"), L("Open T-Agent"), nil)
+    if !notice.target.isEmpty { return (URL(string: notice.target), notice.target, nil, nil) }
+    return (URL(string: base + "/"), L("Open T-Agent"), nil, nil)
+}
+
+/// The page path that shows a task's details in the T-Attention panel: "/?openAttention=<key>" for a key of the list
+/// ("local:<id>" or "remote:<id>:<id>", the pattern public/js/h5.js accepts); nil for anything else.
+func itemPagePath(_ key: String) -> String? {
+    guard let regex = try? NSRegularExpression(pattern: "^(local|remote:[1-9][0-9]{0,14}):[1-9][0-9]{0,14}\\z"),
+          regex.firstMatch(in: key, range: NSRange(key.startIndex..., in: key)) != nil else { return nil }
+    return "/?openAttention=" + key
 }
 
 /// The terminal a page path names: "/?openTerminal=<engine>:<task id>:<terminal id>" with engine "local" or
@@ -106,6 +110,12 @@ func openTerminalOutcome(code: Int, data: Data?) -> OpenTerminalOutcome {
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let delivered = looseNumber(object["delivered"]), delivered >= 1 else { return .openURL }
     return .switched(focused: jsonBool(object["focused"]) == true)
+}
+
+/// What the window does after POST /open-item: the same answer as /open-terminal ({ delivered, focused }). No page took
+/// it, the task is not there (404), an older server without the route (404) or any failure: the details link opens.
+func openItemOutcome(code: Int, data: Data?) -> OpenTerminalOutcome {
+    openTerminalOutcome(code: code, data: data)
 }
 
 /// Brings the default browser (the app that opens http addresses) to the front without opening an address. Launching
@@ -175,6 +185,12 @@ extension WidgetAPI {
     /// terminal; the answer is { delivered, focused }.
     func openTerminalRequest(engine: String, taskId: String, terminalId: String) -> URLRequest {
         request("POST", "/api/attention/widget/open-terminal", body: ["engine": engine, "task_id": taskId, "terminal_id": terminalId])
+    }
+
+    /// POST /open-item { key }: an open T-Agent page on this machine shows that task's details; the answer is
+    /// { delivered, focused }.
+    func openItemRequest(key: String) -> URLRequest {
+        request("POST", "/api/attention/widget/open-item", body: ["key": key])
     }
 }
 
@@ -485,7 +501,7 @@ extension WidgetController {
         switch action {
         case .open:  // Part G: what a click on the bubble opens
             let target = bubbleOpen(notice, item: bubbleItem(notice), base: api.base)
-            if let session = target.session { openTerminalPage(session) } else if let url = target.url { openPage(url) }
+            if let key = target.item { openItemPage(key) } else if let session = target.session { openTerminalPage(session) } else if let url = target.url { openPage(url) }
         case .session, .terminal: openSession(notice.key)
         default: runAction(notice.key, action)
         }
@@ -609,6 +625,29 @@ extension WidgetController {
                 self.openPage(url)
             }
         }
+    }
+
+    /// Shows a task's details on the T-Agent page (the T-Attention panel with its edit view), the way openTerminalPage
+    /// shows a terminal: POST /open-item tells the most recently used T-Agent page of this machine to show them, and the
+    /// browser (or the running T-Agent.app) comes to the front when the extension did not focus that tab. When no page
+    /// took it, the task is not there, the server is older (404) or failed, "/?openAttention=<key>" opens (in
+    /// T-Agent.app when it is installed). A click on a task row and on a task's bubble come here; never a terminal.
+    func openItemPage(_ key: String) {
+        guard let path = itemPagePath(key), let url = linkTarget(path, base: api.base) else { return }
+        perform(api.openItemRequest(key: key)) { [weak self] data, code, _ in
+            guard let self = self else { return }
+            switch openItemOutcome(code: code, data: data) {
+            case .switched(let focused):
+                if !focused { self.raisePage() }
+            case .openURL:
+                self.openPage(url)
+            }
+        }
+    }
+
+    @objc func openDetailsItemClicked(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        openItemPage(key)
     }
 
     /// Opens an address: a page of this T-Agent in T-Agent.app when it is installed ("t-agent://open?path="), anything
@@ -835,17 +874,25 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     let linked = decodeItem(item("local:1", "waiting_user", link: "https://example.com/pr", session: session("local", "1")))!
     let pageLinked = decodeItem(item("local:1", "waiting_user", link: "/h5?attention=1"))!
     func opens(_ notice: WidgetNotice, _ item: WidgetItem?) -> String { bubbleOpen(notice, item: item, base: base).url?.absoluteString ?? "-" }
-    check("click target: the task's link first (the notice's target)", opens(notice("local:1", target: "https://example.com/pr"), linked)
-          == "https://example.com/pr" && opens(notice("local:1"), pageLinked) == base + "/h5?attention=1")
-    check("click target: else the session on this T-Agent", opens(notice("local:1", target: base + "/"), live) == base + "/?openTerminal=local:1:t1"
-          && opens(notice("remote:7:3", target: base + "/"), remote) == base + "/?openTerminal=remote:7:3:t1"
-          && bubbleOpen(notice("local:1"), item: live, base: base).tooltip == "Open session")
-    check("click target: else the notice's target, else the page", opens(notice("local:1", target: "https://example.com/n"), bare)
-          == "https://example.com/n" && opens(notice("local:9", target: "https://example.com/n"), live) == "https://example.com/n"
+    func details(_ notice: WidgetNotice, _ item: WidgetItem?) -> String? { bubbleOpen(notice, item: item, base: base).item }
+    check("click target: a notice of a task the list has opens its details, not its link or session",
+          opens(notice("local:1", target: "https://example.com/pr"), linked) == base + "/?openAttention=local:1"
+          && details(notice("local:1", target: "https://example.com/pr"), linked) == "local:1"
+          && opens(notice("local:1"), pageLinked) == base + "/?openAttention=local:1"
+          && opens(notice("local:1", target: base + "/"), live) == base + "/?openAttention=local:1"
+          && details(notice("remote:7:3", target: base + "/"), remote) == "remote:7:3"
+          && bubbleOpen(notice("local:1"), item: live, base: base).tooltip == "Open details"
+          && bubbleOpen(notice("local:1"), item: live, base: base).session == nil)
+    check("click target: else the notice's target, else the page", opens(notice("local:9", target: "https://example.com/n"), live)
+          == "https://example.com/n" && details(notice("local:9", target: "https://example.com/n"), live) == nil
+          && opens(notice("local:9"), nil) == base + "/"
           && opens(notice("", kind: "direct"), nil) == base + "/" && bubbleOpen(notice("", kind: "direct"), item: nil, base: base).tooltip
-          == "Open T-Agent")
-    check("click target: a bad open path is never opened", opens(notice("local:1"),
-          decodeItem(item("local:1", "waiting_user", session: session("local", "1", path: "//evil.example.com/?openTerminal=x")))) == base + "/")
+          == "Open T-Agent" && details(notice("local:1", kind: "direct", target: "https://example.com/n"), live) == nil)
+    check("details path: only a key of the list", itemPagePath("local:12") == "/?openAttention=local:12"
+          && itemPagePath("remote:7:3") == "/?openAttention=remote:7:3"
+          && ["", "local", "local:0", "local:1:2", "copy:abc:1", "remote:0:1", "phone:1", "local:1 ", "local:1\n", "remote:7:3:x"]
+              .allSatisfy { itemPagePath($0) == nil }
+          && details(notice("copy:x:1"), decodeItem(item("copy:x:1", "working"))) == nil)
 
     // The reply request.
     check("reply text: trimmed, not empty, at most 4000 UTF-16 units", replyText("  hi  ") == "hi" && replyText(" \n ") == nil
@@ -909,9 +956,9 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     answer("{\"error\":\"NOT_FOUND\",\"message\":\"Not found\"}", 404)
     check("row: an older server (404) opens the terminal's page as before", opened == [base + "/?openTerminal=local:4:t1"] && browserRaised == 0)
     check("row menu: Open session after Open link, the row's actions before Edit",
-          window.testMenuTitles("local:5") == ["Open link", "Open session", "Edit", "Delete", "Quit"]
-          && window.testMenuTitles("local:2") == ["Confirm", "Reject", "Edit", "Delete", "Quit"]
-          && window.testMenuTitles("local:1") == ["Open session", "Handled", "Reply", "Edit", "Delete", "Quit"])
+          window.testMenuTitles("local:5") == ["Details", "Open link", "Open session", "Edit", "Delete", "Quit"]
+          && window.testMenuTitles("local:2") == ["Details", "Confirm", "Reject", "Edit", "Delete", "Quit"]
+          && window.testMenuTitles("local:1") == ["Details", "Open session", "Handled", "Reply", "Edit", "Delete", "Quit"])
     sent = []
     _ = window.testOpenFromRowMenu("remote:7:3", "Open session")
     check("row menu: Open session asks for the remote terminal", posts()
@@ -959,14 +1006,68 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     check("reply form: none for a terminal that cannot take it", !window.testPressButton("remote:7:3", .reply) && window.testOverlay == nil)
     sent = []
 
+    // A plain click on a task row: the task's details on the T-Agent page, never the conversation.
+    window.loadForTest(decoded(board))
+    check("row click: the tooltip says what a click does", window.testRowTooltip("local:4") == "Task local:4\nClick to open details")
+    check("row click: asks an open page to show the task's details", window.testClickRow("local:4")
+          && posts() == ["/api/attention/widget/open-item {\"key\":\"local:4\"}"] && opened.count == 2)
+    let raisedBeforeClick = browserRaised
+    answer("{\"delivered\":1,\"focused\":true}", 200)
+    check("row click: a page took it and the extension focused the tab: nothing else happens", opened.count == 2 && browserRaised == raisedBeforeClick)
+    sent = []
+    _ = window.testClickRow("remote:7:3")
+    answer("{\"delivered\":1,\"focused\":false}", 200)
+    check("row click: a task of a connected service; without the extension the browser comes forward",
+          posts() == ["/api/attention/widget/open-item {\"key\":\"remote:7:3\"}"] && browserRaised == raisedBeforeClick + 1 && opened.count == 2)
+    _ = window.testClickRow("local:2")
+    answer("{\"delivered\":0,\"focused\":false}", 200)
+    check("row click: no page took it, so the details link opens", opened.last == base + "/?openAttention=local:2")
+    _ = window.testClickRow("local:1")
+    answer("{\"error\":\"NOT_FOUND\",\"message\":\"Not found\"}", 404)
+    check("row click: an older T-Agent or a task that is gone (404) opens the details link", opened.last == base + "/?openAttention=local:1")
+    _ = window.testClickRow("local:6")
+    answer("", 0)
+    check("row click: a failure opens the details link too", opened.last == base + "/?openAttention=local:6" && opened.count == 5)
+    sent = []
+    window.moveHook = { _, _, _ in }
+    let dragged = window.sendMouseDrag(DebugDrag(source: "local:4", over: "local:1", lowerHalf: false))
+    window.moveHook = nil
+    check("row click: a drag is not a click", dragged.hit == "local:4" && !posts().contains { $0.hasPrefix("/api/attention/widget/open-item") })
+    window.loadForTest(decoded(board))
+    sent = []
+    _ = window.testPressButton("local:4", .session)
+    check("row click: Open session still opens the conversation, and only it", posts()
+          == ["/api/attention/widget/open-terminal {\"engine\":\"local\",\"task_id\":\"4\",\"terminal_id\":\"t1\"}"])
+    answer("{\"delivered\":1,\"focused\":true}", 200)
+    sent = []
+    _ = window.testOpenFromRowMenu("local:5", "Details")
+    check("row menu: Details opens the task's details", posts() == ["/api/attention/widget/open-item {\"key\":\"local:5\"}"])
+    answer("{\"delivered\":1,\"focused\":true}", 200)
+    sent = []
+    check("VoiceOver: the row's press and its last action open the details", window.testRowView("local:4")?.accessibilityPerformPress() == true
+          && window.testRowView("local:4")?.accessibilityHelp() == "Open details"
+          && window.testRowView("local:4")?.accessibilityCustomActions()?.last?.name == "Open details"
+          && posts() == ["/api/attention/widget/open-item {\"key\":\"local:4\"}"])
+    answer("{\"delivered\":1,\"focused\":true}", 200)
+    _ = window.testRowView("local:4")?.accessibilityCustomActions()?.last?.handler?()
+    check("VoiceOver: Open details asks for the same", posts().count == 2 && posts().last == "/api/attention/widget/open-item {\"key\":\"local:4\"}")
+    answer("{\"delivered\":1,\"focused\":true}", 200)
+    sent = []
+    _ = window.testPressButton("local:1", .reply)
+    _ = window.testClickRow("local:4")
+    check("row click: nothing opens while a form is open", window.testReplyForm != nil && posts().isEmpty)
+    window.testClose()
+    sent = []
+
     // The bubble's buttons.
+    let openedAtBubbles = opened.count
     window.loadForTest(decoded(board))
     window.testShowNotices([WidgetNotice(seq: 1, kind: "item", title: "Check", status: "review", key: "local:2", target: base + "/")])
     check("bubble: review shows Confirm and Reject", window.testBubbleActions == ["Confirm", "Reject"])
     check("bubble: a button takes its own press", window.testBubbleButtonHit(.confirm) is ActionButton
           && window.testBubbleHit(NSPoint(x: 60, y: (window.testBubbleView?.bounds.height ?? 0) - 20)) is NoticeBubbleView)
     check("bubble: Confirm runs the row's action, closes the bubble and opens nothing", window.testBubbleAction(.confirm)
-          && posts() == ["/api/attention/widget/items/local:2/confirm {}"] && window.testBubbleTitle == nil && opened.count == 2)
+          && posts() == ["/api/attention/widget/items/local:2/confirm {}"] && window.testBubbleTitle == nil && opened.count == openedAtBubbles)
     answer("{\"error\":\"WRONG_STATUS\",\"message\":\"Not in review\"}", 409)
     check("bubble: a refused action shows the row's message", window.testToast == "Action failed: Not in review")
     sent = []
@@ -1009,7 +1110,7 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
         return window.testBubbleHit(point) === field
     } == true)
     window.testBubbleClick()
-    check("bubble reply: a click on the bubble does not lose the reply", window.testBubbleTitle == "Allow" && opened.count == 2
+    check("bubble reply: a click on the bubble does not lose the reply", window.testBubbleTitle == "Allow" && opened.count == openedAtBubbles
           && window.testBubbleReplying)
     check("bubble reply: an empty Return sends nothing", !window.testBubbleSendEnabled
           && window.testBubbleKey(#selector(NSResponder.insertNewline(_:))) && sent.isEmpty)
@@ -1037,7 +1138,7 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     window.testBubbleKey(#selector(NSResponder.insertNewline(_:)))
     answer("{\"ok\":true}", 200)
     check("bubble reply: success closes the bubble and gives up the keyboard", window.testBubbleTitle == nil && !window.testBubbleCanBecomeKey
-          && listReads() == readsAtReply + 3 && opened.count == 2)
+          && listReads() == readsAtReply + 3 && opened.count == openedAtBubbles)
     window.testShowNotices([WidgetNotice(seq: 6, kind: "item", title: "Again", status: "waiting_user", key: "local:1")])
     _ = window.testBubbleAction(.reply)
     window.testBubbleClose()
@@ -1054,17 +1155,25 @@ func runPartBSelfTest(_ check: (String, Bool) -> Void) {
     // A click on the bubble: the link, else the session.
     window.loadForTest(decoded(board))
     window.testShowNotices([WidgetNotice(seq: 8, kind: "item", title: "Run", status: "working", key: "local:4", target: base + "/")])
-    check("bubble click: the tooltip names the session", window.testBubbleView?.toolTip == "Open session" && window.testBubbleActions.isEmpty)
+    check("bubble click: the tooltip offers the details", window.testBubbleView?.toolTip == "Open details" && window.testBubbleActions.isEmpty)
     window.testBubblePress()
-    check("bubble click: asks to switch an open page to the session", window.testBubbleTitle == nil
-          && posts() == ["/api/attention/widget/open-terminal {\"engine\":\"local\",\"task_id\":\"4\",\"terminal_id\":\"t1\"}"])
+    check("bubble click: asks an open page to show the task's details, not its session", window.testBubbleTitle == nil
+          && posts() == ["/api/attention/widget/open-item {\"key\":\"local:4\"}"])
     let openedBefore = opened.count
+    let raisedBefore = browserRaised
     answer("{\"delivered\":1,\"focused\":false}", 200)
-    check("bubble click: a page took it, so the browser comes forward and nothing opens", opened.count == openedBefore && browserRaised == 1)
+    check("bubble click: a page took it, so the browser comes forward and nothing opens", opened.count == openedBefore && browserRaised == raisedBefore + 1)
     sent = []
     window.testShowNotices([WidgetNotice(seq: 9, kind: "item", title: "PR", status: "working", key: "local:5", target: "https://example.com/pr")])
     window.testBubblePress()
-    check("bubble click: the task's link comes first", opened.last == "https://example.com/pr" && sent.isEmpty)
+    check("bubble click: a task with a link opens its details too", posts() == ["/api/attention/widget/open-item {\"key\":\"local:5\"}"]
+          && opened.count == openedBefore)
+    answer("{\"delivered\":0,\"focused\":false}", 200)
+    check("bubble click: no page took it, so the details link opens", opened.last == base + "/?openAttention=local:5")
+    sent = []
+    window.testShowNotices([WidgetNotice(seq: 11, kind: "item", title: "Elsewhere", status: "working", key: "local:77", target: "https://example.com/n")])
+    window.testBubblePress()
+    check("bubble click: a task the list does not have keeps the notice's target", opened.last == "https://example.com/n" && sent.isEmpty)
 
     // Words from the table.
     stringTable = ["Open session": "OS", "Reply": "R", "Send": "S", "Reply to the agent": "RA"]

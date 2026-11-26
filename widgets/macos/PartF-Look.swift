@@ -170,13 +170,13 @@ func runLookSelfTest(_ check: (String, Bool) -> Void) {
     check("hover: with VoiceOver every row shows its icons", shown("local:20") == [.session] && shown("local:30") == [.link])
     voiceOver = false
     window.loadForTest(sampleList())
-    check("keyboard: a Working row's actions are in its menu", window.testMenuTitles("local:20") == ["Open session", "Edit", "Delete", "Quit"])
-    check("keyboard: a review row's menu confirms and rejects", window.testMenuTitles("local:9") == ["Open link", "Confirm", "Reject", "Edit", "Delete", "Quit"])
+    check("keyboard: a Working row's actions are in its menu", window.testMenuTitles("local:20") == ["Details", "Open session", "Edit", "Delete", "Quit"])
+    check("keyboard: a review row's menu confirms and rejects", window.testMenuTitles("local:9") == ["Details", "Open link", "Confirm", "Reject", "Edit", "Delete", "Quit"])
     let custom = window.testRowView("local:12")?.accessibilityCustomActions()?.map { $0.name } ?? []
     check("VoiceOver: the row is one element with its actions", window.testRowView("local:12")?.isAccessibilityElement() == true
-          && custom == ["Open link: CI run", "Open session", "Handled", "Reply"]
+          && custom == ["Open link: CI run", "Open session", "Handled", "Reply", "Open details"]
           && window.testRowView("local:12")?.accessibilityLabel() == "Deploy the staging build. Allow running npm publish?")
-    check("VoiceOver: a hidden row's actions are still there", window.testRowView("local:20")?.accessibilityCustomActions()?.map { $0.name } == ["Open session"])
+    check("VoiceOver: a hidden row's actions are still there", window.testRowView("local:20")?.accessibilityCustomActions()?.map { $0.name } == ["Open session", "Open details"])
     _ = window.testRowView("local:20")?.accessibilityCustomActions()?.first?.handler?()
     check("VoiceOver: its Open session asks to switch an open page", posts()
           == ["/api/attention/widget/open-terminal {\"engine\":\"local\",\"task_id\":\"20\",\"terminal_id\":\"t1\"}"] && opened.isEmpty)

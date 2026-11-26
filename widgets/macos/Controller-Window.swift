@@ -272,23 +272,30 @@ extension WidgetController {
             ])
         }
         let full = (row.title.isEmpty ? "\u{2013}" : row.title) + (second.isEmpty ? "" : "\n" + second)
-        view.toolTip = full
+        view.toolTip = full + "\n" + L("Click to open details")
         view.setAccessibilityElement(true)
         view.setAccessibilityRole(.group)
         view.setAccessibilityLabel(full.replacingOccurrences(of: "\n", with: ". "))
+        // A click opens the details: VoiceOver's press does the same, and it is the last of the row's actions.
+        view.setAccessibilityHelp(L("Open details"))
+        view.onOpen = { [weak self] in self?.openItemPage(key) }
         view.setAccessibilityCustomActions(actions.map { action in
             NSAccessibilityCustomAction(name: action == .link ? L("Open link: {1}", row.linkTitle) : action.label) { [weak self] in
                 guard let self = self else { return false }
                 self.performRowAction(key, action)
                 return true
             }
-        })
+        } + [NSAccessibilityCustomAction(name: L("Open details")) { [weak self] in
+            guard let self = self else { return false }
+            self.openItemPage(key)
+            return true
+        }])
         view.actionsAlwaysShown = actionsAlwaysShown || alwaysShowRowActions()
         view.onPress = { [weak self] in self?.rowPressed(key) }
         view.onDragBegin = { [weak self] in self?.rowDragBegan(key) }
         view.onDragMove = { [weak self] event in self?.rowDragMoved(event) }
         view.onDragEnd = { [weak self] in self?.rowDragEnded() }
-        view.onRelease = { [weak self] in self?.rowReleased() }
+        view.onRelease = { [weak self] in self?.rowReleased(key) }
         view.contextMenu = { [weak self] in self?.rowMenu(key) }
         view.actionButtons.forEach { $0.contextMenu = view.contextMenu }
         stack.addArrangedSubview(view)

@@ -638,7 +638,7 @@ func runSelfTest() -> Never {
     check("link button: on the title line, whether the title is short or long", links.testRowHeight("local:4") == rowIconSize
           && links.testRowHeight("remote:7:1") == rowIconSize && links.testRowHeight("local:6") == rowIconSize)
     check("row: a long title stays on one line with an ellipsis, the full title in the tooltip", links.testTitleTruncated("local:6")
-          && !links.testTitleTruncated("local:4") && links.testRowTooltip("local:6") == longTitle)
+          && !links.testTitleTruncated("local:4") && links.testRowTooltip("local:6") == longTitle + "\nClick to open details")
     check("link button: the panel gives its press to the button, not the row", links.testButtonTakesPress("local:4", .link)
           && links.testButtonTakesPress("remote:7:1", .link) && links.testButtonTakesPress("local:1", .link))
     check("link button: a click opens the address", links.testPressButton("local:1", .link) && opened == ["https://example.com/pr/1"])
@@ -646,8 +646,8 @@ func runSelfTest() -> Never {
           && opened.last == "http://127.0.0.1:3999/h5?task=2")
     check("link button: a click sends nothing and leaves the row alone", linkRequests.isEmpty && !links.testHolding()
           && links.testOrder == linkOrder && links.testButtonTitles("local:1") == ["Open link", "Handled"])
-    check("link menu: a row with a link offers Open link", links.testMenuTitles("local:4") == ["Open link", "Edit", "Delete", "Quit"]
-          && links.testMenuTitles("local:5") == ["Edit", "Delete", "Quit"])
+    check("link menu: a row with a link offers Open link", links.testMenuTitles("local:4") == ["Details", "Open link", "Edit", "Delete", "Quit"]
+          && links.testMenuTitles("local:5") == ["Details", "Edit", "Delete", "Quit"])
     _ = links.testOpenFromRowMenu("local:4", "Open link")
     check("link menu: Open link opens it", opened.last == "https://example.com/logs" && linkRequests.isEmpty)
     stringTable = ["Open link": "OL", "Open link: {1}": "OL: {1}"]
@@ -671,8 +671,8 @@ func runSelfTest() -> Never {
                             it("local:5", "todo", title: "Name", custom: "Custom", notes: "Old notes"),
                             it("local:6", "todo", title: "No notes", notes: nil)])
     crud.loadForTest(crudBoard)
-    check("menu: a row has Edit, Delete and Quit", crud.testMenuTitles("local:4") == ["Edit", "Delete", "Quit"])
-    check("menu: an action button opens the row's menu", crud.testButtonMenuTitles("local:3") == ["Confirm", "Reject", "Edit", "Delete", "Quit"])
+    check("menu: a row has Edit, Delete and Quit", crud.testMenuTitles("local:4") == ["Details", "Edit", "Delete", "Quit"])
+    check("menu: an action button opens the row's menu", crud.testButtonMenuTitles("local:3") == ["Details", "Confirm", "Reject", "Edit", "Delete", "Quit"])
     check("menu: off a row only Quit", crud.testPanelMenuTitles() == ["Quit"])
     check("menu: the row takes the right click", crud.testHitAtRow("local:4") is TaskRowView)
     check("menu: the + button takes its click", crud.testPlusHit)

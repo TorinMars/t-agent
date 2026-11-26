@@ -58,20 +58,13 @@ The goal of the project: the person hardly notices which engine (T01, K01, ...) 
 6. When tests lack dependencies, install the dependencies declared by the project, including the dev dependencies the tests need. When blocked by permissions, network or the environment, state the actual reason; a check that was not run or did not pass must not be reported as passed.
 7. When done, briefly state the result, how it was verified and the remaining limitations. When features, configuration or interfaces change, update the necessary documentation such as `README.md` and the topic files in `docs/design/` (see "Design document").
 
-## Requirement batches (overrides the automatic release below)
+## Requirement batches
 
-The user usually sends several requirements one after another and then releases them together. Until the user explicitly says that all requirements are submitted (for example "that is all", "release now", "submit the upgrade"):
-
-- For each requirement, only write the code and its unit tests. Run just the test files the change touches (`npm run test:quick -- test/<file>.test.js`, or one `node scripts/test-<name>-browser.cjs`), plus `node --check` on modified JavaScript.
-- Do not run the full `npm test` or `npm run test:quick`, do not run `node scripts/release.js`, do not bump any version field, and do not push a release. Do not tell the user that something was "released" or "upgraded".
-- Rebuild a bundle (for example `npm run build:agent-chat`) only when the files the browser loads must change with the code; that is part of writing the code, not a full build.
-- Keep the changes in the working tree or in ordinary commits as the task needs; the version bump and the push of the release wait for the user's signal.
-- A signal about one requirement ("this one is done", "next") is not the signal for the whole batch. When it is unclear whether the user has finished, ask instead of releasing.
-- When the user does say all requirements are submitted, then run the full `npm test` once, and continue with "Releases and pushing" for everything collected so far, as one release.
+Automatic release is the default. If the user explicitly asks to hold changes for a batch, run targeted tests as each requirement is completed and keep the changes local. The version bump and push wait for the user's release instruction for that batch. When the user releases the batch, run the full `npm test` once and follow "Releases and pushing".
 
 ## Releases and pushing
 
-The user has authorized automatic release and push: once the user has said that all requirements are submitted (see "Requirement batches"), and the development or fix in this repository is complete and the relevant verification has passed, continue by default with the version bump, commit, push and checking the result, without asking again. This includes work done on a feature branch or in a git worktree: merge it into `main` with a merge commit, bump the version and push, every time. When the user explicitly asks not to release yet, to only review, or to keep changes local, follow that request; when verification fails or the release is blocked, report it truthfully and do not force a release.
+The user has authorized automatic release and push. When a code change is complete, run the full `npm test` once and continue with the version bump, commit, push and remote verification after the checks pass. No separate release instruction is required. For work on a feature branch or in a git worktree, merge into `main` with a merge commit and verify the release candidate before bumping and pushing. Honor explicit requests to batch changes, review only, or keep changes local. When verification or a release step is blocked, report the failure and hold the release.
 
 1. Before releasing, check the working tree, current branch, remote address, remote target branch and existing versions, to avoid overwriting someone else's commits or duplicating a version. The regular release target of this repository is `origin/main`; if the user specifies otherwise, follow the user.
 2. Use `node scripts/release.js patch "<note for DESIGN.md>"` (or `minor`, or an exact `X.Y.Z`; `--dry-run` only prints the result) to update all the version fields below in one step; it refuses to run when they disagree. Follow the existing version sequence: regular fixes bump the patch version; new features or incompatible changes choose the version by impact. Before releasing, update together:

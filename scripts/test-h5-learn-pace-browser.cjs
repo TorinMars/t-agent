@@ -318,12 +318,12 @@ const openScreen = (page, name) => page.evaluate(view => window.H5UI.actions.ope
       assert.equal(await noSidewaysScroll(page), true, 'settings fit 390px');
       await page.locator('#h5-learn-back').tap();
 
-      // Practice (the coach's "practice" screen): spell and fill (the sentence queue) with extra=practice.
+      // Practice (the coach's "practice" screen) uses one word queue with extra=practice.
       await page.locator('[data-coach="only"] #h5-learn-coach').waitFor();
       const before = mock.gets(/\/queue$/).length;
       await openScreen(page, 'practice');
-      await waitFor(() => mock.gets(/\/queue$/).length >= before + 2, 'the practice queues');
-      assert.deepEqual(mock.gets(/\/queue$/).slice(before).map(item => item.search).sort(), ['?mode=fill&limit=10&extra=practice', '?mode=spell&limit=10&extra=practice']);
+      await waitFor(() => mock.gets(/\/queue$/).length > before, 'the practice queue');
+      assert.deepEqual(mock.gets(/\/queue$/).slice(before).map(item => item.search), ['?mode=spell&limit=20&extra=practice']);
       await context.close();
     }
 

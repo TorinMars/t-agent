@@ -2008,6 +2008,7 @@ I18n.add({
   "I don't know": "我不知道",
   "Meaning": "释义",
   "Hear it": "听发音",
+  "Hear the sentence": "听这句话",
   "Show first letter": "显示首字母",
   "Hide": "收起",
   "Apostrophe": "撇号",

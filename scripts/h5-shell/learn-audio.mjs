@@ -58,6 +58,15 @@ export function autoPlays(exercise, options) {
   return [options.sentencesAt];
 }
 
+// What the study step of a word practice reads by itself, in order: the word, then its example sentence, each only when its setting is on
+// ("Audio" in docs/design/learn-english-page.md). Each is read once, not repeated.
+export function studyReadings(word, sentence, options) {
+  const out = [];
+  if (options.words && word) out.push(word);
+  if (options.sentences && sentence) out.push(sentence);
+  return out;
+}
+
 // A rough upper bound of one reading, for a browser that never says the speech ended (Chromium can drop `end` for long text).
 export const longestMs = (text, slow) => Math.round((4000 + String(text || '').length * 120) * (slow ? 1.6 : 1));
 

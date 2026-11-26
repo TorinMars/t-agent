@@ -34,7 +34,7 @@ import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
 import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss, normWord, partsOf, spellCheck, spellingNote, spellingPattern, suggestedGrade, typedInFull } from './learn-grade.mjs';
 import { BUILD_HIDDEN, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, gapLayout, maskedContext, minutesFor, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
-import { audioOptions, autoPlays, beginMixedPlayback, createPlayer } from './learn-audio.mjs';
+import { audioOptions, autoPlays, beginMixedPlayback, createPlayer, studyReadings } from './learn-audio.mjs';
 import { BAILIAN_VOICES, SERVER_ENGINES, TRY_TEXT, createServerVoice, createVoiceEngine, fetchVoiceStatus, saveBailianKey, voiceOptions, voiceState } from './learn-voice.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
@@ -1017,15 +1017,45 @@ function SeriesSession({ series, phone, keys, speech, ui, openTranslator, settin
   );
 }
 
+// The study step plays by itself as the Audio settings say: the word once, then its example sentence once (each only when its own setting is on).
 function StudyWord({ card, frame, audio, tts, last, onNext }) {
   const meaning = useMeaning(card, card.en);
+  const cloze = sentenceGap(card);
+  const sentence = cloze ? `${cloze.before}${cloze.word}${cloze.after}` : '';
+  const readings = studyReadings(card.en, sentence, audio.options);
+  const next = useRef(1); // the index of the reading to start when the one now playing ends
+  const heard = useRef(false);
+  useEffect(() => {
+    audio.preload(card.en);
+    if (sentence) audio.preload(sentence);
+    if (readings.length) audio.play(readings[0], { once: true, auto: true });
+    return () => audio.stop();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once per word (the step is drawn again for each word)
+  useEffect(() => {
+    if (next.current >= readings.length) return;
+    const { state } = audio;
+    if (state.playing && state.text === readings[next.current - 1]) heard.current = true;
+    else if (heard.current && !state.playing && !state.blocked) {
+      heard.current = false;
+      const text = readings[next.current];
+      next.current += 1;
+      audio.play(text, { once: true });
+    }
+  }, [audio.state]); // eslint-disable-line react-hooks/exhaustive-deps -- the end of a reading
   return (
     <ViewFrame {...frame}>
       <Card sx={{ p: 2, display: 'grid', gap: 1 }}>
         <WordLine word={card.en} phonetic={meaning.phonetic} />
         {meaning.zh ? <Typography variant="body1">{meaning.zh}</Typography> : null}
+        {sentence ? (
+          <Box id="h5-learn-study-sentence" sx={{ display: 'grid', gap: 0.5, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+            <Typography variant="body2" translate="no">{sentence}</Typography>
+            <Typography variant="caption" color="text.secondary">{cloze.zh}</Typography>
+          </Box>
+        ) : null}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           {tts ? <AudioButton audio={audio} text={card.en} /> : null}
+          {tts && sentence ? <AudioButton audio={audio} text={sentence} id="h5-learn-hear-sentence" label="Hear the sentence" /> : null}
           <Box sx={{ flex: 1 }} />
           <Button variant="contained" onClick={onNext}>{t(last ? 'Start spelling' : 'Next word')}</Button>
         </Box>

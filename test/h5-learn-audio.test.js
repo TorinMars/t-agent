@@ -225,3 +225,13 @@ test('a browser that keeps saying it is reading: the repeat comes after the long
   r.advance(1000 + 400);
   assert.equal(r.spoken.length, 2);
 });
+
+test('the study step reads the word, then its sentence, as the settings say', async () => {
+  const { audioOptions, studyReadings } = await load();
+  const on = audioOptions({});
+  assert.deepEqual(studyReadings('receive', 'Did you receive it?', on), ['receive', 'Did you receive it?']);
+  assert.deepEqual(studyReadings('receive', '', on), ['receive'], 'a word with no sentence');
+  assert.deepEqual(studyReadings('receive', 'Did you receive it?', audioOptions({ audio_words: false })), ['Did you receive it?']);
+  assert.deepEqual(studyReadings('receive', 'Did you receive it?', audioOptions({ audio_sentences: false })), ['receive']);
+  assert.deepEqual(studyReadings('receive', 'Did you receive it?', audioOptions({ audio_words: false, audio_sentences: false })), []);
+});

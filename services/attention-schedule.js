@@ -1,19 +1,30 @@
 // T-Attention schedules ("Scheduled and recurring tasks" in docs/design/attention-schedules.md), pure: no database and no clock of its own (every time is
 // passed in), so test/attention-schedule.test.js checks it with fixed clocks and fixed zones.
 //
-// - A schedule is { kind: 'once', at: 'YYYY-MM-DDTHH:mm', tz } or { kind: 'repeat', rule: { freq, days?, day?, interval?, time }, starts?, ends?, tz }.
+// - A schedule is { kind: 'once', at: 'YYYY-MM-DDTHH:mm', tz } or { kind: 'repeat', rule: { freq, days?, day?, interval?, time }, starts?, ends?, tz };
+//   a yearly rule is { freq: 'yearly', calendar: 'solar' | 'lunar', month, day, leap?, occasion?, year?, time } (lunar dates: lib/lunar.js).
 //   Wall times are local to `tz` (the IANA zone of the owner engine when it was saved). normalizeSchedule validates a body value and returns the
 //   canonical form (fixed key order, no empty parts, `ends: never` left out), so the same schedule sent again compares equal and changes nothing.
 // - Time zones and daylight saving time: a wall time is turned into an instant with Intl (localToUtc). A wall time that does not exist (the clock
 //   jumps forward over it) moves to the next minute that exists; one that happens twice (the clock goes back) is the first of the two, so it fires once.
 // - nextOccurrence(schedule, afterMs, { runs }) is the first fire time after afterMs (a once schedule: its time while it has not fired, also in the
 //   past, so it fires at once), null when nothing is left (`ends` reached). describe() is the English sentence the page and the CLI show.
+// - occurrencesIn(schedule, from, to) is the days of the schedule in a range, for the page's calendar (the page bundles this file and lib/lunar.js,
+//   so neither may use a Node-only module).
+const lunar = require('../lib/lunar');
+
 const CAPABILITY = 'attention:schedule';
-const FREQS = Object.freeze(['daily', 'weekdays', 'weekly', 'monthly', 'every']);
+// attention:yearly: the rule freq 'yearly' (birthdays and anniversaries, solar or lunar). A page offers it only on an engine that lists it.
+const YEARLY_CAPABILITY = 'attention:yearly';
+const FREQS = Object.freeze(['daily', 'weekdays', 'weekly', 'monthly', 'every', 'yearly']);
+const CALENDARS = Object.freeze(['solar', 'lunar']);
+const OCCASIONS = Object.freeze(['birthday', 'anniversary']);
 const DAY_NAMES = Object.freeze(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-const SCAN_DAYS = 400; // enough for every rule: monthly, every N <= 365 days
+const SCAN_DAYS = 400; // enough for every day-walked rule: monthly, every N <= 365 days (yearly rules go year by year instead)
+const YEARLY_YEARS = 100; // how far a yearly rule looks ahead: a lunar leap month can be years apart (leap month 6: 2025, then 2036)
+const RANGE_DAYS = 400; // occurrencesIn: the longest range of one call
 const MAX_MISSED = 10000;
 const PROMPT_MAX = 4000;
 const SCRIPT_MAX = 4000;
@@ -92,6 +103,34 @@ function only(value, keys, name) {
 }
 const given = value => value !== undefined && value !== null && value !== '';
 
+// The parts of a yearly rule after freq, in their canonical order: calendar (written, 'solar' when none), month, day, leap (lunar, only true),
+// occasion, year. A solar date must exist at least in a leap year (2-29 yes, 2-30 no).
+function yearlyRule(raw) {
+  const calendar = given(raw.calendar) ? raw.calendar : 'solar';
+  if (!CALENDARS.includes(calendar)) throw invalid("schedule.rule.calendar must be 'solar' or 'lunar'");
+  if (!Number.isInteger(raw.month) || raw.month < 1 || raw.month > 12) throw invalid('schedule.rule.month must be a month from 1 to 12');
+  if (calendar === 'lunar') {
+    if (!Number.isInteger(raw.day) || raw.day < 1 || raw.day > 30) throw invalid('schedule.rule.day of a lunar date must be a day from 1 to 30');
+  } else {
+    if (!Number.isInteger(raw.day) || raw.day < 1 || raw.day > 31) throw invalid('schedule.rule.day must be a day of the month from 1 to 31');
+    if (raw.day > new Date(Date.UTC(2024, raw.month, 0)).getUTCDate()) throw invalid(`There is no day ${raw.day} in month ${raw.month}`);
+  }
+  const rule = { calendar, month: raw.month, day: raw.day };
+  if (given(raw.leap) && raw.leap !== false) {
+    if (calendar !== 'lunar' || raw.leap !== true) throw invalid('schedule.rule.leap is only for a lunar date and must be true');
+    rule.leap = true;
+  }
+  if (given(raw.occasion)) {
+    if (!OCCASIONS.includes(raw.occasion)) throw invalid("schedule.rule.occasion must be 'birthday' or 'anniversary'");
+    rule.occasion = raw.occasion;
+  }
+  if (given(raw.year)) {
+    if (!Number.isInteger(raw.year) || raw.year < 1900 || raw.year > 2100) throw invalid('schedule.rule.year must be a year from 1900 to 2100');
+    rule.year = raw.year;
+  }
+  return rule;
+}
+
 // A schedule body value -> the canonical schedule, or null (none). `tz`: the zone used when the value names none; `starts`: the first day of an
 // "every N days" rule that names none (the anchor its days are counted from).
 function normalizeSchedule(value, { tz, starts } = {}) {
@@ -111,12 +150,14 @@ function normalizeSchedule(value, { tz, starts } = {}) {
   if (given(value.at)) throw invalid('A repeating schedule has a rule, not a time (at)');
   if (!isPlainObject(value.rule)) throw invalid('A repeating schedule needs a rule');
   const raw = value.rule;
-  only(raw, ['freq', 'days', 'day', 'interval', 'time'], 'schedule.rule');
+  only(raw, ['freq', 'calendar', 'month', 'days', 'day', 'leap', 'occasion', 'year', 'interval', 'time'], 'schedule.rule');
   if (!FREQS.includes(raw.freq)) throw invalid(`schedule.rule.freq must be one of: ${FREQS.join(', ')}`);
   if (!validTime(raw.time)) throw invalid('schedule.rule.time must be a time in the form HH:mm');
   const rule = { freq: raw.freq };
-  const extra = { days: 'weekly', day: 'monthly', interval: 'every' };
-  for (const [key, freq] of Object.entries(extra)) if (given(raw[key]) && raw.freq !== freq) throw invalid(`schedule.rule.${key} is only for the rule ${freq}`);
+  const extra = { days: 'weekly', day: 'monthly', interval: 'every', calendar: 'yearly', month: 'yearly', leap: 'yearly', occasion: 'yearly', year: 'yearly' };
+  for (const [key, freq] of Object.entries(extra)) {
+    if (given(raw[key]) && raw.freq !== freq && !(key === 'day' && raw.freq === 'yearly')) throw invalid(`schedule.rule.${key} is only for the rule ${freq}`);
+  }
   if (raw.freq === 'weekly') {
     if (!Array.isArray(raw.days) || !raw.days.length) throw invalid('A weekly rule needs at least one day (schedule.rule.days, Monday = 1)');
     if (raw.days.some(day => !Number.isInteger(day) || day < 1 || day > 7)) throw invalid('schedule.rule.days must be days 1 to 7 (Monday = 1)');
@@ -126,6 +167,7 @@ function normalizeSchedule(value, { tz, starts } = {}) {
     if (!Number.isInteger(raw.day) || raw.day < 1 || raw.day > 31) throw invalid('schedule.rule.day must be a day of the month from 1 to 31');
     rule.day = raw.day;
   }
+  if (raw.freq === 'yearly') Object.assign(rule, yearlyRule(raw));
   if (raw.freq === 'every') {
     if (!Number.isInteger(raw.interval) || raw.interval < 1 || raw.interval > 365) throw invalid('schedule.rule.interval must be a number of days from 1 to 365');
     rule.interval = raw.interval;
@@ -195,6 +237,13 @@ function normalizeThenAction(value) {
 }
 
 // ---- Occurrences ----
+// The day (UTC midnight) of a yearly rule in a year: a solar year, or the lunar year (lib/lunar.js) for a lunar date. Solar Feb 29 is Feb 28 in a
+// common year; lunar day 30 of a 29-day month is its day 29; a leap month only in a year that has it (else null).
+function yearlyDay(rule, year) {
+  if (rule.calendar === 'lunar') return lunar.dayOf(year, rule.month, rule.day, Boolean(rule.leap));
+  return Date.UTC(year, rule.month - 1, Math.min(rule.day, new Date(Date.UTC(year, rule.month, 0)).getUTCDate()));
+}
+const yearOf = (rule, day) => (rule.calendar === 'lunar' ? lunar.lunarOfMs(day).year : new Date(day).getUTCFullYear());
 function matches(rule, day, starts) {
   switch (rule.freq) {
     case 'daily': return true;
@@ -202,6 +251,7 @@ function matches(rule, day, starts) {
     case 'weekly': return rule.days.includes(isoDow(day));
     case 'monthly': return new Date(day).getUTCDate() === Math.min(rule.day, daysInMonth(day));
     case 'every': { const diff = Math.round((day - dateMs(starts)) / DAY_MS); return diff >= 0 && diff % rule.interval === 0; }
+    case 'yearly': return yearlyDay(rule, yearOf(rule, day)) === day;
     default: return false;
   }
 }
@@ -218,16 +268,40 @@ const onceAt = schedule => {
   return localToUtc(y, m, d, hh, mm, schedule.tz);
 };
 
-// The first occurrence of a repeating rule strictly after afterMs, ignoring a count end (ends after N); null when the end date is passed.
-function nextRaw(schedule, afterMs) {
-  const first = schedule.starts ? dateMs(schedule.starts) : -Infinity;
-  const last = schedule.ends && schedule.ends.kind === 'on' ? dateMs(schedule.ends.date) : Infinity;
-  let day = Math.max(localDateOf(afterMs, schedule.tz) - DAY_MS, first);
+// The first day (UTC midnight) of a repeating rule on or after `day` and not after `last`, or null. Day-walked rules look at most SCAN_DAYS days
+// ahead; a yearly rule goes year by year (at most YEARLY_YEARS), so a leap month years away is found with a few lunar conversions.
+function nextDay(schedule, day, last = Infinity) {
+  const { rule } = schedule;
+  if (rule.freq === 'yearly') {
+    const startYear = yearOf(rule, day);
+    for (let year = startYear; year < startYear + YEARLY_YEARS; year += 1) {
+      if (Date.UTC(year, 0, 1) > last) return null; // every day of a (lunar) year `year` is in solar year `year` or later
+      const found = yearlyDay(rule, year);
+      if (found === null || found < day) continue;
+      return found > last ? null : found;
+    }
+    return null;
+  }
   for (let i = 0; i < SCAN_DAYS + 2; i += 1, day += DAY_MS) {
     if (day > last) return null;
-    if (!matches(schedule.rule, day, schedule.starts)) continue;
-    const at = onDay(schedule, day);
+    if (matches(rule, day, schedule.starts)) return day;
+  }
+  return null;
+}
+const firstDayOf = schedule => (schedule.starts ? dateMs(schedule.starts) : -Infinity);
+const lastDayOf = schedule => (schedule.ends && schedule.ends.kind === 'on' ? dateMs(schedule.ends.date) : Infinity);
+
+// The first occurrence of a repeating rule strictly after afterMs, ignoring a count end (ends after N); null when the end date is passed.
+function nextRaw(schedule, afterMs) {
+  const last = lastDayOf(schedule);
+  let day = Math.max(localDateOf(afterMs, schedule.tz) - DAY_MS, firstDayOf(schedule));
+  // The day before, the day of and the day after afterMs's local date can each hold a time at or before it; a fourth is always after it.
+  for (let i = 0; i < 4; i += 1) {
+    const found = nextDay(schedule, day, last);
+    if (found === null) return null;
+    const at = onDay(schedule, found);
     if (at > afterMs) return at;
+    day = found + DAY_MS;
   }
   return null;
 }
@@ -268,6 +342,47 @@ function upcoming(schedule, nowMs, count = 3) {
   return out;
 }
 
+// The days ('YYYY-MM-DD', in the schedule's zone) the schedule falls on from fromDate to toDate, both included, for the page's calendar. A range
+// longer than RANGE_DAYS is cut there. Honors starts and an end on a date; "ends after N" counts N occurrences from the first one on or after
+// starts (from fromDate when there is no starts), which is exact only for a schedule that has not fired yet. [] for a range or schedule that is
+// not valid.
+function occurrencesIn(schedule, fromDate, toDate) {
+  if (!schedule || !validDate(fromDate) || !validDate(toDate)) return [];
+  const from = dateMs(fromDate);
+  const to = Math.min(dateMs(toDate), from + (RANGE_DAYS - 1) * DAY_MS);
+  if (to < from) return [];
+  if (schedule.kind === 'once') {
+    const day = schedule.at ? dateMs(schedule.at.slice(0, 10)) : NaN;
+    return day >= from && day <= to ? [dateText(day)] : [];
+  }
+  if (schedule.kind !== 'repeat' || !schedule.rule || !FREQS.includes(schedule.rule.freq)) return [];
+  const first = firstDayOf(schedule);
+  let last = Math.min(lastDayOf(schedule), to);
+  if (schedule.ends && schedule.ends.kind === 'after') {
+    // The day of the Nth occurrence; counting stops at the end of the range (nothing after it is shown anyway).
+    let day = Number.isFinite(first) ? first : from;
+    let reached = 0;
+    let nth = null;
+    while (reached < schedule.ends.count) {
+      const found = nextDay(schedule, day, last);
+      if (found === null) break;
+      nth = found;
+      reached += 1;
+      day = found + DAY_MS;
+    }
+    if (reached === schedule.ends.count) last = nth;
+  }
+  const out = [];
+  let day = Math.max(from, first);
+  while (day <= last && out.length < RANGE_DAYS) {
+    const found = nextDay(schedule, day, last);
+    if (found === null) break;
+    out.push(dateText(found));
+    day = found + DAY_MS;
+  }
+  return out;
+}
+
 // HH:mm of an instant in a zone (the busy note of a prompt).
 const clockIn = (ms, tz) => { const w = wallOf(ms, tz); return `${pad(w.hh)}:${pad(w.mm)}`; };
 
@@ -277,7 +392,8 @@ function dayList(days) {
   if (names.length === 1) return names[0];
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
-// "Every Monday at 09:00", "Once on 2026-12-01 at 10:00", parts after " · ": "starting <date>", "until <date>", "ends after <n> times".
+// "Every Monday at 09:00", "Once on 2026-12-01 at 10:00", "Every year on 11-15 at 09:00", "Every year on lunar month 10, day 7 at 09:00" ("lunar leap
+// month 6"), parts after " · ": "birthday" or "anniversary", "starting <date>", "until <date>", "ends after <n> times".
 function describe(schedule) {
   if (!schedule) return null;
   if (schedule.kind === 'once') return `Once on ${schedule.at.slice(0, 10)} at ${schedule.at.slice(11)}`;
@@ -287,8 +403,11 @@ function describe(schedule) {
   else if (rule.freq === 'weekdays' || (rule.freq === 'weekly' && rule.days.join() === '1,2,3,4,5')) head = `Every weekday at ${rule.time}`;
   else if (rule.freq === 'weekly') head = `Every ${dayList(rule.days)} at ${rule.time}`;
   else if (rule.freq === 'monthly') head = `Every month on day ${rule.day} at ${rule.time}`;
+  else if (rule.freq === 'yearly' && rule.calendar === 'lunar') head = `Every year on lunar ${rule.leap ? 'leap ' : ''}month ${rule.month}, day ${rule.day} at ${rule.time}`;
+  else if (rule.freq === 'yearly') head = `Every year on ${pad(rule.month)}-${pad(rule.day)} at ${rule.time}`;
   else head = `Every ${rule.interval} days at ${rule.time}`;
   const parts = [head];
+  if (rule.occasion) parts.push(rule.occasion); // "birthday" or "anniversary"
   if (schedule.starts) parts.push(`starting ${schedule.starts}`);
   if (schedule.ends && schedule.ends.kind === 'on') parts.push(`until ${schedule.ends.date}`);
   if (schedule.ends && schedule.ends.kind === 'after') parts.push(schedule.ends.count === 1 ? 'ends after 1 time' : `ends after ${schedule.ends.count} times`);
@@ -301,6 +420,9 @@ function preview(value, nowMs, { tz } = {}) {
     const schedule = normalizeSchedule(value, { tz, starts: dateText(localDateOf(nowMs, validZone(tz) ? tz : 'UTC')) });
     if (!schedule) return { next: [], text: null, error: 'schedule must be a JSON object' };
     const next = upcoming(schedule, nowMs);
+    if (!next.length && schedule.kind === 'repeat' && schedule.rule.freq === 'yearly' && !schedule.ends) {
+      return { next, text: describe(schedule), error: `This date does not come in the next ${YEARLY_YEARS} years` };
+    }
     if (!next.length) return { next, text: describe(schedule), error: 'The schedule ends before its next time' };
     return { next, text: describe(schedule) };
   } catch (error) {
@@ -313,7 +435,7 @@ function preview(value, nowMs, { tz } = {}) {
 const systemZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } };
 
 module.exports = {
-  CAPABILITY, FREQS, DAY_NAMES, PROMPT_MAX, SCRIPT_MAX, SCRIPT_TIMEOUT_DEFAULT, SCRIPT_TIMEOUT_MAX, ScheduleError,
-  normalizeSchedule, normalizeThenAction, nextOccurrence, occurrencesBetween, upcoming, describe, preview,
+  CAPABILITY, YEARLY_CAPABILITY, FREQS, CALENDARS, OCCASIONS, RANGE_DAYS, DAY_NAMES, PROMPT_MAX, SCRIPT_MAX, SCRIPT_TIMEOUT_DEFAULT, SCRIPT_TIMEOUT_MAX, ScheduleError,
+  normalizeSchedule, normalizeThenAction, nextOccurrence, occurrencesBetween, occurrencesIn, upcoming, describe, preview,
   localToUtc, localDateOf, dateText, clockIn, validZone, systemZone,
 };

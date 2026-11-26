@@ -311,3 +311,22 @@ test('copies carry the fields; run now and a schedule change are refused while t
   const plain = service.create({ title: 'Plain' });
   assert.deepEqual(merge.withoutSameSchedule({ then_action: { kind: 'remind' }, schedule: null }, plain), {});
 });
+
+test('a yearly birthday is an ordinary scheduled item: next_at and waiting when saved, fired on its day, done puts it back for its next year', () => {
+  const { service, at } = setup();
+  const birthday = { kind: 'repeat', rule: { freq: 'yearly', month: 11, day: 20, occasion: 'birthday', year: 1964, time: '09:00' } };
+  const item = service.create({ title: 'Mum', schedule: birthday });
+  assert.deepEqual([item.next_at, item.schedule_state, item.status, item.schedule_text], ['2026-11-20T01:00:00.000Z', 'waiting', 'todo', 'Every year on 11-20 at 09:00 · birthday']);
+  assert.deepEqual(item.schedule.rule, { freq: 'yearly', calendar: 'solar', month: 11, day: 20, occasion: 'birthday', year: 1964, time: '09:00' });
+  at('2026-11-20T01:00:00Z');
+  service.fireDue();
+  const due = service.get(item.id);
+  assert.deepEqual([due.schedule_state, due.runs, due.next_at], ['due', 1, '2027-11-20T01:00:00.000Z']);
+  at('2026-11-20T02:00:00Z');
+  const done = service.update(item.id, { status: 'done' });
+  assert.deepEqual([done.status, done.schedule_state, done.next_at], ['todo', 'waiting', '2027-11-20T01:00:00.000Z']);
+  // A lunar one: 10/7 was 2026-11-15, already past, so its next day is 2027-11-04.
+  const lunarItem = service.create({ title: 'Grandpa', schedule: { kind: 'repeat', rule: { freq: 'yearly', calendar: 'lunar', month: 10, day: 7, time: '09:00' } } });
+  assert.deepEqual([lunarItem.next_at, lunarItem.schedule_state], ['2027-11-04T01:00:00.000Z', 'waiting']);
+  fails(() => service.create({ title: 'x', schedule: { kind: 'repeat', rule: { freq: 'yearly', month: 2, day: 30, time: '09:00' } } }), 'VALIDATION_FAILED', 400);
+});

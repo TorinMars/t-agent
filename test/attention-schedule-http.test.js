@@ -96,6 +96,11 @@ test('preview answers three times and the sentence, or the reason; with the sess
   assert.deepEqual([bad.status, bad.body.next, bad.body.error], [200, [], 'A weekly rule needs at least one day (schedule.rule.days, Monday = 1)']);
   const saved = await call('POST', `${local}/api/attention`, { title: 'Bad', schedule: { kind: 'once', at: 'tomorrow' } }, bearer(cliToken));
   assert.deepEqual([saved.status, saved.body.error], [400, 'VALIDATION_FAILED']);
+  // A yearly lunar birthday: the sentence and three times a year apart.
+  const lunar = await call('POST', `${local}/api/attention/schedule/preview`, { schedule: { kind: 'repeat', rule: { freq: 'yearly', calendar: 'lunar', month: 10, day: 7, occasion: 'birthday', year: 1964, time: '09:00' }, tz: 'Asia/Taipei' } });
+  assert.deepEqual([lunar.status, lunar.body.text, lunar.body.next.length], [200, 'Every year on lunar month 10, day 7 at 09:00 \u00b7 birthday', 3]);
+  const wrong = await call('POST', `${local}/api/attention/schedule/preview`, { schedule: { kind: 'repeat', rule: { freq: 'yearly', month: 2, day: 30, time: '09:00' } } });
+  assert.deepEqual([wrong.body.next, wrong.body.error], [[], 'There is no day 30 in month 2']);
 });
 
 test('the item JSON carries the schedule fields; run now fires a reminder and sends an idle prompt, 409 SESSION_BUSY otherwise', async () => {
@@ -132,7 +137,9 @@ test('a script: the page and a CLI token made in Settings may set it; a terminal
 });
 
 test('/v1/attention and the proxy: preview and run now are forwarded; an older engine is 501; an unreachable one previews here', async () => {
-  assert.ok((await call('GET', `${engine}/v1/info`, undefined, engineAuth)).body.capabilities.includes('attention:schedule'));
+  const capabilities = (await call('GET', `${engine}/v1/info`, undefined, engineAuth)).body.capabilities;
+  assert.ok(capabilities.includes('attention:schedule'));
+  assert.ok(capabilities.includes('attention:yearly'), 'yearly birthdays and anniversaries');
   for (const target of ['/v1/attention/schedule/preview', '/v1/attention/12/run-now']) assert.equal(checkTunnelTarget(target), target);
   const v1 = await call('POST', `${engine}/v1/attention/schedule/preview`, { schedule: weekly }, engineAuth);
   assert.deepEqual([v1.status, v1.body.text], [200, 'Every Monday at 09:00']);

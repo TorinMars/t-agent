@@ -20,7 +20,8 @@ import { t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { keyTick } from './Osk.jsx';
 import {
-  BALL_SIZE, DWELL_IDLE, ballFor, cellFromPoint, cursorFor, dockPosition, dwellProgress, dwellStep, intersect, scrollSpeed, selectionRange,
+  BALL_SIZE, DWELL_IDLE, ballFor, cellFromPoint, cursorFor, dockPosition, dwellProgress, dwellStep, intersect, joinSelection, scrollSpeed,
+  selectionRange,
 } from './mouse-ball-model.mjs';
 
 const RING_R = 29; // the dwell ring, just outside the ball
@@ -80,11 +81,42 @@ function control(nodes, ui) {
     line.setAttribute('x2', drag.ball.x);
     line.setAttribute('y2', drag.ball.y);
   }
+  // How many cells of a row hold text (the cell after the last one that does).
+  function usedCells(line, cols) {
+    for (let x = cols - 1; x >= 0; x -= 1) {
+      const cell = line.getCell(x);
+      if (cell && cell.getChars()) return x + (cell.getWidth() || 1);
+    }
+    return 0;
+  }
+  // The copied text: the rows of the selection read from the buffer and joined by joinSelection (a line a program wrapped itself is one line again).
+  function textOf(term, range) {
+    const buffer = term.buffer.active;
+    const cols = term.cols;
+    const end = range.row * cols + range.col + range.length;
+    const rows = [];
+    for (let row = range.row; ; row += 1) {
+      const line = buffer.getLine(row);
+      if (!line) break;
+      const from = row === range.row ? range.col : 0;
+      const to = end < (row + 1) * cols ? end - row * cols : cols;
+      const next = buffer.getLine(row + 1);
+      rows.push({
+        text: line.translateToString(!(next && next.isWrapped && to === cols), from, to),
+        wrapped: row !== range.row && line.isWrapped,
+        full: to === cols,
+        length: usedCells(line, cols),
+      });
+      if (end <= (row + 1) * cols) break;
+    }
+    return joinSelection(rows, cols);
+  }
   // The selection from the press point to the cell under the cursor, in buffer rows (so a scrolled view keeps the press point where it was).
   function select() {
     const { term } = drag.geo.target;
     const focus = cellFromPoint(drag.cursor, drag.geo.screen, term.cols, term.rows, term.buffer.active.viewportY);
     const range = selectionRange(drag.anchor, focus, term.cols);
+    drag.range = range;
     if (range) term.select(range.col, range.row, range.length);
     else term.clearSelection();
   }
@@ -173,7 +205,7 @@ function control(nodes, ui) {
     event.preventDefault();
     if (drag.anchor && follow(event.clientX, event.clientY)) {
       const { term, copy } = drag.geo.target;
-      const text = term.hasSelection() ? term.getSelection() : '';
+      const text = term.hasSelection() && drag.range ? textOf(term, drag.range) : '';
       if (text) void copy(text); // inside the lift, so the browser lets the page write the clipboard
     }
     end();

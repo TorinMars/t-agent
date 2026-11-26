@@ -136,3 +136,25 @@ test('intersect: the visible part of two rects, or null', async () => {
   assert.deepEqual(intersect({ left: 0, top: 56, right: 390, bottom: 740 }, { left: 0, top: 0, right: 390, bottom: 500 }), { left: 0, top: 56, right: 390, bottom: 500 });
   assert.equal(intersect({ left: 0, top: 0, right: 10, bottom: 10 }, { left: 20, top: 0, right: 30, bottom: 10 }), null);
 });
+
+test('joinSelection: soft-wrapped rows continue, rows a program wrapped itself are one line again, anything else keeps its line break', async () => {
+  const { joinSelection } = await load();
+  const COLS = 36;
+  const row = (text, extra = {}) => ({ text, wrapped: false, full: true, length: text.trimEnd().length, ...extra });
+  const join = rows => joinSelection(rows, COLS);
+  assert.equal(join([row('one line')]), 'one line');
+  assert.equal(join([row('The quick brown fox '), row('jumps over', { wrapped: true })]), 'The quick brown fox jumps over', 'xterm soft wrap: as is');
+  // The program cut the line at a space because the next word did not fit.
+  assert.equal(join([row('She worked hard to accomplish her'), row('goal before the deadline.')]), 'She worked hard to accomplish her goal before the deadline.', 'one space');
+  assert.equal(join([row('She worked hard to accomplish her'), row('goal before the deadline, and then'), row('rested.')]), 'She worked hard to accomplish her goal before the deadline, and then rested.', 'several rows');
+  // The row ends far from the edge but the next word is long: it would not have fitted.
+  assert.equal(join([row('Short line here'), row('unbelievablylongwordthatwouldnotfitonthatline')]), 'Short line here unbelievablylongwordthatwouldnotfitonthatline');
+  assert.equal(join([row('A short line'), row('another line')]), 'A short line\nanother line', 'a row that did not need to break ends its line');
+  assert.equal(join([row('https://example.com/a/very/long/pa'), row('th/in/the/middle')]), 'https://example.com/a/very/long/path/in/the/middle', 'a cut word: joined with nothing');
+  assert.equal(join([row('see https://example.com/a/very/lon'), row('continues here')]), 'see https://example.com/a/very/lon continues here', 'a row with words: one space');
+  assert.equal(join([row('A line that fills the whole width of'), row('')]), 'A line that fills the whole width of\n', 'a blank row stays');
+  assert.equal(join([row('Items that run to the edge of screen'), row('- second item')]), 'Items that run to the edge of screen\n- second item', 'a list item starts a line');
+  assert.equal(join([row('A line that fills the whole width of'), row('2. numbered')]), 'A line that fills the whole width of\n2. numbered');
+  assert.equal(join([row('wrapped here at the very edge of th'), row('   indented rest')]), 'wrapped here at the very edge of th indented rest', 'the indent of the rest is dropped');
+  assert.equal(join([row('She worked hard to accomplish her', { full: false }), row('goal before the deadline.')]), 'She worked hard to accomplish her\ngoal before the deadline.', 'a selection that stops inside a row does not join');
+});

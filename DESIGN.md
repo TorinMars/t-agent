@@ -280,3 +280,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.172.3 Clicking a task in the floating window opens its details; only Open session goes to the conversation
 > v2.173.0 Attention calendar view: schedules, birthdays and anniversaries (lunar calendar), to dos by due date
 > v2.174.0 Mouse ball on the phone terminal: drag a cursor, hold still to press, drag to select, lift to copy
+> v2.174.1 Mouse ball copy joins the rows of a line the program wrapped

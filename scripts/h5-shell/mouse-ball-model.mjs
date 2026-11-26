@@ -75,6 +75,38 @@ export function selectionRange(a, b, cols) {
   return { col: first % cols, row: Math.floor(first / cols), length };
 }
 
+// The text of a selection, joined the way a person reads it ("Copy" in docs/design/page-terminal-mouse-ball.md). `rows`: one entry per buffer row
+// of the selection, { text (the selected part of the row), wrapped (xterm soft-wrapped it onto the row before), full (the selection runs to the end
+// of the row), length (the length of the whole row without its trailing blanks) }; `cols`: the terminal width. A soft-wrapped row continues the one
+// before it as it is. A row that a program wrapped itself (Claude Code and Codex cut their lines at the width) is one line again when the row before
+// runs to the right edge (within HARD_WRAP_SLACK columns: a long word, a path or an address cut in the middle) or when the first word of this row
+// would not have fitted after it (a break at a space): joined with one space, or with nothing after a cut word. A row that starts a list item, a
+// quote, a heading or a table row, a blank row and a row after a short row are new lines.
+export const HARD_WRAP_SLACK = 2;
+const NEW_LINE_START = /^\s*([-*+\u2022>|#\u2502]|\d+[.)])(\s|$)/;
+function continues(before, row, cols) {
+  if (!before.full || !row.text.trim() || NEW_LINE_START.test(row.text)) return false;
+  if (before.length >= cols - HARD_WRAP_SLACK) return 'cut';
+  const word = /^\s*(\S+)/.exec(row.text)[1];
+  return before.length + 1 + word.length > cols ? 'space' : false;
+}
+export function joinSelection(rows, cols) {
+  let out = '';
+  rows.forEach((row, index) => {
+    if (!index) { out = row.text; return; }
+    const before = rows[index - 1];
+    if (row.wrapped) { out += row.text; return; }
+    const how = continues(before, row, cols);
+    if (how) {
+      const glue = how === 'space' || /\s/.test(before.text.trim()) ? ' ' : '';
+      out = out.replace(/\s+$/, '') + glue + row.text.replace(/^\s+/, '');
+      return;
+    }
+    out += `\n${row.text}`;
+  });
+  return out;
+}
+
 // Scrolling while the button is down: lines per second for the cursor at height `y` inside `bounds`: negative (older lines) within SCROLL_ZONE px
 // of the top edge, positive (newer) within it of the bottom edge, faster the nearer the edge (SCROLL_MIN to SCROLL_MAX); 0 elsewhere.
 export function scrollSpeed(y, bounds) {

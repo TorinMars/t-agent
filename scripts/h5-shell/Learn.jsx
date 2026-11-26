@@ -32,9 +32,9 @@ import TextField from './TextField.jsx';
 import { TOUCH } from './theme.mjs';
 import { BACKSPACE, Keyboard, SHIFT, chars, rowsFor } from './Osk.jsx';
 import { AUTO_CHECK_MS, alignSpelling, diffWords, hintText, mistakeTag, nearMiss, normWord, partsOf, spellCheck, spellingNote, spellingPattern, suggestedGrade, typedInFull } from './learn-grade.mjs';
-import { BUILD_HIDDEN, SENTENCE_EXERCISE, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, gapLayout, maskedContext, minutesFor, mixCards, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
+import { BUILD_HIDDEN, availableModes, builtAnswer, exerciseFor, exerciseKey, gapFor, goalProgress, hintTile, levelNote, gapLayout, maskedContext, minutesFor, modeOf, pickedNote, sentenceGap, slotLayout, tilesFor } from './learn-model.mjs';
 import { attachVoice, canSpeak, isSpeaking, speakOnce, stopSpeaking, voiceWay } from './learn-speech.mjs';
-import { audioOptions, autoPlays, createPlayer } from './learn-audio.mjs';
+import { audioOptions, autoPlays, beginMixedPlayback, createPlayer } from './learn-audio.mjs';
 import { BAILIAN_VOICES, SERVER_ENGINES, TRY_TEXT, createServerVoice, createVoiceEngine, fetchVoiceStatus, saveBailianKey, voiceOptions, voiceState } from './learn-voice.mjs';
 import { MistakesView, NewReportLine, ReportView, ReportsView } from './LearnMistakes.jsx';
 import { ASK_WIDTH, AskPanel } from './LearnAsk.jsx';
@@ -631,15 +631,15 @@ function Home({ ui, phone, data, modes, current, open }) {
       setBusy(false);
     }
   };
-  const countOf = mode => (mode.kind === 'word' ? count(words, 'word', 'words') : count(sentences, 'sentence', 'sentences'));
+  const countOf = mode => mode.id === 'fill' ? '' : count(words, 'word', 'words');
   const away = homeAway(summary);
   return (
     <>
       {away ? <HomeAway device={summary.device} /> : null}
-      {!words && !sentences ? (
+      {!words ? (
         <Card id="h5-learn-empty" sx={{ p: 2 }}>
           <Typography variant="h6" component="h2">{t('No study cards yet')}</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{t('Sentences you send with "Chinese → English" and words you look up by tapping in the chat will appear here.')}</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{t('Words picked from translations and words you look up appear here.')}</Typography>
           <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
             <Button variant="contained" id="h5-learn-add-starter" disabled={busy} onClick={addStarter}>{t('Add the starter list')}</Button>
             <Button id="h5-learn-how-empty" onClick={() => open({ kind: 'how' })}>{t('How learning works')}</Button>
@@ -682,7 +682,7 @@ function Home({ ui, phone, data, modes, current, open }) {
         <ModeCard key={mode.id} id={`h5-learn-mode-${mode.id}`} icon={mode.icon} title={t(mode.label)} note={t(mode.note)} count={countOf(mode)}
           selected={current === mode.id} onClick={() => open({ kind: 'session', mode: mode.id })} />
       ))}
-      <ModeCard id="h5-learn-mode-mistakes" icon="learnMistakes" title={t('Mistakes')} note={t('Words and sentences you got wrong')}
+      <ModeCard id="h5-learn-mode-mistakes" icon="learnMistakes" title={t('Mistakes')} note={t('Words you get wrong show up here.')}
         count={count(mistakes, 'card', 'cards')} selected={current === 'mistakes' || current === 'report' || current === 'reports'} onClick={() => open({ kind: 'mistakes' })} />
       <Typography variant="overline" component="h2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 2 }}>{t('Ask')}</Typography>
       <ModeCard id="h5-learn-mode-chat" icon="learnAsk" title={t('English chat')}
@@ -763,19 +763,17 @@ const TITLES = { review: 'Daily review', mistakes: 'Mistakes', mixed: 'Practice'
 const titleOf = mode => t(TITLES[mode] || (modeOf(mode) || {}).label || 'Practice');
 const EMPTY = {
   review: ['Nothing due today', 'Every card you have is done for today. Practise anyway, or come back tomorrow.'],
-  mixed: ['No study cards yet', 'Sentences you send with "Chinese → English" and words you look up by tapping in the chat will appear here.'],
+  mixed: ['No words yet', 'Words picked from translations and words you look up appear here.'],
   spell: ['No words yet', 'Words you look up by tapping in the chat become word cards. You can also add the starter list in Learn settings.'],
-  mistakes: ['No mistakes to review', 'Words and sentences you get wrong show up here.'],
+  mistakes: ['No mistakes to review', 'Words you get wrong show up here.'],
+  fill: ['No words with examples to practise', 'You can still practise spelling words directly.'],
   sentence: ['No sentences yet', 'Messages you send with "Chinese → English" become sentence cards.'],
 };
 
 // `extra`: 'practice' asks for cards that are not due (words already learned) on top of the due ones; without it a queue has the due cards and the
 // new words up to today's count, and nothing more ("Done for today" in docs/design/learn-english-page.md). Practice (mixed) always asks for it.
 async function loadQueue(mode, extra = '') {
-  if (mode === 'mixed') {
-    const [words, sentences] = await Promise.all([api('GET', '/api/learn/queue?mode=spell&limit=10&extra=practice'), api('GET', `/api/learn/queue?mode=${SENTENCE_EXERCISE}&limit=10&extra=practice`)]);
-    return mixCards([words && words.cards, sentences && sentences.cards], 20);
-  }
+  if (mode === 'mixed') return loadQueue('spell', 'practice');
   const limit = (modeOf(mode) || { limit: 20 }).limit;
   const data = await api('GET', `/api/learn/queue?mode=${encodeURIComponent(mode)}&limit=${limit}${extra ? `&extra=${encodeURIComponent(extra)}` : ''}`);
   return (data && Array.isArray(data.cards) ? data.cards : []).filter(card => card && !card.suspended);
@@ -847,6 +845,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
   useExerciseKeys(register);
   const card = cards && cards[index];
   const exercise = card ? exerciseFor(card, mode, speech) : null;
+  const shownCard = useMemo(() => exerciseCard(card, exercise, mode), [card, exercise, mode]);
   const answer = async ({ grade, correct, answer: text, helped = false, gaveUp = false, near = false, detail = null }) => {
     if (busyRef.current || !card) return;
     busyRef.current = true;
@@ -934,7 +933,7 @@ function Session({ mode, extra = '', preset, phone, keys, speech, ui, onBack, on
   }
   const Exercise = EXERCISES[exercise];
   return (
-    <Exercise key={`${card.id}-${index}-${loads}`} ui={ui} card={card} cards={cards} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
+    <Exercise key={`${card.id}-${index}-${loads}`} ui={ui} card={shownCard} cards={cards} frame={frame} phone={phone} keys={keys} tts={speech.tts} busy={busy} register={register}
       onAnswer={answer} onSkip={skip} openTranslator={openTranslator} audio={audio} exercise={exercise} />
   );
 }
@@ -1282,6 +1281,7 @@ function useAudio(settings, speech, ui) {
   ttsRef.current = speech.tts;
   const uiRef = useRef(ui);
   uiRef.current = ui;
+  const releaseMix = useRef(null);
   const [state, setState] = useState({ playing: false, text: '', index: 0, total: 0, blocked: false });
   // This device's voices or a server voice (learn-voice.mjs), as chosen now; a server play that fails is read by this device's voice.
   const engine = useMemo(() => createVoiceEngine({
@@ -1295,7 +1295,12 @@ function useAudio(settings, speech, ui) {
   }), []);
   const player = useMemo(() => createPlayer({
     speakOnce: engine.speakOnce, cancel: engine.cancel, speaking: engine.speaking,
-    onChange: next => { if (next.blocked) tapToPlayShown = true; setState(next); },
+    onChange: next => {
+      if (next.playing && !releaseMix.current) releaseMix.current = beginMixedPlayback();
+      if (!next.playing && releaseMix.current) { releaseMix.current(); releaseMix.current = null; }
+      if (next.blocked) tapToPlayShown = true;
+      setState(next);
+    },
   }), [engine]);
   useEffect(() => () => player.stop(), [player]);
   return useMemo(() => ({
@@ -2115,6 +2120,7 @@ function BuildExercise({ ui, card, cards, frame, phone, keys, tts, busy, registe
 
 function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAnswer, onSkip, audio, exercise, openTranslator }) {
   const [value, setValue] = useState('');
+  const inputLabel = t(card.kind === 'word' ? 'Type the word' : 'Type the sentence');
   const field = useRef(null);
   useEffect(() => { focusOnStart(field, true); }, [card]); // eslint-disable-line react-hooks/exhaustive-deps -- one card
   const { result, suggested, grade } = useChecked({
@@ -2144,8 +2150,8 @@ function DictationExercise({ ui, card, frame, phone, keys, busy, register, onAns
         {result ? <ChineseText card={card} id="h5-learn-chinese" compact={kb.compact} field={field} /> : null}
       </Prompt>
       <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <OutlinedInput inputRef={field} multiline minRows={2} value={value} onChange={event => change(event.target.value)} onClick={kb.show} placeholder={t('Type the sentence')}
-          inputProps={{ id: 'h5-learn-dictation-input', 'aria-label': t('Type the sentence'), readOnly: Boolean(result), translate: 'no', ...fieldProps, ...kb.inputProps }} />
+        <OutlinedInput inputRef={field} multiline minRows={2} value={value} onChange={event => change(event.target.value)} onClick={kb.show} placeholder={inputLabel}
+          inputProps={{ id: 'h5-learn-dictation-input', 'aria-label': inputLabel, readOnly: Boolean(result), translate: 'no', ...fieldProps, ...kb.inputProps }} />
         {phone || result ? null : actions}
       </Card>
       {result ? (
@@ -2191,11 +2197,12 @@ function SayExercise({ card, frame, phone, keys, tts, busy, register, onAnswer, 
       <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <IconButton ref={mic} id="h5-learn-mic" className="h5-voice" {...named(t('Voice input'))} aria-pressed="false"
+            onPointerDown={() => audio.stop()} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') audio.stop(); }}
             sx={theme => ({ width: 56, height: 56, color: listening ? 'primary.contrastText' : 'primary.main', bgcolor: listening ? 'primary.main' : alpha(theme.palette.primary.main, 0.14), '&:hover': { bgcolor: listening ? 'primary.dark' : alpha(theme.palette.primary.main, 0.22) } })}>
             <Icon name="voice" size={26} />
           </IconButton>
           <Typography variant="body2" color="text.secondary" id="h5-learn-mic-note">
-            {listening ? t('Listening… press again when you are done.') : t('Press the microphone and read the sentence. You can also type it.')}
+            {listening ? t('Listening… press again when you are done.') : t(card.kind === 'word' ? 'Press the microphone and say the word. You can also type it.' : 'Press the microphone and read the sentence. You can also type it.')}
           </Typography>
         </Box>
         <OutlinedInput inputRef={box} multiline minRows={2} value={value} onChange={event => { if (!result) { audio.typed(); setValue(event.target.value); } }} placeholder={t('What you said')}
@@ -2651,19 +2658,26 @@ function VoiceChoice({ current, busy, save }) {
   const state = useVoiceStatus(chosen.engine, again);
   const [trying, setTrying] = useState(false);
   const [tryFailed, setTryFailed] = useState('');
+  const releaseMix = useRef(null);
   const tryIt = () => {
     const server = getServerVoice();
     if (!server) { setTryFailed(VOICE_FAILURES.media); return; }
     setTryFailed('');
     setTrying(true);
-    const done = () => setTrying(false);
+    releaseMix.current?.();
+    releaseMix.current = beginMixedPlayback();
+    const done = () => {
+      releaseMix.current?.();
+      releaseMix.current = null;
+      setTrying(false);
+    };
     server.speakOnce(TRY_TEXT, {
       choice: chosen, slow: options.slow, onEnd: done,
       onError: error => { done(); setTryFailed(error === 'not-allowed' ? 'Tap Try it again to play.' : VOICE_FAILURES.media); },
       onFail: reason => { done(); setTryFailed(VOICE_FAILURES[reason] || VOICE_FAILURES.other); if (reason === 409) setAgain(n => n + 1); },
     });
   };
-  useEffect(() => () => { if (serverVoice) serverVoice.stop(); }, []);
+  useEffect(() => () => { if (serverVoice) serverVoice.stop(); releaseMix.current?.(); }, []);
   const option = (value, title, caption) => (
     <FormControlLabel value={value} disabled={busy} sx={{ alignItems: 'flex-start', mx: 0, py: 0.5, minHeight: 44 }}
       control={<Radio slotProps={{ input: { id: `h5-learn-voice-${value}` } }} sx={{ mt: -0.75, ml: -1 }} />}
@@ -2798,7 +2812,7 @@ function ScheduleSettings({ current, busy, save }) {
 // ── How learning works ──
 
 const HOW = [
-  ['Your own sentences', 'Messages you send with "Chinese → English" become cards (the Chinese and the English), and words you tap to look up become word cards. A starter list can be added too.'],
+  ['Your own sentences', 'Words picked from translations and words you look up have their own review schedule. Translated sentences provide examples for word practice.'],
   ['Spaced review', 'Each card comes back about when you would start to forget it. FSRS, a model of how memory fades, plans the gap from your own answers; Again / Hard / Good change it, and each button shows when the card returns. The due count is the plan for today.'],
   // Build the sentence is hidden for now (BUILD_HIDDEN in learn-model.mjs): the four ways that are offered.
   BUILD_HIDDEN ? ['Four ways to practise', 'Spell the word · Dictation (hear, type) · Say it (read aloud, voice input checks) · Fill the gap.']

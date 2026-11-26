@@ -114,7 +114,7 @@ test('a card is created once per owner, kind and text; adding it again returns i
   assert.equal(card.en, 'Please fix the login page.');
   assert.equal(card.zh, '');
   assert.equal(card.context, 'Fix login');
-  assert.equal(card.due_at, new Date(NOW).toISOString(), 'a new card is due now');
+  assert.equal(card.due_at, null, 'a translation is material without a review date');
   assert.equal(card.interval_days, 0);
   assert.equal(card.ease, 2.5);
   assert.equal(card.suspended, false);
@@ -188,7 +188,7 @@ test('an answer applies the review rules, is logged, and its answer text is capp
   assert.equal((await call('POST', '/cards/abc/answer', { mode: 'spell', grade: 'good', correct: true })).status, 404);
 });
 
-test('the queue of each mode: review takes due cards of both kinds, spell words, the sentence modes sentences; suspended cards never', async t => {
+test('all queues select word cards and a sentence gap needs a unique target in its example', async t => {
   const { service, clock } = setup(t);
   const call = await serve(t, service);
   await noStarter(call);
@@ -196,24 +196,25 @@ test('the queue of each mode: review takes due cards of both kinds, spell words,
   const s1 = await add(sentence('First sentence to practise today.'), 0);
   const w1 = await add(word('merge', { zh: ZH }), 1);
   const s2 = await add(sentence('Second sentence to practise today.'), 2);
-  const w2 = await add(word('deploy', { zh: ZH }), 3);
-  const s3 = await add(sentence('Third sentence that is suspended.'), 4);
-  await call('PATCH', `/cards/${s3.id}`, { suspended: true });
+  const w2 = await add(word('deploy', { zh: ZH, context: 'Can we deploy the new build?' }), 3);
+  const w3 = await add(word('check', { zh: ZH, context: 'Check one thing before you check the other.' }), 4);
+  const w4 = await add(word('verify', { zh: ZH, context: 'We can verify the new build.' }), 5);
+  await call('PATCH', `/cards/${w4.id}`, { suspended: true });
   clock.now = NOW + 10 * 60 * 1000;
   // w1 answered good: due tomorrow, no longer in the review.
   await call('POST', `/cards/${w1.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
   const ids = async (mode, limit, extra = '') => (await call('GET', `/queue?mode=${mode}${limit ? `&limit=${limit}` : ''}${extra}`)).body.cards.map(card => card.id);
-  assert.deepEqual(await ids('review'), [s1.id, s2.id, w2.id], 'due cards, oldest due first');
-  assert.deepEqual(await ids('review', 2), [s1.id, s2.id], 'the limit');
-  assert.deepEqual(await ids('spell'), [w2.id], 'words: the due and the new ones; a learnt word that is not due is not given');
-  assert.deepEqual(await ids('spell', 0, '&extra=practice'), [w2.id, w1.id], 'with extra=practice the learnt words that are not due follow');
-  for (const mode of ['build', 'dictation', 'say', 'fill']) assert.deepEqual(await ids(mode), [s1.id, s2.id], mode);
-  // s1 practised now (due again in 10 minutes, so not due yet): only the other sentence is given; with extra=practice s1 after it.
-  await call('POST', `/cards/${s1.id}/answer`, { mode: 'build', grade: 'again', correct: false });
-  assert.deepEqual(await ids('build'), [s2.id]);
-  assert.deepEqual(await ids('build', 0, '&extra=practice'), [s2.id, s1.id]);
-  assert.deepEqual(await ids('build', 0, '&extra=other'), [s2.id], 'another extra adds nothing');
-  assert.deepEqual(await ids('mistakes'), [s1.id]);
+  assert.deepEqual(await ids('review'), [w2.id, w3.id], 'due words, oldest due first');
+  assert.deepEqual(await ids('review', 1), [w2.id], 'the limit');
+  for (const mode of ['spell', 'dictation', 'say']) assert.deepEqual(await ids(mode), [w2.id, w3.id], mode);
+  assert.deepEqual(await ids('spell', 0, '&extra=practice'), [w2.id, w3.id, w1.id], 'with extra=practice the learnt words that are not due follow');
+  for (const mode of ['build', 'fill']) assert.deepEqual(await ids(mode), [w2.id], mode);
+  assert.equal((await call('POST', `/cards/${s1.id}/answer`, { mode: 'fill', grade: 'again', correct: false })).status, 409);
+  await call('POST', `/cards/${w2.id}/answer`, { mode: 'fill', grade: 'again', correct: false });
+  assert.deepEqual(await ids('fill'), []);
+  assert.deepEqual(await ids('fill', 0, '&extra=practice'), [w2.id]);
+  assert.deepEqual(await ids('mistakes'), [w2.id]);
+  assert.notEqual(s1.id, s2.id);
   for (const query of ['?mode=other', '', '?mode=review&limit=0', '?mode=review&limit=101', '?mode=review&limit=two']) assert.equal((await call('GET', `/queue${query}`)).status, 400, query);
 });
 
@@ -382,8 +383,8 @@ test('PATCH changes the meaning, the text (checked, no duplicate) and suspension
   assert.equal((await call('PATCH', `/cards/${a.id}`, { suspended: false })).body.card.suspended, false);
 });
 
-test('the summary: due, new and done today, the goal, the streak in the server\'s time zone, counts and mistakes', async t => {
-  const { service, clock } = setup(t);
+test('the summary and progress count words and retain previous sentence answers as historical records', async t => {
+  const { service, clock, db } = setup(t);
   const call = await serve(t, service);
   await noStarter(call);
   await call('PUT', '/settings', { daily_goal: 5 });
@@ -394,18 +395,21 @@ test('the summary: due, new and done today, the goal, the streak in the server\'
   clock.now = NOW;
   const s = (await call('POST', '/cards', sentence('Please fix the login page.'))).body.card;
   const w = (await call('POST', '/cards', word('deploy', { zh: ZH }))).body.card;
-  await call('POST', `/cards/${s.id}/answer`, { mode: 'build', grade: 'again', correct: false });
+  db.prepare("UPDATE learn_cards SET reps = 1, lapses = 1, last_correct = 0, last_at = ?, due_at = ? WHERE id = ?").run(NOW, NOW, s.id);
+  db.prepare("INSERT INTO learn_reviews (card_id, owner, at, mode, grade, correct) VALUES (?, 'me', ?, 'build', 'again', 0)").run(s.id, NOW);
   await call('POST', `/cards/${w.id}/answer`, { mode: 'spell', grade: 'good', correct: true });
   await call('POST', `/cards/${old.id}/answer`, { mode: 'review', grade: 'hard', correct: true });
   assert.deepEqual((await call('GET', '/summary')).body, {
-    // new_today: the cards first answered today (merge was first answered yesterday); three answers at one moment: 15 seconds, 0 minutes.
-    due: 0, new_per_day: 10, new_today: 2, new_left: 8, done_today: 3, minutes_today: 0, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 1,
+    practice_kind: 'word', due: 0, new_per_day: 10, new_today: 1, new_left: 9, done_today: 2, minutes_today: 0, goal: 5, streak: 2, words: 2, sentences: 1, mistakes: 0,
     collecting: true, starter: null, new_report: null, chats: 0,
     // Where the data is kept (services/learn-sync.js): a normal machine, nothing waiting.
     device: { company_computer: false, cache_only: false, home_name: null, home_online: null, waiting: 0, offline_copy_at: null },
   });
   clock.now = NOW + 11 * 60 * 1000;
-  assert.equal((await call('GET', '/summary')).body.due, 1, 'the "again" card is due after 10 minutes');
+  assert.equal((await call('GET', '/summary')).body.due, 0, 'the old sentence schedule is ignored');
+  assert.equal(service.stats('me').total_cards, 2);
+  assert.equal(service.stats('me').daily.at(-1).answers, 2);
+  assert.equal(db.prepare('SELECT COUNT(*) FROM learn_reviews WHERE card_id = ?').pluck().get(s.id), 1);
   // Two days later with no answers in between: the streak is over.
   clock.now = NOW + 2 * DAY;
   const later = (await call('GET', '/summary')).body;

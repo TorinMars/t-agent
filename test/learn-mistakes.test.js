@@ -103,29 +103,29 @@ test('the tagger has the same list of tags on the page and on the server', async
 test('a wrong answer keeps what was asked for, the first tag and whether help was used; a right one keeps none; the list is newest first', t => {
   const ctx = setup(t);
   const word = ctx.learn.addCard('me', { kind: 'word', en: 'necessary', zh: ZH, source: 'manual' }).card;
-  const sentence = ctx.learn.addCard('me', { kind: 'sentence', en: 'He has already left the office.', zh: ZH, source: 'manual' }).card;
+  const gapWord = ctx.learn.addCard('me', { kind: 'word', en: 'left', zh: ZH, context: 'He has already left the office.', source: 'manual' }).card;
   ctx.learn.answer('me', word.id, { mode: 'spell', grade: 'good', correct: true, answer: 'necessary', tag: 'double-letter', expected: 'x' });
   ctx.clock.now += 1000;
   ctx.learn.answer('me', word.id, { mode: 'spell', grade: 'again', correct: false, answer: 'neccesary', tag: 'double-letter', hinted: true });
   ctx.clock.now += 1000;
-  ctx.learn.answer('me', sentence.id, { mode: 'fill', grade: 'again', correct: false, answer: 'leave', tag: 'tense', expected: '  left ' });
+  ctx.learn.answer('me', gapWord.id, { mode: 'fill', grade: 'again', correct: false, answer: 'leave', tag: 'tense', expected: '  left ' });
   ctx.clock.now += 1000;
-  ctx.learn.answer('me', sentence.id, { mode: 'build', grade: 'again', correct: false, answer: 'He already left the office.', tag: 'a-new-tag' });
+  ctx.learn.answer('me', gapWord.id, { mode: 'spell', grade: 'again', correct: false, answer: 'lefft', tag: 'a-new-tag' });
   const rows = ctx.db.prepare('SELECT correct, expected, tag, hinted FROM learn_reviews ORDER BY id').all();
   assert.deepEqual(rows, [
     { correct: 1, expected: null, tag: '', hinted: 0 },
     { correct: 0, expected: 'necessary', tag: 'double-letter', hinted: 1 },
     { correct: 0, expected: 'left', tag: 'tense', hinted: 0 },
-    { correct: 0, expected: 'He has already left the office.', tag: '', hinted: 0 },
+    { correct: 0, expected: 'left', tag: '', hinted: 0 },
   ]);
   assert.throws(() => ctx.learn.answer('me', word.id, { mode: 'spell', grade: 'again', correct: false, tag: 5 }), /Invalid answer/);
   const list = ctx.learn.mistakes('me', { limit: 2 });
   assert.equal(list.more, true);
   assert.deepEqual(list.mistakes.map(item => [item.mode, item.tag, item.expected, item.written]), [
-    ['build', '', 'He has already left the office.', 'He already left the office.'],
+    ['spell', '', 'left', 'lefft'],
     ['fill', 'tense', 'left', 'leave'],
   ]);
-  assert.deepEqual(list.mistakes[0].card, { id: sentence.id, kind: 'sentence', en: 'He has already left the office.' });
+  assert.deepEqual(list.mistakes[0].card, { id: gapWord.id, kind: 'word', en: 'left' });
   const next = ctx.learn.mistakes('me', { limit: 2, before: list.mistakes[1].at });
   assert.deepEqual(next.mistakes.map(item => [item.written, item.hinted]), [['neccesary', true]]);
   assert.equal(next.more, false);

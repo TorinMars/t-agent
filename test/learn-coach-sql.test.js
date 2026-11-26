@@ -69,7 +69,7 @@ test('the views: only the coach_* tables of the owner, with the documented colum
   opened.close();
 
   const cards = rows(await runQuery(snap, 'SELECT kind, en, state, reps, known FROM coach_cards ORDER BY id'));
-  assert.deepEqual(cards.map(card => [card.en, card.state, card.reps]), [['necessary', 'review', 1], ['separate', 'relearning', 1], ['Please merge the branch.', 'new', 0]]);
+  assert.deepEqual(cards.map(card => [card.en, card.state, card.reps]), [['necessary', 'review', 1], ['separate', 'relearning', 1]]);
   const answers = rows(await runQuery(snap, 'SELECT en, correct, typed, tags, day, hour, weekday, mode FROM coach_answers ORDER BY at'));
   assert.deepEqual(answers.map(answer => [answer.en, answer.correct, answer.typed, answer.tags]), [['necessary', 1, 'necessary', null], ['separate', 0, 'seperate', 'wrong-letter']]);
   assert.deepEqual([answers[0].day, answers[0].hour, answers[0].weekday], ['2026-11-21', 20, 'Saturday'], 'Taipei time (UTC+8)');
@@ -97,7 +97,7 @@ test('the switches: reading the answers off empties every view but the settings;
   const ctx = seeded(t);
   const count = async (snap, name) => (await runQuery(snap, `SELECT count(*) FROM ${name}`)).rows[0][0];
   const noText = snapshotOf(ctx, { readText: false });
-  assert.deepEqual([await count(noText, 'coach_journal'), await count(noText, 'coach_messages'), await count(noText, 'coach_cards')], [0, 0, 3]);
+  assert.deepEqual([await count(noText, 'coach_journal'), await count(noText, 'coach_messages'), await count(noText, 'coach_cards')], [0, 0, 2]);
   const nothing = snapshotOf(ctx, { readAnswers: false });
   for (const [name] of VIEWS) assert.equal(await count(nothing, name), name === 'coach_settings' ? Object.keys(ctx.learn.settings('me')).length : 0, name);
   assert.match(schemaText({ readText: false }), /coach_journal: .*\[EMPTY: the person switched this off/);
@@ -179,7 +179,7 @@ test('the caps: at most 200 rows and about 12,000 characters, cut with truncated
   assert.deepEqual([many.rows.length, many.truncated], [200, true]);
   const wide = await runQuery(snap, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100) SELECT i, (SELECT group_concat(en || zh, ' ') FROM coach_cards) || (SELECT text FROM coach_journal) AS t FROM n");
   assert.equal(wide.error === undefined, false, 'a recursive query with || is refused');
-  const long = await runQuery(snap, "SELECT substr(text, 1, 1) || hex(text) || hex(text) || hex(text) || hex(text) || hex(text) || hex(text) AS t, text FROM coach_messages, coach_cards, coach_cards c2, coach_cards c3");
+  const long = await runQuery(snap, "SELECT substr(text, 1, 1) || hex(text) || hex(text) || hex(text) || hex(text) || hex(text) || hex(text) AS t, text FROM coach_messages, coach_cards, coach_cards c2, coach_cards c3, coach_cards c4");
   assert.equal(long.truncated, true);
   assert.ok(JSON.stringify(long.rows).length <= 12_000);
   const started = Date.now();
@@ -208,5 +208,5 @@ test('the child refuses on its own: a write, an ATTACH, load_extension; the snap
   assert.match((await child(snap, "ATTACH DATABASE ':memory:' AS x")).error, /Only a query that reads/);
   assert.match((await child(snap, "SELECT load_extension('/tmp/evil')")).error, /not authorized/);
   assert.match((await child(snap, 'CREATE TABLE t (a)')).error, /Only a query that reads|readonly/);
-  assert.deepEqual((await child(snap, 'SELECT count(*) AS n FROM coach_cards')).rows, [[3]]);
+  assert.deepEqual((await child(snap, 'SELECT count(*) AS n FROM coach_cards')).rows, [[2]]);
 });

@@ -86,6 +86,7 @@ update first".
   the Speed setting), so a tap plays synchronously, which iOS requires. A play whose audio is still loading calls `onLoading` and, when it arrives,
   `onReady`; meanwhile the element plays a short silent WAV inside the tap, which unlocks it on iOS. A load is given up after 50 s.
 - Slow and the Speed setting: Bailian has a real speech rate, so the slow audio is asked for (`speed=slow`, `rate` 0.7) and played at rate 1.
+- Pronunciation and Try it request `navigator.audioSession.type = 'ambient'` during playback when the browser supports it. The page restores the previous type after playback, cancellation or teardown. A recording session keeps its type. Actual audio mixing depends on the phone and its speech engine.
 - `createVoiceEngine` gives the player of `learn-audio.mjs` one `speakOnce` / `cancel` / `speaking` over both engines, as chosen at that moment.
   The player starts its "refused" watch (2.5 s) and its lost-end bound only after `onReady`, so a slow first load is not taken for a browser that
   refuses sound. Repeat, pause, Stop, stop on typing, "Playing 1 of 2" and "Tap to play" behave as with this device's voices.

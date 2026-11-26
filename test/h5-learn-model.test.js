@@ -115,13 +115,12 @@ test('the context of a word card hides the word', async () => {
   assert.equal(maskedContext({ en: 'a+b', context: 'x a+b y' }), 'x ___ y', 'regular expression characters in the word');
 });
 
-test('a mixed session takes words and sentences in turn, without repeats, up to the limit', async () => {
-  const { mixCards } = await load();
-  const words = [card(1, 'a', 'word'), card(2, 'b', 'word'), card(3, 'c', 'word')];
-  const sentences = [card(4, 'x y z'), card(1, 'a', 'word')];
-  assert.deepEqual(mixCards([words, sentences], 10).map(item => item.id), [1, 4, 2, 3]);
-  assert.deepEqual(mixCards([words, sentences], 2).map(item => item.id), [1, 4]);
-  assert.deepEqual(mixCards([[], null], 5), []);
+test('a repeated target cannot reveal the spelling answer in a single-blank exercise', async () => {
+  const { contextGap, exerciseFor, sentenceGap } = await load();
+  const repeated = { kind: 'word', en: 'check', context: 'Check one thing before you check the other.', context_zh: 'meaning' };
+  assert.equal(contextGap(repeated), null);
+  assert.equal(sentenceGap(repeated), null);
+  assert.equal(exerciseFor(repeated, 'fill'), 'spell');
 });
 
 test('the keys of a computer: Enter checks and then continues, 1 / 2 / 3 grade only a checked answer', async () => {

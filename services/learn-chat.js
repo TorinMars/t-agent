@@ -275,7 +275,7 @@ function createLearnChat({
     const cards = new Map();
     let total = 0;
     for (const row of db.prepare(`SELECT c.id, c.kind, c.en, r.tag FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id
-      WHERE r.owner = ? AND r.correct = 0 ORDER BY r.at DESC, r.id DESC LIMIT ?`).all(owner, MAX_MISTAKE_ANSWERS)) {
+      WHERE r.owner = ? AND c.kind = 'word' AND r.correct = 0 ORDER BY r.at DESC, r.id DESC LIMIT ?`).all(owner, MAX_MISTAKE_ANSWERS)) {
       total += 1;
       if (!cards.has(row.id)) {
         if (cards.size >= MAX_MISTAKE_CARDS) continue;

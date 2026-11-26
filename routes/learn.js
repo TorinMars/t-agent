@@ -156,7 +156,10 @@ function createLearnRouter({ service = null, lookupWord = null, sync, analysis, 
   router.get('/stats', handle(async req => {
     if (!cacheOnly()) return learn().stats(owner(req));
     await fresh();
-    try { return await learnSync().askHome('stats', { offline: STATS_OFFLINE }); } catch (error) {
+    try {
+      const stats = await learnSync().askHome('stats', { offline: STATS_OFFLINE });
+      return stats?.practice_kind === 'word' ? stats : { ...learn().stats(owner(req)), offline: false, home_older: true };
+    } catch (error) {
       if (error.statusCode !== 503 && error.statusCode !== 404) throw error;
       return { ...learn().stats(owner(req)), offline: error.statusCode === 503, home_older: error.statusCode === 404 };
     }

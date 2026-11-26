@@ -211,7 +211,7 @@ test('a company computer reads the numbers of its home, and the cards here while
     async askHome(route, options) { calls.push({ route, options }); if (sync.answer instanceof Error) throw sync.answer; return sync.answer; },
   };
   const get = await serve(t, learn, sync);
-  const home = { streak: 9, best_streak: 12, week: { answers: 1, right: 1, prev_answers: 0, prev_right: 0 }, daily: [], weekly: [], memory: { new: 0, learning: 0, young: 0, mature: 0 }, total_cards: 0, due: [] };
+  const home = { practice_kind: 'word', streak: 9, best_streak: 12, week: { answers: 1, right: 1, prev_answers: 0, prev_right: 0 }, daily: [], weekly: [], memory: { new: 0, learning: 0, young: 0, mature: 0 }, total_cards: 0, due: [] };
   sync.answer = home;
   let response = await get('/stats');
   assert.equal(response.status, 200);

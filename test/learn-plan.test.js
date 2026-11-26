@@ -47,6 +47,7 @@ test('word selection ranks by error rate and fills the new-word selection within
   assert.deepEqual(select('highest_error_rate'), [rare.id, frequent.id]);
   assert.deepEqual(select('new'), [fresh.id]);
   assert.deepEqual(select('highest_error_rate', 1), [rare.id]);
+  assert.deepEqual(new Set(select('reviewed')), new Set([rare.id, frequent.id, perfect.id]));
   const newToday = Array.from({ length: 6 }, (_, index) => add(ctx, 'word', `word${String.fromCharCode(97 + index)}`));
   ctx.learn.saveSettings('me', { new_per_day: 5 });
   assert.deepEqual(select('new', 20), [fresh, ...newToday.slice(0, 4)].map(card => card.id));
@@ -126,6 +127,8 @@ test('more new words: the next new words, the allowance raised only when the pla
   // Started again later (an old button): read again, not raised again.
   await ctx.plan.startPlan('me', plan, { id: 'plan-00002', raise: false });
   assert.equal(ctx.learn.settings('me').extra_new.count, 5);
+  for (const card of started.plan.steps[0].cards) ctx.learn.answer('me', card.id, { mode: 'spell', grade: 'good', correct: true });
+  assert.deepEqual(await ctx.plan.startPlan('me', plan, { id: 'plan-00004', raise: false }), { empty: true });
   // A plan whose cards are gone: empty.
   const spell = await ctx.plan.buildPlan('me', 'today_spelling', { words: [words[6].id] });
   ctx.learn.updateCard('me', words[6].id, { suspended: true });
@@ -136,13 +139,13 @@ test('review is word spelling; dictation and fill the gap (plans saved before) s
   const ctx = setup(t);
   const one = add(ctx, 'sentence', 'Please merge the branch.');
   const two = add(ctx, 'sentence', 'The build is green.');
-  add(ctx, 'word', 'deploy');
+  const word = ctx.learn.addCard('me', { kind: 'word', en: 'deploy', zh: ZH, context: 'We can deploy the new build.' }).card;
   ctx.clock.now = NOW;
   const dictation = await ctx.plan.buildPlan('me', 'dictation');
   assert.deepEqual(dictation.steps, [{ mode: 'dictation', card_ids: (await ctx.learn.queue('me', 'dictation', 10)).cards.map(card => card.id) }]);
-  assert.deepEqual(new Set(dictation.steps[0].card_ids), new Set([one.id, two.id]));
+  assert.deepEqual(dictation.steps[0].card_ids, [word.id]);
   const fill = await ctx.plan.buildPlan('me', 'fill_gap', { count: 1 });
-  assert.equal(fill.steps[0].card_ids.length, 1);
+  assert.deepEqual(fill.steps[0].card_ids, [word.id]);
   const review = await ctx.plan.buildPlan('me', 'review');
   // Review spells the due WORDS only (no sentence card in it).
   assert.ok(review.steps.every(step => step.mode === 'spell'));

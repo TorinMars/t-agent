@@ -294,9 +294,9 @@ function cardJson(row, contexts = null, at = Date.now()) {
     id: row.id, kind: row.kind, en: row.en, zh: row.zh, phonetic: row.phonetic || '', source: row.source, context: row.context,
     context_zh: row.kind !== 'word' || !row.context ? '' : row.context_source === 'generated' ? row.context_zh || '' : contexts ? contexts.get(row.context) || '' : '',
     context_source: row.kind === 'word' ? row.context_source || '' : '',
-    due_at: iso(row.due_at), interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
+    due_at: row.kind === 'word' ? iso(row.due_at) : null, interval_days: row.interval_days, ease: row.ease, reps: row.reps, lapses: row.lapses,
     last_result: row.last_result || null, last_at: iso(row.last_at), suspended: Boolean(row.suspended), created_at: iso(row.created_at),
-    retrievability: review.retrievability(row, at),
+    retrievability: row.kind === 'word' ? review.retrievability(row, at) : null,
   };
 }
 
@@ -456,7 +456,7 @@ function createLearn({
       // The text comes back after a move away from it: the card lives here again.
       db.prepare('DELETE FROM learn_card_moves WHERE owner = ? AND kind = ? AND norm = ?').run(owner, body.kind, norm);
       return db.prepare(`INSERT INTO learn_cards (owner, kind, en, norm, zh, phonetic, source, context, created_at, due_at, interval_days, ease, content_at, sync_seq)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, phonetic, source, context, at, at, review.EASE_START, stamp(), seq());
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`).run(owner, body.kind, en, norm, zh, phonetic, source, context, at, body.kind === 'word' ? at : 0, review.EASE_START, stamp(), seq());
     })();
     changed();
     if (body.kind === 'word' && (!zh || !phonetic)) newWords(owner);
@@ -507,6 +507,7 @@ function createLearn({
 
   function answer(owner, id, body) {
     const row = mustCard(owner, id);
+    if (row.kind !== 'word') throw new LearnError('Only word cards can be reviewed', 409);
     if (!isPlainObject(body)) throw bad('Invalid answer');
     if (!MODES.includes(body.mode)) throw bad('Unknown practice mode');
     if (!review.GRADES.includes(body.grade)) throw bad('The grade must be again, hard or good');
@@ -537,13 +538,13 @@ function createLearn({
   // On a company computer the home's count of its last summary today is used when it is larger.
   function newToday(owner, at) {
     const firsts = db.prepare(`SELECT MIN(r.at) AS first, COUNT(*) AS answers, MAX(c.reps) AS reps FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id
-      WHERE r.owner = @owner AND r.card_id IN (SELECT card_id FROM learn_reviews WHERE owner = @owner AND at >= @from) GROUP BY r.card_id`)
+      WHERE r.owner = @owner AND c.kind = 'word' AND r.card_id IN (SELECT card_id FROM learn_reviews WHERE owner = @owner AND at >= @from) GROUP BY r.card_id`)
       .all({ owner, from: at - 2 * review.DAY }).filter(row => row.answers >= (Number(row.reps) || 0)).map(row => row.first);
     let count = review.countToday(firsts, at, timeZone);
     if (cacheOnly()) {
       const last = readState(db, 'learn_home_v1'); // services/learn-sync.js HOME_KEY: the home's last summary
       const copy = isPlainObject(last) && isPlainObject(last.summary) ? last.summary : null;
-      if (copy && Number.isSafeInteger(copy.new_today) && copy.new_per_day !== undefined && Number.isFinite(last.at) && review.dayKey(last.at, timeZone) === review.dayKey(at, timeZone)) {
+      if (copy && copy.practice_kind === 'word' && Number.isSafeInteger(copy.new_today) && Number.isFinite(last.at) && review.dayKey(last.at, timeZone) === review.dayKey(at, timeZone)) {
         count = Math.max(count, copy.new_today);
       }
     }
@@ -638,7 +639,7 @@ function createLearn({
   function mistakeRows(owner, starter) {
     const at = now();
     const rows = db.prepare(`SELECT *, (SELECT MAX(r.at) FROM learn_reviews r WHERE r.card_id = learn_cards.id AND r.correct = 0) AS last_wrong_at
-      FROM learn_cards WHERE owner = @owner AND ${visible} AND (last_correct = 0 OR lapses > 0) ORDER BY last_at DESC, id DESC`).all({ owner, starter });
+      FROM learn_cards WHERE owner = @owner AND kind = 'word' AND ${visible} AND (last_correct = 0 OR lapses > 0) ORDER BY last_at DESC, id DESC`).all({ owner, starter });
     return rows.filter(row => review.isMistake(row, row.last_wrong_at, at));
   }
 
@@ -648,16 +649,18 @@ function createLearn({
     const at = now();
     const params = { owner, starter: current.starter, now: at };
     const count = sql => db.prepare(sql).pluck().get(params);
-    const recentReviews = db.prepare('SELECT at FROM learn_reviews WHERE owner = ? AND at >= ? ORDER BY at').pluck().all(owner, at - 2 * review.DAY);
+    const wordAnswers = "FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = @owner AND c.kind = 'word'";
+    const recentReviews = db.prepare(`SELECT r.at ${wordAnswers} AND r.at >= @from ORDER BY r.at`).pluck().all({ owner, from: at - 2 * review.DAY });
     const today = review.dayKey(at, timeZone);
     const newWords = pace(owner, current, at);
     // Due: the due cards that are not new, and the new ones due now up to today's new words left (what Review gives).
-    const dueNew = count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND ${visible} AND reps = 0 AND due_at <= @now`);
+    const dueNew = count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND kind = 'word' AND ${visible} AND reps = 0 AND due_at <= @now`);
     // The streak needs one moment per stretch of 15 minutes at most (every time zone offset is a multiple of 15 minutes), not every answer.
     const quarter = 15 * 60 * 1000;
-    const stretches = db.prepare(`SELECT DISTINCT (at / ${quarter}) * ${quarter} FROM learn_reviews WHERE owner = ? AND at >= ?`).pluck().all(owner, at - 400 * review.DAY);
+    const stretches = db.prepare(`SELECT DISTINCT (r.at / ${quarter}) * ${quarter} ${wordAnswers} AND r.at >= @from`).pluck().all({ owner, from: at - 400 * review.DAY });
     return {
-      due: count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND ${visible} AND reps > 0 AND due_at <= @now`) + Math.min(newWords.new_left, dueNew),
+      practice_kind: 'word',
+      due: count(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND kind = 'word' AND ${visible} AND reps > 0 AND due_at <= @now`) + Math.min(newWords.new_left, dueNew),
       ...newWords,
       done_today: review.countToday(recentReviews, at, timeZone),
       minutes_today: studyMinutes(recentReviews.filter(time => review.dayKey(time, timeZone) === today)),
@@ -821,15 +824,23 @@ function createLearn({
     if (mode === 'mistakes') candidates = mistakeRows(owner, current.starter).slice(0, limit);
     else {
       // "New words a day": the due cards that are not new (oldest due first), then new cards up to today's new words left (by due date: the starter
-      // list spreads its words over the days), then with extra=practice the learnt cards that are not due. Review takes both kinds and only the new
-      // cards due now; spell takes words; the sentence modes take sentences.
+      // list spreads its words over the days), then with extra=practice the learnt words that are not due. Review takes only new words due now.
       ({ new_left: newLeft } = pace(owner, current, params.now));
-      const kind = mode === 'review' ? '' : `AND kind = '${mode === 'spell' ? 'word' : 'sentence'}'`;
+      const needsContext = mode === 'fill' || mode === 'build';
+      const hasContext = needsContext ? require('./learn-sentences').hasPracticeContext : null;
       // Spell needs the meaning: a word without one is asked for it first and left out when none can be found, so a few more are read.
       const factor = mode === 'spell' ? 2 : 1;
-      const rows = (where, order, take) => (take > 0
-        ? db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND ${visible} ${kind} AND ${where} ORDER BY ${order} LIMIT @take`).all({ ...params, take })
-        : []);
+      const rows = (where, order, take) => {
+        if (take <= 0) return [];
+        const sql = `SELECT * FROM learn_cards WHERE owner = @owner AND kind = 'word' AND ${visible} AND ${where}`;
+        if (!needsContext) return db.prepare(`${sql} ORDER BY ${order} LIMIT @take`).all({ ...params, take });
+        const selected = [];
+        for (const row of db.prepare(`${sql} AND context <> '' ORDER BY ${order}`).iterate(params)) {
+          if (hasContext(row)) selected.push(row);
+          if (selected.length === take) break;
+        }
+        return selected;
+      };
       candidates = [
         ...rows('reps > 0 AND due_at <= @now', 'due_at ASC, id ASC', limit * factor),
         ...rows(`reps = 0${mode === 'review' ? ' AND due_at <= @now' : ''}`, 'due_at ASC, id ASC', Math.min(newLeft, limit) * factor),
@@ -891,7 +902,7 @@ function createLearn({
   async function practiceCards(owner, ids) {
     const list = (Array.isArray(ids) ? ids : []).filter(id => Number.isSafeInteger(id) && id > 0).slice(0, 200);
     if (!list.length) return [];
-    const found = new Map(db.prepare('SELECT * FROM learn_cards WHERE owner = ? AND suspended = 0 AND id IN (SELECT value FROM json_each(?))')
+    const found = new Map(db.prepare("SELECT * FROM learn_cards WHERE owner = ? AND kind = 'word' AND suspended = 0 AND id IN (SELECT value FROM json_each(?))")
       .all(owner, JSON.stringify(list)).map(row => [row.id, row]));
     const rows = list.map(id => found.get(id)).filter(Boolean);
     await fillMeanings(owner, rows.slice(0, QUEUE_HEAD));
@@ -956,7 +967,9 @@ function createLearn({
 
   // ---- Mistakes and reports ("Mistakes" and "Mistake reports" in docs/design/learn-english.md) ----
   const MISTAKE_SELECT = `SELECT r.uid, r.at, r.mode, r.answer, r.expected, r.tag, r.hinted, c.id AS card_id, c.kind, c.en
-    FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = @owner AND r.correct = 0`;
+    FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = @owner AND c.kind = 'word' AND r.correct = 0`;
+  const countWordAnswersSince = (owner, from) => db.prepare(`SELECT COUNT(*) AS answers, COUNT(*) FILTER (WHERE r.correct = 0) AS mistakes
+    FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = ? AND c.kind = 'word' AND r.at > ?`).get(owner, from);
   // The wrong answers, newest first, a page at a time (`before`: the time of the last one shown).
   function mistakes(owner, query = {}) {
     const limit = query.limit === undefined || query.limit === '' ? 50 : Number(query.limit);
@@ -972,20 +985,17 @@ function createLearn({
   function sinceReport(owner) {
     const last = lastReport(owner);
     const from = last ? last.covers_until : 0;
-    const count = sql => Number(db.prepare(sql).pluck().get(owner, from)) || 0;
     return {
       from, last: last ? reportJson(last, { full: false }) : null,
-      mistakes: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND correct = 0 AND at > ?'),
-      answers: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND at > ?'),
+      ...countWordAnswersSince(owner, from),
     };
   }
   // The wrong answers after `from` (at most `max`, the newest), with the counts of the whole stretch, for an analysis.
   function mistakesSince(owner, from, max) {
     const rows = db.prepare(`${MISTAKE_SELECT} AND r.at > @from ORDER BY r.at DESC, r.id DESC LIMIT @max`).all({ owner, from, max });
-    const count = sql => Number(db.prepare(sql).pluck().get(owner, from)) || 0;
+    const counts = countWordAnswersSince(owner, from);
     return {
-      mistakes: rows.map(mistakeJson), total: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND correct = 0 AND at > ?'),
-      answers: count('SELECT COUNT(*) FROM learn_reviews WHERE owner = ? AND at > ?'),
+      mistakes: rows.map(mistakeJson), total: counts.mistakes, answers: counts.answers,
     };
   }
   const reports = owner => ({ reports: db.prepare('SELECT * FROM learn_reports WHERE owner = ? ORDER BY covers_until DESC, created_at DESC LIMIT 50').all(owner).map(row => reportJson(row, { full: false })) });

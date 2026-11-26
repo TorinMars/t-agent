@@ -358,9 +358,8 @@ const PLAN_KINDS = [...OFFER_KINDS, 'dictation', 'fill_gap'];
 const WORD_METHODS = ['spell', 'sentence_gap', 'study_then_spell'];
 const STEP_MODES = ['spell', 'fill', 'dictation', 'retest', 'review', 'direct_spell', 'study'];
 // The screens of Learn a coach answer can open with a button (the tool open_screen; "Screens the coach opens" in docs/design/learn-english-coach.md).
-// The screens the coach may open now: practice is word spelling only; the other modes stay readable for answers saved before (`READABLE_SCREENS`).
-const COACH_SCREENS = ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'spell'];
-const READABLE_SCREENS = [...COACH_SCREENS, 'review', 'practice', 'dictation', 'fill', 'say'];
+const COACH_SCREENS = ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'spell', 'review', 'practice', 'fill'];
+const READABLE_SCREENS = [...COACH_SCREENS, 'dictation', 'say'];
 const MAX_SUGGESTIONS = 4;
 const MAX_SUGGESTION = 60;
 const MAX_BATCH = 50;

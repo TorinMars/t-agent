@@ -92,7 +92,7 @@ test('the loop: tool calls run on the server, their results go back, status line
   const toolMessage = second.messages[second.messages.length - 1];
   assert.equal(toolMessage.role, 'tool');
   assert.equal(toolMessage.tool_call_id, 'call_learn_schema');
-  assert.match(toolMessage.content, /coach_cards: one row per card/);
+  assert.match(toolMessage.content, /coach_cards: one row per word card/);
   assert.deepEqual(JSON.parse(third.messages[third.messages.length - 1].content), { columns: ['n'], rows: [[12]], truncated: false });
   assert.equal(queries.length, 1);
   assert.ok(Buffer.isBuffer(queries[0].snapshot) || queries[0].snapshot instanceof Uint8Array, 'the query runs over a snapshot');
@@ -161,7 +161,7 @@ test('a provider that refuses tools: the answer from the short summary, tools fa
   assert.equal(result.message.text, 'Plain answer.');
   assert.match(result.message.meta.notice, /cannot look up your data/);
   assert.equal(result.message.meta.tools, false);
-  assert.match(ctx.plain.calls[0].messages.at(-1).content, /Learning now: .* due, .*Words often wrong: none yet\.\n\nHow am I doing\?$/);
+  assert.match(ctx.plain.calls[0].messages.at(-1).content, /Learning now: \d+ due words including new words scheduled for today, .*Words often wrong: none yet\.\n\nHow am I doing\?$/);
   assert.match(ctx.plain.calls[0].system, /cannot look up the data/);
   assert.equal(ctx.coach.view('me').tools_ok, false);
   await ctx.coach.send('me', { text: 'Again' });
@@ -344,7 +344,7 @@ test('open_screen: a button under the answer for an allowed screen (each once, a
   assert.equal(results[1].ok, true, 'the same screen twice is one button');
   assert.match(results[2].error, /^screen must be one of mistakes, reports, progress/);
   assert.match(results[5].error, /At most 3 screen buttons/);
-  assert.deepEqual(coachModule.TOOLS.find(tool => tool.name === 'open_screen').parameters.properties.screen.enum, ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'spell']);
+  assert.deepEqual(coachModule.TOOLS.find(tool => tool.name === 'open_screen').parameters.properties.screen.enum, ['mistakes', 'reports', 'progress', 'material', 'settings', 'how', 'spell', 'review', 'practice', 'fill']);
   assert.match(ctx.provider.requests[0].system, /call open_screen/);
   assert.match(ctx.provider.requests[0].system, /Show my progress/);
   assert.deepEqual(ctx.coach.view('me').messages[1].meta.screens, ['mistakes', 'progress', 'settings'], 'stored with the answer');

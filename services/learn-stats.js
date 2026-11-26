@@ -68,7 +68,8 @@ function createLearnStats({ db = require('../db'), now = Date.now, timeZone } = 
     const earliest = [firstDaily, firstWeek, firstRolling].sort()[0];
     // Answers from a little before the earliest day needed (a day is at most 26 hours of the clock), then kept by their day.
     const since = at - ((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${earliest}T00:00:00Z`)) / review.DAY + 2) * review.DAY;
-    const answers = db.prepare('SELECT card_id, at, correct FROM learn_reviews WHERE owner = ? AND at >= ? ORDER BY at, id').all(owner, since);
+    const wordAnswers = "FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = ? AND c.kind = 'word'";
+    const answers = db.prepare(`SELECT r.card_id, r.at, r.correct ${wordAnswers} AND r.at >= ? ORDER BY r.at, r.id`).all(owner, since);
 
     const daily = new Map();
     for (let index = 0; index < DAYS; index += 1) daily.set(addDays(firstDaily, index), { answers: 0, right: 0 });
@@ -93,14 +94,14 @@ function createLearnStats({ db = require('../db'), now = Date.now, timeZone } = 
     }
 
     // The streak like the summary's, and the longest run over the whole history (one moment per 15-minute stretch).
-    const stretches = db.prepare(`SELECT DISTINCT (at / ${QUARTER}) * ${QUARTER} FROM learn_reviews WHERE owner = ?`).pluck().all(owner);
+    const stretches = db.prepare(`SELECT DISTINCT (r.at / ${QUARTER}) * ${QUARTER} ${wordAnswers}`).pluck().all(owner);
     const streak = review.streak(stretches, at, timeZone);
     const answerDays = new Set(stretches.map(time => review.dayKey(time, timeZone)));
     const bestStreak = Math.max(streak, longestRun(answerDays));
 
     const params = { owner, starter };
     const strength = hasStability() ? 'COALESCE(fsrs_stability, interval_days)' : 'interval_days';
-    const cards = db.prepare(`SELECT reps, ${strength} AS strength, due_at FROM learn_cards WHERE owner = @owner AND ${visible}`).all(params);
+    const cards = db.prepare(`SELECT reps, ${strength} AS strength, due_at FROM learn_cards WHERE owner = @owner AND kind = 'word' AND ${visible}`).all(params);
     const memory = { new: 0, learning: 0, young: 0, mature: 0 };
     const due = new Map();
     for (let index = 0; index < DUE_DAYS; index += 1) due.set(addDays(today, index), 0);
@@ -113,6 +114,7 @@ function createLearnStats({ db = require('../db'), now = Date.now, timeZone } = 
     }
 
     return {
+      practice_kind: 'word',
       streak,
       best_streak: bestStreak,
       week,

@@ -65,7 +65,7 @@ const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 
 // Adds the words one millisecond apart (so their due dates keep this order) and returns their cards by text.
 async function addWords(call, clock, words = WORDS) {
   const cards = {};
-  for (const en of words) { cards[en] = (await call('POST', '/cards', word(en))).body.card; clock.now += 1; }
+  for (const en of words) { cards[en] = (await call('POST', '/cards', word(en, { context: `Test the ${en} word today.` }))).body.card; clock.now += 1; }
   return cards;
 }
 const queue = async (call, query) => (await call('GET', `/queue?${query}`)).body.cards;
@@ -83,14 +83,14 @@ test('new words a day: spell, review and build give due cards, then at most new_
   assert.deepEqual(spell.map(card => card.en), WORDS.slice(0, 10), 'new words by due date, at most 10');
   assert.ok(spell.every(card => card.is_new === true && card.missed === 0 && card.leech === false && card.parts === null && card.tip === ''));
   assert.equal((await queue(call, 'mode=review')).length, 10, 'review: at most 10 new cards');
-  assert.equal((await queue(call, 'mode=build')).length, 10, 'build: at most 10 new sentences');
+  assert.equal((await queue(call, 'mode=build')).length, 10, 'build: at most 10 new words with examples');
   assert.equal((await queue(call, 'mode=fill&limit=4')).length, 4, 'the limit still applies');
 
   // Three words answered right: three new words met today, 7 left; they are not due, so they are not given again.
   for (const en of ['alpha', 'bravo', 'charlie']) await answer(call, cards[en], 'good');
   const after = await queue(call, 'mode=spell');
   assert.deepEqual(after.map(card => card.en), WORDS.slice(3, 10));
-  // The sentence modes share the day's allowance: 7 new sentences left.
+  // The example-based modes share the same seven remaining word slots.
   assert.equal((await queue(call, 'mode=build')).length, 7);
   // Practice: due, new, then the learnt words not due, the least recently practised first.
   clock.now += 1000;
@@ -115,7 +115,7 @@ test('new words a day: spell, review and build give due cards, then at most new_
   assert.deepEqual(all.map(card => card.en), ['delta', ...WORDS.slice(5), 'echo'], 'echo is due last');
   const review = await queue(call, 'mode=review&limit=50');
   assert.ok(!review.some(card => card.en === 'echo'), 'review leaves out the new card that is not due');
-  assert.equal(review.filter(card => card.is_new).length, 26 - 4, '30 a day: every new card due now (10 words and 12 sentences)');
+  assert.equal(review.filter(card => card.is_new).length, 10, 'every new word due now, with standalone sentences left out');
 });
 
 test('new_today counts the cards whose first answer is today, once each; it starts again the next day', async t => {

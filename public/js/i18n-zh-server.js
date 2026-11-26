@@ -356,6 +356,7 @@ I18n.add({
   "Token contains disallowed characters": "Token 含有不允许的字符",
   "Translation result is empty": "翻译结果为空",
   "Translation service not configured yet": "尚未配置翻译服务",
+  "Only word cards can be reviewed": "只有单词卡可以复习",
   "Translation timed out; please retry": "翻译超时，请重试",
   "unknown error": "未知错误",
   "Unknown setting: {1}": "不认识的配置项：{1}",

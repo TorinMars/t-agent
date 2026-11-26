@@ -30,15 +30,15 @@ class CoachSqlError extends Error {}
 
 // The views: name, what a row is, and the columns with what they hold. learn_schema() gives this text to the model.
 const VIEWS = [
-  ['coach_cards', 'one row per card (word or sentence) the person studies', [
-    ['id', 'INTEGER', 'card id'], ['kind', 'TEXT', 'word | sentence'], ['en', 'TEXT', 'the English'], ['zh', 'TEXT', 'the Chinese meaning'],
+  ['coach_cards', 'one row per word card the person studies', [
+    ['id', 'INTEGER', 'card id'], ['kind', 'TEXT', 'word'], ['en', 'TEXT', 'the English'], ['zh', 'TEXT', 'the Chinese meaning'],
     ['state', 'TEXT', 'new (never answered) | learning (remembered under a day) | review | relearning (last answer wrong)'],
     ['due', 'TEXT', 'ISO time it is due'], ['stability', 'REAL', 'FSRS stability in days (NULL for new)'], ['difficulty', 'REAL', 'FSRS difficulty 1..10'],
     ['reps', 'INTEGER', 'answers given'], ['lapses', 'INTEGER', 'answers graded again'], ['known', 'INTEGER', '1 when the word counts as learned'],
     ['leech', 'INTEGER', '1 when it keeps slipping'], ['created_at', 'TEXT', 'ISO time added'], ['source', 'TEXT', 'translation | lookup | starter | manual'],
   ], 'answers'],
   ['coach_answers', 'one row per answer in practice', [
-    ['card_id', 'INTEGER', 'coach_cards.id'], ['kind', 'TEXT', 'word | sentence'], ['en', 'TEXT', 'the card English'], ['at', 'TEXT', 'ISO time'],
+    ['card_id', 'INTEGER', 'coach_cards.id'], ['kind', 'TEXT', 'word'], ['en', 'TEXT', 'the card English'], ['at', 'TEXT', 'ISO time'],
     ['day', 'TEXT', 'YYYY-MM-DD in the person\'s time zone'], ['hour', 'INTEGER', '0..23 local'], ['weekday', 'TEXT', 'Monday..Sunday'],
     ['mode', 'TEXT', 'review | spell | build | dictation | say | fill | mistakes'], ['correct', 'INTEGER', '1 | 0'], ['grade', 'TEXT', 'again | hard | good'],
     ['typed', 'TEXT', 'what the person typed (may be NULL)'], ['expected', 'TEXT', 'what was asked for when wrong'], ['tags', 'TEXT', 'the mistake tag of a wrong answer'],
@@ -49,7 +49,7 @@ const VIEWS = [
     ['right_first_time', 'INTEGER', 'cards whose first answer that day was right'], ['minutes', 'INTEGER', 'study minutes'], ['new_cards', 'INTEGER', 'cards answered for the first time'],
   ], 'answers'],
   ['coach_mistakes', 'one row per card ever answered wrong', [
-    ['card_id', 'INTEGER', 'coach_cards.id'], ['kind', 'TEXT', 'word | sentence'], ['en', 'TEXT', 'the English'], ['wrong_count', 'INTEGER', 'wrong answers'],
+    ['card_id', 'INTEGER', 'coach_cards.id'], ['kind', 'TEXT', 'word'], ['en', 'TEXT', 'the English'], ['wrong_count', 'INTEGER', 'wrong answers'],
     ['last_wrong_at', 'TEXT', 'ISO time'], ['tags', 'TEXT', 'the mistake tags, comma separated'], ['in_mistakes', 'INTEGER', '1 when it is in the Mistakes practice now'],
   ], 'answers'],
   ['coach_settings', 'the learning settings', [['key', 'TEXT', 'setting name'], ['value', 'TEXT', 'its value as JSON']], 'always'],
@@ -114,7 +114,7 @@ function buildSnapshot(db, owner, { learn, now = Date.now(), timeZone, readAnswe
       insert('coach_settings', Object.entries(current).map(([key, value]) => ({ key, value: JSON.stringify(value) })));
       if (!readAnswers) return;
       // Cards shown at all (services/learn.js `visible`).
-      const cards = db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND suspended = 0 AND NOT (source = 'starter' AND reps = 0 AND @starter IS NULL) ORDER BY id`)
+      const cards = db.prepare(`SELECT * FROM learn_cards WHERE owner = @owner AND kind = 'word' AND suspended = 0 AND NOT (source = 'starter' AND reps = 0 AND @starter IS NULL) ORDER BY id`)
         .all({ owner, starter: current.starter });
       const slipped = learn.slips(cards);
       const rightCounts = new Map(db.prepare('SELECT card_id, SUM(correct) AS right FROM learn_reviews WHERE owner = ? GROUP BY card_id').all(owner).map(row => [row.card_id, row.right]));
@@ -168,12 +168,15 @@ function buildSnapshot(db, owner, { learn, now = Date.now(), timeZone, readAnswe
       })));
       // The queue, with the same rules as services/learn.js queue (due cards that are not new; new ones up to today's allowance).
       const pace = learn.pace(owner, current, now);
-      const count = (where, kind) => Number(db.prepare(`SELECT COUNT(*) FROM learn_cards WHERE owner = @owner AND suspended = 0 AND NOT (source = 'starter' AND reps = 0 AND @starter IS NULL)
-        ${kind ? `AND kind = '${kind}'` : ''} AND ${where}`).pluck().get({ owner, starter: current.starter, now })) || 0;
-      const queue = [['review', ''], ['spell', 'word'], ['fill', 'sentence'], ['dictation', 'sentence'], ['say', 'sentence']].map(([mode, kind]) => ({
-        mode, due: count('reps > 0 AND due_at <= @now', kind), new_left: pace.new_left,
-        new_available: Math.min(pace.new_left, count(`reps = 0${mode === 'review' ? ' AND due_at <= @now' : ''}`, kind)),
-      }));
+      const { hasPracticeContext } = require('./learn-sentences');
+      const withContext = cards.filter(hasPracticeContext);
+      const queue = ['review', 'spell', 'fill', 'dictation', 'say'].map(mode => {
+        const candidates = mode === 'fill' ? withContext : cards;
+        return {
+          mode, due: candidates.filter(card => card.reps > 0 && card.due_at <= now).length, new_left: pace.new_left,
+          new_available: Math.min(pace.new_left, candidates.filter(card => !card.reps && (mode !== 'review' || card.due_at <= now)).length),
+        };
+      });
       queue.push({ mode: 'mistakes', due: inMistakes.size, new_left: pace.new_left, new_available: 0 });
       insert('coach_queue', queue);
       insert('coach_reports', db.prepare('SELECT * FROM learn_reports WHERE owner = ? ORDER BY covers_until').all(owner).map(row => {

@@ -11,6 +11,23 @@ process.env.T_AGENT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 't-agent-le
 
 const load = () => import('../scripts/h5-shell/learn-audio.mjs');
 
+test('pronunciation acquires mixable audio and restores the previous session after the last player releases it', async () => {
+  const { beginMixedPlayback } = await load();
+  const audioSession = { type: 'auto' };
+  const first = beginMixedPlayback({ audioSession });
+  const second = beginMixedPlayback({ audioSession });
+  assert.equal(audioSession.type, 'ambient');
+  first();
+  first();
+  assert.equal(audioSession.type, 'ambient');
+  second();
+  assert.equal(audioSession.type, 'auto');
+  const recording = { type: 'play-and-record' };
+  beginMixedPlayback({ audioSession: recording })();
+  assert.equal(recording.type, 'play-and-record');
+  assert.doesNotThrow(() => beginMixedPlayback({})());
+});
+
 // Fake timers on a fake clock, and fake speech that the test ends by hand.
 function rig({ refuse = false, silent = false } = {}) {
   let now = 0;

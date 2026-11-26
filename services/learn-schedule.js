@@ -45,7 +45,7 @@ function writeReplayed(db, id, state, extra = {}) {
 // changed. No clock and no change number: every engine reschedules when the setting reaches it (the same stability gives the same date).
 function reschedule(db, owner, retention) {
   const rows = db.prepare(`SELECT id, due_at, interval_days, last_result, last_at, fsrs_stability, fsrs_difficulty FROM learn_cards
-    WHERE owner = ? AND fsrs_stability IS NOT NULL AND last_at IS NOT NULL`).all(owner);
+    WHERE owner = ? AND kind = 'word' AND fsrs_stability IS NOT NULL AND last_at IS NOT NULL`).all(owner);
   const update = db.prepare('UPDATE learn_cards SET due_at = ?, interval_days = ? WHERE id = ?');
   let changed = 0;
   for (const row of rows) {

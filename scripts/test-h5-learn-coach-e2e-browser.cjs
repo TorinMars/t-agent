@@ -309,7 +309,7 @@ async function phoneRun(browser, server, fake) {
   assert.equal(sent[0].body.messages[0].role, 'system');
   assert.match(sent[0].body.messages[0].content, /^You are the English coach/);
   assert.doesNotMatch(sent[0].body.messages[0].content, /Today is \d{4}/, 'no date in the stable system message');
-  assert.match(lastUser(sent[0]), /^Today is \d{4}-\d{2}-\d{2}\. Learning now: \d+ due, .*\n\nGive me today's spelling practice$/s, 'today\'s numbers go with the newest message');
+  assert.match(lastUser(sent[0]), /^Today is \d{4}-\d{2}-\d{2}\. Learning now: \d+ due words including new words scheduled for today, .*\n\nGive me today's spelling practice$/s, 'today\'s numbers go with the newest message');
   // The second round: the model's tool call and its result follow the question.
   const second = sent[1].body.messages;
   assert.equal(second.at(-2).role, 'assistant');
@@ -697,6 +697,30 @@ async function wideRun(browser, server, fake) {
   fake.queue.push({ content: answerText('Spelling after study is done.') });
   assert.equal(await answerCard(page, one, 'receive', touch), true);
   await lastAnswer(page).getByText('Spelling after study is done.').waitFor(WAIT);
+
+  // A standalone fill session uses the same word card as the coach and keeps the example masked.
+  const allowance = await api(page, 'POST', '/api/learn/new-words', { count: 5 });
+  assert.ok(allowance.data.new_left > 0, JSON.stringify(allowance.data));
+  const example = 'The rear weight will counterbalance the heavy motor.';
+  const made = await api(page, 'POST', '/api/learn/cards', { kind: 'word', en: 'counterbalance', zh: '\u62b5\u6d88', context: example });
+  assert.equal(made.data.created, true);
+  assert.equal(made.data.card.context, example);
+  const queue = await api(page, 'GET', '/api/learn/queue?mode=fill');
+  assert.deepEqual(queue.data.cards.map(card => [card.id, card.kind]), [[made.data.card.id, 'word']]);
+  fake.queue.push(
+    { tools: [['open_screen', { screen: 'fill' }]] },
+    { content: answerText('Open Fill the gap.') },
+  );
+  await say(page, 'Open Fill the gap', touch);
+  await lastAnswer(page).getByRole('button', { name: 'Fill the gap' }).click();
+  await page.locator('#h5-learn-gap-input').fill('counterbalance');
+  assert.doesNotMatch(await page.locator('.h5-learn-gap').innerText(), /counterbalance/);
+  await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor(WAIT);
+  await page.locator('#h5-learn-grade-good').click();
+  await waitFor(() => one.of('POST', new RegExp(`/cards/${made.data.card.id}/answer$`)).length === 1, 'the word card received the grade');
+  await page.locator('#h5-learn-done').waitFor(WAIT);
+  await page.locator('#h5-learn-back').click();
+  await page.locator('#h5-learn-coach').waitFor(WAIT);
 
   // Earlier chats in the pane, read-only; Close returns to the coach.
   await page.locator('#h5-learn-coach-more').click();

@@ -4,6 +4,34 @@
 
 export const START_MS = 2500; // an automatic play that has not started by then counts as refused (iOS ignores speech before the first tap)
 
+const mixing = new WeakMap();
+
+// Ask a browser that supports Audio Session to mix pronunciation with other audio while this player is active.
+export function beginMixedPlayback(navigator = globalThis.navigator) {
+  const noop = () => {};
+  try {
+    const session = navigator?.audioSession;
+    if (!session || session.type === 'play-and-record') return noop;
+    let entry = mixing.get(session);
+    if (!entry) {
+      entry = { previous: session.type, users: 0 };
+      session.type = 'ambient';
+      if (session.type !== 'ambient') return noop;
+      mixing.set(session, entry);
+    }
+    entry.users += 1;
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      entry.users -= 1;
+      if (entry.users) return;
+      mixing.delete(session);
+      try { if (session.type === 'ambient') session.type = entry.previous; } catch { /* the browser owns the audio session */ }
+    };
+  } catch { return noop; }
+}
+
 // What the settings ask for (the server's learn_v1 fields, defaults where one is missing).
 export function audioOptions(settings) {
   const value = settings || {};

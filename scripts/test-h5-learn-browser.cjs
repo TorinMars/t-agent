@@ -251,7 +251,7 @@ async function toTerminal(page) {
       assert.equal(await text(page, '#h5-learn-estimate'), 'cards due today · about 6 min');
       assert.equal(await text(page, '#h5-learn-streak'), '5-day streak · 7 of 20 done');
       assert.equal(await page.locator('#h5-learn-goal').getAttribute('aria-valuenow'), '35', '7 of 20');
-      assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '26 sentences', '26 sentences', '26 sentences', '3 cards', '2 chats']);
+      assert.deepEqual(await page.locator('.h5-learn-mode .h5-learn-count').allTextContents(), ['42 words', '42 words', '42 words', '', '3 cards', '2 chats']);
       assert.deepEqual(await page.locator('.h5-learn-mode .MuiTypography-subtitle1').allTextContents(), ['Spell the word', 'Dictation', 'Say it', 'Fill the gap', 'Mistakes', 'English chat']);
       assert.equal(await page.locator('#h5-learn-mode-build').count(), 0, 'Build the sentence is hidden');
       assert.match(await text(page, '#h5-learn-material'), /From your translations · 26 sentences, 42 words/);
@@ -501,15 +501,16 @@ async function toTerminal(page) {
       await learn.click();
       await page.locator('#h5-learn-free').waitFor();
       assert.equal(await text(page, '#h5-learn-due'), 'Nothing due today');
+      const freePracticeRequests = mock.requests.length;
       await page.locator('#h5-learn-free').click();
       await page.locator('#h5-learn-meaning').waitFor();
       assert.equal(await text(page, '#h5-learn-view-title'), 'Practice');
-      assert.ok(mock.requests.some(item => item.search.includes('mode=spell')) && mock.requests.some(item => item.search.includes('mode=fill')), 'words and sentences mixed');
+      assert.deepEqual(mock.requests.slice(freePracticeRequests).filter(item => item.search.includes('mode=')).map(item => item.search), ['?mode=spell&limit=20&extra=practice']);
       await page.locator('#h5-nav-sessions').click();
       mock.summary = { ...SUMMARY, due: 0, words: 0, sentences: 0, mistakes: 0, starter: null };
       await learn.click();
       await page.locator('#h5-learn-empty').waitFor();
-      assert.match(await text(page, '#h5-learn-empty'), /translated|Chinese → English/);
+      assert.match(await text(page, '#h5-learn-empty'), /Words picked from translations/);
       mock.summary = { ...SUMMARY };
       await page.locator('#h5-learn-add-starter').click();
       await waitFor(() => mock.posts(/\/starter$/).length === 1, 'the starter list');

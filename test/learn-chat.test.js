@@ -330,16 +330,15 @@ test('topics: the journal summary (dates, weekday, part of day, lengths, tags, t
   const sentence = ctx.learn.addCard('me', { kind: 'sentence', en: 'We deploy the new version today.', zh: ZH, source: 'manual' }).card;
   ctx.learn.answer('me', card.id, { mode: 'spell', grade: 'again', correct: false, answer: 'recieve', tag: 'letter-order' });
   ctx.learn.answer('me', card.id, { mode: 'spell', grade: 'again', correct: false, answer: 'receve', tag: 'missing-letter' });
-  ctx.learn.answer('me', sentence.id, { mode: 'build', grade: 'again', correct: false, answer: 'We deploys', tag: 'verb-form' });
-  ctx.learn.answer('me', sentence.id, { mode: 'build', grade: 'good', correct: true });
+  ctx.db.prepare("INSERT INTO learn_reviews (owner, card_id, at, mode, grade, correct, answer, tag) VALUES ('me', ?, ?, 'build', 'again', 0, 'We deploys', 'verb-form')").run(sentence.id, ctx.clock.now);
   ctx.db.prepare(`INSERT INTO learn_reports (owner, uid, created_at, covers_from, covers_until, body) VALUES ('me', 'report-0001', 1, 0, 1, ?)`)
     .run(JSON.stringify({ summary: 'You mix up ie and ei.', kinds: [], findings: [] }));
   await ctx.chat.send('me', { question: 'Words I keep getting wrong', topic: 'mistakes' });
   const mistakesPrompt = ctx.model.calls[4].system;
   const data = JSON.parse(mistakesPrompt.split('\n').find(line => line.startsWith('{"wrong_answers"')));
   assert.deepEqual(data, {
-    wrong_answers: 3,
-    cards: [{ kind: 'sentence', text: 'We deploy the new version today.', wrong: 1, tags: { 'verb-form': 1 } }, { kind: 'word', text: 'receive', wrong: 2, tags: { 'missing-letter': 1, 'letter-order': 1 } }],
+    wrong_answers: 2,
+    cards: [{ kind: 'word', text: 'receive', wrong: 2, tags: { 'missing-letter': 1, 'letter-order': 1 } }],
     report: 'You mix up ie and ei.',
   });
   assert.doesNotMatch(mistakesPrompt, /journal entries, newest first/);

@@ -31,7 +31,7 @@
   don't know, Hint, then the grades) are pinned at the bottom of its page, so the answer field and Check stay in sight above the keyboard.
 - **Home** (`GET /api/learn/summary`, `GET /api/learn/settings`): the due count (h4) with "cards due today · about N min" (20 seconds a card,
   `minutesFor`), under it the new words of today (`#h5-learn-new-words`, see "New words a day"), the goal bar (done today / goal), "N-day streak · D of G done" with the fire icon, and Start review (`#h5-learn-start`); with
-  nothing due "Nothing due today" and Practise anyway (`#h5-learn-free`, a mixed session from the spell and fill queues). Then PRACTICE: one card
+  nothing due "Nothing due today" and Practise anyway (`#h5-learn-free`, a single word queue with `extra=practice`). Then PRACTICE: one card
   per offered mode (`#h5-learn-mode-<id>`; not Build, see below) with its count ("42 words", "26 sentences"; the noun is an exact dictionary key, never a "{1} words"
   template), and Mistakes (`#h5-learn-mode-mistakes`, the summary's count); YOUR MATERIAL (`#h5-learn-material`), Learn settings and How
   learning works. Without cards: "No study cards yet", what will appear here, and Add the starter list (`POST /starter` then `PUT /settings
@@ -45,7 +45,7 @@
   (`#h5-learn-settings-error`, an error Alert with the server's message, such as the 503 "Learning settings are kept on a normal computer, which
   cannot be reached right now", besides the toast) until the next change works; the switches and the goal show the stored values again.
 - **Modes** (`MODES` in `learn-model.mjs`; a session fetches `GET /queue?mode=…&limit=` 20 for words, 10 for sentences; without `&extra=practice`
-  a queue has the due cards and the new words up to today's count and nothing more, see "Done for today"; Practice, the mixed session, always asks
+  a queue has the due cards and the new words up to today's count and nothing more, see "Done for today"; Practice always asks
   for `extra=practice` on both its queues):
   - **Build the sentence is hidden** on purpose (the person's decision, 2026-11-23): `BUILD_HIDDEN` in `learn-model.mjs` marks its `MODES`
     entry `hidden`, so the home leaves it out and How learning works says "Four ways to practise". Its code stays (`BuildExercise`, `tilesFor`,
@@ -55,6 +55,8 @@
     (Fill the gap), as do Dictation without speech output and Say it without voice input. A sentence without a content word (`gapFor` null,
     "I am here.") outside the Fill the gap mode gets Dictation when the page can speak; else Fill the gap takes out its longest word
     (`gapFor(card, { loose: true })`, as the mode always does); one without any word shows "This sentence has no word to fill in." with Skip.
+  The current queues return word cards. Daily review and free practice spell the target word. Fill the gap masks its target in an example and submits the answer to the word id. Dictation and Say it practise the target word directly. An older engine can still return a sentence to display.
+
   - Spell the word: the meaning and, when the page can read aloud, the phonetic transcription under it next to Hear it (`#h5-learn-phonetic`; the sound is offered there already, so it gives nothing more away) (or, without a meaning, `POST /meaning`; a 503 shows "Word meanings need a translator…" with Open Settings, which
     closes Learn and opens Settings on Voice and translation), the card's context with the word as a gap, Hear it, Show first letter, a box per
     letter over one transparent input, I don't know. **Automatic check**: once the typed letters reach the word's length the answer is checked by

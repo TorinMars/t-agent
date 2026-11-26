@@ -802,7 +802,7 @@ function createLearnSync(options) {
         // The numbers of the home for the summary while it is away.
         try {
           const summary = await call(`${ROUTE}/summary`);
-          if (isPlainObject(summary)) writeState(db, HOME_KEY, { link_id: peer.id, name: peer.name, summary, at: now() });
+          if (isPlainObject(summary) && summary.practice_kind === 'word') writeState(db, HOME_KEY, { link_id: peer.id, name: peer.name, summary, at: now() });
         } catch { /* the last copy stays */ }
       }
       updatePeer(peer.id, () => ({ last_sync_at: new Date(now()).toISOString(), last_error: null }));
@@ -883,20 +883,23 @@ function createLearnSync(options) {
   async function companySummary(name) {
     await refresh();
     const home = homePeer();
+    let homeOlder = false;
     if (home && request) {
       try {
         const summary = await request(home.baseUrl, `${ROUTE}/summary`, home.token, { timeoutMs });
-        if (isPlainObject(summary)) {
+        if (isPlainObject(summary) && summary.practice_kind === 'word') {
           writeState(db, HOME_KEY, { link_id: home.id, name: home.name, summary, at: now() });
           return { ...summary, device: { ...status(), offline_copy_at: null } };
         }
+        homeOlder = isPlainObject(summary);
       } catch { /* the copy below */ }
     }
     const local = service().summary(name);
     const last = readState(db, HOME_KEY);
-    const copy = last && isPlainObject(last.summary) ? last.summary : null;
+    const copy = last && last.summary?.practice_kind === 'word' ? last.summary : null;
     const at = now();
-    const localTimes = db.prepare('SELECT at FROM learn_reviews WHERE owner = ?').pluck().all(name);
+    const localTimes = db.prepare(`SELECT r.at FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id
+      WHERE r.owner = ? AND c.kind = 'word'`).pluck().all(name);
     let doneToday = review.countToday(localTimes, at, timeZone);
     const days = new Set(localTimes.map(time => review.dayKey(time, timeZone)));
     if (copy) {
@@ -912,7 +915,8 @@ function createLearnSync(options) {
     while (days.has(day)) { streak += 1; day = review.previousDay(day); }
     return {
       ...local, done_today: doneToday, streak, mistakes: copy ? Math.max(int(copy.mistakes), local.mistakes) : local.mistakes,
-      device: { ...status(), offline_copy_at: last && last.at ? new Date(last.at).toISOString() : null },
+      ...(homeOlder ? { home_older: true } : {}),
+      device: { ...status(), offline_copy_at: copy && last.at ? new Date(last.at).toISOString() : null },
     };
   }
 

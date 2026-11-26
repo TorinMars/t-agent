@@ -21,7 +21,8 @@ const merge = require('./learn-merge');
 const { modelError } = require('./learn-ask');
 const { splitMeta, metaFilter, checkQuestion, META } = require('./learn-chat');
 const coachSql = require('./learn-coach-sql');
-const { createLearnPlan, WORD_SOURCES, hasPracticeContext } = require('./learn-plan');
+const { createLearnPlan, WORD_SOURCES } = require('./learn-plan');
+const { hasPracticeContext } = require('./learn-sentences');
 const claudeEngine = require('./learn-coach-claude');
 
 const COACH = syncStore.COACH_UID;
@@ -62,7 +63,7 @@ const TOOLS = [
     parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
   },
   {
-    name: 'select_practice_words', description: 'Choose existing word cards independently of the exercise. today: due words then new words; due: due reviewed words; new: unstudied words within the daily allowance; highest_error_rate: highest fraction of wrong answers; selected: exact word texts or card ids in words, or a read-only query returning one id column from coach_cards for custom filters; previous: reuse the selection from the previous word practice. coach_cards has id, kind, en, source, state, due and created_at. Join coach_answers on card_id for correct and at. Use learn_schema when you need more columns. count: maximum words (default 10, or all from the previous selection).',
+    name: 'select_practice_words', description: 'Choose existing word cards independently of the exercise. today: due words then new words; due: due reviewed words; reviewed: free practice with previously studied words, even if none are due; new: unstudied words within the daily allowance; highest_error_rate: highest fraction of wrong answers; selected: exact word texts or card ids in words, or a read-only query returning one id column from coach_cards for custom filters; previous: reuse the selection from the previous word practice. coach_cards has id, kind, en, source, state, due and created_at. Join coach_answers on card_id for correct and at. Use learn_schema when you need more columns. count: maximum words (default 10, or all from the previous selection).',
     parameters: { type: 'object', properties: { source: { type: 'string', enum: [...WORD_SOURCES, 'previous'] }, words: { type: 'array', items: { type: ['integer', 'string'] } }, query: { type: 'string' }, count: { type: 'integer' } }, required: ['source'] },
   },
   {
@@ -124,6 +125,7 @@ function systemPrompt({ level = null, notes = [], summary = '', tools = true, se
       'Tools: chat, translation, grammar and rewriting need NO lookup. Look up data (learn_schema, learn_sql) only when the question is about the person\'s own learning; prefer one well-made query over many.',
       'Small changes are made at once: when the person asks to change a setting or add or edit a card, the app applies the change after your answer, with an Undo button. Briefly say what you prepared. Removing cards, reminders and practice are offered as cards the person taps; ask before a big change (many cards, a removal).',
       'Build word practice in two steps. First call select_practice_words to match the requested words, count or filters. For custom filters, use source selected with a query returning word card ids in the requested order. Then call propose_practice with kind word_practice and the requested method. If they ask to keep the same words and change the method, use source previous. Default to direct spelling when they did not specify a method. Describe the actual plan and mention any sentence gaps that will use direct spelling. If no words match, say so and offer a relevant next option. For other exercises, help in chat when possible.',
+      'All scheduled cards represent words. Use example sentences to practise their target word. The daily review count includes first-time words whose start date has arrived, while source due selects reviewed words only. For a general daily practice request use today. For free practice use reviewed. Use new to spend the existing allowance and more_new_words only when the learner wants to raise it. If due is empty, explain that no previously studied words are due and offer a reviewed or new word plan as appropriate.',
       `Use remember for lasting facts about the person (at most ${MAX_NOTES} notes; when they are full, suggest merging).${settings.coach_memory === false ? ' The person switched memory off: do not use remember.' : ''}`,
       'The app has no menu of its own screens: the person reaches Mistakes, Progress, their material, Learn settings, "How learning works" and the plain practice modes only through you. When they ask to see or open one ("show my mistakes", "open settings", "how does learning work", "my progress"), call open_screen with it and say in one line what they will find there; offer one with open_screen after a talk about their weak spots or progress when it helps.',
     );
@@ -364,14 +366,14 @@ function createLearnCoach({
     const head = `Today is ${today()}.`;
     if (!current.coach_read_answers) return head;
     const summary = learn.summary(owner);
-    return `${head} Learning now: ${summary.due} due, ${summary.new_left} new words left today, ${summary.done_today} answers today, ${summary.mistakes} words in Mistakes, `
-      + `${summary.words} words and ${summary.sentences} sentences in all, streak ${summary.streak} days.`;
+    return `${head} Learning now: ${summary.due} due words including new words scheduled for today, ${summary.new_left} new words left today, ${summary.done_today} answers today, ${summary.mistakes} words in Mistakes, `
+      + `${summary.words} words in all, streak ${summary.streak} days.`;
   }
   // The short summary of the no-tools answer: today's numbers and the words most often wrong.
   function shortSummary(owner, current) {
     if (!current.coach_read_answers) return 'The person does not share their learning answers.';
     const wrong = db.prepare(`SELECT c.en, COUNT(*) AS wrong FROM learn_reviews r JOIN learn_cards c ON c.id = r.card_id WHERE r.owner = ? AND r.correct = 0
-      GROUP BY r.card_id ORDER BY wrong DESC, MAX(r.at) DESC LIMIT 10`).all(owner);
+      AND c.kind = 'word' GROUP BY r.card_id ORDER BY wrong DESC, MAX(r.at) DESC LIMIT 10`).all(owner);
     return `Words often wrong: ${wrong.length ? wrong.map(row => `${cut(row.en, 60)} (${row.wrong})`).join(', ') : 'none yet'}.`;
   }
 

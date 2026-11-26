@@ -461,24 +461,24 @@ test('a chain A–B–C reaches C; a large set goes in pages; an older peer with
 test('a card whose text changed on one side moves on the other too, with the answers given there under the old text', async t => {
   const { A, B } = await makeNetwork(t, ['A', 'B'], { links: [['A', 'B']] });
   await noStarter(A);
-  const card = (await A.page('POST', '/learn/cards', sentence('Please deploi the new build now.'))).body.card;
+  const card = (await A.page('POST', '/learn/cards', word('deploi'))).body.card;
   await A.sync.syncAll();
   const onB = cardsOf(B)[0];
   // B answers under the old text while A fixes the text.
-  await B.page('POST', `/learn/cards/${onB.id}/answer`, { mode: 'build', grade: 'good', correct: true });
-  assert.equal((await A.page('PATCH', `/learn/cards/${card.id}`, { en: 'Please deploy the new build now.' })).status, 200);
+  assert.equal((await B.page('POST', `/learn/cards/${onB.id}/answer`, { mode: 'spell', grade: 'good', correct: true })).status, 200);
+  assert.equal((await A.page('PATCH', `/learn/cards/${card.id}`, { en: 'deploy' })).status, 200);
   await B.sync.syncAll();
   await A.sync.syncAll();
   for (const side of [A, B]) {
     const cards = cardsOf(side);
     assert.equal(cards.length, 1, `${side.name}: one card`);
-    assert.equal(cards[0].en, 'Please deploy the new build now.');
+    assert.equal(cards[0].en, 'deploy');
     assert.equal(cards[0].reps, 1, `${side.name}: the answer under the old text is kept`);
     assert.equal(reviewsOf(side).length, 1);
-    assert.equal(reviewsOf(side)[0].norm, 'please deploy the new build now.');
+    assert.equal(reviewsOf(side)[0].norm, 'deploy');
   }
   // Adding the old text again later makes a new card there on both sides.
-  await B.page('POST', '/learn/cards', sentence('Please deploi the new build now.'));
+  await B.page('POST', '/learn/cards', word('deploi'));
   await B.sync.syncAll();
   assert.equal(cardsOf(A).length, 2);
 });

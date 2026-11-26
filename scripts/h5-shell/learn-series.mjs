@@ -2,24 +2,11 @@
 // run as one Learn session, step after step. Which exercise each card gets in a step, the progress of the header ("Step 2 of 4 · 7 / 9"), the
 // words missed in the series that come back at its end, and the result the page posts to /api/learn/coach/practice-result.
 // See "The practice series" in docs/design/learn-english-coach-page.md.
-import { findWholeWord, SENTENCE_EXERCISE } from './learn-model.mjs';
+import { contextGap, SENTENCE_EXERCISE } from './learn-model.mjs';
+export { contextGap } from './learn-model.mjs';
 
 // `review` is the step of a Review plan (services/learn-plan.js): a word is spelled, a sentence gets the sentence exercise, as in a Review session.
 export const SERIES_MODES = ['spell', 'direct_spell', 'study', 'review', 'fill', 'dictation', 'retest'];
-
-// A word card asked inside its own sentence in a Fill the gap step: its `context` with the word as the gap ({ word, before, after }), or null when
-// the word is not in its context as a whole word.
-export function contextGap(card) {
-  if (!card || card.kind === 'sentence') return null;
-  const context = String(card.context || '').trim();
-  const word = String(card.en || '').trim();
-  if (!context || !word) return null;
-  const at = findWholeWord(context, word);
-  if (at < 0) return null;
-  const after = context.slice(at + word.length);
-  if (findWholeWord(after, word) >= 0) return null;
-  return { word: context.slice(at, at + word.length), before: context.slice(0, at), after };
-}
 
 // The exercise a card gets in a step (null: the card is left out of this step): Spell, Review and the retest spell a word and give a sentence the
 // sentence exercise; Fill the gap takes a sentence, or a word inside its own sentence (else the word is spelled); Dictation needs speech output (`tts`), else

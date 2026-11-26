@@ -10,11 +10,11 @@
 // - mistakes_series: spell wrong words, most often wrong first, then retest words missed in the series.
 // `words` (card ids or English texts) narrows a plan to those cards ("Practise the 3 I missed").
 const { normalize } = require('./learn');
-const { wholeWordPlaces } = require('./learn-sentences');
+const { hasPracticeContext } = require('./learn-sentences');
 const { WORD_METHODS, cleanPracticeExamples } = require('./learn-merge');
 
 const KINDS = ['today_spelling', 'review', 'mistakes_series', 'more_new_words', 'dictation', 'fill_gap'];
-const WORD_SOURCES = ['today', 'due', 'new', 'highest_error_rate', 'selected'];
+const WORD_SOURCES = ['today', 'due', 'reviewed', 'new', 'highest_error_rate', 'selected'];
 const SECONDS = { spell: 20, direct_spell: 20, study: 10, review: 12, fill: 30, dictation: 40, retest: 15 };
 const TITLES = {
   word_practice: 'Word practice',
@@ -23,8 +23,6 @@ const TITLES = {
 const MAX_CARDS = 50;
 
 class PlanError extends Error { constructor(message, statusCode = 400) { super(message); this.statusCode = statusCode; } }
-
-const hasPracticeContext = row => wholeWordPlaces(row.context, row.en).length === 1;
 
 function createLearnPlan({ db, learn, now = Date.now }) {
   const limitOf = (count, fallback) => (Number.isInteger(count) && count >= 1 ? Math.min(count, MAX_CARDS) : fallback);
@@ -49,8 +47,6 @@ function createLearnPlan({ db, learn, now = Date.now }) {
     const words = new Set(kept.flatMap(step => step.card_ids)).size;
     return { kind, title: TITLES[kind], steps: kept, words, minutes: kept.length ? minutesOf(kept) : 0, notes, ...extra };
   };
-  // The ids among `ids` that are word cards.
-  const wordIds = (owner, ids) => (ids.length ? db.prepare(`SELECT id FROM learn_cards WHERE owner = ? AND kind = 'word' AND id IN (${ids.map(() => '?').join(',')})`).pluck().all(owner, ...ids) : []);
   const queueIds = async (owner, mode, limit, extra) => (await learn.queue(owner, mode, limit, extra ? { extra } : {})).cards.map(card => card.id);
 
   function selectWords(owner, { source, words, count }) {
@@ -81,6 +77,8 @@ function createLearnPlan({ db, learn, now = Date.now }) {
     if (source === 'highest_error_rate') return db.prepare(`SELECT c.* FROM learn_cards c JOIN learn_reviews r ON r.card_id = c.id AND r.owner = c.owner
       WHERE ${visible} GROUP BY c.id HAVING SUM(r.correct = 0) > 0
       ORDER BY AVG(r.correct = 0) DESC, SUM(r.correct = 0) DESC, MAX(CASE WHEN r.correct = 0 THEN r.at END) DESC, c.id LIMIT @take`).all(params);
+    if (source === 'reviewed') return db.prepare(`SELECT c.* FROM learn_cards c WHERE ${visible} AND c.reps > 0
+      ORDER BY (c.due_at > @at), c.last_at ASC NULLS FIRST, c.id LIMIT @take`).all(params);
     const due = db.prepare(`SELECT c.* FROM learn_cards c WHERE ${visible} AND c.reps > 0 AND c.due_at <= @at ORDER BY c.due_at, c.id LIMIT @take`).all(params);
     return source === 'today' ? [...due, ...newWords(take - due.length)] : due;
   }
@@ -103,12 +101,13 @@ function createLearnPlan({ db, learn, now = Date.now }) {
   }
   async function buildPlan(owner, kind, { words = null, count = null } = {}) {
     if (!KINDS.includes(kind)) throw new PlanError('Unknown practice plan');
-    const named = namedCards(owner, words);
+    const named = Array.isArray(words) && words.length
+      ? selectWords(owner, { source: 'selected', words, count: count ?? MAX_CARDS }) : null;
     if (kind === 'mistakes_series') return mistakesSeries(owner, named, limitOf(count, 12));
     if (named) {
       // A plan of the cards named: each in the exercise of its kind for this plan.
       const mode = kind === 'dictation' ? 'dictation' : kind === 'fill_gap' ? 'fill' : 'spell';
-      const fit = named.filter(row => (mode === 'spell' ? row.kind === 'word' : row.kind === 'sentence'));
+      const fit = named.filter(row => row.kind === 'word' && (mode !== 'fill' || hasPracticeContext(row)));
       return finish(kind, [{ mode, card_ids: fit.map(row => row.id) }]);
     }
     if (kind === 'today_spelling') {
@@ -118,10 +117,8 @@ function createLearnPlan({ db, learn, now = Date.now }) {
       return finish(kind, [{ mode: 'spell', card_ids: [...first, ...ids.filter(id => !wrong.has(id))] }], first.length ? `${first.length} words you got wrong come first` : '', { wrong_first: first.length });
     }
     if (kind === 'review') {
-      // Review is word spelling too: the due word cards of the review queue, spelled.
-      const ids = await queueIds(owner, 'review', 100);
-      const words = new Set(wordIds(owner, ids));
-      return finish(kind, [{ mode: 'spell', card_ids: ids.filter(id => words.has(id)).slice(0, limitOf(count, 20)) }]);
+      const ids = await queueIds(owner, 'review', limitOf(count, 20));
+      return finish(kind, [{ mode: 'spell', card_ids: ids }]);
     }
     if (kind === 'dictation') return finish(kind, [{ mode: 'dictation', card_ids: await queueIds(owner, 'dictation', limitOf(count, 10)) }]);
     if (kind === 'fill_gap') return finish(kind, [{ mode: 'fill', card_ids: await queueIds(owner, 'fill', limitOf(count, 10)) }]);
@@ -157,9 +154,9 @@ function createLearnPlan({ db, learn, now = Date.now }) {
       // Use the selection shown in the proposal. Names resolve to local word cards after sync.
       const rows = selectWords(owner, { source: 'selected', words: saved.words_list, count: MAX_CARDS });
       plan = buildWordPlan(saved.method, rows, saved.examples);
-    } else if (saved.kind === 'more_new_words' && raise) {
-      // The new words the raised allowance gives now.
-      const cards = (await learn.queue(owner, 'spell', 100)).cards.filter(card => card.is_new).slice(0, saved.count || 5);
+    } else if (saved.kind === 'more_new_words') {
+      // Reopening uses only available slots. It does not grant a second allowance.
+      const cards = selectWords(owner, { source: 'new', count: saved.count || 5 });
       plan = finish('more_new_words', [{ mode: 'spell', card_ids: cards.map(card => card.id) }], '', { count: saved.count || 5 });
     } else plan = await buildPlan(owner, saved.kind, { words: saved.words_list && saved.words_list.length ? saved.words_list : null, count: saved.count || null });
     const steps = [];

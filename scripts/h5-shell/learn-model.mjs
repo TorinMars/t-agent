@@ -15,9 +15,9 @@ export const BUILD_HIDDEN = true;
 export const MODES = [
   { id: 'spell', kind: 'word', label: 'Spell the word', note: 'See the meaning or hear it, type the word', icon: 'learnSpell', limit: 20 },
   { id: 'build', kind: 'sentence', label: 'Build the sentence', note: 'Chinese + word tiles → the full sentence', icon: 'learnBuild', limit: 10, hidden: BUILD_HIDDEN },
-  { id: 'dictation', kind: 'sentence', label: 'Dictation', note: 'Hear a sentence, type what you hear', icon: 'learnDictation', limit: 10, needs: 'tts' },
-  { id: 'say', kind: 'sentence', label: 'Say it', note: 'Read aloud; voice input checks you', icon: 'voice', limit: 10, needs: 'voice' },
-  { id: 'fill', kind: 'sentence', label: 'Fill the gap', note: 'One word missing from your own sentence', icon: 'learnFill', limit: 10 },
+  { id: 'dictation', kind: 'word', label: 'Dictation', note: 'Listen and type what you hear', icon: 'learnDictation', limit: 10, needs: 'tts' },
+  { id: 'say', kind: 'word', label: 'Say it', note: 'Read aloud; voice input checks you', icon: 'voice', limit: 10, needs: 'voice' },
+  { id: 'fill', kind: 'word', label: 'Fill the gap', note: 'Spell the missing word in an example sentence', icon: 'learnFill', limit: 10 },
 ];
 export const modeOf = id => MODES.find(mode => mode.id === id) || null;
 // The modes this browser can offer: Dictation needs speech output, Say it a way to hear the person; a hidden mode is never offered.
@@ -37,6 +37,7 @@ export const exerciseOf = (card, mode) => (MIXED.has(mode) ? (card.kind === 'wor
 export function exerciseFor(card, mode, { tts = false, voice = false } = {}) {
   let exercise = exerciseOf(card, mode);
   if ((modeOf(exercise) || {}).hidden || (exercise === 'dictation' && !tts) || (exercise === 'say' && !voice)) exercise = SENTENCE_EXERCISE;
+  if (exercise === 'fill' && card.kind === 'word' && !contextGap(card)) return 'spell';
   if (exercise === 'fill' && mode !== 'fill' && card.kind === 'sentence' && tts && !gapFor(card)) return 'dictation';
   return exercise;
 }
@@ -169,15 +170,22 @@ export function findWholeWord(text, word) {
 // the Chinese of that sentence (`context_zh`, from the server) and the word stands in its `context` as a whole word. Returns the sentence split at
 // the word, { before, word (as written in the sentence), after, zh }, with the punctuation around the word kept outside it; else null (the meaning
 // layout of today, with "Used in" for any other context).
-export function sentenceGap(card) {
+export function contextGap(card) {
   if (!card || card.kind === 'sentence') return null;
-  const zh = String(card.context_zh || '').trim();
   const context = String(card.context || '').trim();
   const word = String(card.en || '').trim();
-  if (!zh || !context || !word) return null;
+  if (!context || !word) return null;
   const at = findWholeWord(context, word);
   if (at < 0) return null;
-  return { before: context.slice(0, at), word: context.slice(at, at + word.length), after: context.slice(at + word.length), zh };
+  const after = context.slice(at + word.length);
+  if (findWholeWord(after, word) >= 0) return null;
+  return { before: context.slice(0, at), word: context.slice(at, at + word.length), after };
+}
+
+export function sentenceGap(card) {
+  const zh = String(card?.context_zh || '').trim();
+  const gap = zh ? contextGap(card) : null;
+  return gap ? { ...gap, zh } : null;
 }
 
 // The gap of Spell's sentence layout shows how many letters the word has: one short underline per character of the word as written in the sentence
@@ -259,21 +267,6 @@ export function slotLayout(count, width) {
     if (fit.slot >= SLOT_MIN || perRow === 1) return fit;
   }
   return sized(1, n);
-}
-
-// A mixed session: words and sentences taken in turn (free practice when nothing is due), at most `limit` cards, no card twice.
-export function mixCards(lists, limit = 20) {
-  const seen = new Set();
-  const out = [];
-  const queues = lists.map(list => [...(list || [])]);
-  while (out.length < limit && queues.some(queue => queue.length)) {
-    for (const queue of queues) {
-      const card = queue.shift();
-      if (card && !seen.has(card.id)) { seen.add(card.id); out.push(card); }
-      if (out.length >= limit) break;
-    }
-  }
-  return out;
 }
 
 // The keys of an exercise on a computer: Enter checks (and, once checked, continues with the offered grade); 1 / 2 / 3 grade a checked answer.

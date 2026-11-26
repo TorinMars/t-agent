@@ -54,6 +54,10 @@ function wholeWordPlaces(text, word) {
   return places;
 }
 const findWholeWord = (text, word) => { const places = wholeWordPlaces(text, word); return places.length ? places[0] : -1; };
+function hasPracticeContext(card) {
+  if (wholeWordPlaces(card.context, card.en).length !== 1) return false;
+  try { checkEnglish('sentence', card.context); return true; } catch { return false; }
+}
 
 // The word cards that share one sentence, as [{ context, keeper, others }]: `cards` [{ id, en, context, created_at }] (word cards asked inside the
 // person's own sentence); only groups of two or more. The keeper is the card created first, then the one whose word stands first in the sentence,
@@ -289,6 +293,6 @@ function createLearnSentences({
 }
 
 module.exports = {
-  createLearnSentences, sharedGroups, needingSentence, checkGenerated, buildSentencePrompt, budgetLeft, wholeWordPlaces, findWholeWord, dayStateKey,
+  createLearnSentences, sharedGroups, needingSentence, checkGenerated, buildSentencePrompt, budgetLeft, wholeWordPlaces, findWholeWord, hasPracticeContext, dayStateKey,
   PER_DAY, AFTER_PICK, MIN_WORDS, MAX_WORDS,
 };

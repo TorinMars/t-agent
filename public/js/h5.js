@@ -4044,8 +4044,8 @@
   });
   // ── Mouse ball (docs/design/page-terminal-mouse-ball.md; scripts/h5-shell/MouseBall.jsx, a chunk of its own) ──
   // On or off for this device (localStorage `h5-mouse-ball`, a property of the hardware in the hand: a phone without a mouse wants it, a tablet with
-  // a trackpad may not). The ball asks for the shown terminal at each touch: its xterm, its screen and the copy path of the double tap (the same
-  // notice, the same refusal bar), or null while no terminal is shown (empty, the chat over it, the copy view, a notebook).
+  // a trackpad may not). The ball asks for the shown terminal at each touch: its xterm, its screen, the copy path of the double tap (the same
+  // notice, the same refusal bar) and the gesture mark for a program's own copy, or null while no terminal is shown (empty, the chat over it, the copy view, a notebook).
   ui.set({ mouseBall: store.get('mouse-ball') === 'on' });
   ui.actions.setMouseBall = on => { store.set('mouse-ball', on ? 'on' : null); ui.set({ mouseBall: Boolean(on) }); };
   ui.actions.mouseBallTarget = () => {
@@ -4059,6 +4059,8 @@
       screen,
       copy: text => s.clipboard?.copy(text), // call it inside the lift (pointerup): the write needs the user activation
       hookSelection: () => hookSelection(s), // new output clears the highlight, as after a double tap
+      // The lift that releases a program's mouse button (the program copies on it): the user's gesture, so its OSC 52 copy is written at once.
+      gesture: () => s.clipboard?.gesture(),
     };
   };
   // ── Links opened by programs (docs/design/open-links.md; routes/open-link.js and offerLink in routes/terminal.js) ──

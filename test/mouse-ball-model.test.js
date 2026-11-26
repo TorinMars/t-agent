@@ -158,3 +158,34 @@ test('joinSelection: soft-wrapped rows continue, rows a program wrapped itself a
   assert.equal(join([row('wrapped here at the very edge of th'), row('   indented rest')]), 'wrapped here at the very edge of th indented rest', 'the indent of the rest is dropped');
   assert.equal(join([row('She worked hard to accomplish her', { full: false }), row('goal before the deadline.')]), 'She worked hard to accomplish her\ngoal before the deadline.', 'a selection that stops inside a row does not join');
 });
+
+test('the edge scroll counts whole lines per frame and keeps the fraction', async () => {
+  const { scrollStep } = await load();
+  assert.deepEqual(scrollStep(0, 0, 16), { lines: 0, carry: 0 }, 'no speed: nothing, the fraction is dropped');
+  assert.deepEqual(scrollStep(0.7, 0, 16), { lines: 0, carry: 0 });
+  let step = scrollStep(0, 40, 16); // 0.64 of a line
+  assert.equal(step.lines, 0);
+  near(step.carry, 0.64, 'the fraction is kept');
+  step = scrollStep(step.carry, 40, 16);
+  assert.equal(step.lines, 1, 'two frames make a line');
+  near(step.carry, 0.28, 'and the rest is kept');
+  step = scrollStep(0, -40, 50);
+  assert.equal(step.lines, -2, 'upward: negative lines');
+  near(step.carry, 0, 'nothing left');
+  let lines = 0;
+  let carry = 0;
+  for (let i = 0; i < 60; i++) ({ lines: step.lines, carry } = scrollStep(carry, 4, 1000 / 60), lines += step.lines);
+  near(lines + carry, 4, '4 lines per second over one second of frames');
+  assert.ok(lines >= 3, `whole lines were scrolled on the way (${lines})`);
+});
+
+test('the button goes to the program while it reports the mouse, else to the page; what each tracking mode is sent', async () => {
+  const { buttonMode, programReports } = await load();
+  assert.equal(buttonMode('none'), 'page', 'no mouse reporting: the page selects');
+  assert.equal(buttonMode(undefined), 'page', 'an xterm without modes: the page');
+  for (const mode of ['x10', 'vt200', 'drag', 'any']) assert.equal(buttonMode(mode), 'program', mode);
+  assert.deepEqual(programReports('x10'), { release: false, motion: false, wheel: false }, 'x10: the press only');
+  assert.deepEqual(programReports('vt200'), { release: true, motion: false, wheel: true }, 'vt200: press, release and wheel');
+  assert.deepEqual(programReports('drag'), { release: true, motion: true, wheel: true }, 'drag: and the motion with the button held');
+  assert.deepEqual(programReports('any'), { release: true, motion: true, wheel: true });
+});

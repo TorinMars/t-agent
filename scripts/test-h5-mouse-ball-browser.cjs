@@ -6,7 +6,10 @@
 // exactly the expected text through the copy path of the double tap (notice "Copied N characters"), then the ball docks again; the edge fade lets the
 // cursor reach the last column; a drag without the dwell copies nothing; a cancelled touch copies nothing and leaves no selection; the terminal does
 // not scroll under the ball, but a held button near the top edge scrolls it and the selection keeps its start; a refused write shows the copy bar;
-// no horizontal overflow; off again removes the ball. H5_SHOT_DIR=<dir> saves screenshots.
+// with mouse reporting on (SGR drag tracking) the button goes to the program instead: the press at the dwell, motions while held and the release at
+// the lift as 1-based SGR reports of the cursor cell, wheel steps near the top edge, no page selection, no page copy, the program's OSC 52 copy on
+// the release written at once (the lift is a gesture), reporting turned off mid-gesture keeps the gesture the program's, and off again the page
+// selects and copies as before; no horizontal overflow; off again removes the ball. H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -339,6 +342,112 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await touch('touchEnd');
     await page.waitForFunction(() => window.copied.length === 5);
     assert.equal((await copied())[4], words.join(' '), 'the rows the program cut are one line again, with one space at each break');
+    await notices();
+    await dockedAgain(dock);
+
+    // ── A program with mouse reporting on (drag tracking, SGR): the ball drives the program's own selection ──
+    await emit(`\x1b[2J\x1b[HMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n`);
+    await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
+    await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').dispatchEvent(new MouseEvent('click', { bubbles: true }))); // no old highlight
+    await emit('\x1b[?1000h\x1b[?1002h\x1b[?1006h');
+    let gm = await grid();
+    const mid = (col, row) => ({ x: gm.left + (col + 0.5) * gm.cw, y: gm.top + (row + 0.5) * gm.ch }); // the middle of a cell
+    // The SGR mouse reports the page sent since `from`: [button, col, row, 'M' (press, motion) or 'm' (release)], 1-based screen cells.
+    const sentCount = () => page.evaluate(() => window.sockets.at(-1).sent.length);
+    const reports = from => page.evaluate(from => window.sockets.at(-1).sent.slice(from).flatMap(item => [...item.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g)].map(m => [Number(m[1]), Number(m[2]), Number(m[3]), m[4]])), from);
+    const pageScroll = await scrollTop();
+    let from = await sentCount();
+    const copiesBefore = (await copied()).length;
+    await touch('touchStart', dock.x, dock.y);
+    await glide(dock, fingerFor(mid(8, 6)));
+    assert.deepEqual(await reports(from), [], 'moving the ball without the button sends nothing');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    view = await ui();
+    assert.equal(await page.locator('#h5-mouse-ball').getAttribute('data-mode'), 'program', 'the button went to the program');
+    assert.equal(view.color, 'rgb(144, 202, 249)', 'the same pressed look');
+    assert.deepEqual(await reports(from), [[0, 9, 7, 'M']], 'the press at the dwell, at the cursor cell');
+    await glide(fingerFor(mid(8, 6)), fingerFor(mid(14, 8)));
+    let sent = await reports(from);
+    assert.ok(sent.slice(1).length >= 2 && sent.slice(1).every(r => r[0] === 32 && r[3] === 'M'), `motions with the left button held (${JSON.stringify(sent)})`);
+    assert.deepEqual(sent.at(-1), [32, 15, 9, 'M'], 'the last motion is at the cursor cell');
+    view = await ui();
+    assert.equal(view.selected, 0, 'no page selection: the program draws its own');
+    await shot('program');
+    await touch('touchEnd');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle');
+    sent = await reports(from);
+    assert.deepEqual(sent.at(-1), [0, 15, 9, 'm'], 'the release at the lift');
+    assert.equal(sent.filter(r => r[3] === 'm').length, 1, 'one release');
+    // The program copies on the release (OSC 52): the lift counted as the gesture, so it is written at once with the notice.
+    await emit(`\x1b]52;c;${Buffer.from('program copy').toString('base64')}\x07`);
+    await page.waitForFunction(n => window.copied.length === n + 1, copiesBefore);
+    assert.deepEqual((await copied()).slice(copiesBefore), ['program copy'], 'only the program copied; the ball did not');
+    assert.deepEqual(await notices(), [['Copied 12 characters', 'success']]);
+    assert.equal(await page.locator('#h5-clipboard-bar').count(), 0, 'no request bar');
+    assert.equal(await scrollTop(), pageScroll, 'the page did not scroll');
+    // Without a recent gesture the same kind of copy waits on the request bar (what the lift's gesture mark avoided above).
+    await page.waitForTimeout(1600);
+    await emit(`\x1b]52;c;${Buffer.from('later copy').toString('base64')}\x07`);
+    await page.locator('#h5-clipboard-bar').waitFor({ state: 'visible' });
+    await page.locator('#h5-clipboard-bar button', { hasText: /^Cancel$/ }).tap();
+    await page.locator('#h5-clipboard-bar').waitFor({ state: 'detached' });
+    await page.waitForTimeout(300); // the terminal takes its height back
+    gm = await grid();
+    assert.equal((await copied()).length, copiesBefore + 1);
+    await dockedAgain(dock);
+
+    // The edge scroll sends wheel steps at the cursor to the program; the page view does not move.
+    from = await sentCount();
+    await touch('touchStart', dock.x, dock.y);
+    await glide(dock, fingerFor(mid(5, 8)));
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    await glide(fingerFor(mid(5, 8)), { x: mid(5, 0).x + 46, y: gm.top + 4 + 46 });
+    await page.waitForTimeout(500);
+    sent = await reports(from);
+    const wheelUps = sent.filter(r => r[0] === 64);
+    assert.ok(wheelUps.length >= 3, `wheel-up reports near the top edge (${JSON.stringify(sent)})`);
+    const zoneRows = Math.floor(24 / gm.ch) + 1; // the rows of the 24px scroll zone (1-based)
+    assert.ok(wheelUps.every(r => r[1] === 6 && r[2] <= zoneRows && r[3] === 'M'), `at the cursor, in the zone (${JSON.stringify(wheelUps)})`);
+    assert.equal(wheelUps.at(-1)[2], 1, 'the last ones on the first row');
+    assert.equal(await scrollTop(), pageScroll, 'the page view stays: the program scrolls its own');
+    assert.equal((await ui()).selected, 0);
+    await touch('touchEnd');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle');
+    assert.equal((await reports(from)).at(-1)[3], 'm', 'released at the lift');
+    await dockedAgain(dock);
+
+    // The program turns mouse reporting off in the middle of a gesture: the gesture stays the program's (no page selection, no copy).
+    from = await sentCount();
+    await touch('touchStart', dock.x, dock.y);
+    await glide(dock, fingerFor(mid(8, 1)));
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    assert.deepEqual(await reports(from), [[0, 9, 2, 'M']]);
+    await emit('\x1b[?1000l\x1b[?1002l\x1b[?1006l');
+    await glide(fingerFor(mid(8, 1)), fingerFor(mid(12, 2)));
+    assert.equal(await page.locator('#h5-mouse-ball').getAttribute('data-mode'), 'program', 'the mode of the press is kept');
+    assert.equal((await ui()).selected, 0, 'no page selection in the middle of the gesture');
+    await touch('touchEnd');
+    await page.waitForTimeout(200);
+    assert.deepEqual(await reports(from), [[0, 9, 2, 'M']], 'xterm drops what the program no longer asks for');
+    assert.equal((await copied()).length, copiesBefore + 1, 'nothing copied');
+    await dockedAgain(dock);
+
+    // Reporting off: the page selection and copy work again (the request bar above changed the terminal's height for a while: fresh text and cells).
+    await emit(`\x1b[2J\x1b[HMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n`);
+    await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
+    await page.waitForTimeout(200);
+    gm = await grid();
+    from = await sentCount();
+    await touch('touchStart', dock.x, dock.y);
+    await glide(dock, fingerFor(at(gm, 8, 1)));
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    assert.equal(await page.locator('#h5-mouse-ball').getAttribute('data-mode'), 'page');
+    await glide(fingerFor(at(gm, 8, 1)), fingerFor(at(gm, 12, 2)));
+    assert.ok((await ui()).selected > 0, 'the page draws its selection again');
+    await touch('touchEnd');
+    await page.waitForFunction(n => window.copied.length === n + 2, copiesBefore);
+    assert.equal((await copied()).at(-1), expected1, 'and the lift copies it');
+    assert.deepEqual(await reports(from), [], 'no mouse reports');
     await notices();
     await dockedAgain(dock);
 

@@ -118,6 +118,27 @@ export function scrollSpeed(y, bounds) {
   return 0;
 }
 
+// The lines to scroll in one frame of `dt` ms at `speed` lines per second (scrollSpeed), with the fraction left from the frames before (`carry`):
+// { lines (whole lines, signed), carry (the new fraction) }. A speed of 0 drops the fraction.
+export function scrollStep(carry, speed, dt) {
+  if (!speed) return { lines: 0, carry: 0 };
+  const total = carry + (speed * dt) / 1000;
+  const lines = Math.trunc(total);
+  return { lines, carry: total - lines };
+}
+
+// Who gets the button ("Two modes" in docs/design/page-terminal-mouse-ball.md), decided once at the press and kept until the lift: 'program'
+// when the program in the terminal turned mouse reporting on (xterm `term.modes.mouseTrackingMode`: 'x10', 'vt200', 'drag' or 'any'), so the
+// press, the motion and the release go to the program and it selects and copies by itself; 'page' otherwise (the page's own selection and copy).
+export function buttonMode(tracking) {
+  return tracking && tracking !== 'none' ? 'program' : 'page';
+}
+// What the ball sends a program in mouse tracking mode `tracking` besides the press: the release (not in x10, which reports presses only),
+// motion with the button held (drag and any) and wheel steps for the edge scroll (not in x10).
+export function programReports(tracking) {
+  return { release: tracking !== 'x10', motion: tracking === 'drag' || tracking === 'any', wheel: tracking !== 'x10' };
+}
+
 // The dwell that presses the button, as a reducer over the touch and a clock (the time `t` of each event, in ms):
 //   idle    no finger on the ball
 //   waiting the finger is down and the ball counts how long it has been still (`since`, from the point x, y)

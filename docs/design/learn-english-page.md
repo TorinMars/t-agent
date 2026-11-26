@@ -378,6 +378,8 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
 - Voice (the first row of the card): this device's voices or DeepSeek's, made on the server; the player is the same for both. See "DeepSeek
   voice" in [learn-english-voice.md](learn-english-voice.md).
 
+**The study step** (Look first, then spell, `StudyWord`) plays by itself as well: the word once, then its example sentence once (shown under the meaning with its Chinese, and a second "Hear the sentence" button), each only when its own setting ("Play words automatically", "Play sentences automatically") is on; both settings are on by default and the Audio section of Learn settings turns them off. The order comes from `studyReadings` in `learn-audio.mjs`; the second reading starts when the first ends, a browser that refused the first play shows "Tap to play" as everywhere. Spelling a word inside its sentence reads the whole sentence at the start, the word included.
+
 ## Speech
 
 - Reading aloud (`learn-speech.mjs`): `speechSynthesis`, always American English (the user's rule, 2026-11-21: American pronunciation). Every

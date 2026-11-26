@@ -50,7 +50,7 @@ flowchart TB
 |---|---|---|---|---|
 | 1 | `spell` Direct spelling (default) | `direct_spell` | Sees the meaning, spells the word in letter boxes grouped by syllable | |
 | 2 | `sentence_gap` Fill the gap | `fill` | Sees a sentence with the word taken out, spells the word | Needs a sentence with exactly one occurrence of the word (its own example sentence, or one the coach supplies and the server checks). A word with none is spelled directly (shown in the proposal as "plain") |
-| 3 | `study_then_spell` Look first, then spell | `study`, `direct_spell` | Looks at the word and meaning, then spells it | The study step sends no grades |
+| 3 | `study_then_spell` Look first, then spell | `study`, `direct_spell` | Looks at the word and meaning (the word, then its example sentence, play by themselves), then spells it | The study step sends no grades |
 
 Adding a method: add its name to `WORD_METHODS` (`services/learn-merge.js`), map it to modes in `buildWordPlan` (`services/learn-plan.js`), give each new mode a time estimate in `SECONDS`, a title in `SERIES_TITLES` and an exercise in `Learn.jsx`, then describe it for the coach prompt.
 
@@ -78,6 +78,10 @@ Adding a method: add its name to `WORD_METHODS` (`services/learn-merge.js`), map
 | `build` | Word tiles to build the sentence (hidden: `BUILD_HIDDEN`) | Not offered now |
 
 A word whose spelling keeps failing (a leech) gets the same spelling in parts (`PartsExercise`) instead of the plain letter boxes.
+
+## Audio
+
+Every exercise plays by itself as the Audio settings say (both on by default, switches in Learn settings: "Play words automatically", "Play sentences automatically"). A word is read when its card appears and once more after the answer; a word spelled inside its sentence is heard in the whole sentence, the word included; the study step reads the word, then its sentence. A browser that refuses sound before the first tap shows "Tap to play".
 
 ## What every answer does
 

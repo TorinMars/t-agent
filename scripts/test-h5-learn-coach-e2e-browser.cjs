@@ -714,7 +714,8 @@ async function wideRun(browser, server, fake) {
   await say(page, 'Open Fill the gap', touch);
   await lastAnswer(page).getByRole('button', { name: 'Fill the gap' }).click();
   await page.locator('#h5-learn-gap-input').fill('counterbalance');
-  assert.doesNotMatch(await page.locator('.h5-learn-gap').innerText(), /counterbalance/);
+  // The example stays masked: the word is only in its letter slots (the typed letters), never in the sentence around them.
+  assert.doesNotMatch(await page.locator('.h5-learn-gap').evaluate(el => [...el.childNodes].filter(node => node.id !== 'h5-learn-gap').map(node => node.textContent).join('')), /counterbalance/);
   await page.locator('#h5-learn-feedback[data-correct="true"]').waitFor(WAIT);
   await page.locator('#h5-learn-grade-good').click();
   await waitFor(() => one.of('POST', new RegExp(`/cards/${made.data.card.id}/answer$`)).length === 1, 'the word card received the grade');

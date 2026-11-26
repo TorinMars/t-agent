@@ -2027,6 +2027,33 @@ function SentenceGap({ word, parts = null }) {
     </Box>
   );
 }
+// The gap of Fill the gap: SentenceGap's primary underlines grouped by syllable (gapLayout), each wide enough for one letter, with the letters typed
+// so far in them (the hidden field over them takes the typing); after Check the right word in them, in the success colour when right and the error
+// colour when wrong, as in Spell's sentence layout. See "Fill the gap" in docs/design/learn-english-page.md.
+function GapSlots({ word, parts, value, result, focused, children }) {
+  const { count, space, groupSpace, breaks } = gapLayout(word, parts);
+  const starts = new Set(breaks);
+  const letters = [...word];
+  const typed = [...value];
+  const tone = result ? (result.correct ? 'success.light' : 'error.light') : null;
+  return (
+    <Box component="span" id="h5-learn-gap" data-letters={count} data-parts={breaks.length + 1} data-correct={result ? String(Boolean(result.correct)) : undefined}
+      sx={{ position: 'relative', display: 'inline-flex', columnGap: `${space}em`, mx: 0.5, fontFamily: MONO, whiteSpace: 'nowrap', verticalAlign: 'baseline' }}>
+      {letters.map((char, at) => {
+        const caret = !result && focused && at === Math.min(typed.length, count - 1);
+        return (
+          <Box key={at} component="span" aria-hidden="true" className="h5-learn-gap-letter" data-part-start={starts.has(at) ? 'true' : undefined}
+            sx={theme => ({ display: 'inline-block', width: '0.62em', textAlign: 'center', borderBottom: 2, borderColor: tone || 'primary.main', color: tone || 'text.primary',
+              bgcolor: caret ? alpha(theme.palette.primary.main, 0.12) : 'transparent', '&:empty::before': { content: '"\\00a0"' },
+              ...(starts.has(at) ? { ml: `${Math.max(0, groupSpace - space)}em` } : {}) })}>
+            {result ? char : typed[at] || ''}
+          </Box>
+        );
+      })}
+      {children}
+    </Box>
+  );
+}
 // The sentence of Spell's sentence layout, in the h6 size (subtitle1 while the page's keyboard is open on a phone): a primary underline per letter where the word goes; after Check the word in it (the success colour
 // when right, the error colour when wrong: the right word either way).
 function SentenceWithGap({ cloze, result, compact = false, card = null }) {
@@ -2257,8 +2284,11 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   const gap = useMemo(() => card.gap || gapFor(card, { loose: true }), [card]);
   const [value, setValue] = useState('');
   const [helped, setHelped] = useState(false);
+  const [focused, setFocused] = useState(false);
   const field = useRef(null);
   useEffect(() => focusOnStart(field, true), []); // eslint-disable-line react-hooks/exhaustive-deps -- on start
+  // The syllables of the gap word for its letter slots: the card's own parts when the card is that word, else the rough split (partsOf).
+  const parts = useMemo(() => (gap ? partsOf(String(card.en || '').trim().toLowerCase() === gap.word.toLowerCase() ? card : { en: gap.word }) : null), [card, gap]);
   const full = gap ? `${gap.before}${value.trim()}${gap.after}` : '';
   const { result, suggested, grade } = useChecked({
     register, onAnswer, answerText: () => value,
@@ -2274,7 +2304,8 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
   useCardAudio(audio, exercise, card.en, result);
   // The gap word's length is known: the answer is checked by itself once that many letters are typed (Check stays for a shorter one).
   useAutoCheck({ register, ready: Boolean(gap) && typedInFull(value, gap.word), value, result });
-  const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '')); } };
+  // One letter a slot: no more than the gap word has (as in Spell).
+  const change = next => { if (!result) { audio.typed(); setValue(next.replace(/\s+/g, '').slice(0, gap ? [...gap.word].length : undefined)); } };
   const kb = useLearnKeys({ ui, keys, phone, field, change, letters: true });
   const ask = useAsk({ card, exercise, result, answer: () => value, expected: gap ? gap.word : '', gap: true, field, phone, keys, openTranslator });
   if (!gap) {
@@ -2305,9 +2336,12 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
         <Typography variant="body2" color="text.secondary">{t('Type the missing word')}</Typography>
         <Typography variant="h6" component="p" translate="no" className="h5-learn-gap" sx={{ fontWeight: 400, lineHeight: 2, overflowWrap: 'break-word' }}>
           {gap.before}
-          <InputBase inputRef={field} value={value} onChange={event => change(event.target.value)} onClick={kb.show}
-            inputProps={{ id: 'h5-learn-gap-input', 'aria-label': t('The missing word'), readOnly: Boolean(result), size: Math.max(4, gap.word.length + 1), ...fieldProps, ...kb.inputProps }}
-            sx={theme => ({ ...theme.typography.h6, fontWeight: 400, mx: 0.5, verticalAlign: 'baseline', '& input': { p: 0, borderBottom: `2px solid ${theme.palette.primary.main}`, textAlign: 'center' } })} />
+          <GapSlots word={gap.word} parts={parts} value={value} result={result} focused={focused}>
+            <InputBase inputRef={field} value={value} onChange={event => change(event.target.value)} onClick={kb.show}
+              onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+              inputProps={{ id: 'h5-learn-gap-input', 'aria-label': t('The missing word'), readOnly: Boolean(result), maxLength: [...gap.word].length, ...fieldProps, ...kb.inputProps }}
+              sx={{ position: 'absolute', inset: 0, opacity: 0, '& input': { height: '100%', cursor: 'text', p: 0 } }} />
+          </GapSlots>
           {gap.after}
         </Typography>
         {tts ? (

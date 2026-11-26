@@ -10,7 +10,7 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const { createLearn, checkEnglish, codeLike } = require('../services/learn');
 // The audio settings with their defaults ("Audio" in docs/design/learn-english-page.md).
-const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true,
+const AUDIO = { audio_words: true, audio_sentences: true, audio_sentences_at: 'start', audio_repeat: 2, audio_pause: 2, audio_speed: 'normal', audio_stop_on_typing: true,
   // The mistake analysis settings ("Mistake reports" in docs/design/learn-english.md), kept with them.
   analysis_auto: true, report_seen: '', report_lang: 'en', pick_words: true,
   // The desired retention of the review ("Desired retention" in docs/design/learn-review-fsrs.md).
@@ -444,8 +444,8 @@ test('settings: defaults, checks, and the starter list imported once with its wo
     assert.equal((await call('PUT', '/settings', body)).status, 400, JSON.stringify(body));
   }
   // The audio settings are saved one at a time and read back.
-  const audio = (await call('PUT', '/settings', { audio_repeat: 5, audio_pause: 1, audio_speed: 'slow', audio_sentences_at: 'start', audio_words: false, audio_stop_on_typing: false })).body;
-  assert.deepEqual(audio, { collect: true, daily_goal: 20, starter: 'dev', ...AUDIO, audio_repeat: 5, audio_pause: 1, audio_speed: 'slow', audio_sentences_at: 'start', audio_words: false, audio_stop_on_typing: false });
+  const audio = (await call('PUT', '/settings', { audio_repeat: 5, audio_pause: 1, audio_speed: 'slow', audio_sentences_at: 'after', audio_words: false, audio_stop_on_typing: false })).body;
+  assert.deepEqual(audio, { collect: true, daily_goal: 20, starter: 'dev', ...AUDIO, audio_repeat: 5, audio_pause: 1, audio_speed: 'slow', audio_sentences_at: 'after', audio_words: false, audio_stop_on_typing: false });
   assert.deepEqual((await call('GET', '/settings')).body, audio);
   await call('PUT', '/settings', AUDIO);
   const words = STARTER_LISTS.dev.words;

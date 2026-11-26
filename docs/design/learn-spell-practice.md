@@ -103,7 +103,7 @@ coach's series), so the card keeps room while the page's letter keyboard is open
 
 ## Letter boxes by syllable (v2.168.1)
 
-The underlines of the sentence layout's gap are grouped by the word's syllables (`gapLayout(word, parts)` in `learn-model.mjs`, `SentenceGap` in `Learn.jsx`): the `parts` of `partsOf` (the card's own from the translator when they give the word back, else the rough vowel-group split) put a wider space (0.7em, 0.4em for a long word) before each part after the first; the gap stays within 12em. `data-parts` has the count of parts and `data-part-start` marks the first underline of each part. Every spelled word has it, not only a leech word; the plain Spell layout has no letter boxes, so it is unchanged.
+The underlines of the sentence layout's gap are grouped by the word's syllables (`gapLayout(word, parts)` in `learn-model.mjs`, `SentenceGap` in `Learn.jsx`): the `parts` of `partsOf` (the card's own from the translator when they give the word back, else the rough vowel-group split) put a wider space (0.7em, 0.4em for a long word) before each part after the first; the gap stays within 12em. `data-parts` has the count of parts and `data-part-start` marks the first underline of each part. Every spelled word has it, not only a leech word; the plain Spell layout has no letter boxes, so it is unchanged. Since 2026-11-27 Fill the gap draws its gap the same way (`GapSlots` in `Learn.jsx`, `partsOf` of the gap word), with the typed letters in the slots; see "Fill the gap" in [learn-english-page.md](learn-english-page.md).
 
 ## Backfill of older words
 

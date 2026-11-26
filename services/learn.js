@@ -48,7 +48,7 @@ const PREFILL_BATCH = 40;
 const AUDIO_SETTINGS = {
   audio_words: { default: true, values: [true, false] }, // a word is read when its card appears and once more after the answer
   audio_sentences: { default: true, values: [true, false] },
-  audio_sentences_at: { default: 'after', values: ['after', 'start'] }, // Build, Fill the gap and a sentence in Review (Dictation and Say it: at the start)
+  audio_sentences_at: { default: 'start', values: ['after', 'start'] }, // Build, Fill the gap and a sentence in Review: the whole sentence when the card appears (Dictation and Say it: always at the start)
   audio_repeat: { default: 2, values: [1, 2, 3, 5] },
   audio_pause: { default: 2, values: [1, 2, 3] }, // seconds between repeats
   audio_speed: { default: 'normal', values: ['normal', 'slow'] },

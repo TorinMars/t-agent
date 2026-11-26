@@ -69,16 +69,18 @@ function rig({ refuse = false, silent = false } = {}) {
 
 test('the settings and when each exercise plays by itself', async () => {
   const { audioOptions, autoPlays } = await load();
-  assert.deepEqual(audioOptions({}), { words: true, sentences: true, sentencesAt: 'after', repeat: 2, pauseMs: 2000, slow: false, stopOnTyping: true });
+  assert.deepEqual(audioOptions({}), { words: true, sentences: true, sentencesAt: 'start', repeat: 2, pauseMs: 2000, slow: false, stopOnTyping: true });
   assert.deepEqual(audioOptions({ audio_repeat: 5, audio_pause: 3, audio_speed: 'slow', audio_words: false, audio_repeat_bad: 1 }).repeat, 5);
   assert.equal(audioOptions({ audio_repeat: 4 }).repeat, 2, 'a value it does not know is the default');
   const on = audioOptions({});
   assert.deepEqual(autoPlays('spell', on), ['start', 'after'], 'a word: when it appears and once more after the answer');
   assert.deepEqual(autoPlays('dictation', on), ['start']);
   assert.deepEqual(autoPlays('say', on), ['start']);
-  assert.deepEqual(autoPlays('build', on), ['after'], 'hearing the sentence first would give the answer away');
-  assert.deepEqual(autoPlays('fill', on), ['after']);
-  assert.deepEqual(autoPlays('build', audioOptions({ audio_sentences_at: 'start' })), ['start']);
+  assert.deepEqual(autoPlays('build', on), ['start'], 'by default the whole sentence when the card appears');
+  assert.deepEqual(autoPlays('fill', on), ['start'], 'Fill the gap reads its sentence at the start by default');
+  assert.deepEqual(autoPlays('fill', audioOptions({ audio_sentences_at: 'bad' })), ['start'], 'a value it does not know is the default');
+  assert.deepEqual(autoPlays('fill', audioOptions({ audio_sentences_at: 'after' })), ['after'], 'After the answer stays a choice');
+  assert.deepEqual(autoPlays('build', audioOptions({ audio_sentences_at: 'after' })), ['after']);
   const off = audioOptions({ audio_words: false, audio_sentences: false });
   assert.deepEqual(autoPlays('spell', off), []);
   assert.deepEqual(autoPlays('build', off), []);

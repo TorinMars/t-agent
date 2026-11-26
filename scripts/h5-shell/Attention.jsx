@@ -7,6 +7,7 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
+import Checkbox from '@mui/material/Checkbox';
 import Drawer from '@mui/material/Drawer';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
@@ -36,9 +37,11 @@ import {
   MAX_INDENT, PRIORITIES, PRIORITY_LABELS, REMIND_STATUSES, STATUSES, STATUS_LABELS, buildTree, childrenOf, collapseId, contextFilePath, contextOf, engineOf, groupItems,
   groupOf, hasTree, homeDetail, homeGroups, isShownSession, jumpBack, keyOf, moveLocal, onThisMachine, overdue, parentChoices, parseKey, patchFor, readCollapsed, rollbackItems,
   linkParts, safeLink, sessionOf, shortTime, statusOfGroup, statusesOfGroup, stepMove, timeline,
-  WEEKDAYS, applyChange, momentOf, momentTokens, scheduleLine, tagItem, thenOf, timedSections,
+  WEEKDAYS, applyChange, momentOf, momentTokens, tagItem, thenOf, timedSections,
 } from './attention-model.mjs';
-import { FREQUENCIES, hasSchedule, retryActions, scheduleForm, scheduleFromForm, schedulePatch, scriptTerminal, sessionTasks, targetName } from './attention-schedule.mjs';
+import { FREQUENCIES, OCCASIONS, hasSchedule, retryActions, scheduleForm, scheduleFromForm, schedulePatch, scriptTerminal, sessionTasks, targetName, yearlyOn, rowLine } from './attention-schedule.mjs';
+import { MONTHS, lunarParts } from './calendar-model.mjs';
+import { AttentionCalendar } from './AttentionCalendar.jsx';
 import { DIALOG_RADIUS, TOUCH } from './theme.mjs';
 
 // T-Attention: the tasks agents and services report (through listener plugins, the `t-attention` CLI) and the user's own, in one list
@@ -154,13 +157,26 @@ const DETAILS_SX = theme => ({
 // The row of the session the page shows (wide layout): MD2's selected look, the primary colour at 8% and a 3px indicator at the left edge.
 const SHOWN_SX = theme => ({ bgcolor: alpha(theme.palette.primary.main, 0.08), boxShadow: `inset 3px 0 0 ${theme.palette.primary.main}` });
 
+// A lunar date ({ month, day, leap }) as text: in Chinese the month and day words of the dictionaries ("lunar month 10" and "lunar day 7" of
+// i18n-zh-extra.js), else the numbers ("Lunar 10/7", "Lunar leap 6/1"). `prefix`: the word in front ('Lunar', 'lunar' or none); `short`: only the
+// day word in Chinese, the month's on its first day (a calendar cell).
+export function lunarText(value, { prefix = 'Lunar', short = false } = {}) {
+  const parts = lunarParts(value);
+  if (!parts) return '';
+  const month = t(parts.month);
+  if (month !== parts.month) {
+    const words = short ? (parts.first ? month : t(parts.day)) : `${month}${t(parts.day)}`;
+    return prefix ? `${t(prefix)}${words}` : words;
+  }
+  return prefix ? `${prefix} ${parts.numbers}` : parts.numbers;
+}
 // Tokens of a schedule line or a moment (`scheduleLine`, `momentTokens` of attention-model.mjs) as text: an English word is translated, a time or date
-// is shown as it is, and a session name is never translated.
-function Words({ tokens }) {
+// is shown as it is, a lunar date in words (`lunarText`), and a session name is never translated.
+export function Words({ tokens }) {
   return tokens.map((token, index) => (
     <Fragment key={index}>
       {index ? ' ' : ''}
-      {typeof token === 'string' ? t(token) : token.name != null ? <span className="h5-attention-schedule-session" translate="no">{token.name}</span> : token.raw}
+      {typeof token === 'string' ? t(token) : token.lunar ? lunarText(token.lunar, { prefix: 'lunar' }) : token.name != null ? <span className="h5-attention-schedule-session" translate="no">{token.name}</span> : token.raw}
     </Fragment>
   ));
 }
@@ -331,7 +347,7 @@ function RejectDialog({ item, onCancel, onReject }) {
 // The engine a new task goes to when more than one is listed (`h5-attention-add-on`, an engine key): the one chosen last, else the first in the one
 // order of devices (never "the engine of this page", so every engine's page starts alike; docs/design/entry-symmetry.md). The person's choice on
 // every device and engine (the shared page state keeps it by instance id, shared-store.mjs); this machine is kept by its key too.
-const ADD_ON_KEY = 'h5-attention-add-on';
+export const ADD_ON_KEY = 'h5-attention-add-on';
 
 function QuickAdd({ ui, engines }) {
   const [title, setTitle] = useState('');
@@ -585,7 +601,47 @@ function useSchedulePreview(engine, form) {
   return answer;
 }
 
-function ScheduleFields({ form, setForm, item, state }) {
+// The date of a yearly rule: Solar | Lunar, Month and Day (native selects: a lunar month and day by their Chinese words, else by number), "Leap month"
+// (lunar only: a checkbox, since the form is saved with a button) and the year it began ("Birth year" for a birthday). `values`: { calendar, month,
+// day, leap, year } as strings and a boolean; `put(key, value)` changes one. `occasion` names the year field; `ids` is the prefix of the field ids.
+const lunarMonthName = (n, leap) => { const key = `lunar ${leap ? 'leap ' : ''}month ${n}`; const word = t(key); return word !== key ? word : String(n); };
+const lunarDayName = n => { const key = `lunar day ${n}`; const word = t(key); return word !== key ? word : String(n); };
+export function YearlyFields({ ids, values, put, occasion }) {
+  const lunar = values.calendar === 'lunar';
+  const days = lunar ? 30 : 31;
+  return (
+    <>
+      <Box id={`${ids}-calendar-title`} sx={OVERLINE}>{t('Calendar')}</Box>
+      <ToggleButtonGroup id={`${ids}-calendar`} exclusive fullWidth size="small" value={values.calendar} aria-labelledby={`${ids}-calendar-title`} onChange={(event, value) => { if (value) put('calendar', value); }}>
+        <ToggleButton value="solar" data-value="solar">{t('Solar')}</ToggleButton>
+        <ToggleButton value="lunar" data-value="lunar">{t('Lunar')}</ToggleButton>
+      </ToggleButtonGroup>
+      <Box sx={{ ...PAIR, '& > *': { flex: '1 1 0', minWidth: 0 } }}>
+        <TextField id={`${ids}-month`} select label={t('Month')} size="small" value={values.month} onChange={event => put('month', event.target.value)} slotProps={{ select: { native: true } }}>
+          {MONTHS.map(month => <option key={month.n} value={String(month.n)}>{lunar ? lunarMonthName(month.n, values.leap) : t(month.long)}</option>)}
+        </TextField>
+        <TextField id={`${ids}-day`} select label={t('Day')} size="small" value={values.day} onChange={event => put('day', event.target.value)} slotProps={{ select: { native: true } }}>
+          {Array.from({ length: days }, (unused, index) => index + 1).map(day => <option key={day} value={String(day)}>{lunar ? lunarDayName(day) : String(day)}</option>)}
+        </TextField>
+        <TextField
+          id={`${ids}-year`} label={t(occasion === 'birthday' ? 'Birth year' : 'Year it began')} size="small" type="number" value={values.year} onChange={event => put('year', event.target.value)}
+          placeholder={t('Optional')} slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: 1900, max: 2100, inputMode: 'numeric' } }}
+        />
+      </Box>
+      {lunar ? (
+        <FormControlLabel
+          id={`${ids}-leap-row`} sx={{ mx: 0, alignItems: 'flex-start', '& .MuiCheckbox-root': { mt: -0.75, ml: -1 } }}
+          control={<Checkbox size="small" checked={Boolean(values.leap)} onChange={event => put('leap', event.target.checked)} slotProps={{ input: { id: `${ids}-leap` } }} />}
+          label={<Box><Box sx={{ typography: 'body1' }}>{t('Leap month')}</Box><Box sx={{ typography: 'caption', color: 'text.secondary' }}>{t('Only when the date is in a leap month')}</Box></Box>}
+        />
+      ) : null}
+    </>
+  );
+}
+
+// `fixed`: the New event dialog (AttentionCalendar.jsx) chose Once or Repeats with its own chips, so the When toggle is left out. `yearly`: the item's
+// engine takes yearly rules (`yearlyOn`); "Every year" is offered then, or when the item already has one.
+export function ScheduleFields({ form, setForm, item, state, fixed = false, yearly = false }) {
   const engine = engineOf(item);
   const set = key => event => setForm(current => ({ ...current, [key]: event.target.value }));
   const put = (key, value) => setForm(current => ({ ...current, [key]: value }));
@@ -595,13 +651,17 @@ function ScheduleFields({ form, setForm, item, state }) {
   const next = preview && Array.isArray(preview.next) && preview.next.length ? momentOf(preview.next[0]) : null;
   return (
     <Box id="h5-attention-schedule" component="section" aria-label={t('When')} sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-      <Box id="h5-attention-when-title" sx={OVERLINE}>{t('When')}</Box>
-      <ToggleButtonGroup
-        id="h5-attention-when" exclusive fullWidth size="small" value={form.when} aria-labelledby="h5-attention-when-title"
-        onChange={(event, value) => { if (value) put('when', value); }}
-      >
-        {WHEN_CHOICES.map(([value, label]) => <ToggleButton key={value} value={value} data-value={value}>{t(label)}</ToggleButton>)}
-      </ToggleButtonGroup>
+      {fixed ? null : (
+        <>
+          <Box id="h5-attention-when-title" sx={OVERLINE}>{t('When')}</Box>
+          <ToggleButtonGroup
+            id="h5-attention-when" exclusive fullWidth size="small" value={form.when} aria-labelledby="h5-attention-when-title"
+            onChange={(event, value) => { if (value) put('when', value); }}
+          >
+            {WHEN_CHOICES.map(([value, label]) => <ToggleButton key={value} value={value} data-value={value}>{t(label)}</ToggleButton>)}
+          </ToggleButtonGroup>
+        </>
+      )}
       {form.when === 'once' ? (
         <Box sx={PAIR}>
           <TextField id="h5-attention-once-date" label={t('Date')} size="small" type="date" value={form.onceDate} onChange={set('onceDate')} slotProps={{ inputLabel: { shrink: true } }} />
@@ -612,7 +672,7 @@ function ScheduleFields({ form, setForm, item, state }) {
         <>
           <Box sx={PAIR}>
             <TextField id="h5-attention-repeat-freq" select label={t('Repeats')} size="small" value={form.freq} onChange={set('freq')} slotProps={{ select: { native: true } }}>
-              {FREQUENCIES.map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
+              {FREQUENCIES.filter(entry => entry.value !== 'yearly' || yearly || form.freq === 'yearly').map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
             </TextField>
             <TextField id="h5-attention-repeat-time" label={t('At')} size="small" type="time" value={form.time} onChange={set('time')} slotProps={{ inputLabel: { shrink: true } }} />
           </Box>
@@ -631,6 +691,18 @@ function ScheduleFields({ form, setForm, item, state }) {
           ) : null}
           {form.freq === 'monthly' ? (
             <TextField id="h5-attention-repeat-day" label={t('Day of the month')} size="small" type="number" value={form.day} onChange={set('day')} helperText={t('A month without that day uses its last day')} slotProps={{ htmlInput: { min: 1, max: 31, inputMode: 'numeric' } }} />
+          ) : null}
+          {form.freq === 'yearly' ? (
+            <>
+              <TextField id="h5-attention-repeat-occasion" select label={t('What it is')} size="small" value={form.occasion} onChange={set('occasion')} slotProps={{ select: { native: true } }}>
+                {OCCASIONS.map(entry => <option key={entry.value} value={entry.value}>{t(entry.label)}</option>)}
+              </TextField>
+              <YearlyFields
+                ids="h5-attention-repeat-yearly" occasion={form.occasion}
+                values={{ calendar: form.calendar, month: form.month, day: form.yearDay, leap: form.leap, year: form.year }}
+                put={(key, value) => put(key === 'day' ? 'yearDay' : key, value)}
+              />
+            </>
           ) : null}
           {form.freq === 'every' ? (
             <TextField id="h5-attention-repeat-interval" label={t('Every how many days')} size="small" type="number" value={form.interval} onChange={set('interval')} slotProps={{ htmlInput: { min: 1, max: 365, inputMode: 'numeric' } }} />
@@ -784,7 +856,7 @@ function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui,
           <Box id="h5-attention-edit-reason" sx={{ p: 2, borderRadius: 1, border: 1, borderColor: REASON_COLOR[item.status], color: REASON_COLOR[item.status], ...BODY, whiteSpace: 'pre-wrap' }}><Linked text={item.attention_reason} /></Box>
         ) : null}
         <Field id="h5-attention-edit-name" label="Title" value={form.title} onChange={set('title')} htmlInput={{ maxLength: 300 }} />
-        {timed ? <ScheduleFields form={form} setForm={setForm} item={item} state={state} /> : null}
+        {timed ? <ScheduleFields form={form} setForm={setForm} item={item} state={state} yearly={yearlyOn(state.sources, engineOf(item)) === true} /> : null}
         <Field id="h5-attention-edit-notes" label="Notes" value={form.notes} onChange={set('notes')} multiline minRows={3} maxRows={12} htmlInput={{ maxLength: 20000 }} />
         {/* The link: an http(s) address or a page path of this app; the server checks it (a refusal shows its message in the error line). */}
         <Field
@@ -874,6 +946,9 @@ function EditDialog({ item, items, fields, movable, tag, owner, state, wide, ui,
 // The ids of the parents whose sub-tasks are hidden (JSON list); default: shown. The same on every device and engine (the shared page state keeps
 // them by instance id, shared-store.mjs).
 const COLLAPSED_KEY = 'h5-attention-collapsed';
+// The view of the panel: 'list' (the default) or 'calendar' ("Calendar view" in docs/design/page-attention-calendar.md). The person's choice on every
+// device and engine (the shared page state).
+const VIEW_KEY = 'h5-attention-view';
 
 // The drag of a T-Attention row (useListDrag, list-drag.jsx): a row is held (a finger 400 ms; a mouse held, or moved 4px) and moves among the rows drawn
 // at its own level of its group (its siblings) of its own engine and status group (the server keeps one order per status; on the phone a level can
@@ -1054,6 +1129,8 @@ const SIDE_SHEET = {
   top: 8, right: 8, bottom: 8, height: 'auto', width: 'min(480px, calc(100vw - var(--h5-nav-width) - 16px))', borderRadius: `${DIALOG_RADIUS}px`, border: 0,
   zIndex: SIDE_SHEET_Z, display: 'flex', flexDirection: 'column', overflow: 'hidden',
 };
+// The calendar on a wide screen needs the month grid and its day panel side by side: the sheet then takes the whole window right of the rail.
+const SIDE_SHEET_CALENDAR = { ...SIDE_SHEET, width: 'calc(100vw - var(--h5-nav-width) - 16px)' };
 
 // A press outside the side sheet: a transparent layer over the whole window under the sheet (no scrim) takes it, closes the sheet and swallows it, so
 // it does not also click, focus or type into what lies below (an iframe column too, which a document listener would never hear). The rail lies
@@ -1096,6 +1173,7 @@ export function AttentionPanel({ state, ui }) {
   const [busy, setBusy] = useState(() => new Set()); // the ids with a row button on its way (one at a time per task)
   const busyRef = useRef(new Set());
   const collapsedText = useShared(COLLAPSED_KEY);
+  const calendar = useShared(VIEW_KEY) === 'calendar';
   const collapsed = useMemo(() => readCollapsed(collapsedText), [collapsedText]);
   const items = attention.items || [];
   // The engines of the list, by name (attention-feed.mjs); with more than one every row has its engine tag.
@@ -1125,7 +1203,7 @@ export function AttentionPanel({ state, ui }) {
   const timed = useMemo(() => timedSections(items, { engines: order }), [items, order]);
   // The schedule line of a row; a prompt names its session and a script its task as the task list (or the edit view's read) knows them, on the
   // item's own engine.
-  const lineOf = entry => scheduleLine(entry, { now: new Date(), targetName: then => targetName(then, (state.taskList || {}).tasks, engineOf(entry), readsOf(engineOf(entry))) });
+  const lineOf = entry => rowLine(entry, { now: new Date(), targetName: then => targetName(then, (state.taskList || {}).tasks, engineOf(entry), readsOf(engineOf(entry))) });
   // The counts of the header: the tasks that need the person (Needs you and Review) and the open ones.
   const needCount = items.filter(entry => entry.status === 'waiting_user' || entry.status === 'review').length;
   const openCount = items.filter(entry => !['done', 'failed', 'cancelled'].includes(entry.status)).length;
@@ -1280,14 +1358,30 @@ export function AttentionPanel({ state, ui }) {
         </Box>
         {side ? <IconButton id="h5-attention-close" {...named(t('Close'))} onClick={close}><Icon name="close" size={22} /></IconButton> : null}
       </Box>
+      {/* List | Calendar: one exclusive toggle under the header, full width on a phone. */}
+      <Box sx={{ flex: '0 0 auto', px: 2, py: 1, borderBottom: 1, borderColor: 'divider' }}>
+        <ToggleButtonGroup
+          id="h5-attention-view" exclusive size="small" fullWidth={!side} value={calendar ? 'calendar' : 'list'} aria-label={t('View')}
+          onChange={(event, value) => { if (value) writeShared(VIEW_KEY, value); }} sx={side ? { width: 220 } : null}
+        >
+          <ToggleButton value="list" data-value="list" sx={{ flex: '1 1 0' }}>{t('List')}</ToggleButton>
+          <ToggleButton value="calendar" data-value="calendar" sx={{ flex: '1 1 0' }}>{t('Calendar')}</ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
       {/* A new task can go to this machine and to every engine whose list was read. */}
-      <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />
+      {calendar ? null : <QuickAdd ui={ui} engines={engines.filter(engine => engine.key === 'local' || engine.ready)} />}
       {attention.status === 'loading' ? <LinearProgress id="h5-attention-loading" aria-label={t('Loading…')} sx={{ flex: '0 0 auto' }} /> : null}
-      <GroupList
+      {calendar ? (
+        <AttentionCalendar
+          ui={ui} state={state} items={items} wide={side} open={open} tagOf={tagOf} onOpen={setEditing}
+          engines={engines.filter(engine => engine.key === 'local' || engine.ready)}
+        />
+      ) : null}
+      {calendar ? null : <GroupList
         ui={ui} attention={attention} groups={groups} home={home} timed={timed} lineOf={lineOf} items={items} fieldsOf={fieldsOf} movable={movable} movableOf={movableOf} tagOf={tagOf} nameOf={nameOf} dismiss={dismiss} showClosed={showClosed} setShowClosed={setShowClosed}
         collapsed={collapsed} toggleCollapsed={toggleCollapsed} onOpen={setEditing} act={act} busy={busy} move={move} open={open}
         sessionOf={sessionFor} shownOf={shownOf} jump={jump} hint={side && items.some(entry => !['done', 'failed', 'cancelled'].includes(entry.status) && sessionFor(entry))}
-      />
+      />}
       {rejectItem ? <RejectDialog key={keyOf(rejectItem)} item={rejectItem} onCancel={() => setRejecting(null)} onReject={reject} /> : null}
       {/* onLeave: the user goes to a terminal or a file from the context card; the edit view closes, and on a phone the sheet too. */}
       {item ? (
@@ -1307,7 +1401,7 @@ export function AttentionPanel({ state, ui }) {
         <OutsidePress active={open} onPress={close} />
         <Drawer
           variant="persistent" anchor="right" id="h5-attention-sheet" open={open} transitionDuration={reduced ? 0 : undefined}
-          slotProps={{ paper: { className: 'h5-attention-panel', role: 'complementary', 'aria-labelledby': 'h5-attention-title', elevation: 16, onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: SIDE_SHEET } }}
+          slotProps={{ paper: { className: 'h5-attention-panel', role: 'complementary', 'aria-labelledby': 'h5-attention-title', elevation: 16, 'data-view': calendar ? 'calendar' : 'list', onKeyDown: event => { if (event.key === 'Escape' && event.currentTarget.contains(event.target)) { event.stopPropagation(); close(); } }, sx: calendar ? SIDE_SHEET_CALENDAR : SIDE_SHEET } }}
         >
           {contents}
         </Drawer>

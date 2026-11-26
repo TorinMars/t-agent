@@ -12,7 +12,14 @@ const FINGER = { [TOUCH]: { minWidth: 44, minHeight: 44 } };
 // hue (MUI blue) at 800: the dark theme's own blues (primary #90caf9, info #29b6f6) are too light for white text, while white on blue 800 is 5.7:1
 // (WCAG AA). `button` / `buttonHover` are the white filled button on it, whose blue text keeps at least 5:1 at rest and on hover; `ring` is the
 // primary blue of the one highlight pulse when the bar appears.
-const palette = { mode: 'dark', notice: { main: blue[800], contrastText: '#fff', button: '#fff', buttonHover: blue[50], ring: blue[200] } };
+// `calendar`: the colour of each kind of event of the T-Attention calendar (AttentionCalendar.jsx; "Calendar view" in
+// docs/design/page-attention-calendar.md), at the 200/300 shades MD2 uses on a dark surface: once the primary blue, repeats teal, birthdays pink,
+// anniversaries orange (dots, chip tints; the chip text is the same hue lightened). The dark theme's own info blue is too close to the primary. MUI's
+// colour values, written out (teal, pink and orange would each bring their whole palette into the first screen).
+const palette = {
+  mode: 'dark', notice: { main: blue[800], contrastText: '#fff', button: '#fff', buttonHover: blue[50], ring: blue[200] },
+  calendar: { once: blue[200], repeat: '#80cbc4', birthday: '#f48fb1', anniversary: '#ffb74d' },
+};
 const base = createTheme({ palette });
 
 // `<Typography color="text.secondary">` (or "warning.main", "primary.light"): Material UI 9 no longer reads a palette path in Typography's `color`

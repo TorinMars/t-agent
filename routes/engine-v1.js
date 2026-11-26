@@ -215,6 +215,9 @@ function infoHandler(req, res) {
       // attention:schedule: the schedule fields of items (schedule, then_action, next_at, schedule_state, runs, ...), POST /v1/attention/schedule/preview
       // and POST /v1/attention/:id/run-now. An older engine ignores a schedule it is sent, so a page offers schedules only on an engine that lists this.
       require('../services/attention-schedule').CAPABILITY,
+      // attention:yearly: the yearly rule (freq 'yearly': birthdays and anniversaries, solar or lunar dates). An older engine refuses that freq, so a
+      // page offers yearly items only on an engine that lists this.
+      require('../services/attention-schedule').YEARLY_CAPABILITY,
       // notify:relay: GET /v1/attention/notify-relay/status, PUT /sender, POST / and /test, the one Telegram sender of linked devices (link tokens only).
       // A linked service without it keeps sending by itself and is never chosen as the sender.
       require('../services/attention-relay').CAPABILITY,

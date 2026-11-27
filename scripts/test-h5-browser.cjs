@@ -1213,9 +1213,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     const screenWidth = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect().width);
     const rowsText = () => page.locator('.h5-xterm:not([hidden]) .xterm-rows').textContent();
 
-    // No history yet: nothing is drawn and touches go through.
+    // No history yet: the strip is drawn all the same (the mouse ball comes out of it), the thumb filling the track.
     await page.evaluate(() => window.sockets[0].emit('\x1b[?1049l\x1b[?1000l\x1b[H\x1b[2J\x1b[3J'));
-    await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'none');
+    await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar' && document.querySelector('#h5-wheel').getAttribute('aria-valuemax') === '0');
     const idle = await page.evaluate(() => {
       const el = document.querySelector('#h5-wheel');
       const box = el.getBoundingClientRect();
@@ -1231,8 +1231,18 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     assert.deepEqual([idle.role, idle.label, idle.orientation], ['scrollbar', 'Scroll', 'vertical'], 'the strip is a vertical scrollbar named Scroll');
     assert.equal(await page.locator('[data-copy], #h5-scroll, .h5-scroll').count(), 0, 'the floating copy button is gone');
     {
-      const none = await bar();
-      assert.deepEqual([none.visibility, none.pointerEvents, none.ariaHidden], ['hidden', 'none', 'true'], 'without scrollback the strip is hidden and lets touches through');
+      const empty = await bar();
+      assert.deepEqual([empty.visibility, empty.pointerEvents, empty.ariaHidden, empty.max, empty.now], ['visible', 'auto', null, 0, 0], 'without scrollback the strip is still drawn and takes touches');
+      assert.ok(Math.abs(empty.thumbHeight - empty.height) <= 1 && empty.thumbTop <= 0.5, `nothing to scroll: the thumb fills the track (${empty.thumbHeight} of ${empty.height})`);
+      // A drag scrolls nothing; a tap goes through to the terminal under it.
+      await page.evaluate(y => window.__wfire('pointerdown', y), empty.thumbY);
+      await page.evaluate(({ from, to }) => window.__wmove(from, to), { from: empty.thumbY, to: empty.thumbY - 200 });
+      await page.evaluate(y => window.__wfire('pointerup', y), empty.thumbY - 200);
+      assert.equal((await bar()).now, 0, 'a drag without history scrolls nothing');
+      await page.evaluate(() => { window.__emptyClicks = 0; document.querySelector('.h5-xterm:not([hidden])').addEventListener('click', () => { window.__emptyClicks++; }); });
+      await page.evaluate(y => { window.__wfire('pointerdown', y); window.__wfire('pointerup', y); }, empty.thumbY);
+      assert.ok(await page.evaluate(() => window.__emptyClicks) >= 1, 'a tap on the full thumb reaches the terminal under it');
+      await page.waitForFunction(() => !document.querySelector('#h5-wheel').classList.contains('active'), null, { timeout: 3000 });
     }
     const cols0 = await lastCols();
     const width0 = await screenWidth();

@@ -23,7 +23,7 @@ import { countRender, useStore, useStoreKeys } from './use-store.mjs';
 
 // The terminal area. h5.js puts the xterm element in after these two; React draws only the note, the wheel strip (h5.js handles its touches,
 // sets its mode and thumb and its ARIA values) and the copy bar.
-const TERMINAL_KEYS = ['empty', 'emptyCreate', 'input', 'clipboard', 'openLink'];
+const TERMINAL_KEYS = ['empty', 'emptyCreate', 'clipboard', 'openLink'];
 export function TerminalArea({ ui }) {
   const state = useStoreKeys(ui, TERMINAL_KEYS);
   countRender('TerminalArea');
@@ -35,16 +35,14 @@ export function TerminalArea({ ui }) {
           {state.emptyCreate ? <Button id="h5-empty-new" variant="outlined" onClick={() => ui.actions.newSessionFromEmpty()}>{t('New session')}</Button> : null}
         </div>
       ) : null}
-      {/* The wheel strip is for fingers; a computer has a real wheel or trackpad, so it is not drawn there (input mode 'pointer').
-          A scrollbar: a thin track and thumb inside a 40px hit area; in a full-screen program the thumb is a spring in the middle, with chevrons. */}
-      {state.input === 'pointer' ? null : (
-        <div className="h5-wheel" id="h5-wheel" role="scrollbar" aria-orientation="vertical" aria-label={t('Scroll')} data-mode="none" aria-hidden="true">
-          <span className="h5-wheel-track" aria-hidden="true" />
-          <span className="h5-wheel-chevron h5-wheel-up" aria-hidden="true"><Icon name="chevronUp" size={14} /></span>
-          <span className="h5-wheel-chevron h5-wheel-down" aria-hidden="true"><Icon name="chevronDown" size={14} /></span>
-          <span className="h5-wheel-thumb" aria-hidden="true" />
-        </div>
-      )}
+      {/* The wheel strip, the same with a finger and a mouse (the mouse ball comes out of it): a scrollbar, a thin track and thumb inside a 44px hit area
+          (16px with a mouse, h5.css); in a full-screen program the thumb is a spring in the middle, with chevrons. */}
+      <div className="h5-wheel" id="h5-wheel" role="scrollbar" aria-orientation="vertical" aria-label={t('Scroll')} data-mode="none" aria-hidden="true">
+        <span className="h5-wheel-track" aria-hidden="true" />
+        <span className="h5-wheel-chevron h5-wheel-up" aria-hidden="true"><Icon name="chevronUp" size={14} /></span>
+        <span className="h5-wheel-chevron h5-wheel-down" aria-hidden="true"><Icon name="chevronDown" size={14} /></span>
+        <span className="h5-wheel-thumb" aria-hidden="true" />
+      </div>
       {/* The copy bar, one for every copy from the terminal (public/js/terminal-clipboard.js): kind 'ask' is a program's copy without a recent
           gesture of the user (nothing is written before Copy); kind 'tap' is a copy the browser refused to write (a page selection or a program's
           copy alike), written inside this tap. The preview is one line, cut to the bar's width; later output cannot change it.

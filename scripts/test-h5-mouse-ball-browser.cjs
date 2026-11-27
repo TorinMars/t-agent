@@ -16,7 +16,9 @@
 // programs" (touch only, off by default, writing h5-mouse-ball-program); with modes 1000/1002/1003/1004/1006 the bytes of a real mouse (hover
 // moves before the press, ESC[I once when the terminal did not have the focus, the press, drags, the release), no hover in 1002, and with the switch
 // off nothing reaches the program; the spring strip of a full-screen program works the same
-// and sends nothing to the program before the ball is out; no horizontal overflow. H5_SHOT_DIR=<dir> saves screenshots.
+// and sends nothing to the program before the ball is out; a fresh terminal without history has the strip all the same (a full thumb, the hint, a
+// vertical drag and a tap do nothing, the whole gesture from a slide to the left), and it follows history, the alternate screen and a clear; no
+// horizontal overflow. H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,8 +28,8 @@ const ORIGIN = 'https://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const SHOTS = process.env.H5_SHOT_DIR;
 
-async function openPage(browser, { touch = true } = {}) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, ...(touch ? { isMobile: true, hasTouch: true } : {}), deviceScaleFactor: SHOTS ? 3 : 1 });
+async function openPage(browser, { touch = true, viewport = { width: 390, height: 844 } } = {}) {
+  const context = await browser.newContext({ viewport, ...(touch ? { isMobile: true, hasTouch: true } : {}), deviceScaleFactor: SHOTS ? 3 : 1 });
   const page = await context.newPage();
   const errors = [];
   const chunks = [];
@@ -684,7 +686,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.deepEqual(errors, [], 'no page errors');
     await context.close();
 
-    // ── Pointer input on a phone-sized window: no mouse ball, and no switch for it in the More menu ──
+    // ── Pointer input on a phone-sized window: the chunk is there (the strip is drawn with a mouse too), and no switch for it in the More menu ──
     const pointer = await openPage(browser, { touch: false });
     await openTerminal(pointer.page, { touch: false });
     await pointer.page.waitForFunction(() => window.H5UI.get().input === 'pointer');
@@ -692,8 +694,231 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await pointer.page.locator('#h5-refresh').waitFor({ state: 'visible' });
     assert.equal(await pointer.page.locator('#h5-term-width').count(), 1, 'the terminal is shown');
     assert.equal(await pointer.page.locator('#h5-mouse-ball-program').count(), 0, 'the switch is for touch input only');
+    assert.equal(pointer.chunks.length, 1, 'the chunk is loaded in pointer input too');
     assert.deepEqual(pointer.errors, []);
     await pointer.context.close();
+
+    // ── A normal terminal without history (a fresh shell): the strip is drawn all the same, so the mouse can come out of it ──
+    {
+      const fresh = await openPage(browser);
+      const p = fresh.page;
+      await openTerminal(p);
+      const fcdp = await fresh.context.newCDPSession(p);
+      const ftouch = (type, x, y) => fcdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' || type === 'touchCancel' ? [] : [{ x, y }] });
+      const fframes = (n = 2) => p.evaluate(n => new Promise(done => { const step = k => (k ? requestAnimationFrame(() => step(k - 1)) : done()); step(n); }), n);
+      const femit = async data => { await p.evaluate(data => window.sockets.at(-1).emit(data), data); await fframes(); };
+      const fglide = async (from, to, { steps = 8, ms = 16 } = {}) => {
+        for (let i = 1; i <= steps; i++) { await ftouch('touchMove', from.x + (to.x - from.x) * i / steps, from.y + (to.y - from.y) * i / steps); if (ms) await p.waitForTimeout(ms); }
+      };
+      const strip = () => p.evaluate(() => {
+        const el = document.getElementById('h5-wheel');
+        const box = el.getBoundingClientRect();
+        const thumb = el.querySelector('.h5-wheel-thumb').getBoundingClientRect();
+        const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
+        return { mode: el.dataset.mode, width: box.width, height: box.height, thumbHeight: thumb.height, thumbWidth: thumb.width, x: box.right - 8, y: thumb.top + thumb.height / 2,
+          visibility: getComputedStyle(el).visibility, pointerEvents: getComputedStyle(el).pointerEvents, touchAction: getComputedStyle(el).touchAction,
+          ariaHidden: el.getAttribute('aria-hidden'), max: el.getAttribute('aria-valuemax'), scrollTop: viewport.scrollTop, mouse: el.dataset.mouse || '' };
+      });
+      await p.evaluate(() => {
+        window.ballStates = [];
+        new MutationObserver(() => { const s = document.getElementById('h5-mouse-ball')?.dataset.state; if (s && s !== window.ballStates.at(-1)) window.ballStates.push(s); })
+          .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
+        window.passed = [];
+        document.addEventListener('click', event => { if (!(event.target.closest && event.target.closest('#h5-wheel'))) window.passed.push(event.target.className || event.target.tagName); }, true);
+      });
+      const fstates = () => p.evaluate(() => window.ballStates.splice(0));
+      await femit(`\x1b[H\x1b[2J\r\nNO HISTORY\r\n${ROW1}\r\n${ROW2}\r\n$ `);
+      await p.locator('#h5-mouse-ball').waitFor({ state: 'attached' });
+      let st = await strip();
+      assert.equal(st.mode, 'bar', 'a terminal without history still has the strip');
+      assert.deepEqual([st.visibility, st.pointerEvents, st.touchAction, st.ariaHidden], ['visible', 'auto', 'none', null], 'drawn and taking touches');
+      assert.ok(st.width >= 44, `the 44px hit area (${st.width})`);
+      assert.equal(st.thumbWidth, 4, 'the same 4px thumb as a scrollbar with history');
+      assert.ok(Math.abs(st.thumbHeight - st.height) <= 1, `nothing to scroll: the thumb fills the track (${st.thumbHeight} of ${st.height})`);
+      assert.equal(st.max, '0');
+      // The first-time hint shows for it too.
+      const fhint = p.locator('#h5-mouse-ball-hint');
+      await fhint.waitFor({ state: 'visible', timeout: 3000 });
+      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, 'mouse-ball-no-history.png') }); }
+      await fhint.waitFor({ state: 'hidden', timeout: 6000 });
+      // A vertical drag scrolls nothing and never starts the mouse.
+      await ftouch('touchStart', st.x, st.y);
+      await fglide({ x: st.x, y: st.y }, { x: st.x, y: st.y - 150 }, { steps: 10 });
+      await fglide({ x: st.x, y: st.y - 150 }, { x: st.x, y: st.y + 100 }, { steps: 10 });
+      await ftouch('touchEnd');
+      assert.equal((await strip()).scrollTop, 0, 'nothing scrolled');
+      assert.deepEqual(await fstates(), [], 'no mouse from a vertical drag');
+      // A tap goes through to what is under the strip.
+      await p.waitForTimeout(450);
+      await ftouch('touchStart', st.x, st.y);
+      await ftouch('touchEnd');
+      await p.waitForFunction(() => window.passed.length > 0, null, { timeout: 3000 });
+      assert.deepEqual(await fstates(), [], 'a tap is no mouse');
+      // A slide to the left: stretch, the ball at 40px, the dwell presses, a drag selects, the lift copies, the ball glides back into the thumb.
+      const fg = await p.evaluate(() => {
+        const el = document.querySelector('.h5-xterm:not([hidden])');
+        const screen = el.querySelector('.xterm-screen').getBoundingClientRect();
+        const rows = el.querySelectorAll('.xterm-rows > div').length;
+        const cols = window.H5UI.get().terminalWidth.current;
+        return { left: screen.left, top: screen.top, cw: screen.width / cols, ch: screen.height / rows };
+      });
+      const fat = (col, row) => ({ x: fg.left + col * fg.cw, y: fg.top + (row + 0.5) * fg.ch });
+      const ffinger = c => ({ x: c.x + 46, y: c.y + 46 });
+      st = await strip();
+      const from = { x: st.x, y: st.y };
+      await ftouch('touchStart', from.x, from.y);
+      await fglide(from, { x: from.x - 25, y: from.y }, { steps: 5 });
+      assert.equal(await p.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch', 'the thumb stretches');
+      await fglide({ x: from.x - 25, y: from.y }, { x: from.x - 45, y: from.y }, { steps: 3 });
+      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
+      const press = fat(8, 2);
+      await fglide({ x: from.x - 45, y: from.y }, ffinger(press));
+      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+      await fglide(ffinger(press), ffinger(fat(12, 3)));
+      await ftouch('touchEnd');
+      await p.waitForFunction(() => window.copied.length === 1, null, { timeout: 3000 });
+      assert.deepEqual(await p.evaluate(() => window.copied), [`${ROW1.slice(8)}\n${ROW2.slice(0, 12)}`], 'the selection is copied');
+      await p.waitForFunction(() => {
+        const el = document.getElementById('h5-wheel');
+        const ball = document.getElementById('h5-mouse-ball');
+        return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none' && el.querySelector('.h5-wheel-thumb').style.background === '';
+      }, null, { timeout: 3000 });
+      const seen = await fstates();
+      assert.deepEqual(seen.slice(0, 3), ['stretch', 'drag', 'pressed'], `the shipped gesture (${seen})`);
+      assert.ok(seen.includes('glide') && seen.at(-1) === 'idle', `it glides back into the thumb (${seen})`);
+      assert.equal((await strip()).scrollTop, 0, 'still nothing scrolled');
+      // History appears: a smaller thumb; the alternate screen: the spring; cleared again: the full thumb.
+      await femit(`${Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\r\n')}\r\n`);
+      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.dataset.mode === 'bar' && Number(el.getAttribute('aria-valuemax')) > 0; });
+      st = await strip();
+      assert.ok(st.thumbHeight < st.height / 2, `with history the thumb is smaller (${st.thumbHeight})`);
+      await femit('\x1b[?1049h\x1b[H\x1b[2JFULL SCREEN');
+      await p.waitForFunction(() => document.getElementById('h5-wheel').dataset.mode === 'spring');
+      await femit('\x1b[?1049l\x1b[H\x1b[2J\x1b[3J$ ');
+      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.dataset.mode === 'bar' && el.getAttribute('aria-valuemax') === '0'; });
+      st = await strip();
+      assert.ok(Math.abs(st.thumbHeight - st.height) <= 1, 'cleared: the thumb fills the track again');
+      assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no horizontal overflow');
+      assert.deepEqual(fresh.errors, [], 'no page errors');
+      await fresh.context.close();
+    }
+
+    // ── A computer (1440 x 900, a mouse, no touch): the same strip, and the same mouse ball out of it with the left button held ──
+    {
+      const pc = await openPage(browser, { touch: false, viewport: { width: 1440, height: 900 } });
+      const p = pc.page;
+      await p.locator('#h5-tasks').waitFor({ state: 'visible' });
+      await p.locator('.h5-task-item', { hasText: 'Fix login' }).click();
+      await p.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).click();
+      await p.waitForFunction(() => window.sockets.length > 0 && window.sockets.at(-1).readyState === 1 && document.querySelector('.h5-xterm:not([hidden]) .xterm-rows'));
+      assert.equal(await p.evaluate(() => document.documentElement.dataset.input), 'pointer');
+      const pframes = () => p.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+      await p.evaluate(data => window.sockets.at(-1).emit(data), `${Array.from({ length: 300 }, (_, i) => `old ${i + 1}`).join('\r\n')}\r\n\x1b[2J\x1b[H\r\nMOUSE BALL TEST\r\n${ROW1}\r\n${ROW2}\r\n$ `);
+      await pframes();
+      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.dataset.mode === 'bar' && Number(el.getAttribute('aria-valuemax')) > 0; });
+      await p.locator('#h5-mouse-ball').waitFor({ state: 'attached' });
+      assert.equal(pc.chunks.length, 1, 'the chunk is loaded with a mouse');
+      await p.evaluate(() => {
+        window.ballStates = [];
+        new MutationObserver(() => { const s = document.getElementById('h5-mouse-ball')?.dataset.state; if (s && s !== window.ballStates.at(-1)) window.ballStates.push(s); })
+          .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
+      });
+      const pstates = () => p.evaluate(() => window.ballStates.splice(0));
+      const pthumb = () => p.evaluate(() => {
+        const strip = document.getElementById('h5-wheel').getBoundingClientRect();
+        const thumb = document.querySelector('#h5-wheel .h5-wheel-thumb').getBoundingClientRect();
+        return { x: strip.left + strip.width / 2, y: thumb.top + thumb.height / 2, width: strip.width };
+      });
+      const pscroll = () => p.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop);
+      const terminalFocused = () => p.evaluate(() => Boolean(document.activeElement && document.activeElement.closest('.h5-xterm:not([hidden])')));
+      // The first-time hint says the same as on a phone.
+      const phint = p.locator('#h5-mouse-ball-hint');
+      await phint.waitFor({ state: 'visible', timeout: 3000 });
+      assert.match(await phint.textContent(), /Slide the scrollbar left for the mouse/);
+      if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, 'mouse-ball-pc-hint.png') }); }
+      await phint.waitFor({ state: 'hidden', timeout: 6000 });
+      let th = await pthumb();
+      assert.equal(th.width, 16, 'a 16px strip for a mouse');
+      // A vertical drag of the thumb with the mouse scrolls the history and never starts the mouse ball; the keyboard stays in the terminal.
+      await p.locator('.h5-xterm:not([hidden]) .xterm-screen').click({ position: { x: 20, y: 20 } });
+      const bottom = await pscroll();
+      await p.mouse.move(th.x, th.y);
+      await p.mouse.down();
+      await p.mouse.move(th.x, th.y - 200, { steps: 12 });
+      await p.mouse.up();
+      assert.ok(await pscroll() < bottom - 50, 'the mouse drag of the thumb scrolled back');
+      assert.deepEqual(await pstates(), [], 'no mouse ball from a vertical drag');
+      assert.equal(await terminalFocused(), true, 'a press on the strip keeps the keyboard in the terminal');
+      // Back to the newest output by dragging the thumb down with the mouse (a set scrollTop can be swallowed by xterm right after a scroll).
+      th = await pthumb();
+      await p.mouse.move(th.x, th.y);
+      await p.mouse.down();
+      await p.mouse.move(th.x, 890, { steps: 12 });
+      await p.mouse.up();
+      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.getAttribute('aria-valuenow') === el.getAttribute('aria-valuemax'); }, null, { timeout: 3000 });
+      await p.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent.includes('MOUSE BALL TEST'), null, { timeout: 3000 });
+      await pstates();
+      // A slide to the left with the left button held: the ball; holding still presses; a move selects; the mouseup copies; the ball glides back.
+      const pg = await p.evaluate(() => {
+        const el = document.querySelector('.h5-xterm:not([hidden])');
+        const screen = el.querySelector('.xterm-screen').getBoundingClientRect();
+        const rows = el.querySelectorAll('.xterm-rows > div').length;
+        const cols = window.H5UI.get().terminalWidth.current;
+        return { left: screen.left, top: screen.top, cw: screen.width / cols, ch: screen.height / rows };
+      });
+      const pat = (col, row) => ({ x: pg.left + col * pg.cw, y: pg.top + (row + 0.5) * pg.ch });
+      const out = async () => {
+        th = await pthumb();
+        await p.mouse.move(th.x, th.y);
+        await p.mouse.down();
+        await p.mouse.move(th.x - 25, th.y, { steps: 5 });
+        assert.equal(await p.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch', 'the thumb stretches toward the mouse');
+        await p.mouse.move(th.x - 45, th.y, { steps: 3 });
+        await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
+      };
+      await out();
+      const press = pat(8, 2);
+      await p.mouse.move(press.x + 46, press.y + 46, { steps: 8 });
+      const view = await p.evaluate(() => /translate\(([-\d.]+) ([-\d.]+)\)/.exec(document.querySelector('.h5-mouse-ball-cursor').getAttribute('transform')).slice(1).map(Number));
+      assert.ok(Math.abs(view[0] - press.x) < 0.5 && Math.abs(view[1] - press.y) < 0.5, `the cursor is 46px up and left of the mouse (${view})`);
+      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+      const end = pat(12, 3);
+      await p.mouse.move(end.x + 46, end.y + 46, { steps: 8 });
+      await p.mouse.up();
+      await p.waitForFunction(() => window.copied.length === 1, null, { timeout: 3000 });
+      assert.deepEqual(await p.evaluate(() => window.copied), [`${ROW1.slice(8)}\n${ROW2.slice(0, 12)}`], 'the selection is copied at the mouseup');
+      const docked = () => p.waitForFunction(() => {
+        const el = document.getElementById('h5-wheel');
+        const ball = document.getElementById('h5-mouse-ball');
+        return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none' && el.querySelector('.h5-wheel-thumb').style.background === '';
+      }, null, { timeout: 3000 });
+      await docked();
+      const seen = await pstates();
+      assert.deepEqual(seen.slice(0, 3), ['stretch', 'drag', 'pressed'], `the shipped gesture with a mouse (${seen})`);
+      assert.ok(seen.includes('glide') && seen.at(-1) === 'idle', `it glides back into the thumb (${seen})`);
+      // Escape ends it like a cancelled touch: nothing copied, nothing selected, the key not sent to the terminal.
+      await p.evaluate(() => window.copied.splice(0));
+      const sentBefore = await p.evaluate(() => window.sockets.at(-1).sent.length);
+      await out();
+      await p.mouse.move(press.x + 46, press.y + 46, { steps: 8 });
+      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+      await p.mouse.move(end.x + 46, end.y + 46, { steps: 8 });
+      await p.keyboard.press('Escape');
+      await docked();
+      await p.mouse.up();
+      await pframes();
+      assert.deepEqual(await p.evaluate(() => window.copied), [], 'Escape copies nothing');
+      assert.equal(await p.evaluate(() => document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-selection div').length), 0, 'and leaves no selection');
+      const sent = await p.evaluate(n => window.sockets.at(-1).sent.slice(n), sentBefore);
+      assert.ok(!sent.some(item => item.includes('\x1b') && !item.startsWith('{')), `Escape did not reach the terminal (${JSON.stringify(sent)})`);
+      const sentNow = await p.evaluate(() => window.sockets.at(-1).sent.length);
+      await p.keyboard.press('Escape'); // the control: with the ball in the strip, Escape is the terminal's again (the keyboard stayed there)
+      await p.waitForFunction(n => window.sockets.at(-1).sent.slice(n).includes('\x1b'), sentNow, { timeout: 3000 });
+      assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no horizontal overflow');
+      if (SHOTS) await p.screenshot({ path: path.join(SHOTS, 'mouse-ball-pc.png') });
+      assert.deepEqual(pc.errors, [], 'no page errors');
+      await pc.context.close();
+    }
     console.log('h5 mouse ball browser test passed');
   } finally {
     await browser.close();

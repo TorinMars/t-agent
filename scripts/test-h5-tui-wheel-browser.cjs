@@ -2,7 +2,7 @@
 // scroll the messages), with the real task routes, the real terminal WebSocket handler, a real PTY and a fake TUI that turns on mouse reports
 // (1000, 1002, 1003 any motion, 1006 SGR) and shows on its screen the last wheel report it read (button;column;row) and how many motion reports came.
 // See "Wheel strip" and "Terminal width (Fit / Wide)" in docs/design/page-terminal-and-bottom-bar.md.
-// - Computer, Fit (1440 x 900, mouse): a wheel on the left, in the middle and on the last column reaches the program with the column under the pointer.
+// - Computer, Fit (1440 x 900, mouse; the 16px wheel strip drawn beside the terminal box): a wheel on the left, in the middle and on the last column reaches the program with the column under the pointer.
 // - Computer, Wide (200 columns, the default): after Shift+wheel moved the screen to its right end, mouse moves (motion reports) and wheels over the right-most
 //   columns leave the view where it is (before, every mouse report counted as typing and pulled the view back to the program's cursor on the left), and
 //   each wheel names the column under the pointer; a typed key still brings the cursor back into view.
@@ -149,7 +149,8 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
       await page.keyboard.press('Enter');
       await tuiShown(page);
       let st = await status(page);
-      assert.equal(await page.locator('#h5-wheel').count(), 0, 'no wheel strip in pointer mode');
+      await page.waitForFunction(() => document.querySelector('#h5-wheel')?.dataset.mode === 'spring');
+      assert.equal(await page.evaluate(() => document.querySelector('#h5-wheel').getBoundingClientRect().width), 16, 'the wheel strip is drawn in pointer mode too (16px, beside the terminal box)');
       const row = Math.round(st.rows / 2);
       for (const col of [3, Math.round(st.cols / 2), st.cols - 2, st.cols]) {
         const point = cellPoint(st, col, row);

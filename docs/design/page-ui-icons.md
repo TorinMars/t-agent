@@ -39,7 +39,8 @@
 | T-Attention (the phone drawer's row, `#h5-tasks-attention`) | carry out | 4766856 | `attention`, 24px |
 | Settings (the phone drawer's row `#h5-tasks-settings`, the navigation rail's `#h5-nav-settings`) | setting | 4765891 | `setting` in `Icons.jsx`, 24px in the drawer, 22px in the rail |
 | Tasks (the menu button of the phone app bar, `#h5-open-tasks`) | menu | 4767059 | `menu` in `Icons.jsx`, 22px |
-| Mouse ball (the ball over the phone terminal, `#h5-mouse-ball`, 22px; its More menu row `#h5-mouse-ball-switch`, 20px) | self-drawn | - | `mouseBall` in `DRAWN`: a mouse pointer arrow; the library has no plain pointer |
+| Mouse ball (the ball that comes out of the wheel strip, `#h5-mouse-ball`, 22px) | self-drawn | - | `mouseBall` in `DRAWN`: a mouse pointer arrow; the library has no plain pointer |
+| Mouse ball hint ("Slide the scrollbar left for the mouse", `#h5-mouse-ball-hint`) | left (Ant Design LeftOutlined, the same icon in collection 9402) | not looked up | `chevronLeft`, 18px, primary colour, decorative |
 | More (the session header's "More", `#h5-header-more`) | ellipsis | 4767094 | `taskMore`, 22px; its "Refresh the page" item uses `reload` (4765852) at 20px, its phone "Update" item the Update icon below at 20px |
 | Add subtopic (mind map bar) | subnode | 8094810 | `subnode` |
 | Add topic after (mind map bar) | sisternode | 8094823 | `sisternode` |

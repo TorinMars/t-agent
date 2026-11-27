@@ -84,7 +84,7 @@ A column of the multi-column view is the whole page in an `<iframe>` of `/h5?pan
 | `h5-sidebar-collapsed` | `entry.jsx` | per pane (wide layout only; a pane of 900px or more has its own); the top page's is the shared page state's |
 | `terminal-client-id` (sessionStorage) | `terminal-owner.js` | per pane: the frames of a tab share its sessionStorage, and two columns must be two terminal clients, so the second one gets the normal "in use" prompt instead of silently replacing the first one's socket |
 | `h5-terminal-width-noted` | `h5.js` store (`SHARED_KEYS`) | shared (a one-time hint for the device) |
-| `h5-mouse-ball` | `h5.js` store (`SHARED_KEYS`) | shared (the mouse ball is a phone's, and a phone has no columns) |
+| `h5-mouse-ball-hinted` | `MouseBall.jsx` (`local-keys.mjs`, no pane prefix) | shared (a one-time hint for the device) |
 | `ta-lang` | `i18n.js` | shared (language; the shared page state's, the same on every device and engine) |
 | `voice-enabled`, `voice-keep-mic` | `voice-input.js`, `entry.jsx` | shared |
 | `word-translate` | `word-translate.js` | shared (the shared page state's) |

@@ -1,11 +1,14 @@
 // The mouse ball of the phone terminal ("Mouse ball" in docs/design/page-terminal-mouse-ball.md): the pure parts, no DOM and no React, so they are
 // tested with node (test/mouse-ball-model.test.js). MouseBall.jsx (a chunk of its own, screen-mouse-ball.jsx) draws the ball and the cursor and
-// drives the terminal with them.
+// drives the terminal with them. The ball comes out of the wheel strip (the floating scrollbar) when its thumb is slid to the left.
 // Rects are { left, top, right, bottom } in CSS px of the viewport; points are { x, y }.
 
 export const BALL_SIZE = 52; // the ball's diameter
-export const DOCK_MARGIN = 2; // its gap to the right edge of the terminal when docked
-export const DOCK_AT = 2 / 3; // where it docks: this far down the terminal
+export const AXIS_SLOP = 10; // px a finger on the wheel strip travels before its axis is decided (scroll or mouse)
+export const DETACH = 40; // px of travel to the left at which the stretched thumb lets go and becomes the ball
+export const THUMB_WIDTH = 6; // the touched thumb's width: the stretch starts at this size
+export const TAIL_WIDTH = 20; // the widest the stretched tail gets
+export const GLIDE_MS = 220; // the ball's glide back into the strip
 export const OFFSET = 46; // the cursor is this far left of and above the ball's centre, so the finger never covers it
 export const EDGE_FADE = 80; // over the last px before the right (bottom) edge, the sideways (upward) offset shrinks to 0
 export const DWELL_MS = 600; // a ball kept still this long presses the left button
@@ -23,18 +26,46 @@ export function intersect(a, b) {
   return box.right > box.left && box.bottom > box.top ? box : null;
 }
 
-// Where the idle ball rests: at the right edge of the terminal, about two thirds down, always whole inside it (above the on-screen keyboard: the
-// caller passes the visible part of the terminal). Its centre.
-export function dockPosition(area) {
-  const half = BALL_SIZE / 2;
-  const y = area.top + (area.bottom - area.top) * DOCK_AT;
-  return { x: area.right - half - DOCK_MARGIN, y: clamp(y, area.top + half, Math.max(area.top + half, area.bottom - half)) };
+// The axis of a one-finger drag on the wheel strip, from its travel (dx, dy) since the touch: null while it is shorter than AXIS_SLOP, then 'mouse'
+// for a slide more sideways than up or down AND to the left (the ball comes out), else 'scroll' (the strip scrolls as always). The caller keeps
+// the first answer that is not null until the lift: a drag that started vertical, or went to the right, never becomes the mouse.
+export function stripAxis(dx, dy) {
+  if (Math.hypot(dx, dy) < AXIS_SLOP) return null;
+  return Math.abs(dx) > Math.abs(dy) && dx < 0 ? 'mouse' : 'scroll';
+}
+
+// How far the thumb is stretched (0 to 1) for the finger at `finger` after a touch at `start`: the travel to the left over DETACH px. At 1 it lets
+// go and is the ball. A finger back to the right of the touch is 0 (the thumb hangs on the strip).
+export function stretchProgress(start, finger) {
+  return clamp((start.x - finger.x) / DETACH, 0, 1);
+}
+
+// Where the stretch hangs on the strip: the thumb's x, at the touch's height kept inside the thumb (`thumb`: its rect; a touch beside the thumb
+// stretches from the thumb's nearest end).
+export function thumbAnchor(thumb, y) {
+  return { x: (thumb.left + thumb.right) / 2, y: clamp(y, thumb.top, thumb.bottom) };
+}
+
+// The stretched thumb at `progress` (stretchProgress): a head under the finger (never right of the strip) that grows from the thumb's width to the
+// ball (`size`, `scale` of the 52px ball), and a tail of the thumb's colour from `root` (thumbAnchor) to the head, as wide as the head up to
+// TAIL_WIDTH.
+export function stretchShape(root, finger, progress) {
+  const p = clamp(progress, 0, 1);
+  const size = THUMB_WIDTH + (BALL_SIZE - THUMB_WIDTH) * p;
+  const head = { x: Math.min(finger.x, root.x), y: finger.y };
+  return { head, size, scale: size / BALL_SIZE, tail: { x1: root.x, y1: root.y, x2: head.x, y2: head.y, width: Math.min(size, TAIL_WIDTH) } };
+}
+
+// Where the ball glides back to at the lift: the middle of the thumb where it is now (`thumb`: its rect; the view may have scrolled meanwhile),
+// kept inside the visible terminal `area` (a thumb under the on-screen keyboard is not followed out of sight).
+export function glideTarget(thumb, area) {
+  return { x: clamp((thumb.left + thumb.right) / 2, area.left, area.right), y: clamp((thumb.top + thumb.bottom) / 2, area.top, area.bottom) };
 }
 
 // The ball's centre for the finger at `finger`: it keeps the place where it was grabbed (`grab`: the ball's centre minus the finger at the touch),
 // except near the right and bottom edges, where that grab offset shrinks with the same fade as the cursor offset (relative to how much of it there
 // was at the touch, `start`: the finger then), so a ball grabbed on its right side still reaches the edge and the cursor the last column. The
-// centre stays inside `area`.
+// centre stays inside `area`. (Out of the wheel strip the ball is under the finger: no grab.)
 export function ballFor(finger, grab, start, area) {
   const scale = (now, then) => (then > 0 ? Math.min(1, now / then) : 0);
   const gx = scale(fade(area.right - finger.x), fade(area.right - start.x));

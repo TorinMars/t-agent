@@ -1,9 +1,10 @@
-// The mouse ball of the phone terminal ("Mouse ball" in docs/design/page-terminal-mouse-ball.md). A chunk of its own (screen-mouse-ball.jsx), drawn
-// by App.jsx through lazy-screens.jsx while it is on for this device (More > Mouse ball, h5.js `setMouseBall`) in touch input on a phone.
-// - Idle: a 52px half transparent ball docked at the right edge of the visible terminal, about two thirds down (above the on-screen keyboard). It
-//   takes touches only on itself; the terminal scrolls and takes taps as before.
-// - Touch and move: the ball follows the finger; the cursor (the top-left corner of a square, two lines; the corner is the mouse position) shows 46px
-//   left of and above it, with a dashed line between them; near the right and bottom edges that offset fades out (mouse-ball-model.mjs).
+// The mouse ball of the terminal in touch input ("Mouse ball" in docs/design/page-terminal-mouse-ball.md). A chunk of its own (screen-mouse-ball.jsx),
+// drawn by App.jsx through lazy-screens.jsx in touch input. There is no ball of its own on the screen: it comes out of the wheel strip (the floating
+// scrollbar on the right, h5.js `bindWheelStrip`), which hands a finger over when it slides to the left (`ui.actions.stripMouse`, registered here).
+// - Out of the strip: under 40px of travel to the left the thumb stretches toward the finger like a bubble (a tail of the thumb's colour and a head
+//   that grows into the 52px ball); lifted then, it springs back and nothing happens. Past 40px it lets go: the ball under the finger.
+// - The ball: the cursor (the top-left corner of a square, two lines; the corner is the mouse position) shows 46px left of and above it, with a
+//   dashed line between them; near the right and bottom edges that offset fades out (mouse-ball-model.mjs).
 // - Keep still for 600 ms: a ring fills around the ball, then the left button goes down at the cursor (a haptic tick, the cursor turns blue).
 //   Who gets the button is decided then and kept until the lift (`buttonMode`):
 //   - page (no mouse reporting): moving selects from the press point to the cursor with xterm's own selection; near the top or bottom edge the
@@ -14,27 +15,39 @@
 //     bottom edge, the release at the lift. The program selects and copies by itself; the lift marks a gesture for terminal-clipboard.js, so
 //     its OSC 52 copy that follows shows "Copied N characters" instead of the request bar.
 //   Without a press nothing happens. A cancelled touch ends everything without a copy (a program still gets the release).
-// The ball holds the pointer (capture, touch-action none, cancelled touch events), so the terminal under it never scrolls, long-presses or
-// double-tap-selects while it is used. The moving parts are set on the elements directly (a frame per finger move, no React render).
+// - Lift (or cancel): the ball glides back into the strip and is the thumb again (220 ms; at once with reduced motion). While it is out the
+//   strip's thumb is dimmed at its place and the strip says what is out in `data-mouse` (stretch, ball, glide).
+// The strip keeps the pointer capture of the finger, so the terminal under the ball never scrolls, pans, long-presses or double-tap-selects while it
+// is used; this chunk follows that pointer on the document. The moving parts are set on the elements directly (a frame per finger move, no React
+// render). The first time it can be used on a device a hint near the thumb says how (`HINT_KEY`, 4 s, once).
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
+import Paper from '@mui/material/Paper';
 import { alpha } from '@mui/material/styles';
 import { blueGrey } from '@mui/material/colors';
 import { t } from './common.jsx';
 import { Icon } from './Icons.jsx';
 import { keyTick } from './Osk.jsx';
+import { localGet, localSet } from './local-keys.mjs';
 import {
-  BALL_SIZE, DWELL_IDLE, ballFor, buttonMode, cellFromPoint, cursorFor, dockPosition, dwellProgress, dwellStep, intersect, joinSelection,
-  programReports, scrollSpeed, scrollStep, selectionRange,
+  BALL_SIZE, DWELL_IDLE, GLIDE_MS, THUMB_WIDTH, ballFor, buttonMode, cellFromPoint, cursorFor, dwellProgress, dwellStep, glideTarget, intersect,
+  joinSelection, programReports, scrollSpeed, scrollStep, selectionRange, stretchProgress, stretchShape, stripAxis, thumbAnchor,
 } from './mouse-ball-model.mjs';
 
 const RING_R = 29; // the dwell ring, just outside the ball
 const RING = 2 * Math.PI * RING_R;
-const RECHECK_MS = 500; // how often the idle ball looks again whether a terminal is shown (the chat or a session switch changes no store key)
+const RECHECK_MS = 500; // how often it looks whether the terminal is still there and whether the first-time hint is due
 const CURSOR = 'M0 19V0H19'; // the cursor: 19px of a square's top edge and left edge, the corner at the origin
 const WHEEL_MAX = 40; // wheel steps sent to a program in one frame at most
+const THUMB_DIM = 'rgba(255, 255, 255, 0.15)'; // the strip's thumb while the ball is out of it
+const HINT_KEY = 'h5-mouse-ball-hinted'; // per device (public/js/local-keys.js): the first-time hint was shown
+const HINT_MS = 4000;
+const HINT_TEXT = 'Slide the scrollbar left for the mouse';
+const DESCRIPTION = 'Slide left for the mouse'; // the strip's aria-description, set while this chunk is there
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const rectOf = el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+const stripEl = () => document.getElementById('h5-wheel');
+const thumbOf = el => (el ? el.querySelector('.h5-wheel-thumb') : null);
 function viewportRect() {
   const vv = window.visualViewport;
   return vv ? { left: vv.offsetLeft, top: vv.offsetTop, right: vv.offsetLeft + vv.width, bottom: vv.offsetTop + vv.height } : { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
@@ -52,17 +65,18 @@ function geometry(ui) {
   return bounds && target.term.cols && target.term.rows ? { target, area, screen, bounds } : null;
 }
 
-// The imperative part: the touch on the ball, the dwell clock, the selection and the scrolling.
+// The imperative part: the finger handed over by the strip, the stretch, the dwell clock, the selection, the scrolling, the glide back, the hint.
 function control(nodes, ui) {
-  const { ball, overlay, line, cursor, ring } = nodes;
+  const { ball, overlay, line, cursor, ring, tail, hint } = nodes;
   let drag = null;
   let frame = 0;
-  let shown = false;
+  let glide = null; // { el, timer } while the ball glides back into the strip
+  let hintTimer = 0;
+  let hinted = localGet(HINT_KEY) === 'shown';
   const setState = (name, mode = '') => {
-    ball.dataset.state = name;
+    ball.dataset.state = name; // idle, stretch, drag, pressed, glide
     overlay.dataset.state = name;
     ball.dataset.mode = mode; // 'page' or 'program' while the button is down
-    ball.setAttribute('aria-pressed', name === 'pressed' ? 'true' : 'false');
   };
   const setRing = progress => {
     // With reduced motion the ring does not fill; it shows whole once the button is down.
@@ -70,27 +84,32 @@ function control(nodes, ui) {
     ring.style.strokeDashoffset = `${RING * (1 - p)}px`;
     ring.style.opacity = p > 0 ? '1' : '0';
   };
-  const moveBall = point => { ball.style.transform = `translate(${point.x - BALL_SIZE / 2}px, ${point.y - BALL_SIZE / 2}px)`; };
-  const show = on => { if (shown !== on) { shown = on; ball.style.display = on ? '' : 'none'; } };
-  // Docks the idle ball (animated by its CSS transition, none with reduced motion) or hides it while no terminal is shown.
-  function place() {
-    if (drag) return;
-    const geo = geometry(ui);
-    show(Boolean(geo));
-    if (geo) moveBall(dockPosition(geo.area));
+  const moveBall = (point, scale = 1) => { ball.style.transform = `translate(${point.x - BALL_SIZE / 2}px, ${point.y - BALL_SIZE / 2}px) scale(${scale})`; };
+  // The strip while the ball is out of it: `data-mouse` says what (stretch, ball, glide) and the thumb is dimmed at its place; null puts it back.
+  function stripState(el, name) {
+    if (!el) return;
+    const thumb = thumbOf(el);
+    if (name) el.dataset.mouse = name;
+    else delete el.dataset.mouse;
+    if (thumb) thumb.style.background = name ? THUMB_DIM : '';
   }
-  function draw() {
-    moveBall(drag.ball);
+  function drawCursor(opacity) {
     cursor.setAttribute('transform', `translate(${drag.cursor.x} ${drag.cursor.y})`);
+    cursor.style.opacity = opacity;
+    line.style.opacity = opacity;
     line.setAttribute('x1', drag.cursor.x);
     line.setAttribute('y1', drag.cursor.y);
     line.setAttribute('x2', drag.ball.x);
     line.setAttribute('y2', drag.ball.y);
   }
+  function draw() {
+    moveBall(drag.ball);
+    drawCursor('1');
+  }
   // How many cells of a row hold text (the cell after the last one that does).
-  function usedCells(line, cols) {
+  function usedCells(row, cols) {
     for (let x = cols - 1; x >= 0; x -= 1) {
-      const cell = line.getCell(x);
+      const cell = row.getCell(x);
       if (cell && cell.getChars()) return x + (cell.getWidth() || 1);
     }
     return 0;
@@ -102,16 +121,16 @@ function control(nodes, ui) {
     const end = range.row * cols + range.col + range.length;
     const rows = [];
     for (let row = range.row; ; row += 1) {
-      const line = buffer.getLine(row);
-      if (!line) break;
+      const current = buffer.getLine(row);
+      if (!current) break;
       const from = row === range.row ? range.col : 0;
       const to = end < (row + 1) * cols ? end - row * cols : cols;
       const next = buffer.getLine(row + 1);
       rows.push({
-        text: line.translateToString(!(next && next.isWrapped && to === cols), from, to),
-        wrapped: row !== range.row && line.isWrapped,
+        text: current.translateToString(!(next && next.isWrapped && to === cols), from, to),
+        wrapped: row !== range.row && current.isWrapped,
         full: to === cols,
-        length: usedCells(line, cols),
+        length: usedCells(current, cols),
       });
       if (end <= (row + 1) * cols) break;
     }
@@ -169,23 +188,102 @@ function control(nodes, ui) {
     setRing(1);
     keyTick();
   }
+
+  // ── Out of the strip: the stretch, then the ball ──
+  // The thumb stretched toward the finger at `at`; at DETACH px to the left it lets go (detach).
+  function stretch(at) {
+    const p = stretchProgress(drag.from, at);
+    if (p >= 1) { detach(at); return; }
+    const shape = stretchShape(drag.root, at, p);
+    drag.ball = shape.head;
+    drag.scale = shape.scale;
+    drag.cursor = cursorFor(shape.head, drag.geo.area, drag.geo.bounds);
+    ball.dataset.progress = p.toFixed(2);
+    moveBall(shape.head, shape.scale);
+    ball.style.opacity = String(0.4 + 0.55 * p);
+    tail.setAttribute('x1', shape.tail.x1);
+    tail.setAttribute('y1', shape.tail.y1);
+    tail.setAttribute('x2', shape.tail.x2);
+    tail.setAttribute('y2', shape.tail.y2);
+    tail.style.strokeWidth = `${shape.tail.width}px`;
+    tail.style.display = '';
+    drawCursor(String(p)); // the cursor shows where it will be, fainter the less it is stretched
+  }
+  function detach(at) {
+    const now = performance.now();
+    Object.assign(drag, { phase: 'ball', start: at, grab: { x: 0, y: 0 }, scale: 1, last: now, dwell: dwellStep(DWELL_IDLE, { type: 'down', x: at.x, y: at.y, t: now }) });
+    delete ball.dataset.progress;
+    ball.style.opacity = '';
+    tail.style.display = 'none';
+    stripState(drag.el, 'ball');
+    setState('drag');
+    if (!follow(at.x, at.y)) { end(); return; }
+    frame = requestAnimationFrame(tick);
+  }
+  // The finger handed over by the strip (h5.js, a slide to the left): `id` its pointer, `el` the strip (it keeps the capture), `from` the touch,
+  // `at` the finger now, `sync` the strip's redraw. false when there is nothing to point at (the strip then goes on as a scroll).
+  function begin({ id, el, from, at, sync }) {
+    if (drag) return false;
+    const geo = geometry(ui);
+    const thumb = thumbOf(el);
+    if (!geo || !thumb) return false;
+    settle();
+    hideHint();
+    drag = {
+      id, el, sync, geo, from, root: thumbAnchor(rectOf(thumb), from.y), phase: 'stretch', scale: 0, start: null, grab: null, dwell: DWELL_IDLE,
+      anchor: null, range: null, program: null, output: null, carry: 0, last: performance.now(), ball: null, cursor: null,
+    };
+    listen(true);
+    stripState(el, 'stretch');
+    ball.style.display = 'flex';
+    setState('stretch');
+    stretch(at);
+    return true;
+  }
+  // The ball glides back into the strip and is its thumb again (at once with reduced motion or without a thumb to go to).
+  function glideBack(el) {
+    const geo = geometry(ui);
+    const thumb = el && el.isConnected ? thumbOf(el) : null;
+    tail.style.display = 'none';
+    if (!geo || !thumb || reducedMotion()) { settle(el); return; }
+    if (drag && drag.sync) drag.sync(); // the thumb where the view is now (it may have scrolled)
+    stripState(el, 'glide');
+    setState('glide');
+    moveBall(glideTarget(rectOf(thumb), geo.area), THUMB_WIDTH / BALL_SIZE);
+    ball.style.opacity = '0';
+    glide = { el, timer: setTimeout(() => settle(), GLIDE_MS) };
+  }
+  // The ball is gone and the thumb is the strip's own again. A touch during the glide ends it at once.
+  function settle(el = glide && glide.el) {
+    if (glide) clearTimeout(glide.timer);
+    glide = null;
+    ball.style.display = 'none';
+    ball.style.opacity = '';
+    delete ball.dataset.progress;
+    if (!drag) setState('idle');
+    stripState(el, null);
+    const strip = stripEl();
+    if (strip && strip !== el && strip.dataset.mouse && !drag) stripState(strip, null); // a strip drawn again meanwhile
+  }
   function end() {
     if (!drag) return;
-    release();
-    const { id, output } = drag;
-    drag = null;
-    if (output) output.dispose();
+    if (drag.phase === 'ball') release();
+    const { id, el, output, sync } = drag;
     cancelAnimationFrame(frame);
     frame = 0;
-    try { if (ball.hasPointerCapture(id)) ball.releasePointerCapture(id); } catch { /* already released */ }
-    setState('idle');
+    if (output) output.dispose();
+    listen(false);
     setRing(0);
-    place(); // back to the dock
+    glideBack(el);
+    drag = null;
+    if (!glide) setState('idle');
+    try { if (el.hasPointerCapture(id)) el.releasePointerCapture(id); } catch { /* already released */ }
+    if (sync) sync();
   }
-  // Every frame while the finger is down: the dwell clock and the ring, then the scrolling near the top or bottom edge with the button down.
+  // Every frame while the ball is out: the dwell clock and the ring, then the scrolling near the top or bottom edge with the button down.
   function tick() {
     frame = 0;
-    if (!drag) return;
+    if (!drag || drag.phase !== 'ball') return;
     const now = performance.now();
     const dt = Math.max(0, Math.min(100, now - drag.last));
     drag.last = now;
@@ -202,11 +300,17 @@ function control(nodes, ui) {
     }
     frame = requestAnimationFrame(tick);
   }
-  // The ball under the finger at (x, y); false when the terminal went away (another session, the chat): the touch ends.
-  function follow(x, y) {
+  // The terminal still the one of the touch: false when it went away (another session, the chat), and the touch ends.
+  function same() {
     const geo = geometry(ui);
     if (!geo || geo.target.term !== drag.geo.target.term) return false;
     drag.geo = geo;
+    return true;
+  }
+  // The ball under the finger at (x, y).
+  function follow(x, y) {
+    if (!same()) return false;
+    const { geo } = drag;
     drag.ball = ballFor({ x, y }, drag.grab, drag.start, geo.area);
     drag.cursor = cursorFor(drag.ball, geo.area, geo.bounds);
     draw();
@@ -214,25 +318,14 @@ function control(nodes, ui) {
     else if (drag.program && drag.program.reports.motion) report('mousemove', 1); // xterm reports a motion only when the cell changes
     return true;
   }
-  function down(event) {
-    if (drag || (event.button !== undefined && event.button > 0) || !event.isPrimary) return; // one finger drives; a second one is ignored
-    const geo = geometry(ui);
-    if (!geo) return;
-    event.preventDefault();
-    try { ball.setPointerCapture(event.pointerId); } catch { /* the touch still works without capture */ }
-    const now = performance.now();
-    const centre = dockPosition(geo.area);
-    drag = {
-      id: event.pointerId, geo, start: { x: event.clientX, y: event.clientY }, grab: { x: centre.x - event.clientX, y: centre.y - event.clientY },
-      dwell: dwellStep(DWELL_IDLE, { type: 'down', x: event.clientX, y: event.clientY, t: now }), anchor: null, program: null, output: null, carry: 0, last: now, ball: centre, cursor: null,
-    };
-    setState('drag');
-    if (!follow(event.clientX, event.clientY)) { end(); return; }
-    frame = requestAnimationFrame(tick);
-  }
   function move(event) {
     if (!drag || event.pointerId !== drag.id) return;
-    event.preventDefault();
+    if (event.cancelable) event.preventDefault();
+    if (drag.phase === 'stretch') {
+      if (same()) stretch({ x: event.clientX, y: event.clientY });
+      else cancel();
+      return;
+    }
     const waiting = drag.dwell.phase === 'waiting';
     drag.dwell = dwellStep(drag.dwell, { type: 'move', x: event.clientX, y: event.clientY, t: performance.now() });
     if (waiting && drag.dwell.phase === 'pressed') press(); // the wait was over before this move: the press is where the ball stood
@@ -240,7 +333,8 @@ function control(nodes, ui) {
   }
   function up(event) {
     if (!drag || event.pointerId !== drag.id) return;
-    event.preventDefault();
+    if (event.cancelable) event.preventDefault();
+    if (drag.phase === 'stretch') { end(); return; } // not far enough: it springs back, nothing happens
     if (drag.program && follow(event.clientX, event.clientY)) {
       // The program copies by itself on the release (OSC 52 or pbcopy): this lift is the user's gesture for that copy.
       if (drag.program.gesture) drag.program.gesture();
@@ -253,93 +347,144 @@ function control(nodes, ui) {
     end();
   }
   function cancel(event) {
-    if (!drag || (event && event.pointerId !== drag.id)) return;
+    if (!drag || (event && event.pointerId !== undefined && event.pointerId !== drag.id)) return;
     if (drag.anchor) drag.geo.target.term.clearSelection(); // nothing was copied, so nothing stays selected
     end();
   }
-  // The terminal under the ball must not see the touch: no scrolling, zooming, callout or click.
-  const stop = event => { if (event.cancelable) event.preventDefault(); };
-  const listeners = [['pointerdown', down], ['pointermove', move], ['pointerup', up], ['pointercancel', cancel], ['lostpointercapture', cancel],
-    ['touchstart', stop], ['touchmove', stop], ['touchend', stop], ['contextmenu', stop]];
-  for (const [type, handler] of listeners) ball.addEventListener(type, handler, { passive: false });
-  const vv = window.visualViewport;
-  window.addEventListener('resize', place);
-  vv?.addEventListener('resize', place);
-  vv?.addEventListener('scroll', place);
-  const box = document.getElementById('h5-terminal');
-  const observer = box && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
-  observer?.observe(box);
-  const timer = setInterval(place, RECHECK_MS);
+  // While the ball is out: the finger on the document (the strip has its capture); no callout, no scrolling, no context menu.
+  const stop = event => { if (drag && event.cancelable) event.preventDefault(); };
+  const following = [['pointermove', move], ['pointerup', up], ['pointercancel', cancel], ['lostpointercapture', cancel], ['contextmenu', stop], ['touchmove', stop]];
+  function listen(on) {
+    for (const [type, handler] of following) {
+      if (on) document.addEventListener(type, handler, { capture: true, passive: false });
+      else document.removeEventListener(type, handler, { capture: true });
+    }
+  }
+  // Any new touch: the glide is over at once (the thumb is there for it) and the hint goes.
+  const touched = () => { if (glide) settle(); hideHint(); };
+  const away = () => cancel();
+  const hidden = () => { if (document.hidden) cancel(); };
+  const blurred = event => { if (event.target === window) cancel(); };
+
+  // ── The first-time hint, and the strip's description ──
+  function hideHint() {
+    clearTimeout(hintTimer);
+    hintTimer = 0;
+    hint.style.display = 'none';
+  }
+  function showHint(strip, thumb) {
+    const geo = geometry(ui);
+    if (!geo) return;
+    hinted = true;
+    localSet(HINT_KEY, 'shown');
+    const box = rectOf(strip);
+    const middle = glideTarget(rectOf(thumb), geo.area).y;
+    hint.style.display = 'flex';
+    hint.style.right = `${Math.max(0, document.documentElement.clientWidth - box.left + 4)}px`;
+    hint.style.top = `${Math.max(geo.area.top + 4, Math.min(geo.area.bottom - 48, middle - 22))}px`;
+    hintTimer = setTimeout(hideHint, HINT_MS);
+  }
+  function check() {
+    const strip = stripEl();
+    if (strip && strip.getAttribute('aria-description') !== t(DESCRIPTION)) strip.setAttribute('aria-description', t(DESCRIPTION));
+    if (drag) { if (!same()) cancel(); return; } // a terminal that went away while the finger was still
+    if (hinted || !strip || strip.dataset.mode === 'none' || strip.classList.contains('active') || glide) return;
+    const thumb = thumbOf(strip);
+    if (thumb && geometry(ui)) showHint(strip, thumb);
+  }
+
+  ui.actions.stripMouse = { axis: stripAxis, begin };
+  document.addEventListener('pointerdown', touched, true);
+  window.addEventListener('pagehide', away);
+  window.addEventListener('blur', blurred);
+  document.addEventListener('visibilitychange', hidden);
+  const timer = setInterval(check, RECHECK_MS);
   setState('idle');
   setRing(0);
   ball.style.display = 'none';
-  place();
+  tail.style.display = 'none';
+  hint.style.display = 'none';
+  check();
   return {
-    place,
     dispose() {
       cancel();
-      for (const [type, handler] of listeners) ball.removeEventListener(type, handler);
-      window.removeEventListener('resize', place);
-      vv?.removeEventListener('resize', place);
-      vv?.removeEventListener('scroll', place);
-      observer?.disconnect();
+      settle();
+      hideHint();
+      if (ui.actions.stripMouse && ui.actions.stripMouse.begin === begin) delete ui.actions.stripMouse;
+      document.removeEventListener('pointerdown', touched, true);
+      window.removeEventListener('pagehide', away);
+      window.removeEventListener('blur', blurred);
+      document.removeEventListener('visibilitychange', hidden);
       clearInterval(timer);
+      const strip = stripEl();
+      if (strip) strip.removeAttribute('aria-description');
     },
   };
 }
 
 const BALL = theme => ({
   position: 'fixed', left: 0, top: 0, zIndex: theme.zIndex.speedDial, width: BALL_SIZE, height: BALL_SIZE, boxSizing: 'border-box', borderRadius: '50%',
-  display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.palette.common.white, bgcolor: blueGrey[700],
-  border: `1px solid ${alpha(theme.palette.common.white, 0.35)}`, boxShadow: theme.shadows[6], opacity: 0.55,
-  touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', WebkitTapHighlightColor: 'transparent',
-  transition: theme.transitions.create(['transform', 'opacity'], { duration: 220, easing: theme.transitions.easing.easeOut }),
-  '&[data-state="drag"], &[data-state="pressed"]': { transition: 'none', opacity: 0.95, bgcolor: blueGrey[800] },
+  display: 'none', alignItems: 'center', justifyContent: 'center', color: theme.palette.common.white, bgcolor: blueGrey[800], // shown by control()
+  border: `1px solid ${alpha(theme.palette.common.white, 0.35)}`, boxShadow: theme.shadows[6], opacity: 0.95, pointerEvents: 'none', transformOrigin: 'center',
+  transition: 'none',
   '&[data-state="pressed"]': { bgcolor: theme.palette.notice.main },
+  '&[data-state="glide"]': { transition: theme.transitions.create(['transform', 'opacity'], { duration: GLIDE_MS, easing: theme.transitions.easing.easeIn }) },
   '& .h5-mouse-ball-ring': { position: 'absolute', left: -6, top: -6, width: 64, height: 64, overflow: 'visible', pointerEvents: 'none', transform: 'rotate(-90deg)' },
   '& .h5-mouse-ball-ring circle': { fill: 'none', stroke: theme.palette.primary.main, strokeWidth: 3, strokeDasharray: RING, strokeDashoffset: RING, opacity: 0 },
-  '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+  '@media (prefers-reduced-motion: reduce)': { '&[data-state="glide"]': { transition: 'none' } },
 });
 const OVERLAY = theme => ({
   position: 'fixed', left: 0, top: 0, width: '100%', height: '100%', zIndex: theme.zIndex.speedDial, pointerEvents: 'none', overflow: 'visible', display: 'none',
   color: theme.palette.common.white,
-  '&[data-state="drag"], &[data-state="pressed"]': { display: 'block' },
+  '&[data-state="stretch"], &[data-state="drag"], &[data-state="pressed"]': { display: 'block' },
   '&[data-state="pressed"]': { color: theme.palette.primary.main },
-  '& line': { stroke: alpha(theme.palette.common.white, 0.45), strokeWidth: 1.5, strokeDasharray: '3 4' },
+  '& .h5-mouse-ball-line': { stroke: alpha(theme.palette.common.white, 0.45), strokeWidth: 1.5, strokeDasharray: '3 4' },
+  '& .h5-mouse-ball-tail': { stroke: alpha(theme.palette.common.white, 0.3), strokeLinecap: 'round' }, // the thumb's colour, stretched
   '& path': { fill: 'none', strokeLinecap: 'butt', strokeLinejoin: 'miter' },
   '& .h5-mouse-ball-outline': { stroke: theme.palette.common.black },
 });
+// The first-time hint: a pill left of the thumb, never taking a touch.
+const HINT = theme => ({
+  position: 'fixed', zIndex: theme.zIndex.speedDial, height: 44, boxSizing: 'border-box', display: 'none', alignItems: 'center', gap: 1, px: 2,
+  borderRadius: '22px', pointerEvents: 'none', whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 72px)', ...theme.typography.body2,
+  '& .h5-mouse-ball-hint-icon': { display: 'inline-flex', color: theme.palette.primary.main, flex: '0 0 auto' },
+});
 
-// `state`: the store keys of App.jsx `BALL_KEYS`. Off (or with the terminal covered or replaced) it draws nothing.
+// `state`: the store keys of App.jsx `BALL_KEYS`. In pointer input (or with the terminal covered or replaced) it draws nothing.
 export function MouseBall({ state, ui }) {
-  const on = Boolean(state.mouseBall) && state.input === 'touch' && !state.wide && !state.pane;
   const covered = Boolean(state.empty) || Boolean(state.notebook) || state.copyText !== null || Boolean(state.mindmapOpen) || Boolean(state.learnOpen);
-  const live = on && !covered;
+  const live = state.input === 'touch' && !covered;
   const ball = useRef(null);
   const overlay = useRef(null);
   const line = useRef(null);
   const cursor = useRef(null);
   const ring = useRef(null);
+  const tail = useRef(null);
+  const hint = useRef(null);
   useEffect(() => {
     if (!live) return undefined;
-    const handle = control({ ball: ball.current, overlay: overlay.current, line: line.current, cursor: cursor.current, ring: ring.current }, ui);
+    const handle = control({ ball: ball.current, overlay: overlay.current, line: line.current, cursor: cursor.current, ring: ring.current, tail: tail.current, hint: hint.current }, ui);
     return () => handle.dispose();
   }, [live, ui]);
   if (!live) return null;
-  const label = t('Mouse ball');
   return (
     <>
       <Box component="svg" ref={overlay} className="h5-mouse-ball-overlay" aria-hidden="true" focusable="false" sx={OVERLAY}>
-        <line ref={line} />
+        <line ref={tail} className="h5-mouse-ball-tail" />
+        <line ref={line} className="h5-mouse-ball-line" />
         <g ref={cursor} className="h5-mouse-ball-cursor">
           <path d={CURSOR} className="h5-mouse-ball-outline" strokeWidth="5" />
           <path d={CURSOR} stroke="currentColor" strokeWidth="2.5" />
         </g>
       </Box>
-      <Box ref={ball} id="h5-mouse-ball" role="button" aria-label={label} title={label} aria-pressed="false" sx={BALL}>
+      <Box ref={ball} id="h5-mouse-ball" aria-hidden="true" sx={BALL}>
         <svg className="h5-mouse-ball-ring" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><circle ref={ring} cx="32" cy="32" r={RING_R} /></svg>
         <Icon name="mouseBall" size={22} />
       </Box>
+      <Paper ref={hint} id="h5-mouse-ball-hint" role="status" elevation={6} sx={HINT}>
+        <span className="h5-mouse-ball-hint-icon" aria-hidden="true"><Icon name="chevronLeft" size={18} /></span>
+        <span>{t(HINT_TEXT)}</span>
+      </Paper>
     </>
   );
 }

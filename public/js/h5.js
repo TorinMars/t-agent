@@ -3263,8 +3263,8 @@
     s.follow = true;
     if (typeof TerminalGestures === 'undefined') return;
     s.gestures = TerminalGestures.attach(s.el, {
-      // Not while the copy view is open or right after the long press that opened it (the finger is still down).
-      active: () => session === s && !s.disposed && !longPressDone && ui.get().copyText === null,
+      // Not while the copy view is open.
+      active: () => session === s && !s.disposed && ui.get().copyText === null,
       offset: { get: () => s.offset || 0, set: px => setOffset(s, px), max: () => maxOffsetOf(s) },
       onScroll: () => showScroll(s),
       onHorizontalEnd: () => { s.follow = cursorInView(s); },
@@ -3963,32 +3963,13 @@
     if (copySearch(query) === false && query) tell('No match');
   };
 
-  // Long press on the terminal body opens the copy view (also reachable from the terminal actions menu, "Copy text"), scrolled to the latest output. It is cancelled by any movement
-  // (a scroll or a drag), by lifting the finger, and it ignores the wheel strip, the buttons and mouse input.
-  const LONG_PRESS_MS = 500;
-  const LONG_PRESS_SLOP = 8; // px a finger may move before it is a scroll, not a press
-  let longPress = null;
+  // No long press on the terminal body any more (removed on 2026-11-27 at the user's request: it opened the copy view by accident while holding the mouse
+  // ball or the mouse handle). The copy view stays in the terminal actions menu, "Copy text". `lastPointerTouch` tells the double tap that the last
+  // press was a finger.
   let lastPointerTouch = false;
-  let longPressDone = false; // the next click belongs to the press that opened the view
-  function cancelLongPress() { if (longPress) { clearTimeout(longPress.timer); longPress = null; } }
   terminalHost.addEventListener('pointerdown', event => {
-    cancelLongPress();
-    longPressDone = false;
     lastPointerTouch = event.pointerType !== 'mouse'; // a mouse keeps xterm's own double-click selection
-    if (event.pointerType === 'mouse' || !event.isPrimary || !event.target.closest || !event.target.closest('.h5-xterm')) return;
-    longPress = { id: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(() => {
-      longPress = null;
-      longPressDone = true;
-      cancelPendingLink();
-      if (session && !session.disposed && ui.get().copyText === null) openCopy();
-    }, LONG_PRESS_MS) };
   });
-  terminalHost.addEventListener('pointermove', event => {
-    if (longPress && event.pointerId === longPress.id && Math.hypot(event.clientX - longPress.x, event.clientY - longPress.y) > LONG_PRESS_SLOP) cancelLongPress();
-  });
-  for (const type of ['pointerup', 'pointercancel']) terminalHost.addEventListener(type, cancelLongPress);
-  terminalHost.addEventListener('scroll', cancelLongPress, true);
-  terminalHost.addEventListener('contextmenu', event => { if (event.target.closest && event.target.closest('.h5-xterm') && longPressDone) event.preventDefault(); });
 
   // Double tap selects a word and triple tap a line, with xterm's own selection (term.select / selectLines), and copies it at once, inside the
   // tap (copy on select, terminal-clipboard.js `copy`: the same notice and bar as a program's OSC 52 copy). Only while the program has no mouse
@@ -4053,7 +4034,7 @@
   }
   terminalHost.addEventListener('click', event => {
     const s = session;
-    if (!s || s.disposed || !lastPointerTouch || longPressDone || !event.target.closest || !event.target.closest('.h5-xterm')) return;
+    if (!s || s.disposed || !lastPointerTouch || !event.target.closest || !event.target.closest('.h5-xterm')) return;
     if (s.gestures?.recentlyPanned()) return; // the end of a pan, not a tap
     const now = Date.now();
     const chain = now - tapChain.at < MULTI_TAP_MS && Math.hypot(event.clientX - tapChain.x, event.clientY - tapChain.y) < MULTI_TAP_SLOP ? tapChain.count + 1 : 1;
@@ -4675,10 +4656,10 @@
       anyPath: () => readsAnyPath(s.source),
       activate: link => {
         cancelPendingLink();
-        if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null || s.gestures?.recentlyPanned()) return; // a pan is not a tap
+        if (session !== s || s.disposed || ui.get().copyText !== null || s.gestures?.recentlyPanned()) return; // a pan is not a tap
         pendingLink = setTimeout(async () => {
           pendingLink = 0;
-          if (session !== s || s.disposed || longPressDone || ui.get().copyText !== null) return;
+          if (session !== s || s.disposed || ui.get().copyText !== null) return;
           const target = await link.locate();
           if (session !== s || s.disposed) return;
           // Outside the working directory: an Engine that reads any path opens it; an older one cannot (the old note).

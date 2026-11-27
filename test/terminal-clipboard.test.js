@@ -199,7 +199,7 @@ test('when the browser refuses the automatic write, the page offers the bar (kin
 });
 
 test('a write that fails inside the tap closes the bar with one error notice, by input mode', async () => {
-  for (const [input, message] of [['touch', 'Could not copy. Long-press to open the copy view'], ['pointer', 'Could not copy. Use Copy text in the terminal menu']]) {
+  for (const [input, message] of [['touch', 'Could not copy. Use Copy text in the terminal menu'], ['pointer', 'Could not copy. Use Copy text in the terminal menu']]) {
     const { term, handle, context, notices, last } = setup({ clipboardFails: true, input });
     term.osc(osc('text'));
     assert.equal(await context.clipboard.confirm(), false);

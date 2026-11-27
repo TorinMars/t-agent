@@ -970,7 +970,6 @@ I18n.add({
   "Looking up…": "正在查询…",
   "Could not translate the word": "无法翻译这个单词",
   "Could not copy": "无法复制",
-  "Could not copy. Long-press to open the copy view": "无法复制。长按终端打开复制视图",
   "Could not copy. Use Copy text in the terminal menu": "无法复制。请使用终端菜单中的“复制文本”",
   "New chat": "新对话",
   "Start a chat from before this message": "从这条消息之前开始新对话",

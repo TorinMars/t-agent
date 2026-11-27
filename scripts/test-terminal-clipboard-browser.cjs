@@ -417,7 +417,7 @@ async function run(browser, touch) {
   await bar.waitFor({ state: 'visible' });
   await press(page.locator('#h5-clipboard-copy'));
   await bar.waitFor({ state: 'hidden' });
-  const failed = touch ? 'Could not copy. Long-press to open the copy view' : 'Could not copy. Use Copy text in the terminal menu';
+  const failed = 'Could not copy. Use Copy text in the terminal menu';
   await waitNotice(failed);
   assert.deepEqual(await notices(), [[failed, 'error']]);
   await allow();

@@ -2,6 +2,7 @@ import { redact, cut } from './redact.js';
 import { pageAction, installRecorder } from './page.js';
 import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summary, detail, matches, takeDialogs } from './capture.js';
 import { runAction, ACTION_METHODS } from './actions.js';
+import { FRAME, frameWorthy, framePicture } from './frames.js';
 // Features beyond the method names, sent in the hello: the bridge refuses a new option that an older extension would silently ignore
 // (PARAM_FEATURES in services/browser-bridge.js). 1.0.4: `tabs.open` with `record`, record type filters and a body size limit, agent
 // actions in recordings (source 'agent' / 'user'), click target context and the texts of what appeared in DOM change items.
@@ -15,7 +16,8 @@ import { runAction, ACTION_METHODS } from './actions.js';
 // input.fill, input.check and page.dialog (actions.js); page.screenshot with `zoom` / `scale` and `annotate`; page.snapshot with `filter`
 // and `diff`, elements of open shadow roots and same-origin iframes, and refs that stay the same for the same node; page.console with
 // `pattern` and `levels`.
-export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload', 'open.window', 'record.tabs', 'input.drag', 'input.upload', 'input.fill', 'input.check', 'page.dialog', 'shot.zoom', 'shot.annotate', 'snapshot.filter', 'snapshot.diff', 'snapshot.frames', 'snapshot.stable_refs', 'console.filter'];
+// record.frames: `frames` / `max_frames` in the record options, a masked picture after each action (frames.js, "Pictures of a recording").
+export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload', 'open.window', 'record.tabs', 'input.drag', 'input.upload', 'input.fill', 'input.check', 'page.dialog', 'shot.zoom', 'shot.annotate', 'snapshot.filter', 'snapshot.diff', 'snapshot.frames', 'snapshot.stable_refs', 'console.filter', 'record.frames'];
 export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal', ...ACTION_METHODS];
 const recordings = new Map(),
   owned = new Set(),
@@ -219,9 +221,10 @@ function item(id, kind, data) {
   if (!r) return;
   if (kind === 'dom' && !r.dom) return;
   const safe = redact(data);
+  const seq = ++r.count;
   r.queue.push({
     ...safe,
-    seq: ++r.count,
+    seq,
     at: Number.isFinite(safe.at) ? safe.at : Date.now(),
     kind,
     tab_id: id,
@@ -230,6 +233,77 @@ function item(id, kind, data) {
     url: safe.url || urlOf(r, id)
   });
   if (r.queue.length >= 200) flush(r);
+  if (r.frames && frameWorthy(kind, safe)) frameAfter(id, r, seq, kind);
+}
+// Pictures of a recording ("Pictures of a recording" in docs/design/browser-extension.md): a picture is taken a moment after a frame-worthy
+// item, once the command on the tab ended and the page loaded; a newer item on the same tab before that replaces the wait, so a burst of
+// clicks gets one picture. One picture at a time per recording (f.chain); `final` (the recording stops) takes the waiting ones at once.
+function frameAfter(id, r, seq, kind) {
+  const f = r.frames;
+  clearTimeout(f.pending.get(id)?.timer);
+  const entry = {
+    seq,
+    kind
+  };
+  entry.timer = setTimeout(() => void takeFrame(id, r, entry), kind === 'nav' ? FRAME.navDelayMs : FRAME.delayMs);
+  f.pending.set(id, entry);
+}
+function takeFrame(id, r, entry) {
+  const f = r.frames;
+  if (f.pending.get(id) === entry) f.pending.delete(id);
+  f.chain = f.chain.then(async () => {
+    if (recordings.get(id) !== r) return;
+    if (f.count >= f.max) {
+      if (!f.capped) item(id, 'frame', {
+        for_seq: entry.seq,
+        skipped: 'limit'
+      });
+      f.capped = true;
+      return;
+    }
+    for (const end = Date.now() + (entry.final ? 1500 : FRAME.settleMs); Date.now() < end;) {
+      const t = await chrome.tabs.get(id).catch(() => null);
+      if (!t) return;
+      if ((entry.final || !(busy.get(id) > 0)) && t.status === 'complete') break;
+      await new Promise(done => setTimeout(done, 100));
+    }
+    if (recordings.get(id) !== r) return;
+    const shot = await framePicture(id, {
+      cdp,
+      executeScript: injection => chrome.scripting.executeScript(injection),
+      debuggerOn: captures.has(id)
+    });
+    if (recordings.get(id) !== r) return;
+    if (!shot.skipped && f.bytes + shot.bytes > FRAME.totalBytes) {
+      if (!f.capped) item(id, 'frame', {
+        for_seq: entry.seq,
+        skipped: 'limit'
+      });
+      f.capped = true;
+      return;
+    }
+    if (!shot.skipped) {
+      f.count++;
+      f.bytes += shot.bytes;
+    }
+    item(id, 'frame', {
+      for_seq: entry.seq,
+      ...shot
+    });
+  }).catch(() => {});
+  return f.chain;
+}
+// The pictures still waiting when a recording (or one of its tabs) stops are taken now.
+async function settleFrames(r, ids) {
+  if (!r.frames) return;
+  for (const id of ids) {
+    const entry = r.frames.pending.get(id);
+    if (!entry) continue;
+    clearTimeout(entry.timer);
+    entry.final = true;
+    void takeFrame(id, r, entry);
+  }
+  await r.frames.chain;
 }
 function flush(r) {
   while (r.queue.length) {
@@ -330,6 +404,8 @@ async function stopRecord(id, reason, {
 } = {}) {
   const r = recordings.get(id);
   if (!r) return null;
+  if (reason !== 'tab closed') await settleFrames(r, id !== r.main && !all ? [id] : [r.main, ...r.tabs.keys()]);
+  if (recordings.get(id) !== r) return null;
   if (id !== r.main && !all) {
     if (reason === 'tab closed') item(id, 'tab', {
       action: 'closed',
@@ -389,7 +465,7 @@ async function install(id, immediate = false) {
 }
 // The options of record.start and of tabs.open's `record`, checked. `types` are CDP resource types (Document, XHR, Fetch, Script, ...), any case.
 function recordOptions(p) {
-  for (const key of ['network', 'dom', 'bodies', 'drop_other_types']) if (p[key] !== undefined && typeof p[key] !== 'boolean') fail('BAD_PARAMS', `${key} must be true or false`);
+  for (const key of ['network', 'dom', 'bodies', 'drop_other_types', 'frames']) if (p[key] !== undefined && typeof p[key] !== 'boolean') fail('BAD_PARAMS', `${key} must be true or false`);
   const o = {
     network: p.network ?? true,
     dom: p.dom ?? true,
@@ -410,6 +486,11 @@ function recordOptions(p) {
     if (!Number.isInteger(p.max_body_bytes) || p.max_body_bytes < 0) fail('BAD_PARAMS', 'max_body_bytes must be a non-negative integer');
     o.maxBody = Math.min(p.max_body_bytes, 2097152);
   }
+  if (p.max_frames !== undefined) {
+    if (!p.frames) fail('BAD_PARAMS', 'max_frames needs frames');
+    if (!Number.isInteger(p.max_frames) || p.max_frames < 1 || p.max_frames > FRAME.maxFrames) fail('BAD_PARAMS', `max_frames must be a whole number from 1 to ${FRAME.maxFrames}`);
+  }
+  o.frames = p.frames ? p.max_frames ?? FRAME.defaultFrames : null;
   return o;
 }
 // Starts a recording of tab `id` (attaching the debugger). `inject: false` when the tab has no page yet (tabs.open with `record`): the
@@ -446,13 +527,26 @@ async function startRecording(id, p, url, {
     types: o.types,
     dropOthers: o.dropOthers,
     maxBody: o.maxBody,
+    // --frames: the pictures taken (count, bytes), the waits per tab, and the one picture being taken (chain).
+    frames: o.frames ? {
+      max: o.frames,
+      count: 0,
+      bytes: 0,
+      capped: false,
+      pending: new Map(),
+      chain: Promise.resolve()
+    } : null,
     options: {
       network: o.network,
       dom: o.dom,
       bodies: o.bodies,
       types: o.types ? [...o.types] : null,
       drop_other_types: o.dropOthers,
-      max_body_bytes: o.maxBody
+      max_body_bytes: o.maxBody,
+      ...(o.frames ? {
+        frames: true,
+        max_frames: o.frames
+      } : {})
     }
   };
   recordings.set(id, r);
@@ -1843,7 +1937,8 @@ chrome.runtime.onMessage.addListener((m, sender, reply) => {
         r = recordings.get(id);
       if (r?.id === m.recording_id) {
         await allowed(await chrome.tabs.get(id));
-        if (m.item.kind !== 'nav') item(id, m.item.kind, m.item);
+        // Pictures are the worker's own (frames.js); a page recorder never sends one.
+        if (m.item.kind !== 'nav' && m.item.kind !== 'frame') item(id, m.item.kind, m.item);
       }
       return {};
     }

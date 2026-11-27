@@ -300,3 +300,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.177.4 Remove a node_modules symlink committed by mistake in v2.177.3 and ignore it
 > v2.178.0 Mouse handle: a separate bar at the screen edge that pulls out the mouse ball, moves with a long press and snaps to the nearest edge
 > v2.179.0 The mouse handle scrolls the terminal (drag up or down) and the floating scroll strip is removed
+> v2.180.0 tcli browser: drag, upload, fill, check, dialog, snapshot filter/diff, shot zoom/annotate, console filters, recording pictures with an offline replay, and hints on errors (extension 1.0.8)

@@ -8,7 +8,8 @@
 //           X-T-Agent-Token (lib/terminal-relay-auth.js) from this machine, mounted like the OSS relay before the body parsers and the gates.
 //           A request without those headers, or not from this machine, is passed on untouched (and meets the login gate).
 //           Recordings: GET /recordings, /recordings/:id, /recordings/:id/items[?kind&type&source&url&status&tab&limit&offset] (JSON lines),
-//           /recordings/:id/requests[?type&all&url&status&tab&limit&offset] (merged requests, JSON lines), DELETE /recordings/:id.
+//           /recordings/:id/requests[?type&all&url&status&tab&limit&offset] (merged requests, JSON lines), /recordings/:id/frames/:n (a
+//           picture of a recording made with --frames, image/jpeg), DELETE /recordings/:id.
 // Errors are JSON { error, message }. Answers are never cached and never logged.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -155,6 +156,15 @@ function createBrowserRelayRouter({
       res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'X-T-Agent-Left-Out': String(leftOut) });
       return Readable.from(requests.map(entry => `${JSON.stringify(entry)}\n`)).pipe(res);
     } catch (error) { return res.headersSent ? res.destroy() : sendError(res, error); }
+  });
+  // One picture of a recording made with --frames (`tcli browser record export`): the JPEG as it is stored.
+  router.get('/recordings/:id/frames/:n', (req, res) => {
+    let picture;
+    try { picture = recordings().frame(req.params.id, req.params.n); } catch (error) { return sendError(res, error); }
+    res.status(200).set({ 'Content-Type': 'image/jpeg', 'Content-Length': String(picture.bytes), 'X-Content-Type-Options': 'nosniff' });
+    const stream = fs.createReadStream(picture.file);
+    stream.on('error', () => res.destroy());
+    return stream.pipe(res);
   });
   router.delete('/recordings/:id', (req, res) => {
     try { res.json(recordings().remove(req.params.id)); } catch (error) { sendError(res, error); }

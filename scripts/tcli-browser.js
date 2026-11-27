@@ -4,6 +4,7 @@
 // Loaded by scripts/tcli.js, which hands over its HTTP and error helpers. Node built-ins only.
 const fs = require('node:fs');
 const path = require('node:path');
+const { hintFor } = require('../lib/browser-error-hints');
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const HTTP_EXTRA_MS = 15_000; // the relay answers a timeout itself; this only guards against a T-Agent that stopped answering
@@ -154,6 +155,12 @@ your commands have source "agent", the person's
                          types: XHR,Fetch,Document
     --drop-other-types   and no items for others
     --max-body N         cut bodies at N bytes
+    --frames             a small picture after
+                         each action and each
+                         click or page change of
+                         the person (secret
+                         fields masked)
+    --max-frames N       at most N pictures (200)
   record stop [id]
   record list
   record show <id>
@@ -179,6 +186,10 @@ your commands have source "agent", the person's
                          come from several tabs)
     --json | -o file     JSON lines with headers
                          and bodies
+  record export <id> --html file.html
+                         a replay page of the
+                         pictures with each step
+                         (works offline; no GIF)
   record rm <id> --yes
 
 Options (every command)
@@ -271,8 +282,8 @@ function createBrowserGroup(h) {
 
   // The options of `record start` and `open --record`. --types takes CDP resource types in any case (--type is the same).
   const RESOURCE_TYPES = ['Document', 'Stylesheet', 'Image', 'Media', 'Font', 'Script', 'TextTrack', 'XHR', 'Fetch', 'Prefetch', 'EventSource', 'WebSocket', 'Manifest', 'SignedExchange', 'Ping', 'CSPViolationReport', 'Preflight', 'Other'];
-  const RECORD_VALUES = ['types', 'type', 'max-body'];
-  const RECORD_BOOLS = ['no-network', 'no-dom', 'no-bodies', 'drop-other-types'];
+  const RECORD_VALUES = ['types', 'type', 'max-body', 'max-frames'];
+  const RECORD_BOOLS = ['no-network', 'no-dom', 'no-bodies', 'drop-other-types', 'frames'];
   function recordParams(flags) {
     let types;
     if (flags.types !== undefined || flags.type !== undefined) {
@@ -285,9 +296,13 @@ function createBrowserGroup(h) {
       }))];
     }
     if (flags['drop-other-types'] && !types) throw usage('--drop-other-types needs --types');
+    if (flags['max-frames'] !== undefined && !flags.frames) throw usage('--max-frames needs --frames');
+    const maxFrames = wholeNumber(flags['max-frames'], '--max-frames', { min: 1 });
+    if (maxFrames > 500) throw usage('--max-frames is at most 500');
     return prune({
       network: flags['no-network'] ? false : undefined, dom: flags['no-dom'] ? false : undefined, bodies: flags['no-bodies'] ? false : undefined,
       types, drop_other_types: flags['drop-other-types'] ? true : undefined, max_body_bytes: wholeNumber(flags['max-body'], '--max-body', { min: 0 }),
+      frames: flags.frames ? true : undefined, max_frames: maxFrames,
     });
   }
 
@@ -510,7 +525,9 @@ function createBrowserGroup(h) {
     if (Array.isArray(options.types)) filters.push(`${options.drop_other_types ? 'only' : 'bodies of'} ${options.types.join(',')}`);
     if (Number.isInteger(options.max_body_bytes)) filters.push(`bodies cut at ${humanSize(options.max_body_bytes)}`);
     for (const [key, text] of [['network', 'no network'], ['dom', 'no DOM'], ['bodies', 'no bodies']]) if (options[key] === false) filters.push(text);
+    if (options.frames) filters.push(`pictures (at most ${options.max_frames || 200})`);
     if (filters.length) lines.push(`  filters   ${filters.join(' · ')}`);
+    if (summary.frames || summary.frames_dropped) lines.push(`  pictures  ${summary.frames || 0} · ${humanSize(summary.frame_bytes || 0)}${summary.frames_dropped ? ` (+${summary.frames_dropped} past the limit)` : ''} · tcli browser record export ${summary.recording_id} --html file.html`);
     if (summary.task_id !== null && summary.task_id !== undefined) lines.push(`  task      ${summary.task_id}${summary.terminal_id ? ` (terminal ${summary.terminal_id})` : ''}`);
     return lines.join('\n');
   }
@@ -923,7 +940,7 @@ function createBrowserGroup(h) {
     start: {
       values: RECORD_VALUES, bools: RECORD_BOOLS,
       async run(ctx, flags, positional) {
-        none(positional, 'tcli browser record start [--no-network] [--no-dom] [--no-bodies] [--types T [--drop-other-types]] [--max-body N]');
+        none(positional, 'tcli browser record start [--no-network] [--no-dom] [--no-bodies] [--types T [--drop-other-types]] [--max-body N] [--frames [--max-frames N]]');
         const params = { ...common(flags), ...recordParams(flags) };
         return print(ctx, flags, await cmd(ctx, 'record.start', params, { timeoutMs: timeoutOf(flags) }), answer => `Recording ${answer.recording_id}. Use the page (or let the person use it), then: tcli browser record stop`);
       },
@@ -954,6 +971,7 @@ function createBrowserGroup(h) {
     },
     items: records.items,
     requests: records.requests,
+    export: records.exportRecording,
     rm: {
       bools: ['yes'],
       async run(ctx, flags, positional) {
@@ -982,7 +1000,13 @@ function createBrowserGroup(h) {
     if (!command) throw usage(`Unknown command "browser ${label}"; see tcli browser help`);
     const { flags, positional } = parse(args, command);
     if (flags.help) { ctx.stdout.write(HELP); return EXIT.ok; }
-    return command.run(ctx, flags, positional);
+    try { return await command.run(ctx, flags, positional); } catch (error) { throw withHint(error); }
+  }
+  // The next step for the error's code (lib/browser-error-hints.js): scripts/tcli.js prints it as a `hint:` line, and --json has it as `hint`.
+  function withHint(error) {
+    const hint = error instanceof CliError && error.body ? hintFor(error.body.error) : null;
+    if (hint) { error.hint = hint; error.body = { ...error.body, hint }; }
+    return error;
   }
 
   return { help: HELP, run, parse, target, commands: COMMANDS, net: NET, record: RECORD };

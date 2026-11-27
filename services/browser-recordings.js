@@ -6,9 +6,16 @@
 //                                                         options? (the recording's filters: network, dom, bodies, types, drop_other_types,
 //                                                         max_body_bytes; from extension 1.0.4), tabs? (items per tab id, at most
 //                                                         MAX_TABS ids: a recording follows the tabs its page opens; older
-//                                                         recordings have none) }
+//                                                         recordings have none), frames?, frame_bytes?, frames_dropped? (pictures,
+//                                                         below) }
+//   <data dir>/browser-recordings/<recording_id>.frames/<n>.jpg   the pictures of a recording made with --frames (0600, folder 0700)
 // Limits: 200 MiB per recording (items after that are dropped and counted, `truncated: true`), 2 GiB in all (the oldest recordings are removed
 // first), and 14 days (counted from the last item or the stop; checked at start, every 6 hours and after appends).
+// Pictures ("Pictures of a recording" in docs/design/browser-extension.md): a `frame` item from the extension carries a masked JPEG in
+// `data_base64`; it is written to its own file and the line keeps `{ kind: 'frame', for_seq, frame: <n>, file, bytes, width, height, mime }`
+// without the image, so `record items` stays small. At most the recording's `max_frames` (200 by default, never over 500), 512 KiB each and
+// 50 MiB per recording; past that one `{ kind: 'frame', skipped: 'limit' }` line notes it and the rest are counted in `frames_dropped`. The
+// pictures count towards the 2 GiB of all recordings and go with their recording (removal, the 14 days).
 // Reading: itemsStream (the file as it is), and filterItems / requests, which read it line by line through lib/browser-recording-query.js (the
 // filters of `tcli browser record items` and the merge of `record requests`; "Reading recordings" in docs/design/tcli.md).
 const fs = require('node:fs');
@@ -18,7 +25,10 @@ const { redactDeep } = require('../lib/browser-redact');
 const { filterLines, mergeRequests } = require('../lib/browser-recording-query');
 
 const MiB = 1024 * 1024;
-const DEFAULTS = { maxRecordingBytes: 200 * MiB, maxTotalBytes: 2048 * MiB, keepMs: 14 * 24 * 3600 * 1000, cleanupEveryMs: 6 * 3600 * 1000 };
+const DEFAULTS = {
+  maxRecordingBytes: 200 * MiB, maxTotalBytes: 2048 * MiB, keepMs: 14 * 24 * 3600 * 1000, cleanupEveryMs: 6 * 3600 * 1000,
+  maxFrames: 500, defaultFrames: 200, maxFrameBytes: 512 * 1024, maxFrameTotalBytes: 50 * MiB,
+};
 const ID = /^rec_[A-Za-z0-9]{1,24}_[A-Za-z0-9]{1,16}$/;
 const MAX_ORIGINS = 20;
 const MAX_TABS = 20; // tab ids counted in the summary (the extension follows at most 10 per recording)
@@ -33,24 +43,27 @@ const iso = ms => new Date(ms).toISOString();
 function cleanOptions(options) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
   const out = {};
-  for (const key of ['network', 'dom', 'bodies', 'drop_other_types']) if (typeof options[key] === 'boolean') out[key] = options[key];
+  for (const key of ['network', 'dom', 'bodies', 'drop_other_types', 'frames']) if (typeof options[key] === 'boolean') out[key] = options[key];
   if (Array.isArray(options.types)) out.types = options.types.filter(type => typeof type === 'string' && /^[A-Za-z]{1,32}$/.test(type)).slice(0, 32);
   else if (options.types === null) out.types = null;
   if (Number.isInteger(options.max_body_bytes) && options.max_body_bytes >= 0) out.max_body_bytes = options.max_body_bytes;
   else if (options.max_body_bytes === null) out.max_body_bytes = null;
+  if (Number.isInteger(options.max_frames) && options.max_frames > 0) out.max_frames = options.max_frames;
   return out;
 }
 const originOf = url => { try { const parsed = new URL(url); return /^https?:$/.test(parsed.protocol) ? parsed.origin : null; } catch { return null; } };
 
 function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
   if (!dir) throw new Error('createBrowserRecordings needs dir');
-  const { maxRecordingBytes, maxTotalBytes, keepMs, cleanupEveryMs } = { ...DEFAULTS, ...limits };
+  const { maxRecordingBytes, maxTotalBytes, keepMs, cleanupEveryMs, maxFrames, defaultFrames, maxFrameBytes, maxFrameTotalBytes } = { ...DEFAULTS, ...limits };
   const summaries = new Map(); // id -> summary (kept in memory, written after each change)
   let loaded = false;
 
   const ensureDir = () => fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const itemsPath = id => path.join(dir, `${id}.jsonl`);
   const summaryPath = id => path.join(dir, `${id}.json`);
+  const framesDir = id => path.join(dir, `${id}.frames`);
+  const frameName = n => `${String(n).padStart(6, '0')}.jpg`;
   const validId = id => typeof id === 'string' && ID.test(id);
 
   function load() {
@@ -116,10 +129,19 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
     let added = 0;
     for (const item of items.slice(0, MAX_ITEMS_PER_BATCH)) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-      const clean = redactDeep(item);
+      // A picture is not text: it leaves the item before the redaction (the extension masked it before it was taken) and goes to its own file.
+      const { data_base64: picture, ...rest } = item;
+      let clean = redactDeep(rest);
+      let image = null;
+      if (clean.kind === 'frame') {
+        const framed = frameOf(summary, clean, picture);
+        if (!framed) continue;
+        ({ clean, image } = framed);
+      }
       const line = `${JSON.stringify(clean)}\n`;
       const size = Buffer.byteLength(line);
       if (summary.bytes + added + size > maxRecordingBytes) { summary.dropped_items += 1; summary.truncated = true; continue; }
+      if (image) writeFrame(id, summary, clean, image);
       lines.push(line);
       added += size;
       summary.items += 1;
@@ -147,6 +169,40 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
     return { appended: lines.length, items: summary.items, bytes: summary.bytes, truncated: summary.truncated };
   }
 
+  // A `frame` item: the picture checked (a JPEG of at most maxFrameBytes) and counted against the recording's limits. Returns the line to
+  // write (without the picture) and the bytes, or a `skipped` line, or null when the limit was noted already.
+  function frameOf(summary, clean, picture) {
+    const limit = Math.min(summary.options && Number.isInteger(summary.options.max_frames) ? summary.options.max_frames : defaultFrames, maxFrames);
+    if (typeof picture !== 'string') return { clean: { ...clean, skipped: typeof clean.skipped === 'string' ? clean.skipped.slice(0, 40) : 'no picture' }, image: null };
+    const image = /^[A-Za-z0-9+/]+={0,2}$/.test(picture) ? Buffer.from(picture, 'base64') : null;
+    if (!image || image.length < 4 || image[0] !== 0xff || image[1] !== 0xd8 || image[2] !== 0xff) return { clean: { ...clean, skipped: 'not a JPEG' }, image: null };
+    if (image.length > maxFrameBytes) return { clean: { ...clean, skipped: 'too large' }, image: null };
+    if ((summary.frames || 0) >= limit || (summary.frame_bytes || 0) + image.length > maxFrameTotalBytes) {
+      summary.frames_dropped = (summary.frames_dropped || 0) + 1;
+      if (summary.frames_dropped > 1) return null;
+      return { clean: { kind: 'frame', seq: clean.seq, at: clean.at, tab: clean.tab, tab_id: clean.tab_id, for_seq: clean.for_seq, skipped: 'limit' }, image: null };
+    }
+    const n = (summary.frames || 0) + 1;
+    return { clean: { ...clean, frame: n, file: frameName(n), bytes: image.length, mime: 'image/jpeg' }, image };
+  }
+  function writeFrame(id, summary, clean, image) {
+    fs.mkdirSync(framesDir(id), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(framesDir(id), clean.file), image, { mode: 0o600 });
+    summary.frames = clean.frame;
+    summary.frame_bytes = (summary.frame_bytes || 0) + image.length;
+  }
+
+  // The picture of frame n of a recording, as { file, bytes }; FRAME_NOT_FOUND when there is none.
+  function frame(id, n) {
+    get(id);
+    const number = typeof n === 'string' && /^\d{1,9}$/.test(n) ? Number(n) : n;
+    if (!Number.isInteger(number) || number < 1) throw new RecordingError('FRAME_NOT_FOUND', 'There is no such picture in this recording', 404);
+    const file = path.join(framesDir(id), frameName(number));
+    let stat;
+    try { stat = fs.statSync(file); } catch { throw new RecordingError('FRAME_NOT_FOUND', 'There is no such picture in this recording', 404); }
+    return { file, bytes: stat.size };
+  }
+
   function stop(id, { reason = 'stopped', stopped_at } = {}) {
     load();
     if (!validId(id)) return null;
@@ -164,19 +220,20 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
 
   function removeFiles(id) {
     summaries.delete(id);
-    for (const file of [itemsPath(id), summaryPath(id)]) { try { fs.rmSync(file, { force: true }); } catch { /* gone already */ } }
+    for (const file of [itemsPath(id), summaryPath(id), framesDir(id)]) { try { fs.rmSync(file, { force: true, recursive: true }); } catch { /* gone already */ } }
   }
 
   // The oldest recordings go first until all of them fit in maxTotalBytes; the recording being written (`keep`) is the last to go.
   function enforceTotal(keep = null) {
+    const size = summary => summary.bytes + (summary.frame_bytes || 0);
     let total = 0;
-    for (const summary of summaries.values()) total += summary.bytes;
+    for (const summary of summaries.values()) total += size(summary);
     if (total <= maxTotalBytes) return;
     const oldest = [...summaries.values()].sort((a, b) => (Date.parse(a.started_at) || 0) - (Date.parse(b.started_at) || 0));
     for (const summary of oldest) {
       if (total <= maxTotalBytes) break;
       if (summary.recording_id === keep) continue;
-      total -= summary.bytes;
+      total -= size(summary);
       removeFiles(summary.recording_id);
     }
   }
@@ -250,7 +307,7 @@ function createBrowserRecordings({ dir, now = Date.now, ...limits } = {}) {
   }
   function stopCleanup() { if (timer) clearInterval(timer); timer = null; }
 
-  return { dir, start, append, stop, list, get, itemsStream, itemLines, filterItems, requests, remove, cleanup, startCleanup, stopCleanup, validId };
+  return { dir, start, append, stop, list, get, itemsStream, itemLines, filterItems, requests, frame, remove, cleanup, startCleanup, stopCleanup, validId };
 }
 
 let shared = null;

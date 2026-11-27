@@ -17,6 +17,40 @@ test('parseLsofCwd reads the name field', () => {
   assert.equal(parseLsofCwd('p1\nfcwd\nnrelative\n'), null);
 });
 
+test('parseLsofCwd undoes the escapes lsof prints outside a UTF-8 locale and for special characters', () => {
+  assert.equal(parseLsofCwd('p123\nfcwd\nn/a/\\xe9\\x9c\\x80\\xe6\\xb1\\x82/b\n'), '/a/需求/b', 'bytes of one character');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/Users/torin/main/02_agent/\\xe9\\x9c\\x80\\xe6\\xb1\\x82-\\xe6\\xac\\xa2\\xe8\\xbf\\x8enotice\n'), '/Users/torin/main/02_agent/需求-欢迎notice', 'several characters and ASCII between');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/a/\\xe8\\xae\\xbe\\xe8\\xae\\xa1/\\xe9\\x9c\\x80\n'), '/a/设计/需', 'escaped runs on both sides of a slash');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/a/with\\\\backslash\n'), '/a/with\\backslash', 'a backslash is doubled');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/a/tab\\there\n'), '/a/tab\there');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/a/ctl\\^Ax\n'), '/a/ctl\x01x');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/a/plain \\q dir\n'), '/a/plain \\q dir', 'an unknown escape stays as it is');
+  assert.equal(parseLsofCwd('p1\nfcwd\nn/a/\\xe9\n'), '/a/\ufffd', 'a lone byte of a UTF-8 sequence is not valid text');
+});
+
+test('processCwd asks lsof in a UTF-8 locale', async () => {
+  let seen = null;
+  const run = (cmd, args, options, callback) => { seen = options; callback(null, 'p42\nfcwd\nn/a/b\n'); };
+  assert.equal(await processCwd(42, { platform: 'darwin', run }), '/a/b');
+  assert.equal(seen.env.LC_ALL, 'en_US.UTF-8');
+  assert.equal(seen.env.PATH, process.env.PATH, 'the rest of the environment is kept');
+});
+
+test('processCwd reads a Chinese directory through the real lsof even when this process runs under LC_ALL=C', { skip: process.platform !== 'darwin' }, async () => {
+  const dir = path.join(root, 'live', '需求-欢迎语');
+  fs.mkdirSync(dir, { recursive: true });
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { cwd: dir, stdio: 'ignore' });
+  const old = process.env.LC_ALL;
+  process.env.LC_ALL = 'C';
+  try {
+    await new Promise(resolve => child.once('spawn', resolve));
+    assert.equal(await processCwd(child.pid), dir);
+  } finally {
+    if (old === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = old;
+    child.kill();
+  }
+});
+
 test('cwdInRoot compares real paths and refuses symbolic links out of the root', () => {
   const work = path.join(root, 'work');
   const sub = path.join(work, '子 dir');

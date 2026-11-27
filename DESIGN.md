@@ -289,3 +289,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.175.3 Fill the gap after Check: only wrong letters are red, the right word stands above the blanks
 > v2.176.0 The floating scrollbar is the mouse: slide it left to pull out the mouse ball
 > v2.176.1 Mouse ball: a status pill says whether the button is down and who gets it
+> v2.176.2 Terminal file links: the shell's directory with Chinese characters is read correctly (lsof escapes)

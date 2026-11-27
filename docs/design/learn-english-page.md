@@ -370,8 +370,17 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
 - When a card plays by itself (`autoPlays` in `learn-audio.mjs`): a word (Spell, a word in Review or Mistakes) when it appears, with the repeat, and
   once more after the answer (a word asked inside its sentence plays that whole sentence instead, Hear it too; see "Spell the word"); Dictation always at the start (listening is the task); Say it the model at the start; Fill the
   gap (Build while shown) and a sentence in Review as chosen: by default the whole sentence when the card appears, the answer included (the
-  person's decision of 2026-11-26; `audio_sentences_at` 'start' since 2026-11-27, before 'after'); "After the answer" stays a choice. A person
-  who saved the choice keeps it.
+  person's decision of 2026-11-26; `audio_sentences_at` 'start' since 2026-11-27, before 'after'); "After the answer" stays a choice.
+- **Sentences at the start for everyone** (schema 29, the user's report of 2026-11-27: "This sentence needs to autoplay"): the learning settings
+  are stored whole, so anyone who had changed any learning setting before v2.174.2 had 'after' stored as if chosen, and the new default never
+  reached them. The 28 → 29 migration (`migrateSentencesAtStart` in `services/learn-sync-store.js`, run by `db/index.js` for a database below 29
+  that existed before) turns every stored 'after' into 'start' once, with a new settings version (the next hybrid clock time and change number in
+  `learn_v1_sync:<owner>`), so the Learn sync carries it to the linked engines and it wins over an old copy from a peer that was not migrated yet;
+  two engines that migrate apart both write 'start' and agree. The schema number is the marker: a database at 29 is never changed again, so
+  "After the answer" chosen from then on is kept, and a new database has the default with nothing to migrate. A company computer is skipped (its
+  settings are its home's read-only copy). Known limit: an engine still on an older version that saves a learning setting before it received the
+  migrated copy sends 'after' again with a newer version; it is corrected when that engine updates and migrates. A person who picks "After the
+  answer" on an updated engine while another engine has not updated yet gets it turned back to 'start' when that engine migrates.
 - The player (`createPlayer`, pure, with fake timers in `test/h5-learn-audio.test.js`; one per session, `useAudio` / `useCardAudio` in `Learn.jsx`)
   reads with `speakOnce` (learn-speech.mjs) and waits for each reading's end, then the pause. While it plays, Hear it / Play shows "Playing 1 of 2"
   with a Stop text button (`#h5-learn-stop`); pressing Hear it / Play plays again with the same repeat (Slow too, slowly). Typing (a key, the page's
@@ -382,7 +391,10 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
   user's report, 2026-11-21: "it starts the second pass before the sentence has finished"). The player looks again every 200 ms and starts the
   pause only when the browser has stopped, giving up after the longest time a reading can take.
 - A browser that refuses sound before the first tap (`not-allowed`, or an automatic play that has not started after 2.5 s: iOS): the button
-  becomes "Tap to play" (`#h5-learn-tap-play`) once per page load; later automatic plays are not watched.
+  becomes "Tap to play" (`#h5-learn-tap-play`) once per page load; later automatic plays are not watched. On a phone "Tap to play" scrolls
+  just into sight above the pinned actions and the page's keyboard when it appears (`TapToPlay`, with `revealInPage`, which keeps the answer
+  above it on the page): on a small phone (375 x 667) the sound row under the gap of Fill the gap was behind the actions, so a refused sentence
+  was only silent. `scripts/test-h5-learn-browser.cjs` checks it at 390 x 844 and 375 x 667 with the keyboard open.
 - Voice (the first row of the card): this device's voices or DeepSeek's, made on the server; the player is the same for both. See "DeepSeek
   voice" in [learn-english-voice.md](learn-english-voice.md).
 

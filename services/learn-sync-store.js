@@ -131,6 +131,42 @@ function storedSeqs(db) {
   return best;
 }
 
+// Schema 29 ("Sentences at the start for everyone" in docs/design/learn-english-page.md): v2.174.2 made the whole sentence play when a card appears
+// ('start') the default of `audio_sentences_at`, but the learning settings are stored whole, so anyone who had changed any learning setting before
+// had 'after' stored as if they had chosen it. Once, when a database below schema 29 is migrated, every owner's stored 'after' becomes 'start'
+// with a new version of the settings (the next hybrid clock time and change number), so the Learn sync carries it to the linked engines and it wins
+// over the old copy of a peer that was not migrated yet (two engines that migrate apart both write 'start', so they agree). The schema number is the
+// marker: a database at 29 is never looked at again, so an explicit "After the answer" chosen later stays. A company computer is skipped: its
+// learning settings are a read-only copy of its home's, which migrates them. Returns how many owners were changed.
+function migrateSentencesAtStart(db, { company = false, now = Date.now() } = {}) {
+  if (company) return 0;
+  const { readState, writeState } = require('./settings-sync-store');
+  // The owners with learning settings stored (the key after `learn_v1:`).
+  let owners;
+  let levels;
+  try {
+    owners = db.prepare("SELECT substr(key, 10) FROM system_state WHERE substr(key, 1, 9) = 'learn_v1:'").pluck().all();
+    levels = db.prepare("SELECT substr(key, 16) FROM system_state WHERE substr(key, 1, 15) = 'learn_level_v1:'").pluck().all();
+  } catch { return 0; } // no system_state (a database made before it): nothing stored
+  let changed = 0;
+  db.transaction(() => {
+    // The change numbers and clock times kept in system_state come first, so the new version is after every one a peer may have seen.
+    for (const owner of new Set([...owners, ...levels])) {
+      for (const value of [readState(db, `learn_v1_sync:${owner}`), readState(db, `learn_level_v1:${owner}`)]) {
+        if (value && typeof value === 'object') { observeSeq(db, value.seq); observe(db, value.at); }
+      }
+    }
+    for (const owner of owners) {
+      const value = readState(db, `learn_v1:${owner}`);
+      if (!value || typeof value !== 'object' || Array.isArray(value) || value.audio_sentences_at !== 'after') continue;
+      writeState(db, `learn_v1:${owner}`, { ...value, audio_sentences_at: 'start' });
+      writeState(db, `learn_v1_sync:${owner}`, { at: stamp(db, now), by: '', seq: nextSeq(db) });
+      changed += 1;
+    }
+  })();
+  return changed;
+}
+
 // The questions about a card and their answers ("Ask about a question" in docs/design/learn-english.md): only the newest MAX_CHAT_MESSAGES of a card
 // are kept, ordered by time then uid, the same order on every engine, so the union of two engines pruned the same way is the same set.
 const MAX_CHAT_MESSAGES = 20;
@@ -196,4 +232,4 @@ function onLearnChanged(listener) {
   return () => listeners.delete(listener);
 }
 
-module.exports = { COACH_UID, MAX_CHAT_MESSAGES, pruneChats, MAX_CONVOS, MAX_CONVO_MESSAGES, pruneConvos, ensureSyncSchema, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };
+module.exports = { COACH_UID, MAX_CHAT_MESSAGES, pruneChats, MAX_CONVOS, MAX_CONVO_MESSAGES, pruneConvos, ensureSyncSchema, migrateSentencesAtStart, observe, observeSeq, stamp, nextSeq, maxSeq, reviewId, learnChanged, onLearnChanged };

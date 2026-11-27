@@ -62,6 +62,13 @@ const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 // Every key of system_state and engine_identity is declared with its scope (lib/server-state-keys.js); a row with any other key is refused.
 require('../lib/server-state-keys').guard(db);
+// Schema 29: once, a stored "After the answer" of the sentence audio becomes the default "When the card appears" (services/learn-sync-store.js
+// migrateSentencesAtStart). Only for a database below 29 that existed before (a new one has nothing stored); not on a company computer.
+if (storedSchema > 0 && storedSchema < 29) {
+  const company = require('../services/device-tier').createDeviceTier({ db }).isCompany();
+  const moved = require('../services/learn-sync-store').migrateSentencesAtStart(db, { company });
+  if (moved) console.log(`Database: the sentences of ${moved} learning settings are read when the card appears (the default since v2.174.2)`);
+}
 
 const { randomUUID } = require('crypto');
 const identity = db.prepare("SELECT value FROM engine_identity WHERE key = 'instance_id'").get();

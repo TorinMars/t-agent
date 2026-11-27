@@ -284,3 +284,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.174.2 Fill the gap: letters grouped by syllable, sentences read when the card opens by default
 > v2.174.3 Mouse ball drives the program's own mouse selection when mouse reporting is on
 > v2.175.0 Attention calendar: year, month, week and day views, search, schedule duration and all day
+> v2.175.1 Sentences read at the start for everyone: a one-time settings migration (schema 29), Tap to play stays visible

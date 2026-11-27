@@ -1362,12 +1362,26 @@ function useCardAudio(audio, exercise, text, result) {
     if (plays.includes('after')) audio.play(text, { once: exercise === 'spell' });
   }, [checked]); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the answer is checked
 }
+// "Tap to play" after the browser refused the first play by itself. On a phone it scrolls just into sight above the pinned actions and the page's
+// keyboard when it appears (revealInPage, which never moves the answer above it out of the page): on a small phone the sound row below the gap of
+// Fill the gap is under the actions otherwise, and the refused sentence would only be silent ("Audio" in docs/design/learn-english-page.md).
+function TapToPlay({ onClick }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const scroller = el && el.closest('.h5-learn-scroll');
+    if (!scroller) return undefined;
+    const frame = requestAnimationFrame(() => revealInPage(el, scroller));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return <Button ref={ref} id="h5-learn-tap-play" variant="outlined" startIcon={<Icon name="learnSound" size={20} />} onClick={onClick}>{t('Tap to play')}</Button>;
+}
 // Hear it / Play: while this text plays, "Playing 1 of 2" with Stop; when the browser refused the first play, "Tap to play".
 function AudioButton({ audio, text, phone, field, id = 'h5-learn-hear', label = 'Hear it', slow, onPress = null }) {
   const press = () => { if (onPress) onPress(); audio.play(text, slow === undefined ? {} : { slow }); };
   const { state } = audio;
   if (state.blocked && state.text === text) {
-    return <Button id="h5-learn-tap-play" variant="outlined" startIcon={<Icon name="learnSound" size={20} />} onClick={press}>{t('Tap to play')}</Button>;
+    return <TapToPlay onClick={press} />;
   }
   const playing = state.playing && state.text === text && slow === undefined;
   const name = playing ? tf('Playing {1} of {2}', state.index, state.total) : t(label);
@@ -1397,7 +1411,7 @@ function AudioIcons({ audio, text, field, id = 'h5-learn-hear', label = 'Hear it
   const playing = state.playing && state.text === text;
   const tint = theme => (playing ? { bgcolor: alpha(theme.palette.primary.main, 0.12) } : {});
   const first = state.blocked && state.text === text
-    ? <Button id="h5-learn-tap-play" variant="outlined" startIcon={<Icon name="learnSound" size={20} />} onClick={() => press(false)}>{t('Tap to play')}</Button>
+    ? <TapToPlay onClick={() => press(false)} />
     : (
       <IconButton id={id} data-playing={playing ? 'true' : undefined} onClick={() => press(false)} {...keepFocus(field)} {...named(playing ? tf('Playing {1} of {2}', state.index, state.total) : t(label))}
         sx={theme => ({ color: 'primary.main', ...tint(theme) })}><Icon name="learnSound" size={22} /></IconButton>

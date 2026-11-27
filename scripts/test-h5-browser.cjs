@@ -1658,7 +1658,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('#h5-copy-close').tap();
     await page.locator('#h5-copy').waitFor({ state: 'hidden' });
 
-    // Long press on the terminal body opens the copy view; a press that moves does not.
+    // No long press on the terminal body: a held finger does not open the copy view (it stays in the menu), and a moving press is a scroll.
     const touch = (type, x, y) => page.evaluate(([kind, px, py]) => {
       const target = document.querySelector('.h5-xterm:not([hidden]) .xterm-screen');
       const init = { bubbles: true, cancelable: true, clientX: px, clientY: py, pointerId: 7, pointerType: 'touch', isPrimary: true };
@@ -1666,16 +1666,9 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     }, [type, x, y]);
     const screenBox = await page.locator('.h5-xterm:not([hidden]) .xterm-screen').boundingBox();
     await touch('pointerdown', screenBox.x + 50, screenBox.y + 100);
-    await touch('pointermove', screenBox.x + 50, screenBox.y + 130);
     await page.waitForTimeout(700);
-    assert.equal(await page.locator('#h5-copy').isVisible(), false, 'a moving press is a scroll, not a long press');
-    await touch('pointerup', screenBox.x + 50, screenBox.y + 130);
-    await touch('pointerdown', screenBox.x + 50, screenBox.y + 100);
-    await page.waitForTimeout(700);
-    await page.locator('#h5-copy').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#h5-copy').isVisible(), false, 'a held finger does not open the copy view');
     await touch('pointerup', screenBox.x + 50, screenBox.y + 100);
-    await page.locator('#h5-copy-close').tap();
-    await page.locator('#h5-copy').waitFor({ state: 'hidden' });
 
     // Double tap selects a word and triple tap a line and copies at once (copy on select, the same notice as a program copy, no bar);
     // new output clears the highlight; a program with mouse mode gets the taps instead.

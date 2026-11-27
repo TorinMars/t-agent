@@ -42,11 +42,8 @@ const TerminalClipboard = (() => {
   }
   const countChars = text => Array.from(text).length;
   const copiedMessage = text => (countChars(text) === 1 ? 'Copied 1 character' : `Copied ${countChars(text)} characters`);
-  // The way to copy by hand that is left when the browser refuses every write: the copy view (a long press on touch, "Copy text" in the
-  // terminal menu with a mouse).
-  const failedMessage = () => (typeof document !== 'undefined' && document.documentElement && document.documentElement.dataset
-    && document.documentElement.dataset.input === 'pointer'
-    ? 'Could not copy. Use Copy text in the terminal menu' : 'Could not copy. Long-press to open the copy view');
+  // The way to copy by hand that is left when the browser refuses every write: the copy view ("Copy text" in the terminal menu).
+  const failedMessage = () => 'Could not copy. Use Copy text in the terminal menu';
   // One line for the bar: white space folded, cut after PREVIEW_CHARS (the bar cuts it again to its width).
   function previewOf(text) {
     const line = text.replace(/\s+/g, ' ').trim();

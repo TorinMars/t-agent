@@ -147,10 +147,12 @@ const probe = page => page.evaluate(() => {
       await page.touchscreen.tap(150, 300);
       assert.equal(await topLine(), lockedTop, 'a tap does not scroll');
 
-      // Copy view (long press): Fit under 100 columns shows the wrap hint; "Widen terminal" switches to Wide (200) and the PTY gets 200 columns.
+      // Copy view (opened from the menu action; a held finger does not open it): Fit under 100 columns shows the wrap hint; "Widen terminal" switches to Wide (200) and the PTY gets 200 columns.
       await touch('touchStart', 150, 300);
       await page.waitForTimeout(650);
       await touch('touchEnd');
+      assert.equal(await page.locator('#h5-copy').count(), 0, 'a held finger does not open the copy view');
+      await page.evaluate(() => window.H5UI.actions.openCopy());
       await page.locator('#h5-copy').waitFor();
       await page.locator('#h5-copy-wrap-hint').waitFor();
       assert.equal(await page.locator('#h5-copy-wrap-hint span').first().textContent(), `Lines are wrapped at ${fit.lastCols} columns`);

@@ -320,7 +320,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.equal(view.pressed, 'true');
     assert.equal(view.ring, '1');
     assert.equal(view.color, 'rgb(144, 202, 249)', 'the cursor is blue while pressed');
-    assert.equal(view.copyView, false, 'the long press of the terminal did not open the copy view');
+    assert.equal(view.copyView, false, 'no copy view opened (the terminal has no long press any more)');
     await shot('press');
     const select1 = at(g, 12, 3);
     await glide(finger1, fingerFor(select1));

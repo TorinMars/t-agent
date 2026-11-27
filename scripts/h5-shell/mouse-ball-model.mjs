@@ -26,18 +26,21 @@ export function intersect(a, b) {
   return box.right > box.left && box.bottom > box.top ? box : null;
 }
 
-// The axis of a one-finger drag on the wheel strip, from its travel (dx, dy) since the touch: null while it is shorter than AXIS_SLOP, then 'mouse'
-// for a slide more sideways than up or down AND to the left (the ball comes out), else 'scroll' (the strip scrolls as always). The caller keeps
-// the first answer that is not null until the lift: a drag that started vertical, or went to the right, never becomes the mouse.
-export function stripAxis(dx, dy) {
+// The axis of a one-finger drag on the wheel strip or the mouse handle, from its travel (dx, dy) since the touch: null while it is shorter than
+// AXIS_SLOP, then 'mouse' for a slide more sideways than up or down AND toward the inside of the screen (the ball comes out), else 'scroll' (the
+// strip scrolls as always; on the handle nothing happens). `side`: the edge the strip or handle sits on, 'right' (the strip, always: the slide is
+// to the left) or 'left' (a handle moved to the left edge: the slide is to the right). The caller keeps the first answer that is not null until the
+// lift: a drag that started vertical, or went toward the edge, never becomes the mouse.
+const inward = side => (side === 'left' ? 1 : -1);
+export function stripAxis(dx, dy, side = 'right') {
   if (Math.hypot(dx, dy) < AXIS_SLOP) return null;
-  return Math.abs(dx) > Math.abs(dy) && dx < 0 ? 'mouse' : 'scroll';
+  return Math.abs(dx) > Math.abs(dy) && dx * inward(side) > 0 ? 'mouse' : 'scroll';
 }
 
-// How far the thumb is stretched (0 to 1) for the finger at `finger` after a touch at `start`: the travel to the left over DETACH px. At 1 it lets
-// go and is the ball. A finger back to the right of the touch is 0 (the thumb hangs on the strip).
-export function stretchProgress(start, finger) {
-  return clamp((start.x - finger.x) / DETACH, 0, 1);
+// How far the thumb (or the handle) is stretched (0 to 1) for the finger at `finger` after a touch at `start`: the travel toward the inside (to the
+// left for `side` 'right', to the right for 'left') over DETACH px. At 1 it lets go and is the ball. A finger back toward the edge is 0.
+export function stretchProgress(start, finger, side = 'right') {
+  return clamp(((finger.x - start.x) * inward(side)) / DETACH, 0, 1);
 }
 
 // Where the stretch hangs on the strip: the thumb's x, at the touch's height kept inside the thumb (`thumb`: its rect; a touch beside the thumb
@@ -46,13 +49,13 @@ export function thumbAnchor(thumb, y) {
   return { x: (thumb.left + thumb.right) / 2, y: clamp(y, thumb.top, thumb.bottom) };
 }
 
-// The stretched thumb at `progress` (stretchProgress): a head under the finger (never right of the strip) that grows from the thumb's width to the
-// ball (`size`, `scale` of the 52px ball), and a tail of the thumb's colour from `root` (thumbAnchor) to the head, as wide as the head up to
-// TAIL_WIDTH.
-export function stretchShape(root, finger, progress) {
+// The stretched thumb at `progress` (stretchProgress): a head under the finger (never outside the strip or the handle: not right of it on the
+// right edge, not left of it on the left edge, `side`) that grows from the thumb's width (`from`: the handle's) to the ball (`size`, `scale` of
+// the 52px ball), and a tail of the thumb's colour from `root` (thumbAnchor) to the head, as wide as the head up to TAIL_WIDTH.
+export function stretchShape(root, finger, progress, side = 'right', from = THUMB_WIDTH) {
   const p = clamp(progress, 0, 1);
-  const size = THUMB_WIDTH + (BALL_SIZE - THUMB_WIDTH) * p;
-  const head = { x: Math.min(finger.x, root.x), y: finger.y };
+  const size = from + (BALL_SIZE - from) * p;
+  const head = { x: side === 'left' ? Math.max(finger.x, root.x) : Math.min(finger.x, root.x), y: finger.y };
   return { head, size, scale: size / BALL_SIZE, tail: { x1: root.x, y1: root.y, x2: head.x, y2: head.y, width: Math.min(size, TAIL_WIDTH) } };
 }
 
@@ -197,4 +200,62 @@ export function dwellStep(state, event) {
 export function dwellProgress(state, t) {
   if (state.phase === 'pressed') return 1;
   return state.phase === 'waiting' ? clamp((t - state.since) / DWELL_MS, 0, 1) : 0;
+}
+
+// ── The mouse handle ("The mouse handle" in docs/design/page-terminal-mouse-ball.md) ──
+// A small bar of its own on the left or right edge of the terminal, only for the mouse: a slide toward the inside pulls the ball out of it (as out of
+// the strip: stripAxis, stretchProgress and stretchShape with its `side`), a long press picks it up to be moved, and the lift snaps it to the
+// nearest edge. Its place is kept per device as { edge: 'left' | 'right', y } (y: the bar's centre as a fraction of the visible terminal's
+// height; null: the default height).
+export const HANDLE = Object.freeze({
+  width: 11, height: 64, // the drawn bar at rest
+  moveWidth: 18, moveHeight: 84, // the drawn bar while it is moved
+  hitWidth: 44, hitHeight: 72, // the box that takes the touch (at least 44px in touch input), the bar inside it at the edge
+  inset: 2, // the bar's gap to the edge, as the strip's
+  bottom: 68, // the default height: the centre this far above the bottom of the terminal (the bar ends 36px above it, clear of the key row)
+});
+export const HOLD_MS = 500; // a handle held still this long is picked up to be moved
+export const HOLD_SLOP = 6; // px the finger may move while the handle counts as held still (as DWELL_SLOP)
+export const SNAP_MS = 160; // the glide to the nearest edge after a move
+export const DEFAULT_PLACE = Object.freeze({ edge: 'right', y: null });
+
+// The stored place, read safely: anything but { edge: 'left' | 'right', y: a number from 0 to 1 or null } falls back to the default (a bad height
+// alone keeps the edge and takes the default height).
+export function parsePlace(text) {
+  let value = null;
+  try { value = typeof text === 'string' ? JSON.parse(text) : null; } catch { value = null; }
+  if (!value || typeof value !== 'object' || (value.edge !== 'left' && value.edge !== 'right')) return DEFAULT_PLACE;
+  if (value.y === null || value.y === undefined) return { edge: value.edge, y: null };
+  return typeof value.y === 'number' && Number.isFinite(value.y) && value.y >= 0 && value.y <= 1 ? { edge: value.edge, y: value.y } : { edge: value.edge, y: null };
+}
+export function serializePlace(place) {
+  const y = typeof place.y === 'number' && Number.isFinite(place.y) ? Math.round(clamp(place.y, 0, 1) * 1000) / 1000 : null;
+  return JSON.stringify({ edge: place.edge === 'left' ? 'left' : 'right', y });
+}
+// The edge nearer to x within `area` (the right one exactly in the middle, where it starts).
+export function nearestEdge(x, area) {
+  return x < (area.left + area.right) / 2 ? 'left' : 'right';
+}
+// A centre for a box of `w` x `h` kept inside `area` (in a terminal too small for it: its middle).
+export function clampCentre(point, area, w, h) {
+  const fit = (value, low, high) => (high < low ? (low + high) / 2 : clamp(value, low, high));
+  return { x: fit(point.x, area.left + w / 2, area.right - w / 2), y: fit(point.y, area.top + h / 2, area.bottom - h / 2) };
+}
+// The centre of the handle's bar at `place` in `area` (the visible terminal): on its edge, `inset` from it, at its height (by default HANDLE.bottom
+// above the bottom), kept so that its touch box stays inside the terminal.
+export function handleCentre(place, area) {
+  const y = place.y === null ? area.bottom - HANDLE.bottom : area.top + place.y * (area.bottom - area.top);
+  const x = place.edge === 'left' ? area.left + HANDLE.inset + HANDLE.width / 2 : area.right - HANDLE.inset - HANDLE.width / 2;
+  return { x, y: clampCentre({ x, y }, area, 0, HANDLE.hitHeight).y };
+}
+// Where a handle let go at `centre` goes: the nearest edge at that height (kept inside), and the place to keep.
+export function snapPlace(centre, area) {
+  const height = area.bottom - area.top;
+  const y = clampCentre(centre, area, 0, HANDLE.hitHeight).y;
+  const place = { edge: nearestEdge(centre.x, area), y: height > 0 ? clamp((y - area.top) / height, 0, 1) : null };
+  return { place, centre: handleCentre(place, area) };
+}
+// A finger on the handle still counts as held still: within HOLD_SLOP px of the touch.
+export function heldStill(from, at) {
+  return Math.hypot(at.x - from.x, at.y - from.y) <= HOLD_SLOP;
 }

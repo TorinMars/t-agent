@@ -1,5 +1,6 @@
-// The mouse ball of the terminal in touch input ("Mouse ball" in docs/design/page-terminal-mouse-ball.md). A chunk of its own (screen-mouse-ball.jsx),
-// drawn by App.jsx through lazy-screens.jsx in touch input. There is no ball of its own on the screen: it comes out of the wheel strip (the floating
+// The mouse ball of the terminal ("Mouse ball" in docs/design/page-terminal-mouse-ball.md), for a finger and a mouse alike (a mouse drags it with the
+// left button held; the lift is the mouseup; Escape cancels). A chunk of its own (screen-mouse-ball.jsx), drawn by App.jsx through lazy-screens.jsx in
+// both input modes. There is no ball of its own on the screen: it comes out of the wheel strip (the floating
 // scrollbar on the right, h5.js `bindWheelStrip`), which hands a finger over when it slides to the left (`ui.actions.stripMouse`, registered here).
 // - Out of the strip: under 40px of travel to the left the thumb stretches toward the finger like a bubble (a tail of the thumb's colour and a head
 //   that grows into the 52px ball); lifted then, it springs back and nothing happens. Past 40px it lets go: the ball under the finger.
@@ -381,7 +382,9 @@ function control(nodes, ui) {
   }
   // While the ball is out: the finger on the document (the strip has its capture); no callout, no scrolling, no context menu.
   const stop = event => { if (drag && event.cancelable) event.preventDefault(); };
-  const following = [['pointermove', move], ['pointerup', up], ['pointercancel', cancel], ['lostpointercapture', cancel], ['contextmenu', stop], ['touchmove', stop]];
+  // Escape (a mouse, or a keyboard beside the finger) ends it like a cancelled touch, and the key does not reach the terminal.
+  const escape = event => { if (drag && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); } };
+  const following = [['pointermove', move], ['pointerup', up], ['pointercancel', cancel], ['lostpointercapture', cancel], ['contextmenu', stop], ['touchmove', stop], ['keydown', escape]];
   function listen(on) {
     for (const [type, handler] of following) {
       if (on) document.addEventListener(type, handler, { capture: true, passive: false });
@@ -485,10 +488,10 @@ const HINT = theme => ({
   '& .h5-mouse-ball-hint-icon': { display: 'inline-flex', color: theme.palette.primary.main, flex: '0 0 auto' },
 });
 
-// `state`: the store keys of App.jsx `BALL_KEYS`. In pointer input (or with the terminal covered or replaced) it draws nothing.
+// `state`: the store keys of App.jsx `BALL_KEYS`. With the terminal covered or replaced it draws nothing; a finger and a mouse use it alike.
 export function MouseBall({ state, ui }) {
   const covered = Boolean(state.empty) || Boolean(state.notebook) || state.copyText !== null || Boolean(state.mindmapOpen) || Boolean(state.learnOpen);
-  const live = state.input === 'touch' && !covered;
+  const live = !covered;
   const ball = useRef(null);
   const overlay = useRef(null);
   const line = useRef(null);

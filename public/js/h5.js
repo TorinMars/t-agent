@@ -2875,17 +2875,20 @@
   }
   // A layer that opened by itself before the terminal took the focus (the "Updated to v…" dialog, UpdatedNotice.jsx) hands it back here once it is gone.
   ui.actions.focusTerminal = () => { if (session && !session.disposed) focusTerminalSoon(session); };
-  // The wheel strip: a scrollbar on the right edge of the terminal (drawn by the shell, scripts/h5-shell/Terminal.jsx; touch mode only).
+  // The wheel strip: a scrollbar on the right edge of the terminal (drawn by the shell, scripts/h5-shell/Terminal.jsx), the same for a finger and a
+  // mouse (pointer events; a mouse drags with the left button), and the place the mouse ball comes out of.
   // Its mode (`data-mode`) follows the shown terminal's buffer:
-  // - 'bar' (normal buffer with history): a thumb whose size is rows / (rows + scrollback in use) and whose position is viewportY / baseY.
+  // - 'bar' (normal buffer): a thumb whose size is rows / (rows + scrollback in use) and whose position is viewportY / baseY.
   //   Dragging the thumb moves the view like a scrollbar (down = newer, up = older), mapped 1:1 to the buffer; a tap on the track above or
   //   below the thumb scrolls one page. The thumb also follows scrolling done elsewhere (new output, a native drag on the body, keys).
+  //   Without history (a fresh shell, a short output) it is drawn all the same, the thumb filling the track: there is nothing to scroll, so a
+  //   drag scrolls nothing and a tap goes through, but the strip is always there, because the mouse ball comes out of it (a slide to the left).
   // - 'spring' (alternate buffer: Claude Code, Codex, vim, tmux ...; the page cannot know the program's position): the thumb rests in the
   //   middle; pulling it down scrolls down (newer), up scrolls up (older), faster the further it is pulled; released, it springs back. The
   //   steps are wheel events, which xterm forwards the way a desktop wheel would (mouse reports, or arrow keys without mouse mode). They point at the
   //   middle of the visible terminal, not at the strip: a program that scrolls the pane under the mouse (opencode) has its main content there, and
   //   the strip's own x is over its right-most columns (opencode's sidebar, which does not scroll the messages).
-  // - 'none' (no terminal, or a normal buffer without history): nothing is drawn and touches go through to the terminal.
+  // - 'none' (no terminal shown): nothing is drawn and touches go through.
   // A drag on the terminal body does not make wheel events; xterm's own touch handling scrolls the normal-buffer history there (touch-action: pan-y).
   // Tuning. Change these to tune the feel.
   const WHEEL_THUMB_MIN = 32; // px, the smallest bar thumb
@@ -2918,8 +2921,7 @@
   function wheelMode(s) {
     if (!s || s.disposed || s.el.hidden) return 'none';
     const buf = s.term.buffer.active;
-    if (buf.type === 'alternate') return 'spring';
-    return buf.baseY > 0 ? 'bar' : 'none';
+    return buf.type === 'alternate' ? 'spring' : 'bar'; // a normal buffer without history is a bar too (always drawn, the user's rule of 2026-11-27)
   }
   // The bar geometry in px of the strip: thumb size, the room it moves in, its top, and the buffer numbers behind them.
   function wheelBar(s, el) {
@@ -3136,7 +3138,9 @@
     });
     document.addEventListener('pointerup', finish);
     document.addEventListener('pointercancel', finish);
-    // A mouse wheel or trackpad over the strip (a touch screen that also has a mouse or trackpad: the strip is drawn in input mode 'touch') goes to the
+    // A mouse press on the strip keeps the keyboard where it is (the terminal) and starts no text selection.
+    document.addEventListener('mousedown', event => { if (strip(event)) event.preventDefault(); });
+    // A mouse wheel or trackpad over the strip (a computer, or a touch screen that also has a mouse or trackpad) goes to the
     // terminal under it at the same point, as if the strip were not there: xterm scrolls, or reports the cell under the pointer to the program, and a
     // sideways wheel moves the wide terminal. A pinch (ctrlKey) stays the browser's.
     document.addEventListener('wheel', event => {

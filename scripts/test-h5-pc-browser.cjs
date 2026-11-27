@@ -1,5 +1,5 @@
 // The MUI page (/h5) on a computer, in real Chromium with mocked servers: input mode 'pointer' (no touch, a mouse) at 1440x900 and 1280x800, and the
-// touch mode at phone size for comparison. Checks: no key row, no wheel strip, no keyboard buttons, the draft box always shown, 13px terminal font,
+// touch mode at phone size for comparison. Checks: no key row, the wheel strip (16px, beside the terminal), no keyboard buttons, the draft box always shown, 13px terminal font,
 // native titles on icon buttons, Escape closing the saved commands menu from the terminal; Enter translates and sends, Alt+Enter sends as typed, Cmd/Ctrl+Enter is a new line, and after a send the focus stays in the draft box;
 // typing with nothing focused reaches the terminal, Escape in the draft box goes back to it, Cmd/Ctrl+K focuses the session search; a shorter window does
 // NOT pin the terminal (it was taken for the on-screen keyboard); the terminal "done" acknowledgement (local and remote Engine) and the next-session
@@ -115,9 +115,20 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await openTerminal(page, 'Fix login', 'Terminal 1');
       await history(page);
 
-      // Layout: no key row, no wheel strip, no keyboard buttons; the draft box is shown at rest (one line) with the whole action row.
+      // Layout: no key row, no keyboard buttons; the draft box is shown at rest (one line) with the whole action row. The wheel strip is drawn as on a
+      // phone (the mouse ball comes out of it), 16px wide beside the terminal box (it covers no column), and xterm's own scrollbar is hidden.
       assert.equal(await page.locator('#h5-keys').count(), 0, `${label}: no function key row`);
-      assert.equal(await page.locator('#h5-wheel').count(), 0, `${label}: no wheel strip`);
+      {
+        const strip = await page.evaluate(() => {
+          const el = document.getElementById('h5-wheel');
+          const box = el.getBoundingClientRect();
+          const term = document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect();
+          const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
+          return { mode: el.dataset.mode, width: box.width, left: box.left, termRight: term.right, scrollbar: viewport.offsetWidth - viewport.clientWidth, visibility: getComputedStyle(el).visibility };
+        });
+        assert.deepEqual([strip.mode, strip.visibility, strip.scrollbar], ['bar', 'visible', 0], `${label}: the wheel strip is drawn, xterm's scrollbar is not (${JSON.stringify(strip)})`);
+        assert.ok(strip.width === 16 && strip.left >= strip.termRight, `${label}: a 16px strip beside the terminal box (${JSON.stringify(strip)})`);
+      }
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"], #h5-actions [data-action="draft"]').count(), 0, `${label}: no keyboard buttons`);
       const draft = await page.evaluate(() => ({ focused: document.activeElement && document.activeElement.id === 'h5-translate-input', height: document.getElementById('h5-translate').getBoundingClientRect().height, input: document.getElementById('h5-translate-input').getBoundingClientRect().height }));
       assert.equal(draft.focused, false);

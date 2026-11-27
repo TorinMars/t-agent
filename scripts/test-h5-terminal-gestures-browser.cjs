@@ -1,7 +1,7 @@
 // The sideways pan and the width of the page's terminal (public/js/terminal-gestures.js, h5.js) in real Chromium, and how it lives with the wheel strip.
 // Phone (390 x 844, touch, real CDP touches): the strip is there and the terminal is touch-action: pan-y; a pan picks its axis in the first 10px and keeps
 // it; a vertical pan on the body scrolls the normal buffer once (xterm's own touch scrolling, 1:1) and sends the alternate buffer nothing; in Wide mode a sideways
-// pan moves the screen, but not from the strip, which stays at the right edge of the visible box; the cursor is followed after input; the terminal width in
+// pan moves the screen, but not from the strip (drawn also without history), which stays at the right edge of the visible box; the cursor is followed after input; the terminal width in
 // the header's More menu ("Terminal width: …") picks Fit / 200 / 500 / 1000 / 2000 (the current one ticked); the PTY gets the columns through the resize message;
 // the copy view shows the wrap hint in Fit mode and widens from there (to the default 200); the choice is remembered. The strip's own behaviour is in test-h5-browser.cjs and test-h5-wheel-stuck-browser.cjs.
 // Computer (1440 x 900, mouse): Shift+wheel and a sideways wheel move the wide screen, the vertical wheel stays xterm's. The server is mocked (no data folder is used).
@@ -98,6 +98,8 @@ const probe = page => page.evaluate(() => {
       };
       const emit = data => page.evaluate(data => new Promise(done => { window.sockets.at(-1).emit(data); requestAnimationFrame(() => requestAnimationFrame(done)); }), data);
       assert.equal(await page.locator('#h5-wheel').count(), 1, 'the wheel strip is there');
+      await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar');
+      assert.equal(await page.evaluate(() => document.querySelector('#h5-wheel').getAttribute('aria-valuemax')), '0', 'a fresh terminal without history has the strip all the same (nothing to scroll)');
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden])')).touchAction), 'pan-y', 'the body keeps pan-y: vertical drags stay the browser\'s and xterm\'s');
       // The phone has the terminal width in More (the app bar has no room for the switch).
       const widthMode = () => page.evaluate(() => window.H5UI.get().terminalWidth.mode);
@@ -206,6 +208,17 @@ const probe = page => page.evaluate(() => {
       wide = await probe(page);
       const cell = wide.content / 200;
       assert.ok(wide.offset > 0 && 122 * cell <= wide.offset + wide.visible + 1, `the cursor at column 122 is kept in view (offset ${wide.offset})`);
+      // Wide without history (a cleared screen): the strip is still drawn and still is not the terminal's: a pan from its left moves the screen, a
+      // sideways pan that starts on it (right, so it is no mouse ball) moves nothing.
+      await emit('\x1b[H\x1b[2J\x1b[3J$ ');
+      await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar' && document.querySelector('#h5-wheel').getAttribute('aria-valuemax') === '0');
+      await page.locator('#h5-keys [data-key="Escape"]').tap();
+      await page.waitForFunction(() => !document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').style.transform);
+      await pan(300, 300, -120, 0);
+      const clearedPan = (await probe(page)).offset;
+      assert.ok(Math.abs(clearedPan - 120) <= 1, `without history a pan beside the strip still moves the wide screen (${clearedPan})`);
+      await pan(352, 300, 34, 0);
+      assert.equal((await probe(page)).offset, clearedPan, 'a sideways pan that starts on the strip does not move the wide screen');
 
       // More > Terminal width: the list ticks 200; pick 500 columns; then Fit to screen goes back to the columns that fit.
       assert.equal(await pickWidth('500 columns'), '200', 'the current width (200) is ticked');

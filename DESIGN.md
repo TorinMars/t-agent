@@ -304,3 +304,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.179.0 The mouse handle scrolls the terminal (drag up or down) and the floating scroll strip is removed
 > v2.180.0 tcli browser: drag, upload, fill, check, dialog, snapshot filter/diff, shot zoom/annotate, console filters, recording pictures with an offline replay, and hints on errors (extension 1.0.8)
 > v2.181.0 Open in VS Code in the browser: the engine's VS Code web server, the page server's proxy for a local, direct or linked engine, one-time license confirmation (no page button yet)
+> v2.182.0 Open in VS Code in the More menu of a terminal session (starts VS Code in the browser on the engine, one-time license confirmation)

@@ -509,6 +509,12 @@ function createVscodeWeb({
   }
 
   // Where the process listens, without the token (diagnostics and tests). Null while not running.
+  // The token the browser's VS Code needs as its `vscode-tkn` cookie (its client reads it for the connection handshake: found with a real VS Code,
+  // 2026-11-27). Only for the answer of an authenticated start/status call (routes/vscode-web-engine.js `vscodeTerminalAnswer`), never in status().
+  function connectionToken() {
+    return state === 'ready' && child && child.token ? child.token : null;
+  }
+
   function socketTarget() {
     return child && child.target ? { ...child.target } : null;
   }
@@ -645,7 +651,7 @@ function createVscodeWeb({
 
   return {
     CAPABILITY, ERRORS,
-    probe, check, ensure, status, stop, shutdown, socketTarget, touch, onStop,
+    probe, check, ensure, status, stop, shutdown, socketTarget, connectionToken, touch, onStop,
     request, upgrade, openWebSocket,
     settings: readSettings, setSettings, acceptLicense,
     basePath, validHost, validProto,

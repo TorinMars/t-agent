@@ -359,3 +359,17 @@ test('an HTTP request to a stopped VS Code is refused before any socket is opene
   const status = await new Promise(resolve => ws.once('unexpected-response', (req, res) => resolve(res.statusCode)));
   assert.equal(status, 503);
 });
+
+test('connectionToken(): only while ready, never in status(), and it is the token VS Code was started with', async t => {
+  const { manager, args } = fixture(t);
+  assert.equal(manager.connectionToken(), null, 'stopped');
+  await manager.ensure(HOST);
+  await ready(manager);
+  const token = manager.connectionToken();
+  assert.match(token, /^[0-9a-f]{64}$/);
+  assert.ok(!JSON.stringify(manager.status()).includes(token));
+  const argv = args();
+  assert.ok(!argv.join(' ').includes(token), 'not on the command line');
+  await manager.stop();
+  assert.equal(manager.connectionToken(), null, 'stopped again');
+});

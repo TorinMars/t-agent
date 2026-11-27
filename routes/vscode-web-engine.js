@@ -103,7 +103,12 @@ function resolveFolder(task, terminalId) {
 async function vscodeTerminalAnswer({ task, terminalId, start = false, body = {}, manager = getVscodeWeb() }) {
   const folder = resolveFolder(task, terminalId);
   const status = start ? await manager.ensure({ host: body && body.host, proto: body && body.proto }) : await manager.check();
-  return { ...status, folder, open_path: `${status.base_path}/?folder=${encodeURIComponent(folder)}` };
+  const answer = { ...status, folder, open_path: `${status.base_path}/?folder=${encodeURIComponent(folder)}` };
+  // The browser's VS Code reads the token from its own `vscode-tkn` cookie: the page server sets it when it exchanges the launch ticket and takes it
+  // out of the answer before the browser sees it ("The connection token" in docs/design/vscode-web-proxy.md).
+  const tkn = status.state === 'ready' && typeof manager.connectionToken === 'function' ? manager.connectionToken() : null;
+  if (tkn) answer.connection_token = tkn;
+  return answer;
 }
 
 module.exports = { createVscodeWebEngineRouter, handleVscodeUpgrade, authorizeBearer, parseWebTarget, resolveFolder, vscodeTerminalAnswer, SCOPE };

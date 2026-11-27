@@ -191,11 +191,11 @@ function createVscodeProxy(options = {}) {
     for (const [ticket, record] of tickets) if (record.expiresAt <= time) tickets.delete(ticket);
   }
 
-  function issueTicket({ sessionId, owner, engineId, target }) {
+  function issueTicket({ sessionId, owner, engineId, target, connectionToken }) {
     pruneTickets();
     if (tickets.size >= MAX_PENDING_TICKETS) tickets.delete(tickets.keys().next().value);
     const ticket = randomToken(TICKET_PREFIX);
-    tickets.set(ticket, { sessionId, owner, engineId, target, expiresAt: now() + settings.ticketTtlMs });
+    tickets.set(ticket, { sessionId, owner, engineId, target, connectionToken, expiresAt: now() + settings.ticketTtlMs });
     return ticket;
   }
 
@@ -212,12 +212,14 @@ function createVscodeProxy(options = {}) {
     if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return answer;
     const out = { ...answer };
     delete out.open_url;
+    delete out.connection_token; // never in the JSON the browser reads: it goes into a cookie when the ticket is exchanged
     if (answer.state !== 'ready' || !sessionId) return out;
     const engineId = answer.engine_id;
     const openPath = answer.open_path;
     if (typeof engineId !== 'string' || !ENGINE_ID.test(engineId) || typeof openPath !== 'string') return out;
     if (!openPath.startsWith(`/vscode/${engineId}/`) || /[^\x21-\x7e]|[#\\]/.test(openPath)) return out;
-    const ticket = issueTicket({ sessionId, owner, engineId, target });
+    const connectionToken = typeof answer.connection_token === 'string' && /^[A-Za-z0-9_-]{16,256}$/.test(answer.connection_token) ? answer.connection_token : '';
+    const ticket = issueTicket({ sessionId, owner, engineId, target, connectionToken });
     out.open_url = `${openPath}${openPath.includes('?') ? '&' : '?'}${TICKET_PARAM}=${ticket}`;
     return out;
   }
@@ -291,7 +293,16 @@ function createVscodeProxy(options = {}) {
     const origin = publicOrigin(req);
     if (req.secure || (origin && origin.proto === 'https')) parts.push('Secure');
     res.statusCode = 302;
-    res.setHeader('Set-Cookie', parts.join('; '));
+    const cookiesOut = [parts.join('; ')];
+    // VS Code's own client reads `vscode-tkn` from the browser's cookies for its connection handshake (without it: "Unauthorized client refused: auth
+    // mismatch"). Scoped to this engine's path; not HttpOnly because VS Code's script reads it. Requests still get the token from the engine, never from here.
+    if (ticket.connectionToken) {
+      const tkn = [`vscode-tkn=${ticket.connectionToken}`, `Path=${target.basePath}/`, 'SameSite=Lax'];
+      if (expires) tkn.push(`Expires=${new Date(expires).toUTCString()}`);
+      if (parts.includes('Secure')) tkn.push('Secure');
+      cookiesOut.push(tkn.join('; '));
+    }
+    res.setHeader('Set-Cookie', cookiesOut);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Location', `${target.path}${target.query}`);

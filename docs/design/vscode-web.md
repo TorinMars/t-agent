@@ -138,7 +138,7 @@ vscode.socketTarget();    // { socketPath } or { host, port } while running, for
 vscode.settings(); await vscode.setSettings({ enabled, idle_minutes });
 ```
 
-The connection token never leaves the manager: no function returns it, and `request` / `upgrade` / `openWebSocket` add it themselves.
+The connection token stays in the manager: `request` / `upgrade` / `openWebSocket` add it themselves, and `status()` never has it. One call returns it: `connectionToken()` (the token while ready, else null), used only for the answer of an authenticated start/status call (`vscodeTerminalAnswer` adds `connection_token`), because the browser's VS Code client reads it from its own `vscode-tkn` cookie for its connection handshake (without that cookie the workbench says "Unauthorized client refused: auth mismatch"; found with a real VS Code on 2026-11-27, v2.182.0 stripped the cookie and failed on a phone).
 
 ## Security notes
 
@@ -146,7 +146,7 @@ The connection token never leaves the manager: no function returns it, and `requ
   in VS Code's pages can call the page's `/api` with the person's session (the path-scoped cookie limits only what the browser sends to
   `/vscode/...`, not what a script on the origin can request). This is the price of one origin; the planned "VS Code address" setting can move
   `open_url` to an origin of its own. The engine strips `service-worker-allowed`, so VS Code's service worker cannot claim the page's scope.
-- **The token never leaves the engine**: not in a status, an error, a log or a URL. It is in a 0600 file for the CLI, in the `vscode-tkn` cookie of
+- **The token leaves the engine only in the answer of an authenticated start/status call** (`connection_token`), never in a status, an error, a log or a URL; the page server turns it into a path-scoped `vscode-tkn` cookie and takes it out of the JSON the browser reads. It is in a 0600 file for the CLI, in the `vscode-tkn` cookie of
   the requests the engine makes, and taken out of `Location`, `Set-Cookie` and the kept output.
 - **Ticket and cookie** (Contract C, page server): a single-use 30-second launch ticket in `open_url`, exchanged for an httpOnly `ta_vscode` cookie
   scoped to `/vscode/<engine id>/`, bound to the issuing session; it grants nothing under `/api`.

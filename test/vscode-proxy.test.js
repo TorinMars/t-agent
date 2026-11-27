@@ -407,6 +407,29 @@ test('Secure is set on the cookie when the browser came over HTTPS', async () =>
   assert.ok(setCookie.split(';').map(part => part.trim()).includes('Secure'), setCookie);
 });
 
+test('the connection token goes into a path-scoped vscode-tkn cookie (VS Code\'s client reads it), never into the answer', async () => {
+  const token = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+  const answer = env.proxy.launchAnswer({ ...readyAnswer(DIRECT), connection_token: token }, { sessionId: 'sid-1', owner: 'owner', target: TARGETS[DIRECT] });
+  assert.equal(answer.connection_token, undefined, 'the browser never reads it from the JSON');
+  assert.ok(!JSON.stringify(answer).includes(token));
+  const first = await call(answer.open_url, { headers: {} });
+  assert.equal(first.status, 302);
+  const cookies = first.headers['set-cookie'];
+  assert.equal(cookies.length, 2);
+  assert.match(cookies[0], /^ta_vscode=tvc_/);
+  const attributes = cookies[1].split(';').map(part => part.trim());
+  assert.equal(attributes[0], `vscode-tkn=${token}`);
+  assert.ok(attributes.includes(`Path=/vscode/${DIRECT}/`), cookies[1]);
+  assert.ok(attributes.includes('SameSite=Lax'));
+  assert.ok(!attributes.includes('HttpOnly'), 'VS Code\'s own script reads this cookie');
+  // An answer without a token (an older engine) or with an odd one sets only the session cookie.
+  for (const connection_token of [undefined, 'bad token;x']) {
+    const plain = env.proxy.launchAnswer({ ...readyAnswer(DIRECT), connection_token }, { sessionId: 'sid-1', owner: 'owner', target: TARGETS[DIRECT] });
+    const exchanged = await call(plain.open_url, { headers: {} });
+    assert.equal(exchanged.headers['set-cookie'].length, 1);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Refusals
 // ---------------------------------------------------------------------------

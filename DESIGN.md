@@ -299,3 +299,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.177.3 Remove the long press that opens the copy view on the phone terminal (Copy text stays in the menu)
 > v2.177.4 Remove a node_modules symlink committed by mistake in v2.177.3 and ignore it
 > v2.178.0 Mouse handle: a separate bar at the screen edge that pulls out the mouse ball, moves with a long press and snaps to the nearest edge
+> v2.179.0 The mouse handle scrolls the terminal (drag up or down) and the floating scroll strip is removed

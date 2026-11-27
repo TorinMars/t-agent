@@ -127,6 +127,19 @@ const resizes = (page, index) => page.evaluate(i => window.sockets[i].sent.filte
     assert.equal(await page.locator('.terminal-owner-prompt, .h5-owner-prompt').count(), 0, 'no take-over prompt for a hidden terminal');
     assert.equal(await shownId(page), 't2');
 
+    // The shown terminal is in use on another device: the notice is over it; switching to another terminal that is free takes the notice away
+    // (it sat on the box every terminal shares and stayed over the next one), and showing the first again connects and asks again.
+    const t2 = (await socketOf(page, 't2')).at(-1)[0]; // its current connection
+    await page.evaluate(i => { const socket = window.sockets[i]; socket.readyState = 3; socket.onclose?.({ code: 4009 }); }, t2);
+    await page.locator('.terminal-owner-prompt').waitFor();
+    assert.match(await page.locator('.terminal-owner-prompt').innerText(), /in use on another device/);
+    await pick(page, 'Term 4');
+    assert.equal(await shownId(page), 't4');
+    assert.equal(await page.locator('.terminal-owner-prompt').count(), 0, 'the notice of the first terminal is gone over the next one');
+    await pick(page, 'Term 2');
+    assert.equal(await shownId(page), 't2');
+    assert.equal(await page.locator('.terminal-owner-prompt').count(), 0, 'shown again it connects (the mock accepts) and no stale notice');
+
     // The page is hidden for more than 60 s: every socket is closed; shown again, the shown terminal connects again.
     const setHidden = hidden => page.evaluate(value => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (value ? 'hidden' : 'visible') });

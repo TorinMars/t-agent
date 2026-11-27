@@ -2687,12 +2687,19 @@
   let linkIds = 0;
   let linkTimer = 0;
   let linkHold = { on: false, round: 0 };
+  // The notice "This terminal is in use on another device" of a session (terminal-owner.js `prompt`, drawn over the box all terminals share).
+  function clearOwnerPrompt(s) {
+    if (!s.ownerPrompt) return;
+    s.ownerPrompt();
+    s.ownerPrompt = null;
+  }
   function hideShown() {
     const s = session;
     session = null;
     if (!s) return;
     s.el.hidden = true;
     s.term.blur();
+    clearOwnerPrompt(s); // its "in use on another device" notice sits on the box every terminal shares: it must not stay over the next one (showing it again connects again and asks again)
     s.clipboard?.dismiss(); // a copy request of a terminal that is no longer shown goes away
     dropLinks(s); // and so do its links waiting on the link bar
     scheduleWheelSync();
@@ -3261,6 +3268,7 @@
   }
 
   function open(s, takeover = false) {
+    clearOwnerPrompt(s);
     const taken = takeover ? (dropEarlySocket(), null) : takeEarlySocket(s);
     const ws = taken ? taken.ws : new WebSocket(socketUrl(s.source, s.task.id, s.terminalId, takeover));
     ws.binaryType = 'arraybuffer';
@@ -3295,7 +3303,8 @@
       if (/task[_ ]archived/i.test(event.reason || '')) { archivedElsewhere(s.source, s.task.id); return; } // never reconnects
       if (TerminalOwner.isBlocked(event.code)) {
         if (session !== s) { disposeSession(s); return; } // a hidden warm terminal taken over elsewhere: shown again, it asks then
-        TerminalOwner.prompt(s.el.parentElement || s.el, event.code, () => { if (session === s && !s.disposed) open(s, true); });
+        clearOwnerPrompt(s);
+        s.ownerPrompt = TerminalOwner.prompt(s.el.parentElement || s.el, event.code, () => { s.ownerPrompt = null; if (session === s && !s.disposed) open(s, true); });
         return;
       }
       if (event.code === 1000 || event.code === 1008) {
@@ -3363,6 +3372,7 @@
     keepPreview(s); // what it showed last, for its card in the switcher
     if (session === s) session = null;
     warm = warm.filter(item => item !== s);
+    clearOwnerPrompt(s);
     s.disposed = true;
     scheduleWheelSync();
     s.gestures?.dispose();

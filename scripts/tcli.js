@@ -478,7 +478,7 @@ async function main(argv = process.argv.slice(2), { env = process.env, stdin = p
   } catch (error) {
     const failure = error instanceof CliError ? error : new CliError(error && error.message ? error.message : String(error), EXIT.server);
     if (json) stderr.write(`${JSON.stringify({ ...(failure.body || { error: failure.exit === EXIT.usage ? 'USAGE' : 'ERROR', message: failure.message }), exit: failure.exit })}\n`);
-    else stderr.write(`tcli: ${failure.message}\n`);
+    else stderr.write(`tcli: ${failure.message}\n${failure.hint ? `hint: ${failure.hint}\n` : ''}`); // hint: tcli browser (lib/browser-error-hints.js)
     return failure.exit;
   }
 }

@@ -1,11 +1,14 @@
 // `tcli browser record items` and `tcli browser record requests`: reading a recording ("Reading recordings" in docs/design/tcli.md). Both ask the
 // relay (routes/browser-ext.js) to filter or merge on the server, so a large recording is not sent whole; the filters and the merge are
 // lib/browser-recording-query.js, which tcli also runs itself when the T-Agent it talks to is older (no X-T-Agent-Filtered answer for items, or
-// UNKNOWN_ROUTE for requests), so the answer is the same either way. --tab is applied here again, since a T-Agent from before it ignores it. Loaded by scripts/tcli-browser.js with its helpers. Node built-ins only.
+// UNKNOWN_ROUTE for requests), so the answer is the same either way. --tab is applied here again, since a T-Agent from before it ignores it.
+// `record export` writes the replay page of a recording made with --frames (lib/browser-recording-replay.js). Loaded by scripts/tcli-browser.js
+// with its helpers. Node built-ins only.
 const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
 const { parseItemFilter, filterLines, parseRequestOptions, mergeRequests, QueryError } = require('../lib/browser-recording-query');
+const { buildReplayHtml } = require('../lib/browser-recording-replay');
 
 const OPEN_TIMEOUT_MS = 45_000; // until the answer starts; reading it has no time limit
 
@@ -149,7 +152,59 @@ function createRecordCommands({ send, readJson, failureOf, networkFailure, CliEr
     },
   };
 
-  return { items, requests, requestText };
+  // A whole answer as bytes (a picture of a recording).
+  async function bytesOf(ctx, route) {
+    const response = await open(ctx, route);
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('end', resolve);
+      response.on('error', error => reject(networkFailure(error)));
+    });
+    return Buffer.concat(chunks);
+  }
+
+  // record export <id> --html file (or -o file.html): the pictures of a recording made with --frames and the action each follows, in one
+  // self-contained page ("Pictures of a recording" in docs/design/browser-extension.md). GIF is not built in (it would need a JPEG decoder).
+  const STEP_KINDS = 'frame,click,input,change,submit,key,hover,scroll,nav';
+  const exportRecording = {
+    values: ['output', 'html', 'gif'], bools: ['force'],
+    async run(ctx, flags, positional) {
+      if (positional.length !== 1) throw usage('Usage: tcli browser record export <id> --html file.html [--force]');
+      if (flags.gif !== undefined || /\.gif$/i.test(String(flags.output || ''))) throw usage('GIF export is not built in (it would need a JPEG decoder): use --html file.html, a replay page that works offline');
+      if (flags.html !== undefined && flags.output !== undefined) throw usage('Give the file once: --html file.html or -o file.html');
+      const target = flags.html !== undefined ? flags.html : flags.output;
+      if (!target || target === '-') throw usage('record export needs the file to write: --html file.html');
+      const file = outputFile(ctx, { output: target, force: flags.force });
+      const id = encodeURIComponent(positional[0]);
+      const summary = (await readJson(await open(ctx, `/browser/recordings/${id}`)).catch(error => { throw networkFailure(error); })) || {};
+      const actions = new Map();
+      const frames = [];
+      for await (const line of linesOf(await open(ctx, `/browser/recordings/${id}/items${queryString({ kind: STEP_KINDS })}`))) {
+        if (!line.trim()) continue;
+        let item;
+        try { item = JSON.parse(line); } catch { continue; }
+        if (item.kind === 'frame') frames.push(item);
+        else if (Number.isInteger(item.seq)) actions.set(item.seq, item);
+      }
+      const steps = [];
+      for (const item of frames) {
+        const image = Number.isInteger(item.frame) ? await bytesOf(ctx, `/browser/recordings/${id}/frames/${item.frame}`) : null;
+        steps.push({ item, action: actions.get(item.for_seq) || null, image });
+      }
+      const html = buildReplayHtml({ recordingId: summary.recording_id || positional[0], startedAt: summary.started_at, steps });
+      const size = await toFile(file, async target => { target.write(html); });
+      const pictures = steps.filter(step => step.image).length;
+      if (flags.json) ctx.out(JSON.stringify({ file, size, steps: steps.length, pictures }));
+      else {
+        ctx.out(`Saved ${file} (${pictures} pictures, ${humanSize(size)}): open it in a browser; it needs no network`);
+        if (!pictures) ctx.stderr.write('tcli: this recording has no pictures: record with --frames (record start --frames, or open --record --frames)\n');
+      }
+      return EXIT.ok;
+    },
+  };
+
+  return { items, requests, exportRecording, requestText };
 }
 
 module.exports = { createRecordCommands };

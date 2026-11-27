@@ -244,6 +244,7 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... -o rec.jsonl   
 - `open --record` opens a new Chrome window in front, just for the recording, because the user usually acts in the page while it records: tell the user it is there and what to do in it. When you record only your own actions, add `--background`: the window opens behind the user's windows. A later `open` without `--record` goes to T-Agent's usual window behind. After the recording, a tab the user used stays theirs; an unused one closes like your other tabs, with its window.
 - A recording follows the windows the page opens: popups (sign-in, payment), `target="_blank"` links and new tabs the recorded page opens join the same recording (at most 10 tabs). Each item has `tab`; the first item of an opened tab is `{ "kind": "tab", "action": "opened", "tab", "opener", "url" }`. Its first requests can have `via: "webRequest"` (no bodies). Use `--tab T` with `record items` / `record requests` to read one tab.
 - Keep recordings small: `--types XHR,Fetch,Document` keeps request and response bodies only for those resource types (other requests stay in the recording without bodies, `body_omitted: "type"`); add `--drop-other-types` to leave them out; `--max-body N` cuts longer bodies (`body_truncated: true`, `body_bytes` is the size before the cut). The same options work with `open --record`.
+- To see what happened, add `--frames` to `record start` or `open --record`: a small picture is taken after each of your actions and after each click, form submit and page change of the user (at most 200, `--max-frames N`); password and other secret fields are painted black before the picture is taken, and a picture that cannot be masked is skipped. Then `record export rec_... --html replay.html` writes one HTML file that works offline (pictures, each step and its time, Previous / Next and the arrow keys). Share it only with the user; there is no GIF export.
 - In a recording, the actions of your own commands (click, type, press, select, hover, scroll, go, back, forward, reload, open) have `source: "agent"`; the user's have `source: "user"`. A click or input target has `nearest`: the closest meaningful element around it (`tag`, `role`, `aria_label`, `title`, `alt`, `name`, `text`, `selector`), useful when the click hit an icon. A `dom` item lists in `appeared` the dialogs, alerts, toasts, headings, buttons and links that showed up (texts redacted, at most 20).
 - `UNKNOWN_METHOD` "The extension is older than this command" for one of these options: ask the user to reload the T-Agent extension in `chrome://extensions`.
 
@@ -281,6 +282,8 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser record items rec_... --kind dom,cons
 4. When a page shows a login, a CAPTCHA or a two-factor prompt, ask the user to complete it in Chrome (`activate` the tab for them), then go on. Once they have used the tab it is theirs: open the page again in a new tab (the login is shared) or ask them to hand that tab over.
 
 ### Browser errors
+
+Every error prints a `hint:` line under it with the next step for that code (`hint` in the `--json` error); follow it first.
 
 | Code | Meaning | What to do |
 |---|---|---|

@@ -66,9 +66,11 @@ const METHODS = Object.freeze([
 // Options newer than the method itself: param -> [the feature the extension must list in its hello, the tcli flag]. An extension before
 // 1.0.4 sends no `features` and would ignore these params silently, so command() refuses them with UNKNOWN_METHOD and a message to reload
 // the extension ("Recording" in docs/design/browser-extension.md).
+// A param with a dot is a path into the params (`record.frames` is params.record.frames).
 const PARAM_FEATURES = Object.freeze({
-  'tabs.open': { record: ['open.record', 'open --record'], window: ['open.window', 'open --record in its own window'] },
+  'tabs.open': { record: ['open.record', 'open --record'], window: ['open.window', 'open --record in its own window'], 'record.frames': ['record.frames', 'open --record --frames'] },
   'record.start': {
+    frames: ['record.frames', 'record start --frames'],
     types: ['record.types', 'record start --types'],
     drop_other_types: ['record.types', 'record start --drop-other-types'],
     max_body_bytes: ['record.max_body', 'record start --max-body'],
@@ -413,7 +415,8 @@ function createBrowserBridge({
       return Promise.reject(new BridgeError('UNKNOWN_METHOD', `The connected extension (version ${conn.version || '?'}) does not support ${method}; update it`, 400));
     }
     for (const [param, [feature, flag]] of Object.entries(PARAM_FEATURES[method] || {})) {
-      if (rest[param] !== undefined && !conn.features.has(feature)) {
+      const value = param.split('.').reduce((holder, key) => (isPlainObject(holder) ? holder[key] : undefined), rest);
+      if (value !== undefined && !conn.features.has(feature)) {
         return Promise.reject(new BridgeError('UNKNOWN_METHOD', `The extension is older than this command (version ${conn.version || '?'} does not support ${flag}): reload it in chrome://extensions`, 400));
       }
     }

@@ -291,3 +291,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.176.1 Mouse ball: a status pill says whether the button is down and who gets it
 > v2.176.2 Terminal file links: the shell's directory with Chinese characters is read correctly (lsof escapes)
 > v2.176.3 The 'in use on another device' notice goes away when you switch to another terminal
+> v2.176.4 Mouse ball selects in the page by default, even when a program has mouse reporting on

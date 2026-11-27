@@ -41,6 +41,7 @@ const CURSOR = 'M0 19V0H19'; // the cursor: 19px of a square's top edge and left
 const WHEEL_MAX = 40; // wheel steps sent to a program in one frame at most
 const THUMB_DIM = 'rgba(255, 255, 255, 0.15)'; // the strip's thumb while the ball is out of it
 const HINT_KEY = 'h5-mouse-ball-hinted'; // per device (public/js/local-keys.js): the first-time hint was shown
+const PROGRAM_KEY = 'h5-mouse-ball-program'; // per device: 'on' sends the mouse to a program that has mouse reporting on; absent (the default): the page always selects
 const HINT_MS = 4000;
 const HINT_TEXT = 'Slide the scrollbar left for the mouse';
 const STATUS = { wait: 'Hold still to press', page: 'Selecting in the page', program: 'Mouse sent to the program' }; // what the ball is doing, shown at the top of the terminal
@@ -180,7 +181,7 @@ function control(nodes, ui) {
     const { target } = drag.geo;
     const { term } = target;
     const tracking = term.modes ? term.modes.mouseTrackingMode : 'none';
-    if (buttonMode(tracking) === 'program') {
+    if (localGet(PROGRAM_KEY) === 'on' && buttonMode(tracking) === 'program') {
       term.clearSelection(); // an old page highlight goes, as a mouse press in the terminal clears it; the program draws its own
       drag.program = { screen: target.screen, gesture: target.gesture, reports: programReports(tracking), released: false };
       report('mousedown', 1);

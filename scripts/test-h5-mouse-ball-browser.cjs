@@ -435,7 +435,8 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await notices();
     await dockedAgain();
 
-    // ── A program with mouse reporting on (drag tracking, SGR): the ball drives the program's own selection ──
+    // ── A program with mouse reporting on (drag tracking, SGR): with the device's choice 'on' the ball drives the program's own selection ──
+    await page.evaluate(() => localStorage.setItem('h5-mouse-ball-program', 'on'));
     await emit(`\x1b[2J\x1b[HMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n`);
     await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
     await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').dispatchEvent(new MouseEvent('click', { bubbles: true }))); // no old highlight
@@ -520,6 +521,27 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.equal((await copied()).length, copiesBefore + 1, 'nothing copied');
     await dockedAgain();
 
+    // By default (the choice absent) the page selects even while the program has mouse reporting on: Claude Code did not select with the synthetic mouse
+    // of the ball, so the text is chosen and copied by the page.
+    await page.evaluate(() => localStorage.removeItem('h5-mouse-ball-program'));
+    await emit(`\x1b[2J\x1b[H\r\nMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n\x1b[?1000h\x1b[?1002h\x1b[?1006h`);
+    await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
+    await page.waitForTimeout(200);
+    gm = await grid();
+    from = await sentCount();
+    await enter(fingerFor(at(gm, 8, 2)));
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    assert.equal(await page.locator('#h5-mouse-ball').getAttribute('data-mode'), 'page', 'reporting on, no choice: the page gets the button');
+    assert.equal(await page.locator('#h5-mouse-ball-status').innerText(), 'Selecting in the page');
+    await glide(fingerFor(at(gm, 8, 2)), fingerFor(at(gm, 12, 3)));
+    assert.ok((await ui()).selected > 0, 'the page draws its selection');
+    await touch('touchEnd');
+    await page.waitForFunction(n => window.copied.length === n + 2, copiesBefore);
+    assert.equal((await reports(from)).length, 0, 'nothing is sent to the program');
+    await notices();
+    await dockedAgain();
+    await emit('\x1b[?1000l\x1b[?1002l\x1b[?1006l');
+
     // Reporting off: the page selection and copy work again (the request bar above changed the terminal's height for a while: fresh text and cells).
     await emit(`\x1b[2J\x1b[H\r\nMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n`);
     await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
@@ -532,7 +554,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await glide(fingerFor(at(gm, 8, 2)), fingerFor(at(gm, 12, 3)));
     assert.ok((await ui()).selected > 0, 'the page draws its selection again');
     await touch('touchEnd');
-    await page.waitForFunction(n => window.copied.length === n + 2, copiesBefore);
+    await page.waitForFunction(n => window.copied.length === n + 3, copiesBefore);
     assert.equal((await copied()).at(-1), expected1, 'and the lift copies it');
     assert.deepEqual(await reports(from), [], 'no mouse reports');
     await notices();
@@ -563,7 +585,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await glide(fingerFor(at(gs, 8, 1)), fingerFor(at(gs, 12, 2)));
     await shot('spring');
     await touch('touchEnd');
-    await page.waitForFunction(n => window.copied.length === n + 3, copiesBefore);
+    await page.waitForFunction(n => window.copied.length === n + 4, copiesBefore);
     assert.equal((await copied()).at(-1), expected1, 'the same copy in the full-screen program');
     await notices();
     await stripClean();

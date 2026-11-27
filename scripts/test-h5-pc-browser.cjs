@@ -115,19 +115,24 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await openTerminal(page, 'Fix login', 'Terminal 1');
       await history(page);
 
-      // Layout: no key row, no keyboard buttons; the draft box is shown at rest (one line) with the whole action row. The wheel strip is drawn as on a
-      // phone (the mouse ball comes out of it), 16px wide beside the terminal box (it covers no column), and xterm's own scrollbar is hidden.
+      // Layout: no key row, no keyboard buttons; the draft box is shown at rest (one line) with the whole action row. The mouse handle is drawn as on a
+      // phone (it scrolls and the mouse ball comes out of it); there is no wheel strip any more, so the terminal box is inset 4px on the right again
+      // and xterm's own scrollbar is back (its width, if the platform's scrollbar takes room, is counted by the fit).
       assert.equal(await page.locator('#h5-keys').count(), 0, `${label}: no function key row`);
       {
-        const strip = await page.evaluate(() => {
-          const el = document.getElementById('h5-wheel');
-          const box = el.getBoundingClientRect();
+        await page.waitForFunction(() => { const el = document.getElementById('h5-mouse-handle'); return el && el.style.display === 'block'; });
+        const layout = await page.evaluate(() => {
+          const area = document.getElementById('h5-terminal').getBoundingClientRect();
           const term = document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect();
+          const handle = document.getElementById('h5-mouse-handle').getBoundingClientRect();
           const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
-          return { mode: el.dataset.mode, width: box.width, left: box.left, termRight: term.right, scrollbar: viewport.offsetWidth - viewport.clientWidth, visibility: getComputedStyle(el).visibility };
+          return { strips: document.querySelectorAll('#h5-wheel').length, inset: area.right - term.right, handleRight: area.right - handle.right, handleWidth: handle.width,
+            scrollbarShown: getComputedStyle(viewport).scrollbarWidth !== 'none' };
         });
-        assert.deepEqual([strip.mode, strip.visibility, strip.scrollbar], ['bar', 'visible', 0], `${label}: the wheel strip is drawn, xterm's scrollbar is not (${JSON.stringify(strip)})`);
-        assert.ok(strip.width === 16 && strip.left >= strip.termRight, `${label}: a 16px strip beside the terminal box (${JSON.stringify(strip)})`);
+        assert.equal(layout.strips, 0, `${label}: no wheel strip`);
+        assert.ok(Math.abs(layout.inset - 4) <= 0.5, `${label}: the terminal box ends 4px from the right (${JSON.stringify(layout)})`);
+        assert.equal(layout.scrollbarShown, true, `${label}: xterm's own scrollbar is not hidden (${JSON.stringify(layout)})`);
+        assert.ok(Math.abs(layout.handleRight) <= 0.5 && layout.handleWidth === 44, `${label}: the 44px handle at the right edge of the terminal (${JSON.stringify(layout)})`);
       }
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"], #h5-actions [data-action="draft"]').count(), 0, `${label}: no keyboard buttons`);
       const draft = await page.evaluate(() => ({ focused: document.activeElement && document.activeElement.id === 'h5-translate-input', height: document.getElementById('h5-translate').getBoundingClientRect().height, input: document.getElementById('h5-translate-input').getBoundingClientRect().height }));
@@ -484,7 +489,8 @@ const waitAck = (url, id, from = 0) => new Promise((resolve, reject) => {
       await waitAck('/api/tasks/1/terminal/ack', 'p1', from);
       await history(page, 40, 30);
       assert.equal(await page.locator('#h5-keys').isVisible(), true, 'phone: the key row is shown');
-      assert.equal(await page.locator('#h5-wheel').count(), 1, 'phone: the wheel strip is there');
+      assert.equal(await page.locator('#h5-wheel').count(), 0, 'phone: no wheel strip');
+      await page.waitForFunction(() => { const el = document.getElementById('h5-mouse-handle'); return el && el.style.display === 'block'; });
       assert.equal(await page.locator('#h5-actions [data-action="keyboard"]').isVisible(), true, 'phone: the keyboard buttons are shown');
       assert.equal(await page.evaluate(() => document.getElementById('h5-translate').getBoundingClientRect().height), 0, 'phone: the draft box is hidden at rest');
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows')).fontSize), '12px', 'phone: 12px terminal font');

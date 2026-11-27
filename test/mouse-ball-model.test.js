@@ -1,6 +1,7 @@
-// The mouse ball of the phone terminal (scripts/h5-shell/mouse-ball-model.mjs): the cursor offset with its edge fade, the clamp, the strip's axis,
-// the stretch out of the strip and the glide back, the cell under a point, the selection range over one or several rows (also in a scrolled view), the dwell reducer with a fake clock and the scroll speed,
-// and the mouse handle (the axis and the stretch on either edge, its default place, the snap to the nearest edge, the long press slop, the stored place).
+// The mouse ball of the phone terminal (scripts/h5-shell/mouse-ball-model.mjs): the cursor offset with its edge fade, the clamp, the handle's axis,
+// the stretch out of the handle and the glide back, the cell under a point, the selection range over one or several rows (also in a scrolled view), the dwell reducer with a fake clock and the scroll speed,
+// and the mouse handle (the axis and the stretch on either edge, its default place, the snap to the nearest edge, the long press slop, the stored place,
+// the scrolling pull and speed).
 // The real page is scripts/test-h5-mouse-ball-browser.cjs.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -46,25 +47,27 @@ test('the cursor stays inside the visible cells, and at the right edge it reache
   assert.equal(cellFromPoint(bottom, screen, cols, 33).row, 32, 'the last row');
 });
 
-test('a drag on the wheel strip: its axis is decided after 10px, and only a slide to the left is the mouse', async () => {
-  const { stripAxis, AXIS_SLOP } = await load();
+test('a drag on the mouse handle: its axis is decided after 10px; up or down scrolls, only a slide toward the inside is the mouse', async () => {
+  const { handleAxis, AXIS_SLOP } = await load();
   assert.equal(AXIS_SLOP, 10);
-  assert.equal(stripAxis(0, 0), null);
-  assert.equal(stripAxis(-9, 0), null, 'under 10px: not decided yet');
-  assert.equal(stripAxis(-6, 7), null, 'under 10px in any direction');
-  assert.equal(stripAxis(-10, 0), 'mouse', 'to the left: the mouse');
-  assert.equal(stripAxis(-9, 5), 'mouse', 'more sideways than up or down');
-  assert.equal(stripAxis(-8, -7), 'mouse', 'a little upward still counts as sideways');
-  assert.equal(stripAxis(-7, 8), 'scroll', 'more down than sideways: scrolling');
-  assert.equal(stripAxis(-8, -8), 'scroll', 'a diagonal is not sideways');
-  assert.equal(stripAxis(0, 12), 'scroll', 'down');
-  assert.equal(stripAxis(0, -12), 'scroll', 'up');
-  assert.equal(stripAxis(12, 0), 'scroll', 'to the right: never the mouse');
-  assert.equal(stripAxis(30, -2), 'scroll');
+  assert.equal(handleAxis(0, 0), null);
+  assert.equal(handleAxis(-9, 0), null, 'under 10px: not decided yet');
+  assert.equal(handleAxis(-6, 7), null, 'under 10px in any direction');
+  assert.equal(handleAxis(-10, 0), 'mouse', 'to the left: the mouse');
+  assert.equal(handleAxis(-9, 5), 'mouse', 'more sideways than up or down');
+  assert.equal(handleAxis(-8, -7), 'mouse', 'a little upward still counts as sideways');
+  assert.equal(handleAxis(-7, 8), 'scroll', 'more down than sideways: scrolling');
+  assert.equal(handleAxis(-8, -8), 'scroll', 'a diagonal is a scroll');
+  assert.equal(handleAxis(0, 12), 'scroll', 'down');
+  assert.equal(handleAxis(0, -12), 'scroll', 'up');
+  assert.equal(handleAxis(12, 0), 'none', 'to the right (toward the edge): nothing');
+  assert.equal(handleAxis(30, -2), 'none');
+  assert.equal(handleAxis(5, 30), 'scroll', 'down and a little toward the edge: scrolling');
 });
 
-test('the stretch: its progress over 40px to the left, the thumb growing into the ball, and the glide back', async () => {
-  const { stretchProgress, stretchShape, thumbAnchor, glideTarget, DETACH, THUMB_WIDTH, TAIL_WIDTH, BALL_SIZE } = await load();
+test('the stretch: its progress over 40px to the left, the handle growing into the ball, and the glide back', async () => {
+  const { stretchProgress, stretchShape, barAnchor, glideTarget, DETACH, HANDLE, TAIL_WIDTH, BALL_SIZE } = await load();
+  const WIDTH = HANDLE.width;
   assert.equal(DETACH, 40);
   const start = { x: 380, y: 500 };
   assert.equal(stretchProgress(start, { x: 380, y: 500 }), 0);
@@ -73,29 +76,29 @@ test('the stretch: its progress over 40px to the left, the thumb growing into th
   assert.equal(stretchProgress(start, { x: 340, y: 500 }), 1, '40px: detached');
   assert.equal(stretchProgress(start, { x: 300, y: 500 }), 1, 'never more than 1');
   assert.equal(stretchProgress(start, { x: 395, y: 500 }), 0, 'back to the right: 0');
-  // The tail hangs on the thumb: the touch height inside it, or its nearest end.
-  const thumb = { left: 381, top: 480, right: 387, bottom: 530 };
-  assert.deepEqual(thumbAnchor(thumb, 500), { x: 384, y: 500 });
-  assert.deepEqual(thumbAnchor(thumb, 300), { x: 384, y: 480 }, 'a touch above the thumb: its top');
-  assert.deepEqual(thumbAnchor(thumb, 700), { x: 384, y: 530 }, 'below it: its bottom');
-  const root = thumbAnchor(thumb, 500);
+  // The tail hangs on the handle's bar: the touch height inside it, or its nearest end.
+  const bar = { left: 381, top: 480, right: 387, bottom: 530 };
+  assert.deepEqual(barAnchor(bar, 500), { x: 384, y: 500 });
+  assert.deepEqual(barAnchor(bar, 300), { x: 384, y: 480 }, 'a touch above the bar: its top');
+  assert.deepEqual(barAnchor(bar, 700), { x: 384, y: 530 }, 'below it: its bottom');
+  const root = barAnchor(bar, 500);
   const none = stretchShape(root, { x: 384, y: 500 }, 0);
-  assert.equal(none.size, THUMB_WIDTH, 'at 0 the head is the thumb');
-  near(none.scale, THUMB_WIDTH / BALL_SIZE, 'its scale of the ball');
+  assert.equal(none.size, WIDTH, 'at 0 the head is the bar');
+  near(none.scale, WIDTH / BALL_SIZE, 'its scale of the ball');
   const half = stretchShape(root, { x: 360, y: 510 }, 0.5);
-  assert.equal(half.size, THUMB_WIDTH + (BALL_SIZE - THUMB_WIDTH) / 2, 'halfway: halfway to the ball');
+  assert.equal(half.size, WIDTH + (BALL_SIZE - WIDTH) / 2, 'halfway: halfway to the ball');
   assert.deepEqual(half.head, { x: 360, y: 510 }, 'the head is under the finger');
-  assert.deepEqual(half.tail, { x1: 384, y1: 500, x2: 360, y2: 510, width: TAIL_WIDTH }, 'the tail from the thumb to the head, at most 20px wide');
+  assert.deepEqual(half.tail, { x1: 384, y1: 500, x2: 360, y2: 510, width: TAIL_WIDTH }, 'the tail from the bar to the head, at most 20px wide');
   const small = stretchShape(root, { x: 375, y: 500 }, 0.2);
   assert.equal(small.tail.width, small.size, 'a small head: the tail is as wide as the head');
   const full = stretchShape(root, { x: 340, y: 500 }, 1);
   assert.equal(full.size, BALL_SIZE, 'at 1 it is the 52px ball');
   assert.equal(full.scale, 1);
-  assert.equal(stretchShape(root, { x: 395, y: 500 }, 0).head.x, 384, 'never right of the strip');
+  assert.equal(stretchShape(root, { x: 395, y: 500 }, 0).head.x, 384, 'never right of the handle');
   assert.equal(stretchShape(root, { x: 340, y: 500 }, 3).size, BALL_SIZE, 'the progress is clamped');
-  // The glide back: the middle of the thumb where it is now, inside the visible terminal.
-  assert.deepEqual(glideTarget(thumb, AREA), { x: 384, y: 505 });
-  assert.deepEqual(glideTarget({ left: 381, top: 700, right: 387, bottom: 740 }, AREA), { x: 384, y: 656 }, 'a thumb under the keyboard: the bottom of the visible terminal');
+  // The glide back: the middle of the bar, inside the visible terminal.
+  assert.deepEqual(glideTarget(bar, AREA), { x: 384, y: 505 });
+  assert.deepEqual(glideTarget({ left: 381, top: 700, right: 387, bottom: 740 }, AREA), { x: 384, y: 656 }, 'a bar under the keyboard: the bottom of the visible terminal');
   assert.equal(BALL_SIZE, 52);
 });
 
@@ -233,18 +236,18 @@ test('the button goes to the program while it reports the mouse, else to the pag
 });
 
 test('the mouse handle on either edge: the axis and the stretch point toward the inside', async () => {
-  const { stripAxis, stretchProgress, stretchShape, HANDLE, BALL_SIZE } = await load();
-  assert.equal(stripAxis(-12, 0), 'mouse', 'the default side is the right edge: to the left');
-  assert.equal(stripAxis(-12, 0, 'right'), 'mouse');
-  assert.equal(stripAxis(12, 0, 'right'), 'scroll', 'toward the right edge: no mouse');
-  assert.equal(stripAxis(12, 0, 'left'), 'mouse', 'a handle on the left edge: to the right');
-  assert.equal(stripAxis(-12, 0, 'left'), 'scroll', 'toward the left edge: no mouse');
-  assert.equal(stripAxis(9, 4, 'left'), null, 'under 10px: not decided yet');
-  assert.equal(stripAxis(7, 8, 'left'), 'scroll', 'more down than sideways');
+  const { handleAxis, stretchProgress, stretchShape, HANDLE, BALL_SIZE } = await load();
+  assert.equal(handleAxis(-12, 0), 'mouse', 'the default side is the right edge: to the left');
+  assert.equal(handleAxis(-12, 0, 'right'), 'mouse');
+  assert.equal(handleAxis(12, 0, 'right'), 'none', 'toward the right edge: no mouse, no scroll');
+  assert.equal(handleAxis(12, 0, 'left'), 'mouse', 'a handle on the left edge: to the right');
+  assert.equal(handleAxis(-12, 0, 'left'), 'none', 'toward the left edge: no mouse, no scroll');
+  assert.equal(handleAxis(9, 4, 'left'), null, 'under 10px: not decided yet');
+  assert.equal(handleAxis(7, 8, 'left'), 'scroll', 'more down than sideways');
   near(stretchProgress({ x: 10, y: 0 }, { x: 30, y: 0 }, 'left'), 0.5, 'half of the 40px to the right');
   assert.equal(stretchProgress({ x: 10, y: 0 }, { x: 0, y: 0 }, 'left'), 0, 'back toward the edge: 0');
   assert.equal(stretchProgress({ x: 10, y: 0 }, { x: 80, y: 0 }, 'left'), 1);
-  near(stretchProgress({ x: 380, y: 0 }, { x: 360, y: 0 }), 0.5, 'the strip as before');
+  near(stretchProgress({ x: 380, y: 0 }, { x: 360, y: 0 }), 0.5, 'the right edge: to the left');
   const root = { x: 7.5, y: 400 };
   const left = stretchShape(root, { x: 2, y: 410 }, 0, 'left', HANDLE.width);
   assert.deepEqual(left.head, { x: 7.5, y: 410 }, 'never left of a handle on the left edge');
@@ -252,7 +255,7 @@ test('the mouse handle on either edge: the axis and the stretch point toward the
   const out = stretchShape(root, { x: 40, y: 400 }, 1, 'left', HANDLE.width);
   assert.equal(out.size, BALL_SIZE);
   assert.equal(out.head.x, 40);
-  assert.equal(stretchShape({ x: 382, y: 0 }, { x: 390, y: 0 }, 0).head.x, 382, 'never right of the strip');
+  assert.equal(stretchShape({ x: 382, y: 0 }, { x: 390, y: 0 }, 0).head.x, 382, 'never right of a handle on the right edge');
 });
 
 test('the mouse handle\'s place: the default height, the nearest edge, kept inside the terminal', async () => {
@@ -299,4 +302,28 @@ test('the mouse handle\'s stored place: read back safely, garbage is the default
   assert.equal(serializePlace({ edge: 'right', y: null }), '{"edge":"right","y":null}');
   assert.equal(serializePlace({ edge: 'up', y: 2 }), '{"edge":"right","y":1}', 'written only as a valid place');
   assert.deepEqual(parsePlace(serializePlace({ edge: 'left', y: 0.8 })), { edge: 'left', y: 0.8 }, 'round trip');
+});
+
+test('scrolling with the handle: the pull is clamped to 42% of the terminal, the speed grows with it beyond a 6px dead zone, up to 200 lines per second', async () => {
+  const { springPull, springSpeed, scrollStep, SPRING, SPRING_MS, STALE_MS } = await load();
+  assert.deepEqual({ ...SPRING }, { dead: 6, rate: 8, max: 200, reach: 0.42 }, 'the old spring constants');
+  assert.ok(SPRING_MS >= 160 && SPRING_MS <= 220, 'the spring back takes 160 to 220 ms');
+  assert.equal(STALE_MS, 3000);
+  assert.equal(springPull(30, 600), 30, 'inside the reach: the finger\'s travel');
+  near(springPull(400, 600), 252, 'down: at most 42% of 600px');
+  near(springPull(-400, 600), -252, 'up: the same');
+  assert.equal(springPull(10, 0), 0, 'no terminal: no pull');
+  assert.equal(springSpeed(0, 17), 0);
+  assert.equal(springSpeed(6, 17), 0, 'inside the dead zone');
+  assert.equal(springSpeed(-6, 17), 0);
+  near(springSpeed(6 + 17, 17), 8, 'one row beyond the dead zone: 8 lines per second, newer');
+  near(springSpeed(-(6 + 34), 17), -16, 'pulled up two rows: 16 lines per second, older');
+  assert.equal(springSpeed(-5000, 17), -200, 'at most 200 lines per second');
+  assert.equal(springSpeed(5000, 0.5), 200, 'a tiny row height does not divide by almost nothing');
+  // Counted by real time: one second at 8 lines per second is 8 lines, whether in one step or in many.
+  let carry = 0;
+  let lines = 0;
+  for (let i = 0; i < 60; i += 1) { const step = scrollStep(carry, springSpeed(23, 17), 1000 / 60); carry = step.carry; lines += step.lines; }
+  assert.equal(lines + Math.round(carry), 8);
+  assert.deepEqual(scrollStep(0, springSpeed(23, 17), 1000), { lines: 8, carry: 0 });
 });

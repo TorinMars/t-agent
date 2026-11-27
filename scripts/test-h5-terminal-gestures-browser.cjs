@@ -1,9 +1,11 @@
-// The sideways pan and the width of the page's terminal (public/js/terminal-gestures.js, h5.js) in real Chromium, and how it lives with the wheel strip.
-// Phone (390 x 844, touch, real CDP touches): the strip is there and the terminal is touch-action: pan-y; a pan picks its axis in the first 10px and keeps
-// it; a vertical pan on the body scrolls the normal buffer once (xterm's own touch scrolling, 1:1) and sends the alternate buffer nothing; in Wide mode a sideways
-// pan moves the screen, but not from the strip (drawn also without history), which stays at the right edge of the visible box; the cursor is followed after input; the terminal width in
-// the header's More menu ("Terminal width: …") picks Fit / 200 / 500 / 1000 / 2000 (the current one ticked); the PTY gets the columns through the resize message;
-// the copy view shows the wrap hint in Fit mode and widens from there (to the default 200); the choice is remembered. The strip's own behaviour is in test-h5-browser.cjs and test-h5-wheel-stuck-browser.cjs.
+// The sideways pan and the width of the page's terminal (public/js/terminal-gestures.js, h5.js) in real Chromium, and how it lives with the mouse handle.
+// Phone (390 x 844, touch, real CDP touches): the terminal is touch-action: pan-y; a pan picks its axis in the first 10px and keeps it; a vertical pan on the
+// body scrolls the normal buffer once (xterm's own touch scrolling, 1:1) and sends the alternate buffer nothing; in Wide mode a sideways pan moves the screen
+// from anywhere in the box, its rightmost 42px too (the old wheel strip took them until v2.178), while a vertical drag that starts on the mouse handle scrolls
+// and does not pan; in the alternate buffer the handle's pull sends wheel reports at the middle of the visible terminal; the cursor is followed after input;
+// the terminal width in the header's More menu ("Terminal width: …") picks Fit / 200 / 500 / 1000 / 2000 (the current one ticked); the PTY gets the columns
+// through the resize message; the copy view shows the wrap hint in Fit mode and widens from there (to the default 200); the choice is remembered. The handle's
+// own scrolling is in test-h5-mouse-ball-browser.cjs and test-h5-wheel-stuck-browser.cjs.
 // Computer (1440 x 900, mouse): Shift+wheel and a sideways wheel move the wide screen, the vertical wheel stays xterm's. The server is mocked (no data folder is used).
 // H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
@@ -97,9 +99,9 @@ const probe = page => page.evaluate(() => {
         await touch('touchEnd');
       };
       const emit = data => page.evaluate(data => new Promise(done => { window.sockets.at(-1).emit(data); requestAnimationFrame(() => requestAnimationFrame(done)); }), data);
-      assert.equal(await page.locator('#h5-wheel').count(), 1, 'the wheel strip is there');
-      await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar');
-      assert.equal(await page.evaluate(() => document.querySelector('#h5-wheel').getAttribute('aria-valuemax')), '0', 'a fresh terminal without history has the strip all the same (nothing to scroll)');
+      assert.equal(await page.locator('#h5-wheel').count(), 0, 'no wheel strip any more');
+      await page.waitForFunction(() => { const el = document.getElementById('h5-mouse-handle'); return el && el.style.display === 'block'; });
+      const handleAt = async () => { const box = await page.locator('#h5-mouse-handle').boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2, top: box.y }; };
       assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden])')).touchAction), 'pan-y', 'the body keeps pan-y: vertical drags stay the browser\'s and xterm\'s');
       // The phone has the terminal width in More (the app bar has no room for the switch).
       const widthMode = () => page.evaluate(() => window.H5UI.get().terminalWidth.mode);
@@ -175,21 +177,24 @@ const probe = page => page.evaluate(() => {
       wide = await probe(page);
       assert.ok(Math.abs(wide.offset - 150) <= 1, `a 150px pan moves the screen 150px (${wide.offset})`);
       assert.equal(await topLine(), wideTop, 'a sideways pan leaves the history where it is');
-      await pan(340, 300, -335, 0); // from the left of the strip (it covers x 348 - 388)
+      await pan(340, 300, -335, 0);
       await pan(340, 300, -335, 0);
       await pan(340, 300, -335, 0);
       wide = await probe(page);
       assert.equal(wide.offset, wide.content - wide.visible, 'the offset stops at the right end');
-      // The strip stays at the right edge of the visible box whatever the offset, and a sideways pan that starts on it does not move the screen.
-      const stripBox = () => page.evaluate(() => { const box = document.querySelector('#h5-wheel').getBoundingClientRect(); return { left: box.left, right: box.right, mode: document.querySelector('#h5-wheel').dataset.mode }; });
-      const strip = await stripBox();
-      assert.equal(strip.mode, 'bar', 'the wide terminal with history shows the bar');
-      assert.ok(strip.right >= 387 && strip.right <= 389, `the strip stays at the right edge at any offset (${strip.right})`);
-      const atEdge = (await probe(page)).offset;
-      await pan(370, 300, -100, 0);
-      assert.equal((await probe(page)).offset, atEdge, 'a sideways pan from the strip does not move the wide screen');
+      // The rightmost 42px of the box (above the handle) are the terminal's like the rest: a sideways pan that starts there moves the screen.
+      const handle = await handleAt();
+      assert.ok(handle.top > 400, `the handle sits low on the right edge, below the pans at y 300 (${handle.top})`);
+      await pan(200, 300, 100, 0);
+      const backed = (await probe(page)).offset;
+      assert.ok(Math.abs(wide.offset - backed - 100) <= 1, `a pan to the right moves the screen back (${wide.offset - backed})`);
+      await pan(375, 300, -80, 0);
+      const fromEdge = (await probe(page)).offset;
+      assert.ok(Math.abs(fromEdge - backed - 80) <= 1, `a sideways pan that starts in the rightmost 42px moves the wide screen (${fromEdge - backed})`);
+      assert.equal(await topLine(), wideTop, '... and leaves the history where it is');
       if (shots) await page.screenshot({ path: path.join(shots, 'gestures-wide-right.png') });
       // Diagonal pans lock to their first axis.
+      wide = await probe(page);
       const atEnd = wide.offset;
       await pan(200, 300, 60, 25);
       wide = await probe(page);
@@ -199,6 +204,18 @@ const probe = page => page.evaluate(() => {
       await pan(200, 300, 25, 120);
       assert.equal((await probe(page)).offset, sideways, 'a pan that leans down does not move sideways');
       assert.ok(await topLine() < wideTop, '... and scrolls the history');
+      // A vertical drag that starts on the mouse handle scrolls (pulled up: older lines) and never pans the wide screen.
+      {
+        const at = await handleAt();
+        const top0 = await topLine();
+        await touch('touchStart', at.x, at.y);
+        for (let i = 1; i <= 5; i++) { await touch('touchMove', at.x, at.y - i * 16); await page.waitForTimeout(16); }
+        await page.waitForFunction(top => { const row = document.querySelector('.h5-xterm:not([hidden]) .xterm-rows > div'); const n = Number((/^line (\d+)/.exec(row.textContent.trim()) || [])[1] || 0); return n && n < top; }, top0, { timeout: 8000 })
+          .catch(() => assert.fail('a pull up on the handle scrolls to older lines'));
+        await touch('touchEnd');
+        await page.waitForFunction(() => !window.__h5HandleScrolling());
+        assert.equal((await probe(page)).offset, sideways, 'a vertical drag on the handle does not move the wide screen sideways');
+      }
       // Output does not pull the view back while the user has panned the cursor away; input does.
       await emit('\r\n$ ');
       assert.equal((await probe(page)).offset, sideways, 'output does not move a view the user panned away from the cursor');
@@ -210,17 +227,15 @@ const probe = page => page.evaluate(() => {
       wide = await probe(page);
       const cell = wide.content / 200;
       assert.ok(wide.offset > 0 && 122 * cell <= wide.offset + wide.visible + 1, `the cursor at column 122 is kept in view (offset ${wide.offset})`);
-      // Wide without history (a cleared screen): the strip is still drawn and still is not the terminal's: a pan from its left moves the screen, a
-      // sideways pan that starts on it (right, so it is no mouse ball) moves nothing.
+      // Wide without history (a cleared screen): a pan moves the screen, also one that starts in the rightmost 42px.
       await emit('\x1b[H\x1b[2J\x1b[3J$ ');
-      await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar' && document.querySelector('#h5-wheel').getAttribute('aria-valuemax') === '0');
       await page.locator('#h5-keys [data-key="Escape"]').tap();
       await page.waitForFunction(() => !document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').style.transform);
       await pan(300, 300, -120, 0);
       const clearedPan = (await probe(page)).offset;
-      assert.ok(Math.abs(clearedPan - 120) <= 1, `without history a pan beside the strip still moves the wide screen (${clearedPan})`);
+      assert.ok(Math.abs(clearedPan - 120) <= 1, `without history a pan still moves the wide screen (${clearedPan})`);
       await pan(352, 300, 34, 0);
-      assert.equal((await probe(page)).offset, clearedPan, 'a sideways pan that starts on the strip does not move the wide screen');
+      assert.ok(Math.abs(clearedPan - (await probe(page)).offset - 34) <= 1, 'a sideways pan that starts in the rightmost 42px moves the wide screen too');
 
       // More > Terminal width: the list ticks 200; pick 500 columns; then Fit to screen goes back to the columns that fit.
       assert.equal(await pickWidth('500 columns'), '200', 'the current width (200) is ticked');
@@ -236,24 +251,44 @@ const probe = page => page.evaluate(() => {
       await pickWidth('500 columns'); // Wide 500 again for the alternate buffer
       await page.waitForFunction(() => window.sockets.at(-1).sent.filter(item => item.includes('"cols":500')).length >= 2);
 
-      // Alternate buffer with mouse tracking (Claude Code, vim with mouse): a vertical pan on the body sends nothing (that is the strip's job, as before
-      // v2.90.0); the strip's spring sends wheel reports; a sideways pan moves the screen and sends nothing.
+      // Alternate buffer with mouse tracking (Claude Code, vim with mouse): a vertical pan on the body sends nothing (that is the handle's job); the
+      // handle's pull sends wheel reports at the middle of the visible terminal; a sideways pan moves the screen and sends nothing.
       await emit('\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[Hfull screen app');
       const reports = async () => (await probe(page)).sent.filter(item => /^\x1b\[<6[45];/.test(item)).map(item => item.slice(3, 5));
-      await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'spring');
       let before = (await reports()).length;
       await pan(150, 500, 0, -100);
       await pan(150, 300, 0, 100);
       await page.waitForTimeout(100);
       assert.equal((await reports()).length, before, 'a vertical pan on the body sends no wheel reports');
-      const middle = await page.evaluate(() => { const box = document.querySelector('#h5-wheel').getBoundingClientRect(); return box.top + box.height / 2; });
-      await touch('touchStart', 370, middle);
-      for (let i = 1; i <= 5; i++) { await touch('touchMove', 370, middle + i * 20); await page.waitForTimeout(16); }
+      // The cell in the middle of the visible terminal (1-based, as SGR reports count), and the one under the handle.
+      const cells = await page.evaluate(() => {
+        const el = document.querySelector('.h5-xterm:not([hidden])');
+        const screen = el.querySelector('.xterm-screen').getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        const handleBox = document.getElementById('h5-mouse-handle').getBoundingClientRect();
+        const cols = 500;
+        const cell = screen.width / cols;
+        const rowsN = el.querySelectorAll('.xterm-rows > div').length;
+        const rowH = screen.height / rowsN;
+        return {
+          col: Math.floor((box.left + box.width / 2 - screen.left) / cell) + 1, row: Math.floor((box.top + box.height / 2 - screen.top) / rowH) + 1,
+          handleCol: Math.floor((handleBox.left + handleBox.width / 2 - screen.left) / cell) + 1,
+        };
+      });
+      const at = await handleAt();
+      await touch('touchStart', at.x, at.y);
+      for (let i = 1; i <= 5; i++) { await touch('touchMove', at.x, at.y + i * 20); await page.waitForTimeout(16); }
       await page.waitForFunction(count => window.sockets.at(-1).sent.filter(item => /^\x1b\[<6[45];/.test(item)).length >= count, before + 3, { timeout: 8000 });
       await touch('touchEnd');
-      const pulled = (await reports()).slice(before);
-      assert.ok(pulled.length >= 3 && pulled.every(code => code === '65'), `pulling the spring down in Wide mode sends wheel-down reports (${pulled.join(',')})`);
-      await page.waitForFunction(() => !window.__h5WheelSpring());
+      const pulledFull = (await probe(page)).sent.filter(item => /^\x1b\[<6[45];/.test(item)).slice(before);
+      const pulled = pulledFull.map(item => item.slice(3, 5));
+      assert.ok(pulled.length >= 3 && pulled.every(code => code === '65'), `pulling the handle down in Wide mode sends wheel-down reports (${pulled.join(',')})`);
+      for (const item of pulledFull) {
+        const [, col, row] = /^\x1b\[<6[45];(\d+);(\d+)M$/.exec(item).map(Number);
+        assert.ok(Math.abs(col - cells.col) <= 1 && Math.abs(row - cells.row) <= 1, `the wheel report points at the middle of the visible terminal (${col};${row}, expected about ${cells.col};${cells.row})`);
+        assert.ok(Math.abs(col - cells.handleCol) > 5, `not at the handle's column (${col} vs ${cells.handleCol})`);
+      }
+      await page.waitForFunction(() => !window.__h5HandleScrolling());
       before = (await reports()).length;
       const altOffset = (await probe(page)).offset;
       await pan(300, 400, -120, 20);

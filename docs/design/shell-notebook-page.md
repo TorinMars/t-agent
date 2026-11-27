@@ -33,7 +33,7 @@ A shell notebook is a session of a task after Claude, Codex, OpenCode and New Te
 
 - A row with `agent === 'notebook'` has no terminal socket: `connect()` calls `showNotebook(row)` instead, which mounts the view in `#h5-notebook` (fixed, like the chat: from the bottom of the page header to the bottom of the visual viewport, above the phone's bottom navigation, `fitNotebookView`; left of it the rail and the sidebar on a wide screen). An early socket opened for a remembered notebook row is dropped.
 - It is not kept warm: another row, another task (`loadTerminals`), no terminal (`showNoTerminal`), Delete or Restart of the row (`disconnect`) and the multi-column view being shown unmount it; `destroy` still sends what was typed.
-- The bottom bar, the terminal keyboard, the saved commands and the wheel strip lie under the view; "Copy text" is not offered (no terminal session); the header has no Wide terminal button.
+- The bottom bar, the terminal keyboard, the saved commands and the mouse handle lie under the view (the handle is not drawn while a notebook is shown); "Copy text" is not offered (no terminal session); the header has no Wide terminal button.
 - A notebook whose cell finished while it is shown is acknowledged (`ackNotebook`, `POST …/terminal/ack`), so the activity feed does not keep it as "needs you".
 
 ## Session header

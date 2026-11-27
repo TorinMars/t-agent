@@ -50,7 +50,7 @@ const START_COMMAND_KEYS = ['startCommandDialog'];
 const NEW_TASK_KEYS = ['newTaskOpen', 'sources', 'creatingTask'];
 const NOTICE_KEYS = ['notice'];
 const LEARN_KEYS = ['learnOpen', 'learnTarget', 'wide', 'pane', 'input', 'hasKeyboard'];
-// The mouse ball (MouseBall.jsx, out of the wheel strip): what covers or replaces the terminal.
+// The mouse handle and ball (MouseBall.jsx): what covers or replaces the terminal.
 const BALL_KEYS = ['empty', 'notebook', 'copyText', 'mindmapOpen', 'learnOpen'];
 const SWITCHER_KEYS = ['switcher']; // the open switcher reads the rest itself (Switcher.jsx), so closed it draws nothing on an activity push
 // What the page itself needs: the layout flags and which sheets and dialogs are open.
@@ -131,7 +131,7 @@ export function App({ ui }) {
       <Lazy open={open.newTask}><Part ui={ui} keys={NEW_TASK_KEYS} part={NewTaskDialog} /></Lazy>
       {/* The session switcher of the single view, over the terminal (Switcher.jsx; opened by the switch button, `#h5-cycle`). */}
       <Lazy open={open.switcher}><Part ui={ui} keys={SWITCHER_KEYS} part={SwitcherScreen} /></Lazy>
-      {/* Over the terminal, where the wheel strip is, in both input modes (lazy-screens.jsx `MouseBallScreen`). */}
+      {/* The mouse handle and ball over the terminal, in both input modes (lazy-screens.jsx `MouseBallScreen`). */}
       <Part ui={ui} keys={BALL_KEYS} part={MouseBallScreen} />
       <ColumnStrip ui={ui} />
       <Part ui={ui} keys={NOTICE_KEYS} part={Notice} />

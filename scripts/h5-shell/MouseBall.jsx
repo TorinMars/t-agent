@@ -1,11 +1,13 @@
-// The mouse ball of the terminal ("Mouse ball" in docs/design/page-terminal-mouse-ball.md), for a finger and a mouse alike (a mouse drags it with the
-// left button held; the lift is the mouseup; Escape cancels). A chunk of its own (screen-mouse-ball.jsx), drawn by App.jsx through lazy-screens.jsx in
-// both input modes. There is no ball of its own on the screen: it comes out of the wheel strip (the floating
-// scrollbar on the right, h5.js `bindWheelStrip`), which hands a finger over when it slides to the left (`ui.actions.stripMouse`, registered here),
-// or out of the mouse handle, a small bar of its own drawn here on the right or left edge ("The mouse handle" in the design doc): a slide toward
-// the inside pulls the ball out of it the same way, a long press (500 ms) picks it up to be moved, and the lift snaps it to the nearest edge.
-// - Out of the strip: under 40px of travel to the left the thumb stretches toward the finger like a bubble (a tail of the thumb's colour and a head
-//   that grows into the 52px ball); lifted then, it springs back and nothing happens. Past 40px it lets go: the ball under the finger.
+// The mouse ball of the terminal and the mouse handle ("Mouse ball" and "The mouse handle" in docs/design/page-terminal-mouse-ball.md), for a finger
+// and a mouse alike (a mouse drags with the left button held; the lift is the mouseup; Escape cancels). A chunk of its own (screen-mouse-ball.jsx),
+// drawn by App.jsx through lazy-screens.jsx in both input modes. The handle is a small bar of its own on the right or left edge of the terminal.
+// Its first 10px of travel decide what a drag on it is (`handleAxis`):
+// - Up or down: it scrolls the terminal, like the spring of the old wheel strip. The handle follows the finger, pulled up scrolls to older lines,
+//   pulled down to newer, faster the further it is pulled; the normal buffer with `term.scrollLines`, the alternate buffer (Claude Code, vim,
+//   tmux, Codex) with wheel events on xterm's screen, which xterm forwards to the program. Let go, it springs back and the scrolling stops.
+// - Toward the inside: the ball comes out. Under 40px of travel the handle stretches toward the finger like a bubble (a tail and a head that
+//   grows into the 52px ball); lifted then, it springs back and nothing happens. Past 40px it lets go: the ball under the finger.
+// - Held still for 500 ms: it is picked up to be moved, and the lift snaps it to the nearest edge.
 // - The ball: the cursor (the top-left corner of a square, two lines; the corner is the mouse position) shows 46px left of and above it, with a
 //   dashed line between them; near the right and bottom edges that offset fades out (mouse-ball-model.mjs).
 // - Keep still for 600 ms: a ring fills around the ball, then the left button goes down at the cursor (a haptic tick, the cursor turns blue).
@@ -20,9 +22,9 @@
 //     the release at the lift. The program selects and copies by itself; the lift marks a gesture for terminal-clipboard.js, so its OSC 52 copy
 //     that follows shows "Copied N characters" instead of the request bar.
 //   Without a press nothing happens. A cancelled touch ends everything without a copy (a program still gets the release).
-// - Lift (or cancel): the ball glides back into the strip (or the handle) it came from (220 ms; at once with reduced motion). While it is out the
-//   strip's thumb is dimmed at its place, and the strip or the handle says what is out in `data-mouse` (stretch, ball, glide).
-// The strip keeps the pointer capture of the finger, so the terminal under the ball never scrolls, pans, long-presses or double-tap-selects while it
+// - Lift (or cancel): the ball glides back into the handle (220 ms; at once with reduced motion). While it is out the handle says what is out in
+//   `data-mouse` (stretch, ball, glide).
+// The handle keeps the pointer capture of the finger, so the terminal under the ball never scrolls, pans, long-presses or double-tap-selects while it
 // is used; this chunk follows that pointer on the document. The moving parts are set on the elements directly (a frame per finger move, no React
 // render). The first time it can be used on a device a hint near the handle says how (`HINT_KEY`, 4 s, once).
 import { useEffect, useRef } from 'react';
@@ -36,9 +38,9 @@ import { Icon } from './Icons.jsx';
 import { keyTick } from './Osk.jsx';
 import { localGet, localSet } from './local-keys.mjs';
 import {
-  BALL_SIZE, DWELL_IDLE, GLIDE_MS, HANDLE, HOLD_MS, SNAP_MS, THUMB_WIDTH, ballFor, buttonMode, cellFromPoint, clampCentre, cursorFor, dwellProgress,
-  dwellStep, glideTarget, handleCentre, heldStill, intersect, joinSelection, parsePlace, programReports, scrollSpeed, scrollStep, selectionRange,
-  serializePlace, snapPlace, stretchProgress, stretchShape, stripAxis, thumbAnchor,
+  BALL_SIZE, DWELL_IDLE, GLIDE_MS, HANDLE, HOLD_MS, SNAP_MS, SPRING_MS, STALE_MS, ballFor, barAnchor, buttonMode, cellFromPoint, clampCentre, cursorFor,
+  dwellProgress, dwellStep, glideTarget, handleAxis, handleCentre, heldStill, intersect, joinSelection, parsePlace, programReports, scrollSpeed,
+  scrollStep, selectionRange, serializePlace, snapPlace, springPull, springSpeed, stretchProgress, stretchShape,
 } from './mouse-ball-model.mjs';
 
 const RING_R = 29; // the dwell ring, just outside the ball
@@ -46,20 +48,20 @@ const RING = 2 * Math.PI * RING_R;
 const RECHECK_MS = 500; // how often it looks whether the terminal is still there and whether the first-time hint is due
 const CURSOR = 'M0 19V0H19'; // the cursor: 19px of a square's top edge and left edge, the corner at the origin
 const WHEEL_MAX = 40; // wheel steps sent to a program in one frame at most
-const THUMB_DIM = 'rgba(255, 255, 255, 0.15)'; // the strip's thumb while the ball is out of it
+const SCROLL_WHEEL_MAX = 200; // wheel steps sent in one step of the handle's scroll in the alternate buffer (one per line)
+const SCROLL_CHECK_MS = 250; // while the handle scrolls: how often the terminal, a lost finger and slow frames are checked
 const HINT_KEY = 'h5-mouse-ball-hinted'; // per device (public/js/local-keys.js): the first-time hint was shown
 const PROGRAM_KEY = 'h5-mouse-ball-program'; // per device: absent (the default) sends the mouse to a program that has mouse reporting on; 'off': the page always selects. A program without mouse reporting is always selected in the page. Set by the switch in the More menu (Header.jsx `PROGRAM_KEY`)
 const PLACE_KEY = 'h5-mouse-handle'; // per device (public/js/local-keys.js): where the mouse handle sits, { edge, y } (mouse-ball-model.mjs `parsePlace`)
 const HINT_MS = 4000;
-const HINT_TEXT = { right: 'Slide the mouse handle left', left: 'Slide the mouse handle right' }; // by the edge the handle sits on
+// By the edge the handle sits on. Short enough for one line beside the chevron on a 390px phone ("Drag the handle to scroll, slide it left for
+// the mouse" was about 370px with the chevron and the padding, over the pill's 318px); on a narrower screen the pill wraps to two lines.
+const HINT_TEXT = { right: 'Drag to scroll, slide left for the mouse', left: 'Drag to scroll, slide right for the mouse' };
 const MOVE_TEXT = 'Let go: it snaps to the nearest edge'; // the pill while the handle is moved
 const STATUS = { wait: 'Hold still to press', page: 'Selecting in the page', program: 'Mouse sent to the program' }; // what the ball is doing, shown at the top of the terminal
-const DESCRIPTION = 'Slide left for the mouse'; // the strip's aria-description, set while this chunk is there
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const trackingOf = term => (term.modes ? term.modes.mouseTrackingMode : 'none');
 const rectOf = el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
-const stripEl = () => document.getElementById('h5-wheel');
-const thumbOf = el => (el ? el.querySelector('.h5-wheel-thumb') : null);
 function viewportRect() {
   const vv = window.visualViewport;
   return vv ? { left: vv.offsetLeft, top: vv.offsetTop, right: vv.offsetLeft + vv.width, bottom: vv.offsetTop + vv.height } : { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
@@ -77,17 +79,19 @@ function geometry(ui) {
   return bounds && target.term.cols && target.term.rows ? { target, area, screen, bounds } : null;
 }
 
-// The imperative part: the finger handed over by the strip, the stretch, the dwell clock, the selection, the scrolling, the glide back, the hint.
+// The imperative part: the handle's touches (scroll, pull out, move), the stretch, the dwell clock, the selection, the scrolling, the glide back,
+// the hint.
 function control(nodes, ui) {
   const { ball, overlay, line, cursor, ring, tail, hint, hintText, status, handle, bar, guides, movePill } = nodes;
   let drag = null;
   let frame = 0;
-  let glide = null; // { el, timer } while the ball glides back into the strip
+  let glide = null; // { timer } while the ball glides back into the handle
   let hintTimer = 0;
   let hinted = localGet(HINT_KEY) === 'shown';
   let place = parsePlace(localGet(PLACE_KEY)); // the mouse handle's edge and height on this device
-  let hold = null; // a finger on the handle that has not pulled the ball out: { id, from, last, side, axis, timer, moving, grab, area, centre }
-  let snapTimer = 0;
+  let hold = null; // a finger on the handle that has not pulled the ball out: { id, from, last, side, axis, timer, moving, grab, area, centre, scroll }
+  let snapTimer = 0; // the handle glides back to its place (after a move or a scroll): it is not placed meanwhile
+  let scrollFrame = 0; // requestAnimationFrame id while the handle scrolls
   const setState = (name, mode = '') => {
     ball.dataset.state = name; // idle, stretch, drag, pressed, glide
     overlay.dataset.state = name;
@@ -108,14 +112,11 @@ function control(nodes, ui) {
     status.style.top = `${drag.geo.area.top + 8}px`;
   };
   const moveBall = (point, scale = 1) => { ball.style.transform = `translate(${point.x - BALL_SIZE / 2}px, ${point.y - BALL_SIZE / 2}px) scale(${scale})`; };
-  // The strip (or the handle) while the ball is out of it: `data-mouse` says what (stretch, ball, glide); the strip's thumb is dimmed at its place
-  // (the handle is highlighted while it is stretched, by its CSS); null puts it back.
-  function stripState(el, name) {
-    if (!el) return;
-    const thumb = el === handle ? null : thumbOf(el);
-    if (name) el.dataset.mouse = name;
-    else delete el.dataset.mouse;
-    if (thumb) thumb.style.background = name ? THUMB_DIM : '';
+  // The handle while the ball is out of it: `data-mouse` says what (stretch, ball, glide; highlighted while it is stretched, by its CSS); null
+  // puts it back.
+  function mouseState(name) {
+    if (name) handle.dataset.mouse = name;
+    else delete handle.dataset.mouse;
   }
   function drawCursor(opacity) {
     cursor.setAttribute('transform', `translate(${drag.cursor.x} ${drag.cursor.y})`);
@@ -226,8 +227,8 @@ function control(nodes, ui) {
     keyTick();
   }
 
-  // ── Out of the strip: the stretch, then the ball ──
-  // The thumb stretched toward the finger at `at`; at DETACH px to the left it lets go (detach).
+  // ── Out of the handle: the stretch, then the ball ──
+  // The handle stretched toward the finger at `at`; at DETACH px toward the inside it lets go (detach).
   function stretch(at) {
     const p = stretchProgress(drag.from, at, drag.side);
     if (p >= 1) { detach(at); return; }
@@ -253,75 +254,67 @@ function control(nodes, ui) {
     delete ball.dataset.progress;
     ball.style.opacity = '';
     tail.style.display = 'none';
-    stripState(drag.el, 'ball');
+    mouseState('ball');
     setState('drag');
     setStatus('wait');
     if (!follow(at.x, at.y)) { end(); return; }
     frame = requestAnimationFrame(tick);
   }
-  // The finger handed over by the strip (h5.js, a slide to the left) or by the handle (a slide toward the inside): `id` its pointer, `el` the strip
-  // or the handle (it keeps the capture), `from` the touch, `at` the finger now, `sync` the strip's redraw, `side` the edge it sits on. false when
-  // there is nothing to point at (the strip then goes on as a scroll).
-  function begin({ id, el, from, at, sync, side = 'right' }) {
+  // The finger of a slide toward the inside of the handle: `id` its pointer (the handle keeps the capture), `from` the touch, `at` the finger now,
+  // `side` the edge the handle sits on. false when there is nothing to point at.
+  function begin({ id, from, at, side = 'right' }) {
     if (drag) return false;
     const geo = geometry(ui);
-    const thumb = el === handle ? bar : thumbOf(el);
-    if (!geo || !thumb) return false;
+    if (!geo) return false;
     settle();
     hideHint();
     drag = {
-      id, el, sync, geo, from, side, width: el === handle ? HANDLE.width : THUMB_WIDTH,
-      root: thumbAnchor(rectOf(thumb), from.y), phase: 'stretch', scale: 0, start: null, grab: null, dwell: DWELL_IDLE,
+      id, geo, from, side, width: HANDLE.width,
+      root: barAnchor(rectOf(bar), from.y), phase: 'stretch', scale: 0, start: null, grab: null, dwell: DWELL_IDLE,
       anchor: null, range: null, program: null, hover: false, output: null, carry: 0, last: performance.now(), ball: null, cursor: null,
     };
     listen(true);
-    stripState(el, 'stretch');
+    mouseState('stretch');
     ball.style.display = 'flex';
     setState('stretch');
     stretch(at);
     return true;
   }
-  // The ball glides back into the strip and is its thumb again, or into the handle it came from (at once with reduced motion or without a thumb
-  // or a shown handle to go to).
-  function glideBack(el) {
+  // The ball glides back into the handle (at once with reduced motion or without a shown handle to go to).
+  function glideBack() {
     const geo = geometry(ui);
-    const home = el === handle ? (handle.style.display === 'none' ? null : bar) : el && el.isConnected ? thumbOf(el) : null;
     tail.style.display = 'none';
-    if (!geo || !home || reducedMotion()) { settle(el); return; }
-    if (drag && drag.sync) drag.sync(); // the thumb where the view is now (it may have scrolled)
-    stripState(el, 'glide');
+    if (!geo || handle.style.display === 'none' || reducedMotion()) { settle(); return; }
+    mouseState('glide');
     setState('glide');
-    moveBall(glideTarget(rectOf(home), geo.area), (el === handle ? HANDLE.width : THUMB_WIDTH) / BALL_SIZE);
+    moveBall(glideTarget(rectOf(bar), geo.area), HANDLE.width / BALL_SIZE);
     ball.style.opacity = '0';
-    glide = { el, timer: setTimeout(() => settle(), GLIDE_MS) };
+    glide = { timer: setTimeout(() => settle(), GLIDE_MS) };
   }
-  // The ball is gone and the thumb is the strip's own again. A touch during the glide ends it at once.
-  function settle(el = glide && glide.el) {
+  // The ball is gone and the handle is at rest again. A touch during the glide ends it at once.
+  function settle() {
     if (glide) clearTimeout(glide.timer);
     glide = null;
     ball.style.display = 'none';
     ball.style.opacity = '';
     delete ball.dataset.progress;
     if (!drag) setState('idle');
-    stripState(el, null);
-    const strip = stripEl();
-    if (strip && strip !== el && strip.dataset.mouse && !drag) stripState(strip, null); // a strip drawn again meanwhile
+    if (!drag) mouseState(null);
   }
   function end() {
     if (!drag) return;
     if (drag.phase === 'ball') release();
-    const { id, el, output, sync } = drag;
+    const { id, output } = drag;
     cancelAnimationFrame(frame);
     frame = 0;
     if (output) output.dispose();
     listen(false);
     setRing(0);
     setStatus(null);
-    glideBack(el);
     drag = null;
+    glideBack();
     if (!glide) setState('idle');
-    try { if (el.hasPointerCapture(id)) el.releasePointerCapture(id); } catch { /* already released */ }
-    if (sync) sync();
+    try { if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id); } catch { /* already released */ }
   }
   // Every frame while the ball is out: the dwell clock and the ring, then the scrolling near the top or bottom edge with the button down.
   function tick() {
@@ -395,7 +388,7 @@ function control(nodes, ui) {
     if (drag.anchor) drag.geo.target.term.clearSelection(); // nothing was copied, so nothing stays selected
     end();
   }
-  // While the ball is out: the finger on the document (the strip has its capture); no callout, no scrolling, no context menu.
+  // While the ball is out: the finger on the document (the handle has its capture); no callout, no scrolling, no context menu.
   const stop = event => { if (drag && event.cancelable) event.preventDefault(); };
   // Escape (a mouse, or a keyboard beside the finger) ends it like a cancelled touch, and the key does not reach the terminal.
   const escape = event => { if (drag && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); } };
@@ -406,13 +399,14 @@ function control(nodes, ui) {
       else document.removeEventListener(type, handler, { capture: true });
     }
   }
-  // Any new touch: the glide is over at once (the thumb is there for it) and the hint goes.
+  // Any new touch: the glide is over at once (the handle is there for it) and the hint goes.
   const touched = () => { if (glide) settle(); hideHint(); };
   const away = () => { cancel(); cancelHold(); };
   const hidden = () => { if (document.hidden) { cancel(); cancelHold(); } };
   const blurred = event => { if (event.target === window) { cancel(); cancelHold(); } };
 
-  // ── The mouse handle: a slide toward the inside pulls the ball out, a long press moves it, the lift snaps it to the nearest edge ──
+  // ── The mouse handle: a drag up or down scrolls, a slide toward the inside pulls the ball out, a long press moves it (the lift snaps it to the
+  // nearest edge) ──
   // The touch box (44 x 72, at the edge; centred on the bar while it is moved) and the drawn bar inside it, for the bar's centre `c`.
   function setHandle(c, edge, area, moving) {
     const w = moving ? HANDLE.moveWidth : HANDLE.width;
@@ -439,7 +433,7 @@ function control(nodes, ui) {
   // The handle at its place in the shown terminal (it follows the terminal's size, the bottom bar and the on-screen keyboard); hidden while no
   // terminal is shown.
   function placeHandle() {
-    if ((hold && hold.moving) || snapTimer) return handleGeometry();
+    if ((hold && (hold.moving || hold.scroll)) || snapTimer) return handleGeometry();
     const geo = handleGeometry();
     if (!geo) {
       if (handle.style.display !== 'none') { cancelHold(); handle.style.display = 'none'; }
@@ -499,6 +493,7 @@ function control(nodes, ui) {
     clearTimeout(was.timer);
     document.removeEventListener('keydown', escapeHold, true);
     try { if (handle.hasPointerCapture(was.id)) handle.releasePointerCapture(was.id); } catch { /* already released */ }
+    if (was.scroll) { endScroll(was.scroll, snap); return; }
     if (!was.moving) return;
     showGuides(null);
     if (snap && was.centre) {
@@ -515,10 +510,13 @@ function control(nodes, ui) {
   }
   const cancelHold = () => endHold(false);
   const escapeHold = event => { if (hold && hold.moving && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelHold(); } };
+  // A new touch on the handle always takes over from one that is still open (its end was lost, or this is a second finger): the old one ends
+  // as if cancelled (a scroll stops and springs back, a move goes back where it was).
   function handleDown(event) {
-    if (drag || hold || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || !handleGeometry()) return;
+    if (drag || (!event.isPrimary && !hold) || (event.pointerType === 'mouse' && event.button !== 0) || !handleGeometry()) return;
     event.preventDefault();
     event.stopPropagation();
+    if (hold) cancelHold();
     if (snapTimer) { clearTimeout(snapTimer); snapTimer = 0; handle.dataset.state = 'idle'; placeHandle(); }
     const from = { x: event.clientX, y: event.clientY };
     hold = { id: event.pointerId, from, last: from, side: place.edge, axis: null, moving: false, grab: null, area: null, centre: null, timer: setTimeout(pickUp, HOLD_MS) };
@@ -531,18 +529,138 @@ function control(nodes, ui) {
     hold.last = at;
     if (hold.moving) { moveTo(at); return; }
     if (hold.timer && !heldStill(hold.from, at)) { clearTimeout(hold.timer); hold.timer = 0; } // it slides: no move
-    if (hold.axis) return; // decided as no mouse (up, down or toward the edge): nothing until the lift
-    hold.axis = stripAxis(at.x - hold.from.x, at.y - hold.from.y, hold.side);
+    if (hold.scroll) { scrollMove(at); return; }
+    if (hold.axis) return; // decided as nothing (toward the edge): nothing until the lift
+    hold.axis = handleAxis(at.x - hold.from.x, at.y - hold.from.y, hold.side);
+    if (hold.axis === 'scroll') { startScroll(at); return; }
     if (hold.axis !== 'mouse') return;
     const { id, from, side } = hold;
     hold = null; // the ball has the finger from here (the handle keeps the capture)
-    if (!begin({ id, el: handle, from, at, side })) { try { handle.releasePointerCapture(id); } catch { /* already released */ } }
+    if (!begin({ id, from, at, side })) { try { handle.releasePointerCapture(id); } catch { /* already released */ } }
   }
   const handleUp = event => { if (hold && event.pointerId === hold.id) endHold(event.type === 'pointerup'); };
   const handleStop = event => event.preventDefault(); // no context menu, callout or focus change from a press on the handle
-  const handleEvents = [['pointerdown', handleDown], ['pointermove', handleMove], ['pointerup', handleUp], ['pointercancel', handleUp], ['lostpointercapture', handleUp], ['contextmenu', handleStop], ['mousedown', handleStop]];
+  // A tap on the handle does nothing: its click goes nowhere (it never reaches the terminal or the page under it).
+  const handleClick = event => { event.preventDefault(); event.stopPropagation(); };
+  // A mouse wheel or trackpad over the handle goes to the terminal under it at the same point, as if the handle were not there (xterm scrolls, or
+  // reports the cell to the program; a sideways wheel moves the wide terminal). A pinch (ctrlKey) stays the browser's.
+  function handleWheel(event) {
+    if (event.ctrlKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const old = handle.style.pointerEvents;
+    handle.style.pointerEvents = 'none';
+    const under = document.elementFromPoint(event.clientX, event.clientY);
+    handle.style.pointerEvents = old;
+    if (!under || handle.contains(under)) return;
+    const { deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, shiftKey, altKey, metaKey, buttons } = event;
+    under.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, view: window, deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, shiftKey, altKey, metaKey, buttons }));
+  }
+  const handleEvents = [
+    ['pointerdown', handleDown], ['pointermove', handleMove], ['pointerup', handleUp], ['pointercancel', handleUp], ['lostpointercapture', handleUp],
+    ['contextmenu', handleStop], ['mousedown', handleStop], ['click', handleClick], ['wheel', handleWheel],
+  ];
 
-  // ── The first-time hint (next to the handle), and the strip's description ──
+  // ── Scrolling with the handle ("Scrolling" in "The mouse handle", docs/design/page-terminal-mouse-ball.md) ──
+  // The pull is the finger's travel from the touch (at most SPRING.reach of the terminal's height); the bar follows it, kept inside the terminal
+  // (pulled down from its low default place it soon stops at the bottom, while the pull and the speed still grow with the finger). The speed grows
+  // with the pull and is counted by real time (every frame, every move and every SCROLL_CHECK_MS), so slow frames do not slow it.
+  const rowHeight = target => (target.screen.clientHeight && target.term.rows ? Math.max(8, target.screen.clientHeight / target.term.rows) : 16);
+  // One step of `lines` (negative: older). The buffer type is read here, at the moment of sending, so a program that enters or leaves the alternate
+  // screen during a pull is followed: the normal buffer scrolls the page's view; in the alternate buffer the steps are wheel events on xterm's
+  // screen, one per line, which xterm forwards as the program's mouse wheel reports or, without mouse mode, as up / down arrows. They point at the
+  // middle of the visible terminal: a program that scrolls the pane under the mouse (opencode) has its main content there.
+  function scrollLines(target, lines) {
+    if (target.term.buffer.active.type !== 'alternate') { target.term.scrollLines(lines); return; }
+    const box = target.el.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    for (let i = 0; i < Math.min(Math.abs(lines), SCROLL_WHEEL_MAX); i += 1) {
+      target.screen.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, view: window, deltaMode: 1, deltaY: Math.sign(lines), clientX: x, clientY: y }));
+    }
+  }
+  // The terminal of the scroll, while it is still the one shown (null when it went away: the scroll ends).
+  function scrollTarget(sc) {
+    const target = ui.actions.mouseBallTarget ? ui.actions.mouseBallTarget() : null;
+    return target && target.term === sc.term && handle.isConnected ? target : null;
+  }
+  // The time pulled since the last step, at the current pull.
+  function scrollTick(sc) {
+    const now = performance.now();
+    const dt = Math.min(now - sc.tick, 1000);
+    sc.tick = now;
+    if (sc.stale) return true;
+    const target = scrollTarget(sc);
+    if (!target) return false;
+    const step = scrollStep(sc.carry, springSpeed(sc.pull, rowHeight(target)), dt);
+    sc.carry = step.carry;
+    if (step.lines) scrollLines(target, step.lines);
+    return true;
+  }
+  const stopScrollFrame = () => { if (scrollFrame) cancelAnimationFrame(scrollFrame); scrollFrame = 0; };
+  function scrollLoop() {
+    scrollFrame = 0;
+    const sc = hold && hold.scroll;
+    if (!sc || sc.stale) return;
+    if (!scrollTick(sc)) { cancelHold(); return; }
+    scrollFrame = requestAnimationFrame(scrollLoop);
+  }
+  // The bar where the pull puts it, and which way it scrolls (the chevron that way is highlighted).
+  function drawScroll(sc) {
+    const pulled = sc.stale ? 0 : sc.pull;
+    setHandle(clampCentre({ x: sc.rest.x, y: sc.rest.y + pulled }, sc.area, 0, HANDLE.hitHeight), place.edge, sc.area, false);
+    handle.dataset.dir = pulled < 0 ? 'up' : pulled > 0 ? 'down' : '';
+  }
+  function startScroll(at) {
+    const geo = handleGeometry();
+    if (!geo) { cancelHold(); return; }
+    const now = performance.now();
+    hold.scroll = { term: geo.target.term, area: geo.area, rest: handleCentre(place, geo.area), pull: 0, carry: 0, tick: now, seen: now, stale: false, watch: 0 };
+    hold.scroll.watch = setInterval(scrollCheck, SCROLL_CHECK_MS);
+    handle.dataset.state = 'scroll';
+    hideHint();
+    scrollMove(at);
+  }
+  function scrollMove(at) {
+    const sc = hold.scroll;
+    sc.seen = performance.now();
+    if (sc.stale) { sc.stale = false; sc.tick = sc.seen; handle.dataset.state = 'scroll'; } // the finger moves again after a stale pause
+    if (!scrollTick(sc)) { cancelHold(); return; } // the time pulled so far, at the old pull
+    sc.pull = springPull(at.y - hold.from.y, sc.area.bottom - sc.area.top);
+    drawScroll(sc);
+    if (!scrollFrame) scrollFrame = requestAnimationFrame(scrollLoop);
+  }
+  // Every SCROLL_CHECK_MS while it scrolls: the terminal is still the one of the touch, and a finger with no pointer event for STALE_MS stops the
+  // scrolling and the handle goes back to rest (the next move of the same finger brings both back).
+  function scrollCheck() {
+    const sc = hold && hold.scroll;
+    if (!sc) return;
+    if (!scrollTarget(sc)) { cancelHold(); return; }
+    if (!sc.stale && performance.now() - sc.seen > STALE_MS) {
+      sc.stale = true;
+      stopScrollFrame();
+      handle.dataset.state = 'spring';
+      drawScroll(sc);
+      return;
+    }
+    if (!scrollTick(sc)) cancelHold();
+  }
+  // The lift (`lifted`) or any other end: the time held since the last frame counts on a lift, then the scrolling stops and the handle springs
+  // back to its place (SPRING_MS; at once with reduced motion).
+  function endScroll(sc, lifted) {
+    if (lifted) scrollTick(sc);
+    clearInterval(sc.watch);
+    stopScrollFrame();
+    delete handle.dataset.dir;
+    clearTimeout(snapTimer);
+    snapTimer = 0;
+    if (reducedMotion()) { handle.dataset.state = 'idle'; placeHandle(); return; }
+    handle.dataset.state = 'spring';
+    setHandle(sc.rest, place.edge, sc.area, false);
+    snapTimer = setTimeout(() => { snapTimer = 0; handle.dataset.state = 'idle'; placeHandle(); }, SPRING_MS + 50); // a little after the transition's last frame
+  }
+
+  // ── The first-time hint (next to the handle) ──
   function hideHint() {
     clearTimeout(hintTimer);
     hintTimer = 0;
@@ -558,12 +676,11 @@ function control(nodes, ui) {
     // Above the handle, toward the inside (the slide's direction), inside the terminal.
     hint.style.right = place.edge === 'left' ? 'auto' : `${Math.max(0, document.documentElement.clientWidth - geo.area.right + 24)}px`;
     hint.style.left = place.edge === 'left' ? `${geo.area.left + 24}px` : 'auto';
-    hint.style.top = `${Math.max(geo.area.top + 4, Math.min(geo.area.bottom - 48, box.top - 48))}px`;
+    const height = hint.offsetHeight || 44; // 44px on one line, taller when it wraps
+    hint.style.top = `${Math.max(geo.area.top + 4, Math.min(geo.area.bottom - height - 4, box.top - height - 4))}px`;
     hintTimer = setTimeout(hideHint, HINT_MS);
   }
   function check() {
-    const strip = stripEl();
-    if (strip && strip.getAttribute('aria-description') !== t(DESCRIPTION)) strip.setAttribute('aria-description', t(DESCRIPTION));
     watchBox();
     const geo = placeHandle();
     if (drag) { if (!same()) cancel(); return; } // a terminal that went away while the finger was still
@@ -571,7 +688,8 @@ function control(nodes, ui) {
     showHint(geo);
   }
 
-  ui.actions.stripMouse = { axis: stripAxis, begin };
+  // Test hook: whether the handle is scrolling now (a frame is pending).
+  window.__h5HandleScrolling = () => Boolean(scrollFrame);
   document.addEventListener('pointerdown', touched, true);
   window.addEventListener('pagehide', away);
   window.addEventListener('blur', blurred);
@@ -596,7 +714,6 @@ function control(nodes, ui) {
       cancel();
       settle();
       hideHint();
-      if (ui.actions.stripMouse && ui.actions.stripMouse.begin === begin) delete ui.actions.stripMouse;
       document.removeEventListener('pointerdown', touched, true);
       window.removeEventListener('pagehide', away);
       window.removeEventListener('blur', blurred);
@@ -611,8 +728,7 @@ function control(nodes, ui) {
       unsubscribe();
       window.removeEventListener('resize', schedulePlace);
       if (vv) { vv.removeEventListener('resize', schedulePlace); vv.removeEventListener('scroll', schedulePlace); }
-      const strip = stripEl();
-      if (strip) strip.removeAttribute('aria-description');
+      delete window.__h5HandleScrolling;
     },
   };
 }
@@ -634,7 +750,7 @@ const OVERLAY = theme => ({
   '&[data-state="stretch"], &[data-state="drag"], &[data-state="pressed"]': { display: 'block' },
   '&[data-state="pressed"]': { color: theme.palette.primary.main },
   '& .h5-mouse-ball-line': { stroke: alpha(theme.palette.common.white, 0.45), strokeWidth: 1.5, strokeDasharray: '3 4' },
-  '& .h5-mouse-ball-tail': { stroke: alpha(theme.palette.common.white, 0.3), strokeLinecap: 'round' }, // the thumb's colour, stretched
+  '& .h5-mouse-ball-tail': { stroke: alpha(theme.palette.common.white, 0.3), strokeLinecap: 'round' }, // the stretched handle
   '& path': { fill: 'none', strokeLinecap: 'butt', strokeLinejoin: 'miter' },
   '& .h5-mouse-ball-outline': { stroke: theme.palette.common.black },
 });
@@ -647,15 +763,16 @@ const STATUS_PILL = theme => ({
 });
 // The first-time hint: a pill above the handle, toward the inside, never taking a touch; its chevron points the way of the slide.
 const HINT = theme => ({
-  position: 'fixed', zIndex: theme.zIndex.speedDial, height: 44, boxSizing: 'border-box', display: 'none', alignItems: 'center', gap: 1, px: 2,
-  borderRadius: '22px', pointerEvents: 'none', whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 72px)', ...theme.typography.body2,
+  position: 'fixed', zIndex: theme.zIndex.speedDial, minHeight: 44, boxSizing: 'border-box', display: 'none', alignItems: 'center', gap: 1, px: 2, py: 0.5,
+  borderRadius: '22px', pointerEvents: 'none', maxWidth: 'calc(100vw - 72px)', ...theme.typography.body2,
   '& .h5-mouse-ball-hint-icon': { display: 'inline-flex', color: theme.palette.primary.main, flex: '0 0 auto' },
   '&[data-edge="left"] .h5-mouse-ball-hint-left, &:not([data-edge="left"]) .h5-mouse-ball-hint-right': { display: 'none' },
   '&[data-edge="left"]': { flexDirection: 'row-reverse' },
 });
-// The mouse handle: a touch box at the edge with the drawn bar inside (the scroll thumb's look, a small corner cursor in it). Blue while it is
-// stretched or moved; bigger and lifted (a shadow) while moved; gliding to the edge after a move.
-// Drawn inside #h5-app (a portal), so it layers with the page's own parts: z-index 2 in that stacking context, over the wheel strip (also 2, earlier in the page) but under the bottom bar (3) with its
+// The mouse handle: a touch box at the edge with the drawn bar inside (a small corner cursor in it). Blue while it is scrolling, stretched or
+// moved; bigger and lifted (a shadow) while moved; gliding to the edge after a move; springing back to its place after a scroll (a small
+// overshoot), with a chevron above and one below it while it scrolls (the one of the pull's direction blue).
+// Drawn inside #h5-app (a portal), so it layers with the page's own parts: z-index 2 in that stacking context, over the terminal but under the bottom bar (3) with its
 // saved commands menu over the terminal, the copy bar (3) and everything MUI layers (menus, drawers, dialogs, notices); the ball, its cursor and
 // the pills stay at speedDial.
 const HANDLE_BOX = theme => ({
@@ -665,13 +782,25 @@ const HANDLE_BOX = theme => ({
     position: 'absolute', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
     bgcolor: alpha(theme.palette.common.white, 0.55), border: `1px solid ${alpha(theme.palette.common.white, 0.35)}`, color: theme.palette.common.white,
   },
-  '&[data-mouse="stretch"] .h5-mouse-handle-bar, &[data-state="move"] .h5-mouse-handle-bar': { bgcolor: alpha(theme.palette.primary.main, 0.9) },
+  '&[data-mouse="stretch"] .h5-mouse-handle-bar, &[data-state="move"] .h5-mouse-handle-bar, &[data-state="scroll"] .h5-mouse-handle-bar': { bgcolor: alpha(theme.palette.primary.main, 0.9) },
+  '& .h5-mouse-handle-chevron': {
+    position: 'absolute', left: '50%', width: 14, height: 14, marginLeft: '-7px', lineHeight: 0, display: 'none', pointerEvents: 'none',
+    color: alpha(theme.palette.common.white, 0.4),
+  },
+  '& .h5-mouse-handle-up': { top: -20 },
+  '& .h5-mouse-handle-down': { bottom: -20 },
+  '&[data-state="scroll"] .h5-mouse-handle-chevron': { display: 'block' },
+  '&[data-dir="up"] .h5-mouse-handle-up, &[data-dir="down"] .h5-mouse-handle-down': { color: theme.palette.primary.main },
+  '&[data-state="spring"]': { transition: `transform ${SPRING_MS}ms cubic-bezier(.34, 1.56, .64, 1)` }, // the old spring thumb's small overshoot
+  '&[data-state="spring"] .h5-mouse-handle-bar': { transition: theme.transitions.create('background-color', { duration: SPRING_MS }) },
   '&[data-state="move"] .h5-mouse-handle-bar': { boxShadow: `0 6px 16px ${alpha(theme.palette.common.black, 0.7)}` },
   '&[data-state="snap"]': { transition: theme.transitions.create('transform', { duration: SNAP_MS, easing: theme.transitions.easing.easeOut }) },
   '&[data-state="snap"] .h5-mouse-handle-bar': {
     transition: theme.transitions.create(['left', 'top', 'width', 'height', 'border-radius', 'background-color', 'box-shadow'], { duration: SNAP_MS, easing: theme.transitions.easing.easeOut }),
   },
-  '@media (prefers-reduced-motion: reduce)': { '&[data-state="snap"], &[data-state="snap"] .h5-mouse-handle-bar': { transition: 'none' } },
+  '@media (prefers-reduced-motion: reduce)': {
+    '&[data-state="snap"], &[data-state="snap"] .h5-mouse-handle-bar, &[data-state="spring"], &[data-state="spring"] .h5-mouse-handle-bar': { transition: 'none' },
+  },
 });
 // While the handle is moved: a dashed line at each edge it can snap to.
 const GUIDES = theme => ({
@@ -683,6 +812,9 @@ const MOVE_PILL = theme => ({
   justifyContent: 'center', px: 2, borderRadius: '22px', pointerEvents: 'none', textAlign: 'center', ...theme.typography.body2,
 });
 const HANDLE_GLYPH = 'M1 8 L1 1 L6 1'; // the small corner cursor in the handle
+// The handle's name. It stays role="img": it has no keyboard action (keyboard users scroll with the keys and select with the copy view), so it is
+// not announced as a button; the name says what a finger or a mouse can do with it.
+const HANDLE_LABEL = 'Mouse handle, drag to scroll';
 // The handle goes into the page's own layer (#h5-app, drawn by App.jsx before this chunk loads), or here when there is none.
 const inPage = node => { const app = document.getElementById('h5-app'); return app ? createPortal(node, app) : node; };
 
@@ -716,9 +848,11 @@ export function MouseBall({ state, ui }) {
   return (
     <>
       {inPage(
-        <Box ref={handle} id="h5-mouse-handle" role="img" aria-label={t('Mouse handle')} sx={HANDLE_BOX}>
+        <Box ref={handle} id="h5-mouse-handle" role="img" aria-label={t(HANDLE_LABEL)} sx={HANDLE_BOX}>
           <span ref={bar} className="h5-mouse-handle-bar">
             <svg width="7" height="9" viewBox="0 0 7 9" aria-hidden="true" focusable="false"><path d={HANDLE_GLYPH} fill="none" stroke="currentColor" strokeWidth="1.5" /></svg>
+            <span className="h5-mouse-handle-chevron h5-mouse-handle-up" aria-hidden="true"><Icon name="chevronUp" size={14} /></span>
+            <span className="h5-mouse-handle-chevron h5-mouse-handle-down" aria-hidden="true"><Icon name="chevronDown" size={14} /></span>
           </span>
         </Box>,
       )}

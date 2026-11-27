@@ -1,24 +1,30 @@
-// The mouse ball of the phone terminal (scripts/h5-shell/MouseBall.jsx, mouse-ball-model.mjs; "Mouse ball" in docs/design/page-terminal-mouse-ball.md)
-// in real headless Chromium at 390 x 844 with touch, driven by real CDP touches (Input.dispatchTouchEvent). The server is mocked (no data folder).
-// Checked: no ball and no More-menu switch at start (its chunk is loaded in touch input); the first-time hint near the thumb, once per device (not
-// again after a reload), gone after 4 s; the wheel strip's 44px hit area and its description; a vertical drag of the thumb still scrolls and never
-// starts the mouse, nor does a slide to the right or a vertical start that turns sideways; a slide to the left stretches the thumb (25px: the
-// stretch state, the thumb dimmed), lifted then it springs back with no copy and no scroll; past 40px it is the ball; then the shipped scenario
-// from that entrance: the cursor 46px left of and above the ball with a dashed line; holding still 600 ms presses (ring, blue cursor) and does not
-// open the long-press copy view; a drag then selects, and the lift copies exactly the expected text through the copy path of the double tap
-// (notice "Copied N characters"), then the ball glides back into the strip (a clean strip: no data-mouse, no stuck active, the thumb's own colour);
-// a touch during the glide works at once; the edge fade lets the cursor reach the last column; a drag without the dwell copies nothing; a cancelled
-// touch copies nothing and leaves no selection; the terminal does not scroll under the ball, but a held button near the top edge scrolls it and the
-// selection keeps its start; a refused write shows the copy bar; a paragraph a program wrapped is one line; with mouse reporting on (SGR drag
-// tracking) the button goes to the program instead (the press at the dwell, motions while held and the release at the lift as 1-based SGR reports,
-// wheel steps near the top edge, no page selection or copy, the program's OSC 52 copy on the release written at once, reporting turned off
-// mid-gesture keeps the gesture the program's, off again the page selects and copies); the More menu's switch "Mouse ball sends the mouse to
-// programs" (phone and computer, on by default, writing `off` to h5-mouse-ball-program); with modes 1000/1002/1003/1004/1006 the bytes of a real mouse (hover
-// moves before the press, ESC[I once when the terminal did not have the focus, the press, drags, the release), no hover in 1002, and with the switch
-// off nothing reaches the program; the spring strip of a full-screen program works the same
-// and sends nothing to the program before the ball is out; a fresh terminal without history has the strip all the same (a full thumb, the hint, a
-// vertical drag and a tap do nothing, the whole gesture from a slide to the left), and it follows history, the alternate screen and a clear; no
-// horizontal overflow. H5_SHOT_DIR=<dir> saves screenshots.
+// The mouse handle and the mouse ball of the terminal (scripts/h5-shell/MouseBall.jsx, mouse-ball-model.mjs; "Mouse ball" and "The mouse handle"
+// in docs/design/page-terminal-mouse-ball.md) in real headless Chromium at 390 x 844 with touch, driven by real CDP touches (Input.dispatchTouchEvent),
+// and at 1440 x 900 with Playwright's mouse. The server is mocked (no data folder).
+// Checked: no ball and no More-menu switch at start (its chunk is loaded in touch input); the handle at its default place (role img, "Mouse handle,
+// drag to scroll"); the first-time hint above it ("Drag to scroll, slide left for the mouse"), once per device, gone after 4 s, and
+// mirrored ("Drag to scroll, slide right for the mouse") with the handle on the left edge; a vertical drag on the handle scrolls the normal buffer (up = older, down =
+// newer, faster with the pull), highlighted blue with its chevrons, never the mouse even when it turns sideways, never a long-press move, and on the
+// lift it springs back to its place and the scrolling stops; a tap on the handle does nothing and sends no click to the terminal; a slide toward
+// the edge does nothing; a slide toward the inside stretches the handle (25px: the stretch state, the handle highlighted), lifted then it springs
+// back with no copy and no scroll; past 40px it is the ball; then the shipped scenario from that entrance: the cursor 46px left of and above the
+// ball with a dashed line; holding still 600 ms presses (ring, blue cursor) and does not open the long-press copy view; a drag then selects, and the
+// lift copies exactly the expected text through the copy path of the double tap (notice "Copied N characters"), then the ball glides back into the
+// handle; a touch on the handle during the glide works at once; the edge fade lets the cursor reach the last column; a drag without the dwell copies
+// nothing; a cancelled touch copies nothing and leaves no selection; the terminal does not scroll under the ball, but a held button near the top
+// edge scrolls it and the selection keeps its start; a refused write shows the copy bar; a paragraph a program wrapped is one line; with mouse
+// reporting on (SGR drag tracking) the button goes to the program instead (the press at the dwell, motions while held and the release at the lift as
+// 1-based SGR reports, wheel steps near the top edge, no page selection or copy, the program's OSC 52 copy on the release written at once, reporting
+// turned off mid-gesture keeps the gesture the program's, off again the page selects and copies); the More menu's switch "Mouse ball sends the mouse
+// to programs" (phone and computer, on by default, writing `off` to h5-mouse-ball-program); with modes 1000/1002/1003/1004/1006 the bytes of a real
+// mouse (hover moves before the press, ESC[I once when the terminal did not have the focus, the press, drags, the release), no hover in 1002, and
+// with the switch off nothing reaches the program; in a full-screen program (the alternate buffer) the handle scrolls with wheel events (arrow keys
+// without mouse mode, SGR wheel reports with it) and the ball comes out the same way, sending nothing before the press; the long press that moves
+// the handle, the snap to the nearest edge, the place kept after a reload, the mirrored pull from the left edge; a fresh terminal without history
+// (the handle, the hint, a vertical drag scrolling nothing, a tap doing nothing, the whole gesture, then scrolling once there is history); a computer
+// with a mouse (the terminal box 4px from the right, xterm's own scrollbar not hidden, a left-button vertical drag on the handle scrolling with the
+// keyboard left in the terminal, the slide with the button held, the copy at the mouseup, Escape, the long press and the snap); no horizontal
+// overflow. H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -136,36 +142,24 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     // The finger that puts the cursor at `cursor` (the full 46px offset, away from the edges, grabbed at the ball's centre).
     const fingerFor = cursor => ({ x: cursor.x + 46, y: cursor.y + 46 });
     const at = (g, col, row) => ({ x: g.left + col * g.cw, y: g.top + (row + 0.5) * g.ch }); // the boundary before `col` in the middle of `row`
-    // The middle of the strip's thumb, a little inside the strip's right edge (the strip is 44px wide, the thumb 4px at its right). Where the mouse
-    // handle lies over the thumb (its default place is low on the right edge, where a thumb at the newest output also is), the middle of the part
-    // of the thumb the handle leaves free: the handle takes the touches inside its own box.
-    const thumbPoint = () => page.evaluate(() => {
-      const strip = document.getElementById('h5-wheel').getBoundingClientRect();
-      const thumb = document.querySelector('#h5-wheel .h5-wheel-thumb').getBoundingClientRect();
-      const handle = document.getElementById('h5-mouse-handle');
-      const h = handle && getComputedStyle(handle).display !== 'none' ? handle.getBoundingClientRect() : null;
-      let top = thumb.top;
-      let bottom = thumb.bottom;
-      if (h && h.left < strip.right - 8 && h.right > strip.right - 8 && h.top < bottom && h.bottom > top) {
-        if (bottom - h.bottom >= h.top - top) top = h.bottom + 1; else bottom = h.top - 1;
-      }
-      return { x: strip.right - 8, y: (top + bottom) / 2 };
-    });
-    // The ball out of the strip: a touch on the thumb, 45px to the left (it lets go at 40), then the finger to `to`.
+    // The middle of the handle's drawn bar: where a touch on the handle starts.
+    const handlePoint = () => page.evaluate(() => { const b = document.querySelector('#h5-mouse-handle .h5-mouse-handle-bar').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+    // The ball out of the handle: a touch on its bar, 45px toward the inside (it lets go at 40), then the finger to `to`.
     const enter = async (to, options) => {
-      const from = await thumbPoint();
-      const out = { x: from.x - 45, y: from.y };
+      const from = await handlePoint();
+      const side = await page.evaluate(() => document.getElementById('h5-mouse-handle').dataset.edge);
+      const out = { x: from.x + (side === 'left' ? 45 : -45), y: from.y };
       await touch('touchStart', from.x, from.y);
       await glide(from, out, { steps: 5 });
       await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
       if (to) await glide(out, to, options);
       return out;
     };
-    // Back in the strip after the lift: the ball gone, the strip its own again.
+    // Back in the handle after the lift: the ball gone, the handle at rest.
     const dockedAgain = () => page.waitForFunction(() => {
-      const el = document.getElementById('h5-wheel');
+      const el = document.getElementById('h5-mouse-handle');
       const ball = document.getElementById('h5-mouse-ball');
-      return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none' && el.querySelector('.h5-wheel-thumb').style.background === '';
+      return !el.dataset.mouse && el.dataset.state === 'idle' && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none';
     }, null, { timeout: 3000 });
 
     // The mouse handle: its touch box, its drawn bar (centre and size) and its state, with the terminal box.
@@ -175,7 +169,8 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       const r = el.getBoundingClientRect();
       const b = bar.getBoundingClientRect();
       const box = document.getElementById('h5-terminal').getBoundingClientRect();
-      return { display: getComputedStyle(el).display, state: el.dataset.state, edge: el.dataset.edge, mouse: el.dataset.mouse || '', role: el.getAttribute('role'), label: el.getAttribute('aria-label'),
+      const chevrons = [...el.querySelectorAll('.h5-mouse-handle-chevron')].map(node => ({ display: getComputedStyle(node).display, color: getComputedStyle(node).color, y: node.getBoundingClientRect().top }));
+      return { display: getComputedStyle(el).display, state: el.dataset.state, edge: el.dataset.edge, dir: el.dataset.dir || '', mouse: el.dataset.mouse || '', role: el.getAttribute('role'), label: el.getAttribute('aria-label'), chevrons,
         touchAction: getComputedStyle(el).touchAction, hit: { x: r.left, y: r.top, w: r.width, h: r.height }, bar: { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height, bg: getComputedStyle(bar).backgroundColor, shadow: getComputedStyle(bar).boxShadow },
         box: { left: box.left, right: box.right, top: box.top, bottom: box.bottom } };
     });
@@ -202,16 +197,17 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     const history = Array.from({ length: 300 }, (_, i) => `old ${i + 1}`).join('\r\n');
     // The text starts on row 1 (0-based): the 24px next to the top edge is where a held button scrolls the history.
     await emit(`${history}\r\n\x1b[2J\x1b[H\r\nMOUSE BALL TEST\r\n${ROW1}\r\n${ROW2}\r\n${'W'.repeat(g0.cols - 1)}Z\r\n$ `);
-    await page.waitForFunction(() => document.getElementById('h5-wheel').dataset.mode === 'bar');
     await page.locator('#h5-mouse-ball').waitFor({ state: 'attached' });
+    await page.waitForFunction(() => document.getElementById('h5-mouse-handle')?.style.display === 'block');
     assert.equal(await page.locator('#h5-mouse-ball').isVisible(), false, 'no ball on the screen');
     assert.equal(chunks.length, 1, 'the chunk is loaded in touch input');
     // ── The mouse handle at its default place, and the first-time hint above it, once per device ──
     let hd = await handleBox();
     assert.equal(hd.display, 'block', 'the mouse handle is drawn with the terminal');
-    assert.deepEqual([hd.role, hd.label, hd.edge, hd.state], ['img', 'Mouse handle', 'right', 'idle']);
+    assert.deepEqual([hd.role, hd.label, hd.edge, hd.state], ['img', 'Mouse handle, drag to scroll', 'right', 'idle']);
     assert.deepEqual([hd.bar.w, hd.bar.h], [11, 64], 'an 11 x 64 bar');
-    assert.equal(hd.bar.bg, 'rgba(255, 255, 255, 0.55)', 'the scroll thumb\'s look');
+    assert.equal(hd.bar.bg, 'rgba(255, 255, 255, 0.55)', 'white 55% at rest');
+    assert.ok(hd.chevrons.length === 2 && hd.chevrons.every(c => c.display === 'none'), 'no chevrons at rest');
     assert.ok(hd.hit.w >= 44 && hd.hit.h >= 64 && hd.hit.x <= hd.bar.x - 5.5 && hd.hit.x + hd.hit.w >= hd.bar.x + 5.5 && hd.hit.y <= hd.bar.y - 32 && hd.hit.y + hd.hit.h >= hd.bar.y + 32, `a touch box of at least 44px around the bar (${JSON.stringify(hd)})`);
     assert.ok(Math.abs(hd.bar.x - (hd.box.right - 7.5)) < 0.5, `on the right edge, 2px in (${hd.bar.x}, ${hd.box.right})`);
     assert.ok(Math.abs(hd.bar.y - (hd.box.bottom - 68)) < 0.5, `low, clear of the key row: its centre 68px above the terminal's bottom (${hd.bar.y}, ${hd.box.bottom})`);
@@ -219,10 +215,11 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     const handleHome = hd;
     const hint = page.locator('#h5-mouse-ball-hint');
     await hint.waitFor({ state: 'visible', timeout: 3000 });
-    assert.match(await hint.textContent(), /Slide the mouse handle left/);
+    assert.equal(await hint.textContent(), 'Drag to scroll, slide left for the mouse');
     assert.equal(await page.evaluate(() => localStorage.getItem('h5-mouse-ball-hinted')), 'shown', 'remembered for this device');
     const hintBox = await hint.boundingBox();
-    const stripBox = await page.locator('#h5-wheel').boundingBox();
+    const hintFits = await page.evaluate(() => { const el = document.getElementById('h5-mouse-ball-hint'); return { scroll: el.scrollWidth, client: el.clientWidth }; });
+    assert.ok(hintFits.scroll <= hintFits.client + 1, `the hint's text fits in its pill on one line (${JSON.stringify(hintFits)})`);
     assert.ok(hintBox.x >= 0 && hintBox.x + hintBox.width <= 390 - 24 + 0.5 && hintBox.y + hintBox.height <= hd.bar.y - 32 + 0.5 && hintBox.y >= hd.box.top, `above the handle, inside the screen (${JSON.stringify(hintBox)})`);
     assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('h5-mouse-ball-hint')).pointerEvents), 'none', 'it takes no touch');
     await shot('hint');
@@ -242,11 +239,9 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await page.keyboard.press('Escape');
     await page.locator('#h5-header-more-menu').waitFor({ state: 'detached' });
 
-    // ── The strip: a 44px hit area, a scrollbar that says it slides out ──
+    // ── The terminal keeps its own touch scrolling; the handle scrolls too ──
     const g = await grid();
-    assert.ok(stripBox.width >= 44, `the strip's hit area is 44px wide (${stripBox.width})`);
-    assert.equal(await page.locator('#h5-wheel').getAttribute('role'), 'scrollbar');
-    assert.equal(await page.locator('#h5-wheel').getAttribute('aria-description'), 'Slide left for the mouse');
+    assert.equal(await page.locator('#h5-wheel').count(), 0, 'the old wheel strip is gone');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.h5-xterm:not([hidden])')).touchAction), 'pan-y', 'the terminal keeps its own touch handling');
     const scrollTop = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop);
     const toBottom = async () => { await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; }); await page.waitForTimeout(150); };
@@ -255,68 +250,122 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       window.ballStates = [];
       new MutationObserver(() => { const s = document.getElementById('h5-mouse-ball')?.dataset.state; if (s && s !== window.ballStates.at(-1)) window.ballStates.push(s); })
         .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
+      // The handle's own states, in order (scroll, spring, idle, move, snap).
+      window.handleStates = [];
+      new MutationObserver(() => { const s = document.getElementById('h5-mouse-handle')?.dataset.state; if (s && s !== window.handleStates.at(-1)) window.handleStates.push(s); })
+        .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
+      // Clicks that reach the page outside the handle (the terminal, the document).
+      window.passed = [];
+      document.addEventListener('click', event => window.passed.push(event.target.className || event.target.tagName));
     });
-    const stripClean = () => page.waitForFunction(() => {
-      const el = document.getElementById('h5-wheel');
+    const handleStates = () => page.evaluate(() => window.handleStates.splice(0));
+    const handleClean = () => page.waitForFunction(() => {
+      const el = document.getElementById('h5-mouse-handle');
       const ball = document.getElementById('h5-mouse-ball');
-      return !el.dataset.mouse && !el.classList.contains('active') && el.querySelector('.h5-wheel-thumb').style.background === '' && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none';
+      return !el.dataset.mouse && el.dataset.state === 'idle' && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none';
     }, null, { timeout: 3000 });
+    const atRest = async () => {
+      await handleClean();
+      const now = await handleBox();
+      assert.ok(Math.abs(now.bar.x - handleHome.bar.x) < 0.5 && Math.abs(now.bar.y - handleHome.bar.y) < 0.5 && now.bar.w === 11 && now.dir === '', `the handle is back at its place (${JSON.stringify(now.bar)})`);
+      assert.ok(now.chevrons.every(c => c.display === 'none'), 'no chevrons at rest');
+    };
 
-    // ── A vertical drag of the thumb still scrolls and never starts the mouse ──
-    let t0 = await thumbPoint();
-    const bottomTop = await scrollTop();
-    await touch('touchStart', t0.x, t0.y);
-    await glide(t0, { x: t0.x - 6, y: t0.y - 150 }, { steps: 10 }); // a little sideways on the way: still a scroll
-    assert.ok(await scrollTop() < bottomTop - 50, 'the thumb drag scrolled back');
-    await glide({ x: t0.x - 6, y: t0.y - 150 }, { x: t0.x - 90, y: t0.y - 150 }, { steps: 8 }); // a vertical start that turns sideways
-    assert.deepEqual(await states(), [], 'the mouse never came out');
-    await touch('touchEnd');
+    // ── A vertical drag on the handle scrolls: up = older; it follows the finger, blue with its chevrons; turning sideways stays a scroll ──
     await toBottom();
-    // A slide to the right never becomes the mouse.
-    t0 = await thumbPoint();
-    await touch('touchStart', stripBox.x + 4, t0.y);
-    await glide({ x: stripBox.x + 4, y: t0.y }, { x: stripBox.x + 34, y: t0.y }, { steps: 5 });
+    await handleStates();
+    let t0 = await handlePoint();
+    const bottomTop = await scrollTop();
+    assert.ok(bottomTop > 0, 'there is history to scroll');
+    await touch('touchStart', t0.x, t0.y);
+    await glide(t0, { x: t0.x - 4, y: t0.y - 150 }, { steps: 10 }); // a little sideways on the way: still a scroll
+    let hsc = await handleBox();
+    assert.deepEqual([hsc.state, hsc.dir, hsc.bar.bg], ['scroll', 'up', 'rgba(144, 202, 249, 0.9)'], 'scrolling up: highlighted blue');
+    assert.ok(Math.abs(hsc.bar.y - (t0.y - 150)) < 0.5, `the handle follows the finger (${hsc.bar.y}, ${t0.y - 150})`);
+    assert.ok(hsc.chevrons.every(c => c.display === 'block'), 'the chevrons above and below it');
+    assert.ok(hsc.chevrons[0].y < hsc.bar.y - 32 && hsc.chevrons[1].y > hsc.bar.y + 32, `one above, one below (${JSON.stringify(hsc.chevrons)})`);
+    assert.equal(hsc.chevrons[0].color, 'rgb(144, 202, 249)', 'the chevron of the pull\'s direction is blue');
+    assert.notEqual(hsc.chevrons[1].color, 'rgb(144, 202, 249)', 'the other one is not');
+    await shot('handle-scroll');
+    await page.waitForFunction(top => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop < top - 50, bottomTop, { timeout: 3000 });
+    await glide({ x: t0.x - 4, y: t0.y - 150 }, { x: t0.x - 90, y: t0.y - 150 }, { steps: 8 }); // a vertical start that turns sideways
+    await page.waitForTimeout(700); // longer than the long press: scrolling never becomes the move
+    assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'the mouse never came out');
+    assert.equal((await handleBox()).state, 'scroll', 'still a scroll, never the move');
     await touch('touchEnd');
-    assert.deepEqual(await states(), [], 'a slide to the right is no mouse');
-    await stripClean();
+    assert.equal((await handleBox()).state, 'spring', 'it springs back');
+    await atRest();
+    assert.deepEqual(await handleStates(), ['scroll', 'spring', 'idle'], 'scroll, spring back, rest: no move, no snap');
+    const stopped = await scrollTop();
+    assert.ok(stopped < bottomTop - 50, 'it scrolled back');
+    await page.waitForTimeout(300);
+    assert.equal(await scrollTop(), stopped, 'the scrolling stops on the lift');
+    // Pulled down: newer lines.
+    t0 = await handlePoint();
+    await touch('touchStart', t0.x, t0.y);
+    await glide(t0, { x: t0.x, y: t0.y + 120 }, { steps: 8 });
+    assert.equal((await handleBox()).dir, 'down');
+    await page.waitForFunction(top => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop > top + 20, stopped, { timeout: 3000 });
+    await touch('touchEnd');
+    await atRest();
+    assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'no mouse from a downward pull');
+    await toBottom();
+    // A tap on the handle does nothing: no click reaches the terminal, nothing scrolls, nothing comes out.
+    await page.waitForTimeout(450);
+    await page.evaluate(() => window.passed.splice(0));
+    const tapTop = await scrollTop();
+    t0 = await handlePoint();
+    await touch('touchStart', t0.x, t0.y);
+    await touch('touchEnd');
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(() => window.passed.slice()), [], 'no click passes the handle');
+    assert.equal(await scrollTop(), tapTop, 'a tap scrolls nothing');
+    assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'a tap is no mouse');
+    // A slide toward the right edge does nothing.
+    await touch('touchStart', t0.x - 20, t0.y);
+    await glide({ x: t0.x - 20, y: t0.y }, { x: t0.x + 4, y: t0.y + 2 }, { steps: 4 });
+    await touch('touchEnd');
+    await page.waitForTimeout(100);
+    assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'a slide toward the edge is no mouse');
+    assert.equal(await scrollTop(), tapTop, 'and no scroll');
+    await atRest();
+    await handleStates();
 
-    // ── A slide to the left: 25px stretches the thumb, lifting then springs it back and does nothing ──
-    t0 = await thumbPoint();
+    // ── A slide to the left: 25px stretches the handle, lifting then springs it back and does nothing ──
+    t0 = await handlePoint();
     const scroll0 = await scrollTop();
     await touch('touchStart', t0.x, t0.y);
     await glide(t0, { x: t0.x - 25, y: t0.y }, { steps: 5 });
     let pull = await page.evaluate(() => {
       const ball = document.getElementById('h5-mouse-ball');
-      const el = document.getElementById('h5-wheel');
       const tail = document.querySelector('.h5-mouse-ball-tail');
-      return { state: ball.dataset.state, progress: Number(ball.dataset.progress), mouse: el.dataset.mouse, thumb: getComputedStyle(el.querySelector('.h5-wheel-thumb')).backgroundColor,
-        tail: getComputedStyle(tail).display, width: parseFloat(getComputedStyle(tail).strokeWidth), size: ball.getBoundingClientRect().width };
+      return { state: ball.dataset.state, progress: Number(ball.dataset.progress), tail: getComputedStyle(tail).display, size: ball.getBoundingClientRect().width };
     });
+    let hs = await handleBox();
     assert.equal(pull.state, 'stretch', 'stretched, not out yet');
     assert.ok(Math.abs(pull.progress - 25 / 40) < 0.03, `progress 25 / 40 (${pull.progress})`);
-    assert.equal(pull.mouse, 'stretch');
-    assert.equal(pull.thumb, 'rgba(255, 255, 255, 0.15)', 'the thumb is dimmed at its place');
-    assert.notEqual(pull.tail, 'none', 'the tail from the strip');
-    assert.ok(pull.size > 6 && pull.size < 52, `the head grows toward the ball (${pull.size})`);
+    assert.deepEqual([hs.mouse, hs.bar.bg], ['stretch', 'rgba(144, 202, 249, 0.9)'], 'the handle is highlighted while it is pulled');
+    assert.notEqual(pull.tail, 'none', 'the tail from the handle');
+    assert.ok(pull.size > 11 && pull.size < 52, `the head grows toward the ball (${pull.size})`);
     await shot('pull');
     await touch('touchEnd');
-    await stripClean();
-    assert.deepEqual(await states(), ['stretch', 'glide', 'idle'], 'it springs back into the strip');
+    await handleClean();
+    assert.deepEqual(await states(), ['stretch', 'glide', 'idle'], 'it springs back into the handle');
     assert.deepEqual(await copied(), [], 'nothing copied');
     assert.equal(await scrollTop(), scroll0, 'nothing scrolled');
     assert.equal((await ui()).selected, 0, 'nothing selected');
 
     // ── Past 40px it lets go: the ball ──
-    t0 = await thumbPoint();
+    t0 = await handlePoint();
     await touch('touchStart', t0.x, t0.y);
     await glide(t0, { x: t0.x - 45, y: t0.y }, { steps: 5 });
     await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag');
-    assert.equal(await page.evaluate(() => document.getElementById('h5-wheel').dataset.mouse), 'ball');
+    assert.equal((await handleBox()).mouse, 'ball');
     const out = await ballBox();
     assert.equal(out.w, 52, 'the 52px ball');
     assert.ok(Math.abs(out.x - (t0.x - 45)) < 0.5 && Math.abs(out.y - t0.y) < 0.5, 'under the finger');
     await touch('touchEnd');
-    await stripClean();
+    await handleClean();
     assert.equal(await scrollTop(), scroll0, 'the slide did not scroll');
     await states();
     const idle = await ui();
@@ -358,6 +407,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.ok(view.selected > 0, 'xterm draws the selection while dragging');
     await shot('select');
     await touch('touchEnd');
+    const glideTo = await page.evaluate(() => /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(document.getElementById('h5-mouse-ball').style.transform).slice(1).map(Number));
     const expected1 = `${ROW1.slice(8)}\n${ROW2.slice(0, 12)}`;
     await page.waitForFunction(() => window.copied.length === 1);
     assert.deepEqual(await copied(), [expected1], 'the lift copies the selection');
@@ -365,25 +415,26 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.deepEqual(said, [[`Copied ${expected1.length} characters`, 'success']], 'the notice of every terminal copy');
     view = await ui();
     assert.ok(view.selected > 0, 'the highlight stays after the copy');
+    assert.ok(Math.abs(glideTo[0] + 26 - handleHome.bar.x) < 1 && Math.abs(glideTo[1] + 26 - handleHome.bar.y) < 1 && Math.abs(glideTo[2] - 11 / 52) < 0.01, `it glides back to the handle, as wide as its bar (${glideTo})`);
     await dockedAgain();
-    assert.deepEqual((await states()).slice(-3), ['pressed', 'glide', 'idle'], 'the ball glides back into the strip');
-    await stripClean();
+    assert.deepEqual((await states()).slice(-3), ['pressed', 'glide', 'idle'], 'the ball glides back into the handle');
+    await atRest();
     await shot('copied');
 
-    // ── A touch during the glide works at once (a scroll of the strip) ──
+    // ── A touch on the handle during the glide works at once (a scroll) ──
     await toBottom();
     await enter({ x: 200, y: 300 });
     await touch('touchEnd');
-    let t1 = await thumbPoint();
+    let t1 = await handlePoint();
     await touch('touchStart', t1.x, t1.y);
-    const during = await page.evaluate(() => ({ state: document.getElementById('h5-mouse-ball').dataset.state, mouse: document.getElementById('h5-wheel').dataset.mouse || '', active: document.getElementById('h5-wheel').classList.contains('active') }));
-    assert.deepEqual(during, { state: 'idle', mouse: '', active: true }, 'the glide is over at once and the strip has the new touch');
+    const during = await page.evaluate(() => ({ state: document.getElementById('h5-mouse-ball').dataset.state, mouse: document.getElementById('h5-mouse-handle').dataset.mouse || '' }));
+    assert.deepEqual(during, { state: 'idle', mouse: '' }, 'the glide is over at once and the handle has the new touch');
     const beforeScroll = await scrollTop();
     await glide(t1, { x: t1.x, y: t1.y - 120 }, { steps: 8 });
-    assert.ok(await scrollTop() < beforeScroll, 'and it scrolls');
+    await page.waitForFunction(top => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop < top, beforeScroll, { timeout: 3000 });
     await touch('touchEnd');
     await toBottom();
-    await stripClean();
+    await atRest();
     await states();
 
     // ── The edge fade: the cursor reaches the last column ──
@@ -668,22 +719,56 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await notices();
     await dockedAgain();
 
-    // ── A full-screen program (the alternate buffer): the spring strip lets the ball out the same way ──
+    // ── A full-screen program (the alternate buffer): the handle scrolls the program with wheel events; the ball comes out the same way ──
     await emit(`\x1b[?1049h\x1b[H\x1b[2JSPRING\r\n${ROW1}\r\n${ROW2}\r\n`);
-    await page.waitForFunction(() => document.getElementById('h5-wheel').dataset.mode === 'spring');
-    await page.waitForTimeout(400); // the spring thumb at rest in the middle
+    await page.waitForFunction(() => window.H5UI && document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent.includes('SPRING'));
     const gs = await grid();
-    let ts = await thumbPoint();
-    const stripMiddle = await page.evaluate(() => { const r = document.getElementById('h5-wheel').getBoundingClientRect(); return r.top + r.height / 2; });
-    assert.ok(Math.abs(ts.y - stripMiddle) < 2, 'the spring thumb rests in the middle');
+    const sentText = from => page.evaluate(from => window.sockets.at(-1).sent.slice(from).filter(item => !item.startsWith('{')).join(''), from);
+    // Without mouse mode xterm turns the wheel steps into arrow keys: pulled up, up arrows; pulled down, down arrows.
+    let ts = await handlePoint();
+    from = await sentCount();
+    await touch('touchStart', ts.x, ts.y);
+    await glide(ts, { x: ts.x, y: ts.y - 120 }, { steps: 8 });
+    await page.waitForFunction(from => window.sockets.at(-1).sent.slice(from).some(item => /\x1b[\[O]A/.test(item)), from, { timeout: 3000 });
+    await touch('touchEnd');
+    await atRest();
+    let arrows = await sentText(from);
+    assert.ok(/^(\x1b[\[O]A)+$/.test(arrows), `pulled up: only up arrows to the program (${JSON.stringify(arrows)})`);
+    const settled = await sentCount();
+    await page.waitForTimeout(300);
+    assert.equal(await sentCount(), settled, 'nothing more after the lift');
+    from = await sentCount();
+    ts = await handlePoint();
+    await touch('touchStart', ts.x, ts.y);
+    await glide(ts, { x: ts.x, y: ts.y + 120 }, { steps: 8 });
+    await page.waitForFunction(from => window.sockets.at(-1).sent.slice(from).some(item => /\x1b[\[O]B/.test(item)), from, { timeout: 3000 });
+    await touch('touchEnd');
+    await atRest();
+    arrows = await sentText(from);
+    assert.ok(/^(\x1b[\[O]B)+$/.test(arrows), `pulled down: only down arrows (${JSON.stringify(arrows)})`);
+    // With mouse reporting on, the same pull reaches the program as SGR wheel reports (64 up, 65 down), and the page's view does not move.
+    await emit('\x1b[?1000h\x1b[?1006h');
+    from = await sentCount();
+    ts = await handlePoint();
+    await touch('touchStart', ts.x, ts.y);
+    await glide(ts, { x: ts.x, y: ts.y - 120 }, { steps: 8 });
+    await page.waitForFunction(from => window.sockets.at(-1).sent.slice(from).some(item => /\x1b\[<64;/.test(item)), from, { timeout: 3000 });
+    await touch('touchEnd');
+    await atRest();
+    const wheelReports = (await reports(from)).filter(r => r[0] === 64 || r[0] === 65);
+    assert.ok(wheelReports.length > 0 && wheelReports.every(r => r[0] === 64 && r[3] === 'M'), `wheel-up reports (${JSON.stringify(wheelReports)})`);
+    assert.ok(wheelReports.every(r => Math.abs(r[1] - Math.ceil(gs.cols / 2)) <= 1), `at the middle column of the visible terminal (${JSON.stringify(wheelReports)})`);
+    await emit('\x1b[?1000l\x1b[?1006l');
+    await states();
     // Stretched and let go: nothing reaches the program (no wheel steps, no arrow keys).
+    ts = await handlePoint();
     from = await sentCount();
     await touch('touchStart', ts.x, ts.y);
     await glide(ts, { x: ts.x - 25, y: ts.y + 3 }, { steps: 5 });
     assert.equal(await page.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch');
     await page.waitForTimeout(300);
     await touch('touchEnd');
-    await stripClean();
+    await handleClean();
     assert.equal(await sentCount(), from, 'the stretch sends nothing to the program');
     // Out, pressed, selected, copied, back.
     await enter(fingerFor(at(gs, 8, 1)));
@@ -696,15 +781,13 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await page.waitForFunction(n => window.copied.length === n + 4, copiesBefore);
     assert.equal((await copied()).at(-1), expected1, 'the same copy in the full-screen program');
     await notices();
-    await stripClean();
-    const spring = await page.evaluate(() => { const el = document.getElementById('h5-wheel'); return { offset: el.style.getPropertyValue('--h5-spring-offset'), pulling: el.hasAttribute('data-pulling'), mode: el.dataset.mode }; });
-    assert.deepEqual(spring, { offset: '0px', pulling: false, mode: 'spring' }, 'the spring thumb is back in the middle');
+    await atRest();
     assert.equal(await sentCount(), from, 'nothing was sent to the program');
     await emit('\x1b[?1049l');
 
 
     // (The ball-state observer also fires on the handle's own data-state, which can log the ball's 'idle' once: the checks for 'no ball' leave it out.)
-    // ── The mouse handle: a slide toward the inside pulls the ball out of it, a long press moves it, the lift snaps it to the nearest edge ──
+    // ── The mouse handle: a long press moves it, the lift snaps it to the nearest edge; on the left edge everything is mirrored ──
     await emit(`\x1b[2J\x1b[H\r\nHANDLE TEST\r\n${ROW1}\r\n${ROW2}\r\n$ `);
     await toBottom();
     await states();
@@ -712,60 +795,6 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     const gh = await grid();
     hd = await handleBox();
     assert.deepEqual([hd.edge, Math.round(hd.bar.y)], ['right', Math.round(handleHome.bar.y)], 'still at its default place');
-    const stillThere = async () => { const now = await handleBox(); assert.deepEqual([now.edge, now.state, now.mouse, Math.round(now.bar.x), Math.round(now.bar.y), now.bar.w], [hd.edge, 'idle', '', Math.round(hd.bar.x), Math.round(hd.bar.y), 11], 'the handle is where it was, at rest'); };
-    // Short drags that are no mouse: up and down, and toward the edge. Nothing comes out, nothing moves, nothing is kept, nothing scrolls.
-    const scrollH = await scrollTop();
-    await touch('touchStart', hd.bar.x, hd.bar.y);
-    await glide({ x: hd.bar.x, y: hd.bar.y }, { x: hd.bar.x - 3, y: hd.bar.y - 40 }, { steps: 6 });
-    await glide({ x: hd.bar.x - 3, y: hd.bar.y - 40 }, { x: hd.bar.x - 60, y: hd.bar.y - 40 }, { steps: 6 }); // a vertical start that turns sideways
-    await touch('touchEnd');
-    await touch('touchStart', hd.bar.x - 20, hd.bar.y);
-    await glide({ x: hd.bar.x - 20, y: hd.bar.y }, { x: hd.bar.x + 4, y: hd.bar.y + 2 }, { steps: 4 }); // toward the right edge
-    await touch('touchEnd');
-    await page.waitForTimeout(700); // longer than the long press: a slide never becomes the move
-    assert.deepEqual(await states(), [], 'no ball from a vertical drag or a slide toward the edge');
-    await stillThere();
-    assert.equal(await page.evaluate(() => localStorage.getItem('h5-mouse-handle')), null, 'nothing kept');
-    assert.equal(await scrollTop(), scrollH, 'nothing scrolled');
-    // 25px to the left: the handle stretches toward the finger, highlighted; lifted, it springs back into the handle and nothing happens.
-    await touch('touchStart', hd.bar.x, hd.bar.y);
-    await glide({ x: hd.bar.x, y: hd.bar.y }, { x: hd.bar.x - 25, y: hd.bar.y }, { steps: 5 });
-    let hp = await page.evaluate(() => ({ state: document.getElementById('h5-mouse-ball').dataset.state, progress: Number(document.getElementById('h5-mouse-ball').dataset.progress), tail: getComputedStyle(document.querySelector('.h5-mouse-ball-tail')).display }));
-    let hs = await handleBox();
-    assert.equal(hp.state, 'stretch');
-    assert.ok(Math.abs(hp.progress - 25 / 40) < 0.03, `progress 25 / 40 (${hp.progress})`);
-    assert.notEqual(hp.tail, 'none', 'the tail from the handle');
-    assert.deepEqual([hs.mouse, hs.bar.bg], ['stretch', 'rgba(144, 202, 249, 0.9)'], 'the handle is highlighted while it is pulled');
-    assert.equal(await page.evaluate(() => document.getElementById('h5-wheel').dataset.mouse || ''), '', 'the strip is not involved');
-    await shot('handle-pull');
-    await touch('touchEnd');
-    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle' && !document.getElementById('h5-mouse-handle').dataset.mouse, null, { timeout: 3000 });
-    assert.deepEqual(await states(), ['stretch', 'glide', 'idle'], 'it springs back into the handle');
-    assert.deepEqual(await copied(), [], 'nothing copied');
-    // Past 40px: the ball under the finger; then the whole gesture: the cursor 46px up-left, the press, the selection, the copy, the glide back to the handle.
-    const pullFrom = { x: hd.bar.x, y: hd.bar.y };
-    await touch('touchStart', pullFrom.x, pullFrom.y);
-    await glide(pullFrom, { x: pullFrom.x - 45, y: pullFrom.y }, { steps: 5 });
-    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
-    const hball = await ballBox();
-    assert.ok(hball.w === 52 && Math.abs(hball.x - (pullFrom.x - 45)) < 0.5 && Math.abs(hball.y - pullFrom.y) < 0.5, `the 52px ball under the finger (${JSON.stringify(hball)})`);
-    assert.equal((await handleBox()).mouse, 'ball');
-    const hpress = at(gh, 8, 2);
-    await glide({ x: pullFrom.x - 45, y: pullFrom.y }, fingerFor(hpress));
-    view = await ui();
-    assert.ok(Math.abs(view.cursor.x - hpress.x) < 0.5 && Math.abs(view.cursor.y - hpress.y) < 0.5, `the cursor 46px up and left (${JSON.stringify(view.cursor)})`);
-    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
-    await glide(fingerFor(hpress), fingerFor(at(gh, 12, 3)));
-    await touch('touchEnd');
-    const glideTo = await page.evaluate(() => /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(document.getElementById('h5-mouse-ball').style.transform).slice(1).map(Number));
-    await page.waitForFunction(() => window.copied.length === 1);
-    assert.deepEqual(await copied(), [expected1], 'the lift copies the selection');
-    assert.deepEqual(await notices(), [[`Copied ${expected1.length} characters`, 'success']]);
-    assert.ok(Math.abs(glideTo[0] + 26 - hd.bar.x) < 1 && Math.abs(glideTo[1] + 26 - hd.bar.y) < 1 && Math.abs(glideTo[2] - 11 / 52) < 0.01, `it glides back to the handle, as wide as its bar (${glideTo}, ${hd.bar.x}, ${hd.bar.y})`);
-    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle' && !document.getElementById('h5-mouse-handle').dataset.mouse, null, { timeout: 3000 });
-    assert.deepEqual((await states()).slice(-3), ['pressed', 'glide', 'idle']);
-    await stillThere();
-    assert.equal(await page.evaluate(() => document.getElementById('h5-wheel').dataset.mouse || ''), '', 'the strip was never involved');
     // A long press (500 ms still): the handle is picked up (bigger, blue, a shadow), the dashed guides and the pill show, it follows the finger in 2D.
     const tickedBefore = await page.evaluate(() => window.__h5KeyTicks || 0);
     await touch('touchStart', hd.bar.x, hd.bar.y);
@@ -809,7 +838,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.equal(kept.edge, 'left');
     assert.ok(Math.abs(kept.y - (298 - hd.box.top) / (hd.box.bottom - hd.box.top)) < 0.002, `the height kept as a fraction of the terminal (${JSON.stringify(kept)})`);
     assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'no ball from the move');
-    assert.deepEqual(await copied(), [expected1], 'nothing copied by the move');
+    assert.deepEqual(await copied(), [], 'nothing copied by the move');
     await shot('handle-left');
     // On the left edge it is mirrored: a slide to the left (toward the edge) does nothing, a slide to the right pulls the ball out.
     await touch('touchStart', hd.bar.x + 20, hd.bar.y);
@@ -817,6 +846,21 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await touch('touchEnd');
     await page.waitForTimeout(100);
     assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'a slide toward the left edge is no mouse');
+    // A vertical drag on the left handle scrolls as on the right one.
+    await emit(`${Array.from({ length: 120 }, (_, i) => `left ${i + 1}`).join('\r\n')}\r\n$ `);
+    await toBottom();
+    const leftTop = await scrollTop();
+    await touch('touchStart', hd.bar.x, hd.bar.y);
+    await glide({ x: hd.bar.x, y: hd.bar.y }, { x: hd.bar.x, y: hd.bar.y - 120 }, { steps: 8 });
+    assert.deepEqual([(await handleBox()).state, (await handleBox()).dir], ['scroll', 'up']);
+    await page.waitForFunction(top => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop < top - 20, leftTop, { timeout: 3000 });
+    await touch('touchEnd');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-handle').dataset.state === 'idle', null, { timeout: 2000 });
+    const leftBack = await handleBox();
+    assert.ok(leftBack.edge === 'left' && Math.abs(leftBack.bar.x - hd.bar.x) < 0.5 && Math.abs(leftBack.bar.y - hd.bar.y) < 0.5, 'back at its place on the left edge');
+    assert.deepEqual((await states()).filter(name => name !== 'idle'), [], 'no mouse from the scroll');
+    await emit(`\x1b[2J\x1b[H\r\nHANDLE TEST\r\n${ROW1}\r\n${ROW2}\r\n$ `);
+    await toBottom();
     await touch('touchStart', hd.bar.x, hd.bar.y);
     await glide({ x: hd.bar.x, y: hd.bar.y }, { x: hd.bar.x + 25, y: hd.bar.y }, { steps: 5 });
     hp = await page.evaluate(() => ({ state: document.getElementById('h5-mouse-ball').dataset.state, progress: Number(document.getElementById('h5-mouse-ball').dataset.progress) }));
@@ -835,8 +879,8 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await glide(fingerFor(first), fingerFor(at(gh, 5, 2)));
     await touch('touchEnd');
     const glideLeft = await page.evaluate(() => /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(document.getElementById('h5-mouse-ball').style.transform).slice(1).map(Number));
-    await page.waitForFunction(() => window.copied.length === 2);
-    assert.equal((await copied())[1], ROW1.slice(0, 5), 'from the first column');
+    await page.waitForFunction(() => window.copied.length === 1);
+    assert.equal((await copied())[0], ROW1.slice(0, 5), 'from the first column');
     await notices();
     assert.ok(Math.abs(glideLeft[0] + 26 - hd.bar.x) < 1 && Math.abs(glideLeft[1] + 26 - hd.bar.y) < 1, `it glides back to the handle on the left (${glideLeft})`);
     await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle' && !document.getElementById('h5-mouse-handle').dataset.mouse, null, { timeout: 3000 });
@@ -848,13 +892,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.ok(view.cursor.x >= gh.left + (gh.cols - 0.5) * gh.cw, `the cursor reaches the last column from the left handle too (${view.cursor.x})`);
     await touch('touchEnd');
     await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle', null, { timeout: 3000 });
-    assert.equal((await copied()).length, 2, 'no press, no copy');
-    await states();
-    // The strip still lets the ball out as before, with the handle on the left.
-    await enter({ x: 200, y: 300 });
-    assert.equal(await page.evaluate(() => document.getElementById('h5-wheel').dataset.mouse), 'ball', 'out of the strip');
-    assert.equal((await handleBox()).mouse, '', 'not out of the handle');
-    await touch('touchEnd');
+    assert.equal((await copied()).length, 1, 'no press, no copy');
     await dockedAgain();
     await states();
     const handleKept = hd;
@@ -864,17 +902,28 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await page.reload(); // the phone opens the terminal it showed
     await page.waitForFunction(() => window.sockets.length > 0 && window.sockets.at(-1).readyState === 1 && document.querySelector('.h5-xterm:not([hidden]) .xterm-rows'));
     await page.evaluate(history => window.sockets.at(-1).emit(`${history}\r\n$ `), history);
-    await page.waitForFunction(() => document.getElementById('h5-wheel').dataset.mode === 'bar');
     await page.locator('#h5-mouse-ball').waitFor({ state: 'attached' });
+    await page.waitForFunction(() => document.getElementById('h5-mouse-handle')?.style.display === 'block');
     await page.waitForTimeout(1500); // longer than the hint's check
     assert.equal(await page.locator('#h5-mouse-ball-hint').isVisible(), false, 'the hint is shown once per device');
     hd = await handleBox();
     assert.deepEqual([hd.display, hd.edge, Math.round(hd.bar.x), Math.round(hd.bar.y)], ['block', 'left', Math.round(handleKept.bar.x), Math.round(handleKept.bar.y)], 'the handle comes back where it was left on this device');
+    // With the handle on the left edge the hint is mirrored (shown again only because the stored mark is removed here).
+    await page.evaluate(() => localStorage.removeItem('h5-mouse-ball-hinted'));
+    await page.reload();
+    await page.waitForFunction(() => window.sockets.length > 0 && window.sockets.at(-1).readyState === 1 && document.querySelector('.h5-xterm:not([hidden]) .xterm-rows'));
+    const leftHint = page.locator('#h5-mouse-ball-hint');
+    await leftHint.waitFor({ state: 'visible', timeout: 3000 });
+    assert.equal(await leftHint.textContent(), 'Drag to scroll, slide right for the mouse');
+    const leftHintBox = await leftHint.boundingBox();
+    hd = await handleBox();
+    assert.ok(leftHintBox.x >= hd.box.left + 24 - 0.5 && leftHintBox.x + leftHintBox.width <= 390, `toward the inside of the left handle, on the screen (${JSON.stringify(leftHintBox)})`);
+    await shot('hint-left');
     assert.equal(await page.locator('#h5-mouse-ball-switch').count(), 0);
     assert.deepEqual(errors, [], 'no page errors');
     await context.close();
 
-    // ── Pointer input on a phone-sized window: the chunk is there (the strip is drawn with a mouse too), and no switch for it in the More menu ──
+    // ── Pointer input on a phone-sized window: the chunk is there (the handle is drawn with a mouse too), and the switch in the More menu ──
     const pointer = await openPage(browser, { touch: false });
     await openTerminal(pointer.page, { touch: false });
     await pointer.page.waitForFunction(() => window.H5UI.get().input === 'pointer');
@@ -886,7 +935,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.deepEqual(pointer.errors, []);
     await pointer.context.close();
 
-    // ── A normal terminal without history (a fresh shell): the strip is drawn all the same, so the mouse can come out of it ──
+    // ── A normal terminal without history (a fresh shell): the handle is drawn all the same, so the mouse can come out of it ──
     {
       const fresh = await openPage(browser);
       const p = fresh.page;
@@ -898,51 +947,48 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       const fglide = async (from, to, { steps = 8, ms = 16 } = {}) => {
         for (let i = 1; i <= steps; i++) { await ftouch('touchMove', from.x + (to.x - from.x) * i / steps, from.y + (to.y - from.y) * i / steps); if (ms) await p.waitForTimeout(ms); }
       };
-      const strip = () => p.evaluate(() => {
-        const el = document.getElementById('h5-wheel');
-        const box = el.getBoundingClientRect();
-        const thumb = el.querySelector('.h5-wheel-thumb').getBoundingClientRect();
+      const fhandle = () => p.evaluate(() => {
+        const el = document.getElementById('h5-mouse-handle');
+        const b = el.querySelector('.h5-mouse-handle-bar').getBoundingClientRect();
         const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
-        return { mode: el.dataset.mode, width: box.width, height: box.height, thumbHeight: thumb.height, thumbWidth: thumb.width, x: box.right - 8, y: thumb.top + thumb.height / 2,
-          visibility: getComputedStyle(el).visibility, pointerEvents: getComputedStyle(el).pointerEvents, touchAction: getComputedStyle(el).touchAction,
-          ariaHidden: el.getAttribute('aria-hidden'), max: el.getAttribute('aria-valuemax'), scrollTop: viewport.scrollTop, mouse: el.dataset.mouse || '' };
+        return { display: getComputedStyle(el).display, state: el.dataset.state, mouse: el.dataset.mouse || '', x: b.left + b.width / 2, y: b.top + b.height / 2, scrollTop: viewport.scrollTop };
       });
       await p.evaluate(() => {
         window.ballStates = [];
         new MutationObserver(() => { const s = document.getElementById('h5-mouse-ball')?.dataset.state; if (s && s !== window.ballStates.at(-1)) window.ballStates.push(s); })
           .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
         window.passed = [];
-        document.addEventListener('click', event => { if (!(event.target.closest && event.target.closest('#h5-wheel'))) window.passed.push(event.target.className || event.target.tagName); }, true);
+        document.addEventListener('click', event => window.passed.push(event.target.className || event.target.tagName));
       });
       const fstates = () => p.evaluate(() => window.ballStates.splice(0));
       await femit(`\x1b[H\x1b[2J\r\nNO HISTORY\r\n${ROW1}\r\n${ROW2}\r\n$ `);
       await p.locator('#h5-mouse-ball').waitFor({ state: 'attached' });
-      let st = await strip();
-      assert.equal(st.mode, 'bar', 'a terminal without history still has the strip');
-      assert.deepEqual([st.visibility, st.pointerEvents, st.touchAction, st.ariaHidden], ['visible', 'auto', 'none', null], 'drawn and taking touches');
-      assert.ok(st.width >= 44, `the 44px hit area (${st.width})`);
-      assert.equal(st.thumbWidth, 4, 'the same 4px thumb as a scrollbar with history');
-      assert.ok(Math.abs(st.thumbHeight - st.height) <= 1, `nothing to scroll: the thumb fills the track (${st.thumbHeight} of ${st.height})`);
-      assert.equal(st.max, '0');
+      await p.waitForFunction(() => document.getElementById('h5-mouse-handle')?.style.display === 'block');
+      let st = await fhandle();
+      assert.deepEqual([st.display, st.state], ['block', 'idle'], 'a terminal without history has the handle');
       // The first-time hint shows for it too.
       const fhint = p.locator('#h5-mouse-ball-hint');
       await fhint.waitFor({ state: 'visible', timeout: 3000 });
       if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, 'mouse-ball-no-history.png') }); }
       await fhint.waitFor({ state: 'hidden', timeout: 6000 });
-      // A vertical drag scrolls nothing and never starts the mouse.
+      // A vertical drag scrolls nothing (there is nothing to scroll) and never starts the mouse.
       await ftouch('touchStart', st.x, st.y);
       await fglide({ x: st.x, y: st.y }, { x: st.x, y: st.y - 150 }, { steps: 10 });
-      await fglide({ x: st.x, y: st.y - 150 }, { x: st.x, y: st.y + 100 }, { steps: 10 });
+      assert.equal((await fhandle()).state, 'scroll', 'it is a scroll all the same');
+      await fglide({ x: st.x, y: st.y - 150 }, { x: st.x, y: st.y + 30 }, { steps: 10 });
       await ftouch('touchEnd');
-      assert.equal((await strip()).scrollTop, 0, 'nothing scrolled');
-      assert.deepEqual(await fstates(), [], 'no mouse from a vertical drag');
-      // A tap goes through to what is under the strip.
+      await p.waitForFunction(() => document.getElementById('h5-mouse-handle').dataset.state === 'idle', null, { timeout: 2000 });
+      assert.equal((await fhandle()).scrollTop, 0, 'nothing scrolled');
+      assert.deepEqual((await fstates()).filter(name => name !== 'idle'), [], 'no mouse from a vertical drag');
+      // A tap does nothing and passes no click.
       await p.waitForTimeout(450);
+      await p.evaluate(() => window.passed.splice(0));
       await ftouch('touchStart', st.x, st.y);
       await ftouch('touchEnd');
-      await p.waitForFunction(() => window.passed.length > 0, null, { timeout: 3000 });
-      assert.deepEqual(await fstates(), [], 'a tap is no mouse');
-      // A slide to the left: stretch, the ball at 40px, the dwell presses, a drag selects, the lift copies, the ball glides back into the thumb.
+      await p.waitForTimeout(300);
+      assert.deepEqual(await p.evaluate(() => window.passed.slice()), [], 'a tap on the handle passes no click');
+      assert.deepEqual((await fstates()).filter(name => name !== 'idle'), [], 'a tap is no mouse');
+      // A slide to the left: stretch, the ball at 40px, the dwell presses, a drag selects, the lift copies, the ball glides back into the handle.
       const fg = await p.evaluate(() => {
         const el = document.querySelector('.h5-xterm:not([hidden])');
         const screen = el.querySelector('.xterm-screen').getBoundingClientRect();
@@ -952,11 +998,11 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       });
       const fat = (col, row) => ({ x: fg.left + col * fg.cw, y: fg.top + (row + 0.5) * fg.ch });
       const ffinger = c => ({ x: c.x + 46, y: c.y + 46 });
-      st = await strip();
+      st = await fhandle();
       const from = { x: st.x, y: st.y };
       await ftouch('touchStart', from.x, from.y);
       await fglide(from, { x: from.x - 25, y: from.y }, { steps: 5 });
-      assert.equal(await p.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch', 'the thumb stretches');
+      assert.equal(await p.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch', 'the handle stretches');
       await fglide({ x: from.x - 25, y: from.y }, { x: from.x - 45, y: from.y }, { steps: 3 });
       await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
       const press = fat(8, 2);
@@ -967,31 +1013,31 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       await p.waitForFunction(() => window.copied.length === 1, null, { timeout: 3000 });
       assert.deepEqual(await p.evaluate(() => window.copied), [`${ROW1.slice(8)}\n${ROW2.slice(0, 12)}`], 'the selection is copied');
       await p.waitForFunction(() => {
-        const el = document.getElementById('h5-wheel');
+        const el = document.getElementById('h5-mouse-handle');
         const ball = document.getElementById('h5-mouse-ball');
-        return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none' && el.querySelector('.h5-wheel-thumb').style.background === '';
+        return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none';
       }, null, { timeout: 3000 });
       const seen = await fstates();
       assert.deepEqual(seen.slice(0, 3), ['stretch', 'drag', 'pressed'], `the shipped gesture (${seen})`);
-      assert.ok(seen.includes('glide') && seen.at(-1) === 'idle', `it glides back into the thumb (${seen})`);
-      assert.equal((await strip()).scrollTop, 0, 'still nothing scrolled');
-      // History appears: a smaller thumb; the alternate screen: the spring; cleared again: the full thumb.
+      assert.ok(seen.includes('glide') && seen.at(-1) === 'idle', `it glides back into the handle (${seen})`);
+      assert.equal((await fhandle()).scrollTop, 0, 'still nothing scrolled');
+      // History appears: now the same drag scrolls back.
       await femit(`${Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\r\n')}\r\n`);
-      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.dataset.mode === 'bar' && Number(el.getAttribute('aria-valuemax')) > 0; });
-      st = await strip();
-      assert.ok(st.thumbHeight < st.height / 2, `with history the thumb is smaller (${st.thumbHeight})`);
-      await femit('\x1b[?1049h\x1b[H\x1b[2JFULL SCREEN');
-      await p.waitForFunction(() => document.getElementById('h5-wheel').dataset.mode === 'spring');
-      await femit('\x1b[?1049l\x1b[H\x1b[2J\x1b[3J$ ');
-      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.dataset.mode === 'bar' && el.getAttribute('aria-valuemax') === '0'; });
-      st = await strip();
-      assert.ok(Math.abs(st.thumbHeight - st.height) <= 1, 'cleared: the thumb fills the track again');
+      await p.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
+      await p.waitForTimeout(150);
+      st = await fhandle();
+      assert.ok(st.scrollTop > 0, 'there is history now');
+      await ftouch('touchStart', st.x, st.y);
+      await fglide({ x: st.x, y: st.y }, { x: st.x, y: st.y - 150 }, { steps: 10 });
+      await p.waitForFunction(top => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop < top - 20, st.scrollTop, { timeout: 3000 });
+      await ftouch('touchEnd');
+      await p.waitForFunction(() => document.getElementById('h5-mouse-handle').dataset.state === 'idle', null, { timeout: 2000 });
       assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no horizontal overflow');
       assert.deepEqual(fresh.errors, [], 'no page errors');
       await fresh.context.close();
     }
 
-    // ── A computer (1440 x 900, a mouse, no touch): the same strip, and the same mouse ball out of it with the left button held ──
+    // ── A computer (1440 x 900, a mouse, no touch): the same handle, which scrolls and lets the same mouse ball out with the left button held ──
     {
       const pc = await openPage(browser, { touch: false, viewport: { width: 1440, height: 900 } });
       const p = pc.page;
@@ -1003,65 +1049,64 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       const pframes = () => p.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
       await p.evaluate(data => window.sockets.at(-1).emit(data), `${Array.from({ length: 300 }, (_, i) => `old ${i + 1}`).join('\r\n')}\r\n\x1b[2J\x1b[H\r\nMOUSE BALL TEST\r\n${ROW1}\r\n${ROW2}\r\n$ `);
       await pframes();
-      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.dataset.mode === 'bar' && Number(el.getAttribute('aria-valuemax')) > 0; });
       await p.locator('#h5-mouse-ball').waitFor({ state: 'attached' });
+      await p.waitForFunction(() => document.getElementById('h5-mouse-handle')?.style.display === 'block');
       assert.equal(pc.chunks.length, 1, 'the chunk is loaded with a mouse');
+      assert.equal(await p.locator('#h5-wheel').count(), 0, 'no wheel strip');
+      const layout = await p.evaluate(() => {
+        const host = document.getElementById('h5-terminal').getBoundingClientRect();
+        const box = document.querySelector('.h5-xterm:not([hidden])').getBoundingClientRect();
+        return { right: host.right - box.right, scrollbar: getComputedStyle(document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport')).scrollbarWidth };
+      });
+      assert.ok(Math.abs(layout.right - 4) < 0.5, `the terminal box ends 4px from the right again (${layout.right})`);
+      assert.notEqual(layout.scrollbar, 'none', 'xterm\'s own scrollbar is not hidden');
       await p.evaluate(() => {
         window.ballStates = [];
         new MutationObserver(() => { const s = document.getElementById('h5-mouse-ball')?.dataset.state; if (s && s !== window.ballStates.at(-1)) window.ballStates.push(s); })
           .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-state'] });
       });
       const pstates = () => p.evaluate(() => window.ballStates.splice(0));
-      const pthumb = () => p.evaluate(() => {
-        const strip = document.getElementById('h5-wheel').getBoundingClientRect();
-        const thumb = document.querySelector('#h5-wheel .h5-wheel-thumb').getBoundingClientRect();
-        const handle = document.getElementById('h5-mouse-handle');
-        const h = handle && getComputedStyle(handle).display !== 'none' ? handle.getBoundingClientRect() : null; // as thumbPoint: the part the handle leaves free
-        let top = thumb.top;
-        let bottom = thumb.bottom;
-        if (h && h.left < strip.right && h.right > strip.left && h.top < bottom && h.bottom > top) {
-          if (bottom - h.bottom >= h.top - top) top = h.bottom + 1; else bottom = h.top - 1;
-        }
-        return { x: strip.left + strip.width / 2, y: (top + bottom) / 2, width: strip.width };
-      });
       const pscroll = () => p.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop);
       const terminalFocused = () => p.evaluate(() => Boolean(document.activeElement && document.activeElement.closest('.h5-xterm:not([hidden])')));
       // The first-time hint says the same as on a phone.
       const phint = p.locator('#h5-mouse-ball-hint');
       await phint.waitFor({ state: 'visible', timeout: 3000 });
-      assert.match(await phint.textContent(), /Slide the mouse handle left/);
+      assert.equal(await phint.textContent(), 'Drag to scroll, slide left for the mouse');
       const phandle = () => p.evaluate(() => {
         const el = document.getElementById('h5-mouse-handle');
         const b = el.querySelector('.h5-mouse-handle-bar').getBoundingClientRect();
         const r = el.getBoundingClientRect();
         const box = document.getElementById('h5-terminal').getBoundingClientRect();
-        return { display: getComputedStyle(el).display, edge: el.dataset.edge, state: el.dataset.state, x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height, hitW: r.width, hitH: r.height, right: box.right, left: box.left, bottom: box.bottom };
+        return { display: getComputedStyle(el).display, edge: el.dataset.edge, state: el.dataset.state, dir: el.dataset.dir || '', x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height, hitW: r.width, hitH: r.height, right: box.right, left: box.left, bottom: box.bottom };
       });
       const ph = await phandle();
       assert.deepEqual([ph.display, ph.edge, ph.w, ph.h], ['block', 'right', 11, 64], 'the same handle on the computer');
       assert.ok(ph.hitW >= 44 && Math.abs(ph.x - (ph.right - 7.5)) < 0.5 && Math.abs(ph.y - (ph.bottom - 68)) < 0.5, `the same size and place (${JSON.stringify(ph)})`);
       if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await p.screenshot({ path: path.join(SHOTS, 'mouse-ball-pc-hint.png') }); }
       await phint.waitFor({ state: 'hidden', timeout: 6000 });
-      let th = await pthumb();
-      assert.equal(th.width, 16, 'a 16px strip for a mouse');
-      // A vertical drag of the thumb with the mouse scrolls the history and never starts the mouse ball; the keyboard stays in the terminal.
+      // A vertical drag of the handle with the left button scrolls the history and never starts the mouse ball; the keyboard stays in the terminal.
       await p.locator('.h5-xterm:not([hidden]) .xterm-screen').click({ position: { x: 20, y: 20 } });
       const bottom = await pscroll();
-      await p.mouse.move(th.x, th.y);
+      assert.ok(bottom > 0, 'there is history');
+      await p.mouse.move(ph.x, ph.y);
       await p.mouse.down();
-      await p.mouse.move(th.x, th.y - 200, { steps: 12 });
+      await p.mouse.move(ph.x, ph.y - 200, { steps: 12 });
+      const scrolling = await phandle();
+      assert.deepEqual([scrolling.state, scrolling.dir], ['scroll', 'up'], 'the mouse drags it up: a scroll');
+      await p.waitForFunction(top => document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop < top - 50, bottom, { timeout: 3000 });
       await p.mouse.up();
-      assert.ok(await pscroll() < bottom - 50, 'the mouse drag of the thumb scrolled back');
-      assert.deepEqual(await pstates(), [], 'no mouse ball from a vertical drag');
-      assert.equal(await terminalFocused(), true, 'a press on the strip keeps the keyboard in the terminal');
-      // Back to the newest output by dragging the thumb down with the mouse (a set scrollTop can be swallowed by xterm right after a scroll).
-      th = await pthumb();
-      await p.mouse.move(th.x, th.y);
+      await p.waitForFunction(() => document.getElementById('h5-mouse-handle').dataset.state === 'idle', null, { timeout: 2000 });
+      assert.deepEqual((await pstates()).filter(name => name !== 'idle'), [], 'no mouse ball from a vertical drag');
+      assert.equal(await terminalFocused(), true, 'a press on the handle keeps the keyboard in the terminal');
+      // Back to the newest output by pulling the handle down with the mouse, held until the newest line is shown.
+      await p.mouse.move(ph.x, ph.y);
       await p.mouse.down();
-      await p.mouse.move(th.x, 890, { steps: 12 });
+      await p.mouse.move(ph.x, 890, { steps: 12 });
+      await p.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent.includes('MOUSE BALL TEST'), null, { timeout: 8000 });
       await p.mouse.up();
-      await p.waitForFunction(() => { const el = document.getElementById('h5-wheel'); return el.getAttribute('aria-valuenow') === el.getAttribute('aria-valuemax'); }, null, { timeout: 3000 });
-      await p.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent.includes('MOUSE BALL TEST'), null, { timeout: 3000 });
+      await p.waitForFunction(() => document.getElementById('h5-mouse-handle').dataset.state === 'idle', null, { timeout: 2000 });
+      await p.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
+      await p.waitForTimeout(150);
       await pstates();
       // A slide to the left with the left button held: the ball; holding still presses; a move selects; the mouseup copies; the ball glides back.
       const pg = await p.evaluate(() => {
@@ -1073,12 +1118,11 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       });
       const pat = (col, row) => ({ x: pg.left + col * pg.cw, y: pg.top + (row + 0.5) * pg.ch });
       const out = async () => {
-        th = await pthumb();
-        await p.mouse.move(th.x, th.y);
+        await p.mouse.move(ph.x, ph.y);
         await p.mouse.down();
-        await p.mouse.move(th.x - 25, th.y, { steps: 5 });
-        assert.equal(await p.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch', 'the thumb stretches toward the mouse');
-        await p.mouse.move(th.x - 45, th.y, { steps: 3 });
+        await p.mouse.move(ph.x - 25, ph.y, { steps: 5 });
+        assert.equal(await p.evaluate(() => document.getElementById('h5-mouse-ball').dataset.state), 'stretch', 'the handle stretches toward the mouse');
+        await p.mouse.move(ph.x - 45, ph.y, { steps: 3 });
         await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
       };
       await out();
@@ -1093,14 +1137,15 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       await p.waitForFunction(() => window.copied.length === 1, null, { timeout: 3000 });
       assert.deepEqual(await p.evaluate(() => window.copied), [`${ROW1.slice(8)}\n${ROW2.slice(0, 12)}`], 'the selection is copied at the mouseup');
       const docked = () => p.waitForFunction(() => {
-        const el = document.getElementById('h5-wheel');
+        const el = document.getElementById('h5-mouse-handle');
         const ball = document.getElementById('h5-mouse-ball');
-        return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none' && el.querySelector('.h5-wheel-thumb').style.background === '';
+        return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none';
       }, null, { timeout: 3000 });
       await docked();
       const seen = await pstates();
       assert.deepEqual(seen.slice(0, 3), ['stretch', 'drag', 'pressed'], `the shipped gesture with a mouse (${seen})`);
-      assert.ok(seen.includes('glide') && seen.at(-1) === 'idle', `it glides back into the thumb (${seen})`);
+      assert.ok(seen.includes('glide') && seen.at(-1) === 'idle', `it glides back into the handle (${seen})`);
+      assert.equal(await terminalFocused(), true, 'the keyboard stays in the terminal');
       // Escape ends it like a cancelled touch: nothing copied, nothing selected, the key not sent to the terminal.
       await p.evaluate(() => window.copied.splice(0));
       const sentBefore = await p.evaluate(() => window.sockets.at(-1).sent.length);
@@ -1117,26 +1162,10 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       const sent = await p.evaluate(n => window.sockets.at(-1).sent.slice(n), sentBefore);
       assert.ok(!sent.some(item => item.includes('\x1b') && !item.startsWith('{')), `Escape did not reach the terminal (${JSON.stringify(sent)})`);
       const sentNow = await p.evaluate(() => window.sockets.at(-1).sent.length);
-      await p.keyboard.press('Escape'); // the control: with the ball in the strip, Escape is the terminal's again (the keyboard stayed there)
+      await p.keyboard.press('Escape'); // the control: with the ball back in the handle, Escape is the terminal's again (the keyboard stayed there)
       await p.waitForFunction(n => window.sockets.at(-1).sent.slice(n).includes('\x1b'), sentNow, { timeout: 3000 });
       assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no horizontal overflow');
-      // The handle with the mouse: slid to the left with the button held, the ball; the press, the selection copied at the mouseup, back to the handle.
-      await p.evaluate(() => window.copied.splice(0));
       await pstates();
-      await p.mouse.move(ph.x, ph.y);
-      await p.mouse.down();
-      await p.mouse.move(ph.x - 45, ph.y, { steps: 6 });
-      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'drag', null, { timeout: 3000 });
-      await p.mouse.move(press.x + 46, press.y + 46, { steps: 8 });
-      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
-      await p.mouse.move(end.x + 46, end.y + 46, { steps: 8 });
-      await p.mouse.up();
-      await p.waitForFunction(() => window.copied.length === 1, null, { timeout: 3000 });
-      assert.deepEqual(await p.evaluate(() => window.copied), [`${ROW1.slice(8)}
-${ROW2.slice(0, 12)}`], 'the ball of the handle copies at the mouseup');
-      await p.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle' && !document.getElementById('h5-mouse-handle').dataset.mouse, null, { timeout: 3000 });
-      assert.deepEqual((await pstates()).slice(0, 3), ['stretch', 'drag', 'pressed']);
-      assert.equal(await terminalFocused(), true, 'the keyboard stays in the terminal');
       // A long press with the left button held picks it up; Escape puts it back; a second one, let go right of the middle, snaps to the right edge higher up.
       await p.mouse.move(ph.x, ph.y);
       await p.mouse.down();

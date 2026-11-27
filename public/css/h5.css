@@ -44,36 +44,6 @@ body { -webkit-text-size-adjust: 100%; }
    column narrower than the cell grid that the mouse, the selection and the links use (2 to 3 characters apart at column 130). The terminal starts
    from no spacing of its own. */
 .h5-terminal .xterm { text-spacing-trim: space-all; text-autospace: no-autospace; letter-spacing: normal; word-spacing: normal; }
-/* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a scrollbar on the right edge of the terminal,
-   drawn over the terminal's right margin (it is absolutely placed and never changes the columns). The 44px hit area (a touch target) takes the touches itself
-   (touch-action: none); only a 4px track and thumb are drawn, dim when idle and brighter while a finger is on it ('active').
-   data-mode (set by h5.js): 'bar' = normal buffer (thumb at --h5-thumb-top, --h5-thumb-size; without history it fills the track); 'spring' =
-   full-screen program (thumb in the middle, moved by --h5-spring-offset while pulled, springs back when released; chevrons above and below);
-   'none' = no terminal shown: not drawn, touches go through. */
-.h5-wheel { position: absolute; top: 0; right: 2px; bottom: 0; width: 44px; z-index: 2; background: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; --h5-wheel-x: 4px; }
-.h5-wheel[data-mode="none"] { pointer-events: none; visibility: hidden; }
-.h5-wheel-track, .h5-wheel-thumb { position: absolute; right: var(--h5-wheel-x); width: 4px; border-radius: 2px; pointer-events: none; transition: background-color .4s ease, width .12s ease, right .12s ease; }
-.h5-wheel-track { top: 0; bottom: 0; background: rgba(255, 255, 255, .06); }
-.h5-wheel-thumb { top: var(--h5-thumb-top, 0px); height: var(--h5-thumb-size, 32px); background: rgba(255, 255, 255, .30); }
-.h5-wheel.active .h5-wheel-track { background: rgba(255, 255, 255, .14); transition-duration: .08s; }
-.h5-wheel.active .h5-wheel-thumb { width: 6px; right: calc(var(--h5-wheel-x) - 1px); background: rgba(255, 255, 255, .62); transition-duration: .08s; }
-.h5-wheel-chevron { display: none; position: absolute; right: calc(var(--h5-wheel-x) - 5px); width: 14px; height: 14px; line-height: 0; color: rgba(255, 255, 255, .45); pointer-events: none; transition: color .4s ease; }
-.h5-wheel.active .h5-wheel-chevron { color: rgba(255, 255, 255, .75); transition-duration: .08s; }
-.h5-wheel[data-mode="spring"] .h5-wheel-chevron { display: block; }
-.h5-wheel[data-mode="spring"] .h5-wheel-up { top: calc(50% - 16px - 20px); }
-.h5-wheel[data-mode="spring"] .h5-wheel-down { top: calc(50% + 16px + 6px); }
-.h5-wheel[data-mode="spring"] .h5-wheel-thumb { top: calc(50% - 16px); height: 32px; transform: translateY(var(--h5-spring-offset, 0px));
-  transition: background-color .4s ease, width .12s ease, right .12s ease, transform .32s cubic-bezier(.34, 1.56, .64, 1); }
-.h5-wheel[data-mode="spring"][data-pulling] .h5-wheel-thumb { transition: background-color .08s, width .12s ease, right .12s ease; } /* follows the finger at once */
-@media (prefers-reduced-motion: reduce) { .h5-wheel-track, .h5-wheel-thumb, .h5-wheel-chevron, .h5-wheel[data-mode="spring"] .h5-wheel-thumb { transition: none; } }
-/* The strip is drawn with a mouse too (input mode 'pointer'): it is the terminal's scrollbar there as well, so xterm's own scrollbar is hidden in both
-   modes (the fit then counts no scrollbar width, terminal-viewport.js). A mouse needs no 44px target: the strip is 16px wide and the terminal box
-   ends 20px from the right instead of 4px, so the strip sits beside the text and never covers a column. It brightens under a hovering mouse. */
-.h5-terminal .xterm-viewport { scrollbar-width: none; }
-.h5-terminal .xterm-viewport::-webkit-scrollbar { display: none; }
-html[data-input="pointer"] .h5-wheel { width: 16px; cursor: default; }
-html[data-input="pointer"] .h5-terminal .h5-xterm { right: 20px; }
-@media (hover: hover) { .h5-wheel:hover:not(.active) .h5-wheel-track { background: rgba(255, 255, 255, .10); } .h5-wheel:hover:not(.active) .h5-wheel-thumb { background: rgba(255, 255, 255, .45); } }
 /* The sideways position indicator of the wide terminal (h5.js showScroll): a thin bar at the bottom, shown only while the user pans, like iOS.
    It is never a control: it takes no touches. Positions are inside the terminal box (inset 4px 4px 2px). */
 .h5-scroll-indicator { position: absolute; z-index: 2; border-radius: 2px; background: rgba(255, 255, 255, .45); pointer-events: none; opacity: 0; transition: opacity .4s ease; bottom: 1px; height: 3px; left: calc(4px + var(--h5-ind-pos, 0px)); width: var(--h5-ind-size, 24px); }

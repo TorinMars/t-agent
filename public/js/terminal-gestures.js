@@ -1,8 +1,8 @@
 // Sideways panning of the page's wide terminal, and its width math (see "Terminal width" and "Touch scrolling" in docs/design/page-terminal-and-bottom-bar.md).
 // One handler for the terminal element: a one-finger pan picks its axis in its first AXIS_SLOP px and keeps it until the finger is lifted.
 // - Horizontal: moves the wide terminal sideways (nothing in Fit mode, where the screen fits).
-// - Vertical: not this handler's. The touch is let go at once, untouched: the wheel strip (h5.js bindWheelStrip) is the vertical scroller and a drag on
-//   the body stays what it always was (xterm's own touch scrolling of the normal buffer with touch-action: pan-y; nothing in the alternate buffer).
+// - Vertical: not this handler's. The touch is let go at once, untouched: the mouse handle (MouseBall.jsx) scrolls vertically too, and a drag
+//   on the body stays what it always was (xterm's own touch scrolling of the normal buffer with touch-action: pan-y; nothing in the alternate buffer).
 // A touch that never travels AXIS_SLOP is left to the browser (tap, double tap, long press). A sideways pan never ends in a click, so it never opens a link.
 const TerminalGestures = (() => {
   const AXIS_SLOP = 10; // px of travel that decide the axis of a pan

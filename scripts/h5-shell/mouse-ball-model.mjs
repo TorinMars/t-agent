@@ -165,9 +165,10 @@ export function buttonMode(tracking) {
   return tracking && tracking !== 'none' ? 'program' : 'page';
 }
 // What the ball sends a program in mouse tracking mode `tracking` besides the press: the release (not in x10, which reports presses only),
-// motion with the button held (drag and any) and wheel steps for the edge scroll (not in x10).
+// motion with the button held (drag and any), wheel steps for the edge scroll (not in x10) and, before the press, hover motion with no button
+// (only any, mode 1003: the only mode in which xterm, like a real terminal, reports a mouse that moves without a button).
 export function programReports(tracking) {
-  return { release: tracking !== 'x10', motion: tracking === 'drag' || tracking === 'any', wheel: tracking !== 'x10' };
+  return { release: tracking !== 'x10', motion: tracking === 'drag' || tracking === 'any', wheel: tracking !== 'x10', hover: tracking === 'any' };
 }
 
 // The dwell that presses the button, as a reducer over the touch and a clock (the time `t` of each event, in ms):

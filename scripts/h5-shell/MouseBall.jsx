@@ -10,10 +10,12 @@
 //   - page (no mouse reporting): moving selects from the press point to the cursor with xterm's own selection; near the top or bottom edge the
 //     terminal scrolls and the selection stays anchored to its buffer cell. Lift: the selection is copied through the copy path of the double
 //     tap (h5.js `mouseBallTarget().copy`, inside the pointerup, so the user activation is there; the same notice and refusal bar).
-//   - program (the program turned mouse reporting on: Claude Code in fullscreen, vim, tmux): real mouse events at the cursor go to xterm's
-//     screen, which reports them to the program in its own encoding: the press, the motion with the button held, wheel steps near the top or
-//     bottom edge, the release at the lift. The program selects and copies by itself; the lift marks a gesture for terminal-clipboard.js, so
-//     its OSC 52 copy that follows shows "Copied N characters" instead of the request bar.
+//   - program (only with this device's switch on, More > "Mouse ball sends the mouse to programs", and the program turned mouse reporting on:
+//     Claude Code in fullscreen, vim, tmux): real mouse events at the cursor go to xterm's screen, which reports them to the program in its own
+//     encoding, in the order a real mouse makes them: hover moves with no button while the ball is out (mode 1003 only), the terminal's focus
+//     (`ESC[I` when the program asked for focus reports), the press, the motion with the button held, wheel steps near the top or bottom edge,
+//     the release at the lift. The program selects and copies by itself; the lift marks a gesture for terminal-clipboard.js, so its OSC 52 copy
+//     that follows shows "Copied N characters" instead of the request bar.
 //   Without a press nothing happens. A cancelled touch ends everything without a copy (a program still gets the release).
 // - Lift (or cancel): the ball glides back into the strip and is the thumb again (220 ms; at once with reduced motion). While it is out the
 //   strip's thumb is dimmed at its place and the strip says what is out in `data-mouse` (stretch, ball, glide).
@@ -41,12 +43,13 @@ const CURSOR = 'M0 19V0H19'; // the cursor: 19px of a square's top edge and left
 const WHEEL_MAX = 40; // wheel steps sent to a program in one frame at most
 const THUMB_DIM = 'rgba(255, 255, 255, 0.15)'; // the strip's thumb while the ball is out of it
 const HINT_KEY = 'h5-mouse-ball-hinted'; // per device (public/js/local-keys.js): the first-time hint was shown
-const PROGRAM_KEY = 'h5-mouse-ball-program'; // per device: 'on' sends the mouse to a program that has mouse reporting on; absent (the default): the page always selects
+const PROGRAM_KEY = 'h5-mouse-ball-program'; // per device: 'on' sends the mouse to a program that has mouse reporting on; absent (the default): the page always selects. Set by the switch in the More menu (Header.jsx `PROGRAM_KEY`)
 const HINT_MS = 4000;
 const HINT_TEXT = 'Slide the scrollbar left for the mouse';
 const STATUS = { wait: 'Hold still to press', page: 'Selecting in the page', program: 'Mouse sent to the program' }; // what the ball is doing, shown at the top of the terminal
 const DESCRIPTION = 'Slide left for the mouse'; // the strip's aria-description, set while this chunk is there
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const trackingOf = term => (term.modes ? term.modes.mouseTrackingMode : 'none');
 const rectOf = el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
 const stripEl = () => document.getElementById('h5-wheel');
 const thumbOf = el => (el ? el.querySelector('.h5-wheel-thumb') : null);
@@ -161,13 +164,18 @@ function control(nodes, ui) {
   // trusted events).
   function report(type, buttons) {
     const { x, y } = drag.cursor;
-    drag.program.screen.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons }));
+    (drag.program ? drag.program.screen : drag.geo.target.screen).dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons }));
   }
   function wheel(lines) {
     const { x, y } = drag.cursor;
     for (let i = 0; i < Math.min(Math.abs(lines), WHEEL_MAX); i += 1) {
       drag.program.screen.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, view: window, deltaMode: 1, deltaY: Math.sign(lines), clientX: x, clientY: y }));
     }
+  }
+  // Before the press, with this device's switch on (`drag.hover`, read at the detach): the mouse moving with no button at the cursor, as a real
+  // mouse is seen moving before its click. Only while the program asks for it (any, mode 1003); xterm reports one per changed cell.
+  function hover() {
+    if (drag.hover && !drag.anchor && !drag.program && programReports(trackingOf(drag.geo.target.term)).hover) report('mousemove', 0);
   }
   // The release for the program, once: at the lift (after its gesture mark) and when the touch ends any other way (the program must not be left
   // with its button down, and xterm drops its document listeners on it).
@@ -180,10 +188,14 @@ function control(nodes, ui) {
   function press() {
     const { target } = drag.geo;
     const { term } = target;
-    const tracking = term.modes ? term.modes.mouseTrackingMode : 'none';
+    const tracking = trackingOf(term);
     if (localGet(PROGRAM_KEY) === 'on' && buttonMode(tracking) === 'program') {
       term.clearSelection(); // an old page highlight goes, as a mouse press in the terminal clears it; the program draws its own
       drag.program = { screen: target.screen, gesture: target.gesture, reports: programReports(tracking), released: false };
+      // As a real click: the terminal takes the focus first (xterm sends ESC[I when the program asked for focus reports), then the mouse is at the
+      // cell of the press (a hover, sent by xterm only in mode 1003 and not twice for one cell), then the button goes down.
+      if (term.textarea && document.activeElement !== term.textarea) term.focus();
+      report('mousemove', 0);
       report('mousedown', 1);
       setState('pressed', 'program');
       setStatus('program');
@@ -223,7 +235,8 @@ function control(nodes, ui) {
   }
   function detach(at) {
     const now = performance.now();
-    Object.assign(drag, { phase: 'ball', start: at, grab: { x: 0, y: 0 }, scale: 1, last: now, dwell: dwellStep(DWELL_IDLE, { type: 'down', x: at.x, y: at.y, t: now }) });
+    const program = localGet(PROGRAM_KEY) === 'on' && buttonMode(trackingOf(drag.geo.target.term)) === 'program'; // hover moves until the press
+    Object.assign(drag, { phase: 'ball', start: at, grab: { x: 0, y: 0 }, scale: 1, last: now, hover: program, dwell: dwellStep(DWELL_IDLE, { type: 'down', x: at.x, y: at.y, t: now }) });
     delete ball.dataset.progress;
     ball.style.opacity = '';
     tail.style.display = 'none';
@@ -244,7 +257,7 @@ function control(nodes, ui) {
     hideHint();
     drag = {
       id, el, sync, geo, from, root: thumbAnchor(rectOf(thumb), from.y), phase: 'stretch', scale: 0, start: null, grab: null, dwell: DWELL_IDLE,
-      anchor: null, range: null, program: null, output: null, carry: 0, last: performance.now(), ball: null, cursor: null,
+      anchor: null, range: null, program: null, hover: false, output: null, carry: 0, last: performance.now(), ball: null, cursor: null,
     };
     listen(true);
     stripState(el, 'stretch');
@@ -329,7 +342,8 @@ function control(nodes, ui) {
     drag.cursor = cursorFor(drag.ball, geo.area, geo.bounds);
     draw();
     if (drag.anchor) select();
-    else if (drag.program && drag.program.reports.motion) report('mousemove', 1); // xterm reports a motion only when the cell changes
+    else if (drag.program) { if (drag.program.reports.motion) report('mousemove', 1); } // xterm reports a motion only when the cell changes
+    else hover();
     return true;
   }
   function move(event) {

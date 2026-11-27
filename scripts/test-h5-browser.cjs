@@ -1768,7 +1768,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     // shows both versions, and offers the update.
     const openUpdate = async () => { await page.locator('#h5-header-more').click(); await page.locator('#h5-header-update').click(); };
     await page.locator('#h5-header-more').click();
-    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-header-remember', 'h5-refresh', 'h5-header-update'], 'More: Terminal width, Refresh the page, Update');
+    assert.deepEqual(await page.locator('#h5-header-more-menu [role="menuitem"], #h5-header-more-menu [role="menuitemcheckbox"]').evaluateAll(items => items.map(el => el.id)), ['h5-term-width', 'h5-mouse-ball-program', 'h5-header-remember', 'h5-refresh', 'h5-header-update'], 'More: Terminal width, the mouse ball switch (touch input), Remember this, Refresh the page, Update');
     await page.locator('#h5-header-update').click();
     await page.locator('#h5-update-dialog [role="dialog"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#h5-update-dialog [role="dialog"]').getAttribute('aria-modal'), 'true');

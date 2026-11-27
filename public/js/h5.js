@@ -42,7 +42,7 @@
   // In a pane of the multi-column view (scripts/h5-shell/pane.mjs) what this view shows is kept per pane (`pane:<id>:h5-...`); the keys in SHARED_KEYS stay
   // one for the device. See "Pane mode" in docs/design/page-shell-and-columns.md for the list.
   const PANE = window.H5Pane || null;
-  const SHARED_KEYS = new Set(['terminal-width-noted', 'mouse-ball']);
+  const SHARED_KEYS = new Set(['terminal-width-noted']);
   const storeKey = key => (PANE && !SHARED_KEYS.has(key) ? PANE.key(`h5-${key}`) : `h5-${key}`);
   // Through the registry of browser storage (public/js/local-keys.js), where each of these keys is declared with its reason.
   const LocalKeys = window.TALocalKeys || { get: () => null, set: () => false };
@@ -3078,7 +3078,8 @@
       const mode = wheelMode(s);
       if (mode === 'none') return;
       const now = performance.now();
-      drag = { id: event.pointerId, el, s, mode, y: event.clientY, moved: 0, started: now, seen: now, stale: false, onThumb: false, grab: 0, dragging: false };
+      drag = { id: event.pointerId, el, s, mode, y: event.clientY, moved: 0, started: now, seen: now, stale: false, onThumb: false, grab: 0, dragging: false,
+        x0: event.clientX, y0: event.clientY, line0: s.term.buffer.active.viewportY, axis: null };
       if (mode === 'bar') {
         const bar = wheelBar(s, el);
         const at = event.clientY - el.getBoundingClientRect().top;
@@ -3100,6 +3101,15 @@
       drag.seen = performance.now();
       if (drag.stale) { drag.stale = false; if (drag.mode === 'spring') { drag.tick = drag.seen; drag.el.setAttribute('data-pulling', ''); } }
       if (!shown.has(drag.el)) show(drag.el); // dimmed by the stale check while the finger was still
+      // A slide to the left takes the mouse ball out of the strip ("Mouse ball" in docs/design/page-terminal-mouse-ball.md; its chunk registers
+      // `stripMouse`). The axis is decided in the first px of travel and kept; until then the drag scrolls as always, and a bar scroll is undone
+      // when it becomes the mouse. From then on the ball's chunk has the finger (the strip keeps the pointer capture).
+      const mouse = ui.actions.stripMouse;
+      if (!drag.axis && mouse && (drag.axis = mouse.axis(event.clientX - drag.x0, event.clientY - drag.y0)) === 'mouse') {
+        if (drag.mode === 'bar' && s.term.buffer.active.viewportY !== drag.line0) s.term.scrollToLine(drag.line0);
+        syncWheel();
+        if (mouse.begin({ id: drag.id, el: drag.el, from: { x: drag.x0, y: drag.y0 }, at: { x: event.clientX, y: event.clientY }, sync: syncWheel })) { drop(); return; }
+      }
       drag.moved += Math.abs(event.clientY - drag.y);
       drag.y = event.clientY;
       // The buffer type is read on every move: a program that switches screens during the drag switches the drag with it.
@@ -4043,11 +4053,9 @@
     if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
   // ── Mouse ball (docs/design/page-terminal-mouse-ball.md; scripts/h5-shell/MouseBall.jsx, a chunk of its own) ──
-  // On or off for this device (localStorage `h5-mouse-ball`, a property of the hardware in the hand: a phone without a mouse wants it, a tablet with
-  // a trackpad may not). The ball asks for the shown terminal at each touch: its xterm, its screen, the copy path of the double tap (the same
-  // notice, the same refusal bar) and the gesture mark for a program's own copy, or null while no terminal is shown (empty, the chat over it, the copy view, a notebook).
-  ui.set({ mouseBall: store.get('mouse-ball') === 'on' });
-  ui.actions.setMouseBall = on => { store.set('mouse-ball', on ? 'on' : null); ui.set({ mouseBall: Boolean(on) }); };
+  // It comes out of the wheel strip (a slide to the left, `bindWheelStrip`). The ball asks for the shown terminal at each touch: its xterm, its
+  // screen, the copy path of the double tap (the same notice, the same refusal bar) and the gesture mark for a program's own copy, or null while no
+  // terminal is shown (empty, the chat over it, the copy view, a notebook).
   ui.actions.mouseBallTarget = () => {
     const s = session;
     if (!s || s.disposed || s.el.hidden || !agentView.hidden || ui.get().copyText !== null) return null;

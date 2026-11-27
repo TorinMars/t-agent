@@ -1,5 +1,5 @@
-// The mouse ball of the phone terminal (scripts/h5-shell/mouse-ball-model.mjs): the cursor offset with its edge fade, the clamp, the dock, the cell
-// under a point, the selection range over one or several rows (also in a scrolled view), the dwell reducer with a fake clock and the scroll speed.
+// The mouse ball of the phone terminal (scripts/h5-shell/mouse-ball-model.mjs): the cursor offset with its edge fade, the clamp, the strip's axis,
+// the stretch out of the strip and the glide back, the cell under a point, the selection range over one or several rows (also in a scrolled view), the dwell reducer with a fake clock and the scroll speed.
 // The real page is scripts/test-h5-mouse-ball-browser.cjs.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,16 +45,57 @@ test('the cursor stays inside the visible cells, and at the right edge it reache
   assert.equal(cellFromPoint(bottom, screen, cols, 33).row, 32, 'the last row');
 });
 
-test('the idle ball docks at the right edge about two thirds down, whole inside the visible terminal', async () => {
-  const { dockPosition, BALL_SIZE, DOCK_MARGIN } = await load();
+test('a drag on the wheel strip: its axis is decided after 10px, and only a slide to the left is the mouse', async () => {
+  const { stripAxis, AXIS_SLOP } = await load();
+  assert.equal(AXIS_SLOP, 10);
+  assert.equal(stripAxis(0, 0), null);
+  assert.equal(stripAxis(-9, 0), null, 'under 10px: not decided yet');
+  assert.equal(stripAxis(-6, 7), null, 'under 10px in any direction');
+  assert.equal(stripAxis(-10, 0), 'mouse', 'to the left: the mouse');
+  assert.equal(stripAxis(-9, 5), 'mouse', 'more sideways than up or down');
+  assert.equal(stripAxis(-8, -7), 'mouse', 'a little upward still counts as sideways');
+  assert.equal(stripAxis(-7, 8), 'scroll', 'more down than sideways: scrolling');
+  assert.equal(stripAxis(-8, -8), 'scroll', 'a diagonal is not sideways');
+  assert.equal(stripAxis(0, 12), 'scroll', 'down');
+  assert.equal(stripAxis(0, -12), 'scroll', 'up');
+  assert.equal(stripAxis(12, 0), 'scroll', 'to the right: never the mouse');
+  assert.equal(stripAxis(30, -2), 'scroll');
+});
+
+test('the stretch: its progress over 40px to the left, the thumb growing into the ball, and the glide back', async () => {
+  const { stretchProgress, stretchShape, thumbAnchor, glideTarget, DETACH, THUMB_WIDTH, TAIL_WIDTH, BALL_SIZE } = await load();
+  assert.equal(DETACH, 40);
+  const start = { x: 380, y: 500 };
+  assert.equal(stretchProgress(start, { x: 380, y: 500 }), 0);
+  near(stretchProgress(start, { x: 355, y: 500 }), 25 / 40, '25px: not detached yet');
+  near(stretchProgress(start, { x: 355, y: 540 }), 25 / 40, 'only the travel to the left counts');
+  assert.equal(stretchProgress(start, { x: 340, y: 500 }), 1, '40px: detached');
+  assert.equal(stretchProgress(start, { x: 300, y: 500 }), 1, 'never more than 1');
+  assert.equal(stretchProgress(start, { x: 395, y: 500 }), 0, 'back to the right: 0');
+  // The tail hangs on the thumb: the touch height inside it, or its nearest end.
+  const thumb = { left: 381, top: 480, right: 387, bottom: 530 };
+  assert.deepEqual(thumbAnchor(thumb, 500), { x: 384, y: 500 });
+  assert.deepEqual(thumbAnchor(thumb, 300), { x: 384, y: 480 }, 'a touch above the thumb: its top');
+  assert.deepEqual(thumbAnchor(thumb, 700), { x: 384, y: 530 }, 'below it: its bottom');
+  const root = thumbAnchor(thumb, 500);
+  const none = stretchShape(root, { x: 384, y: 500 }, 0);
+  assert.equal(none.size, THUMB_WIDTH, 'at 0 the head is the thumb');
+  near(none.scale, THUMB_WIDTH / BALL_SIZE, 'its scale of the ball');
+  const half = stretchShape(root, { x: 360, y: 510 }, 0.5);
+  assert.equal(half.size, THUMB_WIDTH + (BALL_SIZE - THUMB_WIDTH) / 2, 'halfway: halfway to the ball');
+  assert.deepEqual(half.head, { x: 360, y: 510 }, 'the head is under the finger');
+  assert.deepEqual(half.tail, { x1: 384, y1: 500, x2: 360, y2: 510, width: TAIL_WIDTH }, 'the tail from the thumb to the head, at most 20px wide');
+  const small = stretchShape(root, { x: 375, y: 500 }, 0.2);
+  assert.equal(small.tail.width, small.size, 'a small head: the tail is as wide as the head');
+  const full = stretchShape(root, { x: 340, y: 500 }, 1);
+  assert.equal(full.size, BALL_SIZE, 'at 1 it is the 52px ball');
+  assert.equal(full.scale, 1);
+  assert.equal(stretchShape(root, { x: 395, y: 500 }, 0).head.x, 384, 'never right of the strip');
+  assert.equal(stretchShape(root, { x: 340, y: 500 }, 3).size, BALL_SIZE, 'the progress is clamped');
+  // The glide back: the middle of the thumb where it is now, inside the visible terminal.
+  assert.deepEqual(glideTarget(thumb, AREA), { x: 384, y: 505 });
+  assert.deepEqual(glideTarget({ left: 381, top: 700, right: 387, bottom: 740 }, AREA), { x: 384, y: 656 }, 'a thumb under the keyboard: the bottom of the visible terminal');
   assert.equal(BALL_SIZE, 52);
-  assert.deepEqual(dockPosition(AREA), { x: 390 - 26 - DOCK_MARGIN, y: 56 + 400 });
-  // The keyboard leaves only 200px of the terminal: still whole inside it.
-  const small = { left: 0, top: 56, right: 390, bottom: 256 };
-  const dock = dockPosition(small);
-  assert.ok(dock.y + 26 <= 256 && dock.y - 26 >= 56, `inside (${dock.y})`);
-  const tiny = { left: 0, top: 56, right: 390, bottom: 90 };
-  assert.equal(dockPosition(tiny).y, 56 + 26, 'too small: at the top, never above it');
 });
 
 test('the ball keeps the grab point, but near the edges the grab offset fades, so it reaches the edge; it stays inside the area', async () => {

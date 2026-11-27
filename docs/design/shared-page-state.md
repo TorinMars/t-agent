@@ -99,7 +99,7 @@ Every localStorage and sessionStorage key of the page and its chunks (`public/js
 | `h5-source`, `h5-task:<source>`, `h5-terminal:<source>:<task>` | local, pane | browser | which session this window opens at start: they decide the first requests (the early socket) before any answer, and opening the session last looked at on another device would open one the person did not choose here. The session last looked at anywhere is the first of the shared Recent list, one press of ⇋ away |
 | `h5-terminal-width`, `h5-terminal-wide-cols` | local, pane | hardware | the screen's size (fit or a fixed width) |
 | `h5-terminal-width-noted` | local | hardware | a one-time hint about this device's gesture |
-| `h5-mouse-ball` | local | hardware | the mouse ball of the phone terminal on or off ([page-terminal-mouse-ball.md](page-terminal-mouse-ball.md)): a touch screen without a mouse wants it, one with a trackpad or a pen may not |
+| `h5-mouse-ball-hinted` | local | hardware | the one-time hint that the scrollbar slides out as a mouse was shown ([page-terminal-mouse-ball.md](page-terminal-mouse-ball.md)): a hint about the gesture of this touch screen |
 | `voice-enabled`, `voice-keep-mic` | local | hardware | this device's microphone and its permission |
 | `h5-key-haptics` | local | hardware | how strongly the page's own keys vibrate (Settings → Keyboard, "This device only"): what this device's vibration motor can play; a phone and a tablet want their own |
 | `h5-attention-sound` | local | device-setting | Settings offers it as "Reminders on this device" (scope device): a phone in a meeting and a computer at home want different sounds |

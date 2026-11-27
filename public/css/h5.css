@@ -45,12 +45,12 @@ body { -webkit-text-size-adjust: 100%; }
    from no spacing of its own. */
 .h5-terminal .xterm { text-spacing-trim: space-all; text-autospace: no-autospace; letter-spacing: normal; word-spacing: normal; }
 /* The wheel strip (2px in from the screen edge, so the browser edge-swipe gesture keeps working): a scrollbar on the right edge of the terminal,
-   drawn over the terminal's right margin (it is absolutely placed and never changes the columns). The 40px hit area takes the touches itself
+   drawn over the terminal's right margin (it is absolutely placed and never changes the columns). The 44px hit area (a touch target) takes the touches itself
    (touch-action: none); only a 4px track and thumb are drawn, dim when idle and brighter while a finger is on it ('active').
    data-mode (set by h5.js): 'bar' = normal buffer with history (thumb at --h5-thumb-top, --h5-thumb-size); 'spring' = full-screen program
    (thumb in the middle, moved by --h5-spring-offset while pulled, springs back when released; chevrons above and below); 'none' = not drawn,
    touches go through. */
-.h5-wheel { position: absolute; top: 0; right: 2px; bottom: 0; width: 40px; z-index: 2; background: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; --h5-wheel-x: 4px; }
+.h5-wheel { position: absolute; top: 0; right: 2px; bottom: 0; width: 44px; z-index: 2; background: transparent; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; --h5-wheel-x: 4px; }
 .h5-wheel[data-mode="none"] { pointer-events: none; visibility: hidden; }
 .h5-wheel-track, .h5-wheel-thumb { position: absolute; right: var(--h5-wheel-x); width: 4px; border-radius: 2px; pointer-events: none; transition: background-color .4s ease, width .12s ease, right .12s ease; }
 .h5-wheel-track { top: 0; bottom: 0; background: rgba(255, 255, 255, .06); }

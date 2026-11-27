@@ -87,9 +87,9 @@ export const CopyScreen = screen(dialogs, 'CopyDialog', state => state.copyText 
 export const UploadScreen = screen(dialogs, 'UploadDialog', state => Boolean(state.upload), () => {});
 export const PasteScreen = screen(dialogs, 'PasteDialog', state => Boolean(state.pasteSheet && state.pasteSheet.open), ui => ui.actions.pasteSheetClose && ui.actions.pasteSheetClose());
 export const RetainScreen = screen(dialogs, 'RetainDialog', state => state.retainUrl !== null, ui => ui.actions.retainClose && ui.actions.retainClose());
-// The mouse ball over the phone terminal (MouseBall.jsx), drawn while it is on for this device in touch input on a phone; off, it is never loaded.
-// Nothing to close after a failed load (it is not asked for again until it is turned off and on).
-export const MouseBallScreen = screen(() => import('./screen-mouse-ball.jsx'), 'MouseBall', state => Boolean(state.mouseBall) && state.input === 'touch' && !state.wide && !state.pane, () => {});
+// The mouse ball over the terminal (MouseBall.jsx), which comes out of the wheel strip: loaded in touch input (where the strip is drawn); in pointer
+// input it is never loaded. Nothing to close after a failed load (it is not asked for again until the input mode changes and comes back).
+export const MouseBallScreen = screen(() => import('./screen-mouse-ball.jsx'), 'MouseBall', state => state.input === 'touch', () => {});
 
 // "Updated to v…" (UpdatedNotice.jsx): no button opens it. The updater calls this when the update status says the person has a notice to see; the
 // chunk asks for the notice, waits until the page is free and draws the dialog in a root of its own. A chunk that cannot be loaded shows nothing.

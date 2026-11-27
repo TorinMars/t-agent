@@ -296,3 +296,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.177.0 The scroll strip is always drawn, on phone and computer; slide it left to pull out the mouse
 > v2.177.1 Play the mouse ball's press tick before the focus so no focus-out and focus-in reports sit between the press and the first drag
 > v2.177.2 Mouse ball sends the mouse to programs by default and the More menu switch is on the computer too
+> v2.177.3 Remove the long press that opens the copy view on the phone terminal (Copy text stays in the menu)

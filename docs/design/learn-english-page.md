@@ -493,3 +493,5 @@ old chat page (the list, a conversation, journal frames, the meta line, company 
   playing Fill the gap at the start slowly; a 16-letter word on one line at 390px and in 8 + 8 at 320px; "Tap to play" when speech is refused; a computer
   checking at the last letter with its keys. `scripts/test-h5-osk-browser.cjs` checks the bubble and the ticks on the terminal's keyboard.
   `H5_SHOT_DIR` saves screenshots.
+
+**Smaller text while the page's keyboard is open on a phone (v2.175.2, "Make the text smaller so more content is visible").** In Fill the gap the sentence with its gap is body1 instead of h6 (line height 1.8), the typed-sentence result (`DiffLine`) is body2 and the Chinese prompt (`ChineseText`, all exercises with a sentence card) is subtitle1 instead of h6, and the gap between the card's parts shrinks from 16px to 8px, so the Chinese, the sentence and the result card fit above the keyboard. The gap slots are in em of the sentence, so they shrink with it. Without the keyboard (or on a computer) the sizes are unchanged.

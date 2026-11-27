@@ -1162,10 +1162,10 @@ function Grades({ suggested, onGrade, busy, keys, next = null, focus = true }) {
 const DEL = theme => ({ color: theme.palette.error.light, bgcolor: alpha(theme.palette.error.main, 0.16), textDecoration: 'line-through', borderRadius: 0.5, px: 0.25 });
 const INS = theme => ({ color: theme.palette.success.light, bgcolor: alpha(theme.palette.success.main, 0.16), textDecoration: 'none', borderRadius: 0.5, px: 0.25 });
 // The word-by-word diff: the right sentence, with each wrong or extra word of the answer struck out and each missing or right one marked.
-function DiffLine({ ops, sentence }) {
+function DiffLine({ ops, sentence, compact = false }) {
   const tail = (String(sentence || '').trim().match(/[.!?…]+$/) || [''])[0];
   return (
-    <Typography variant="body1" component="p" translate="no" className="h5-learn-diff" sx={{ overflowWrap: 'break-word', lineHeight: 1.9 }}>
+    <Typography variant={compact ? 'body2' : 'body1'} component="p" translate="no" className="h5-learn-diff" sx={{ overflowWrap: 'break-word', lineHeight: compact ? 1.7 : 1.9 }}>
       {ops.map((op, index) => (
         <span key={index} data-op={op.type}>
           {index ? ' ' : ''}
@@ -1219,10 +1219,10 @@ function Feedback({ correct, near = false, phone, keys, busy, suggested, onGrade
     </Card>
   );
 }
-function SentenceResult({ card, result }) {
+function SentenceResult({ card, result, compact = false }) {
   return (
     <>
-      <DiffLine ops={result.ops} sentence={card.en} />
+      <DiffLine ops={result.ops} sentence={card.en} compact={compact} />
       <Typography variant="body2" color="text.secondary" className="h5-learn-summary" sx={{ mt: 0.5 }}>
         <Fmt template="Word by word: {1} of {2} right" values={[result.right, result.total]} /><Hints hints={result.hints} />
       </Typography>
@@ -1250,9 +1250,9 @@ function Origin({ card }) {
     </Typography>
   );
 }
-// The Chinese of a sentence card; while the page's keyboard is open on a phone (`compact`) a step smaller (h6) and kept to two lines (ClampText).
+// The Chinese of a sentence card; while the page's keyboard is open on a phone (`compact`) two steps smaller (subtitle1) and kept to two lines (ClampText).
 const ChineseText = ({ card, id, compact = false, field = null }) => (
-  <ClampText clamp={compact} field={field} variant={compact ? 'h6' : 'h5'} component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.zh || '—'}</ClampText>
+  <ClampText clamp={compact} field={field} variant={compact ? 'subtitle1' : 'h5'} component="p" lang="zh" translate="no" id={id} sx={{ mt: 0.75, overflowWrap: 'break-word' }}>{card.zh || '—'}</ClampText>
 );
 // The actions under an answer: before Check the exercise's own buttons, after it the grades (on a phone, pinned at the bottom).
 // `detail()`: what a wrong answer was asked for and its tag, when the exercise knows better than the card's text (Fill the gap).
@@ -2346,9 +2346,9 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
         <ChineseText card={card} id="h5-learn-chinese" compact={kb.compact} field={field} />
         <Origin card={card} />
       </Prompt>
-      <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Card sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: kb.compact ? 1 : 2 }}>
         <Typography variant="body2" color="text.secondary">{t('Type the missing word')}</Typography>
-        <Typography variant="h6" component="p" translate="no" className="h5-learn-gap" sx={{ fontWeight: 400, lineHeight: 2, overflowWrap: 'break-word' }}>
+        <Typography variant={kb.compact ? 'body1' : 'h6'} component="p" translate="no" className="h5-learn-gap" sx={{ fontWeight: 400, lineHeight: kb.compact ? 1.8 : 2, overflowWrap: 'break-word' }}>
           {gap.before}
           <GapSlots word={gap.word} parts={parts} value={value} result={result} focused={focused}>
             <InputBase inputRef={field} value={value} onChange={event => change(event.target.value)} onClick={kb.show}
@@ -2368,7 +2368,7 @@ function FillExercise({ ui, card, frame, phone, keys, tts, busy, register, onAns
       </Card>
       {result ? (
         <Feedback correct={result.correct} near={result.near} phone={phone} keys={keys} busy={busy} suggested={suggested} onGrade={grade} next={card.next}>
-          <SentenceResult card={card} result={result} />
+          <SentenceResult card={card} result={result} compact={kb.compact} />
           {!result.correct ? <PatternNote expected={gap.word} answer={value} tip={card.tip} /> : null}
         </Feedback>
       ) : null}

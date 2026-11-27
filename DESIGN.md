@@ -294,3 +294,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.176.4 Mouse ball selects in the page by default, even when a program has mouse reporting on
 > v2.176.5 Mouse ball: hover and focus events for programs and a More-menu switch to send the mouse to programs
 > v2.177.0 The scroll strip is always drawn, on phone and computer; slide it left to pull out the mouse
+> v2.177.1 Play the mouse ball's press tick before the focus so no focus-out and focus-in reports sit between the press and the first drag

@@ -195,13 +195,15 @@ function control(nodes, ui) {
       drag.program = { screen: target.screen, gesture: target.gesture, reports: programReports(tracking), released: false };
       // As a real click: the terminal takes the focus first (xterm sends ESC[I when the program asked for focus reports), then the mouse is at the
       // cell of the press (a hover, sent by xterm only in mode 1003 and not twice for one cell), then the button goes down.
+      // The haptic tick comes first: on iOS it toggles a hidden switch, which takes the focus from the terminal (ESC[O) and gives it back (ESC[I). Played
+      // after the press, that pair of focus reports sat between the press and the first drag, which a real mouse never sends (found with `cat -v` on a phone).
+      keyTick();
       if (term.textarea && document.activeElement !== term.textarea) term.focus();
       report('mousemove', 0);
       report('mousedown', 1);
       setState('pressed', 'program');
       setStatus('program');
       setRing(1);
-      keyTick();
       return;
     }
     drag.anchor = cellFromPoint(drag.cursor, drag.geo.screen, term.cols, term.rows, term.buffer.active.viewportY);

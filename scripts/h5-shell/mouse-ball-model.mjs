@@ -1,14 +1,13 @@
 // The mouse ball of the phone terminal ("Mouse ball" in docs/design/page-terminal-mouse-ball.md): the pure parts, no DOM and no React, so they are
 // tested with node (test/mouse-ball-model.test.js). MouseBall.jsx (a chunk of its own, screen-mouse-ball.jsx) draws the ball and the cursor and
-// drives the terminal with them. The ball comes out of the wheel strip (the floating scrollbar) when its thumb is slid to the left.
+// drives the terminal with them. The ball comes out of the mouse handle when it is slid toward the inside; a vertical drag on the handle scrolls.
 // Rects are { left, top, right, bottom } in CSS px of the viewport; points are { x, y }.
 
 export const BALL_SIZE = 52; // the ball's diameter
-export const AXIS_SLOP = 10; // px a finger on the wheel strip travels before its axis is decided (scroll or mouse)
-export const DETACH = 40; // px of travel to the left at which the stretched thumb lets go and becomes the ball
-export const THUMB_WIDTH = 6; // the touched thumb's width: the stretch starts at this size
+export const AXIS_SLOP = 10; // px a finger on the mouse handle travels before its axis is decided (scroll or mouse)
+export const DETACH = 40; // px of travel toward the inside at which the stretched handle lets go and becomes the ball
 export const TAIL_WIDTH = 20; // the widest the stretched tail gets
-export const GLIDE_MS = 220; // the ball's glide back into the strip
+export const GLIDE_MS = 220; // the ball's glide back into the handle
 export const OFFSET = 46; // the cursor is this far left of and above the ball's centre, so the finger never covers it
 export const EDGE_FADE = 80; // over the last px before the right (bottom) edge, the sideways (upward) offset shrinks to 0
 export const DWELL_MS = 600; // a ball kept still this long presses the left button
@@ -26,49 +25,50 @@ export function intersect(a, b) {
   return box.right > box.left && box.bottom > box.top ? box : null;
 }
 
-// The axis of a one-finger drag on the wheel strip or the mouse handle, from its travel (dx, dy) since the touch: null while it is shorter than
-// AXIS_SLOP, then 'mouse' for a slide more sideways than up or down AND toward the inside of the screen (the ball comes out), else 'scroll' (the
-// strip scrolls as always; on the handle nothing happens). `side`: the edge the strip or handle sits on, 'right' (the strip, always: the slide is
-// to the left) or 'left' (a handle moved to the left edge: the slide is to the right). The caller keeps the first answer that is not null until the
-// lift: a drag that started vertical, or went toward the edge, never becomes the mouse.
+// The axis of a one-finger drag on the mouse handle, from its travel (dx, dy) since the touch: null while it is shorter than AXIS_SLOP, then
+// 'mouse' for a slide more sideways than up or down AND toward the inside of the screen (the ball comes out), 'scroll' for a drag at least as
+// much up or down as sideways (the handle scrolls the terminal), else 'none' (a slide toward the edge: nothing happens). `side`: the edge the
+// handle sits on, 'right' (the slide is to the left) or 'left' (the slide is to the right). The caller keeps the first answer that is not null until
+// the lift: a drag that started vertical stays a scroll and never becomes the mouse.
 const inward = side => (side === 'left' ? 1 : -1);
-export function stripAxis(dx, dy, side = 'right') {
+export function handleAxis(dx, dy, side = 'right') {
   if (Math.hypot(dx, dy) < AXIS_SLOP) return null;
-  return Math.abs(dx) > Math.abs(dy) && dx * inward(side) > 0 ? 'mouse' : 'scroll';
+  if (Math.abs(dx) > Math.abs(dy)) return dx * inward(side) > 0 ? 'mouse' : 'none';
+  return 'scroll';
 }
 
-// How far the thumb (or the handle) is stretched (0 to 1) for the finger at `finger` after a touch at `start`: the travel toward the inside (to the
+// How far the handle is stretched (0 to 1) for the finger at `finger` after a touch at `start`: the travel toward the inside (to the
 // left for `side` 'right', to the right for 'left') over DETACH px. At 1 it lets go and is the ball. A finger back toward the edge is 0.
 export function stretchProgress(start, finger, side = 'right') {
   return clamp(((finger.x - start.x) * inward(side)) / DETACH, 0, 1);
 }
 
-// Where the stretch hangs on the strip: the thumb's x, at the touch's height kept inside the thumb (`thumb`: its rect; a touch beside the thumb
-// stretches from the thumb's nearest end).
-export function thumbAnchor(thumb, y) {
-  return { x: (thumb.left + thumb.right) / 2, y: clamp(y, thumb.top, thumb.bottom) };
+// Where the stretch hangs on the handle: the bar's x, at the touch's height kept inside the bar (`bar`: its rect; a touch beside the bar
+// stretches from its nearest end).
+export function barAnchor(bar, y) {
+  return { x: (bar.left + bar.right) / 2, y: clamp(y, bar.top, bar.bottom) };
 }
 
-// The stretched thumb at `progress` (stretchProgress): a head under the finger (never outside the strip or the handle: not right of it on the
-// right edge, not left of it on the left edge, `side`) that grows from the thumb's width (`from`: the handle's) to the ball (`size`, `scale` of
-// the 52px ball), and a tail of the thumb's colour from `root` (thumbAnchor) to the head, as wide as the head up to TAIL_WIDTH.
-export function stretchShape(root, finger, progress, side = 'right', from = THUMB_WIDTH) {
+// The stretched handle at `progress` (stretchProgress): a head under the finger (never outside the handle: not right of it on the right edge,
+// not left of it on the left edge, `side`) that grows from the bar's width (`from`) to the ball (`size`, `scale` of the 52px ball), and a tail
+// from `root` (barAnchor) to the head, as wide as the head up to TAIL_WIDTH.
+export function stretchShape(root, finger, progress, side = 'right', from = HANDLE.width) {
   const p = clamp(progress, 0, 1);
   const size = from + (BALL_SIZE - from) * p;
   const head = { x: side === 'left' ? Math.max(finger.x, root.x) : Math.min(finger.x, root.x), y: finger.y };
   return { head, size, scale: size / BALL_SIZE, tail: { x1: root.x, y1: root.y, x2: head.x, y2: head.y, width: Math.min(size, TAIL_WIDTH) } };
 }
 
-// Where the ball glides back to at the lift: the middle of the thumb where it is now (`thumb`: its rect; the view may have scrolled meanwhile),
-// kept inside the visible terminal `area` (a thumb under the on-screen keyboard is not followed out of sight).
-export function glideTarget(thumb, area) {
-  return { x: clamp((thumb.left + thumb.right) / 2, area.left, area.right), y: clamp((thumb.top + thumb.bottom) / 2, area.top, area.bottom) };
+// Where the ball glides back to at the lift: the middle of the handle's bar (`bar`: its rect), kept inside the visible terminal `area` (a bar
+// under the on-screen keyboard is not followed out of sight).
+export function glideTarget(bar, area) {
+  return { x: clamp((bar.left + bar.right) / 2, area.left, area.right), y: clamp((bar.top + bar.bottom) / 2, area.top, area.bottom) };
 }
 
 // The ball's centre for the finger at `finger`: it keeps the place where it was grabbed (`grab`: the ball's centre minus the finger at the touch),
 // except near the right and bottom edges, where that grab offset shrinks with the same fade as the cursor offset (relative to how much of it there
 // was at the touch, `start`: the finger then), so a ball grabbed on its right side still reaches the edge and the cursor the last column. The
-// centre stays inside `area`. (Out of the wheel strip the ball is under the finger: no grab.)
+// centre stays inside `area`. (Out of the handle the ball is under the finger: no grab.)
 export function ballFor(finger, grab, start, area) {
   const scale = (now, then) => (then > 0 ? Math.min(1, now / then) : 0);
   const gx = scale(fade(area.right - finger.x), fade(area.right - start.x));
@@ -203,15 +203,15 @@ export function dwellProgress(state, t) {
 }
 
 // ── The mouse handle ("The mouse handle" in docs/design/page-terminal-mouse-ball.md) ──
-// A small bar of its own on the left or right edge of the terminal, only for the mouse: a slide toward the inside pulls the ball out of it (as out of
-// the strip: stripAxis, stretchProgress and stretchShape with its `side`), a long press picks it up to be moved, and the lift snaps it to the
-// nearest edge. Its place is kept per device as { edge: 'left' | 'right', y } (y: the bar's centre as a fraction of the visible terminal's
+// A small bar of its own on the left or right edge of the terminal: a drag up or down scrolls the terminal (springScroll), a slide toward the inside
+// pulls the ball out of it (handleAxis, stretchProgress and stretchShape with its `side`), a long press picks it up to be moved, and the lift snaps
+// it to the nearest edge. Its place is kept per device as { edge: 'left' | 'right', y } (y: the bar's centre as a fraction of the visible terminal's
 // height; null: the default height).
 export const HANDLE = Object.freeze({
   width: 11, height: 64, // the drawn bar at rest
   moveWidth: 18, moveHeight: 84, // the drawn bar while it is moved
   hitWidth: 44, hitHeight: 72, // the box that takes the touch (at least 44px in touch input), the bar inside it at the edge
-  inset: 2, // the bar's gap to the edge, as the strip's
+  inset: 2, // the bar's gap to the edge (the browser's edge swipe stays free)
   bottom: 68, // the default height: the centre this far above the bottom of the terminal (the bar ends 36px above it, clear of the key row)
 });
 export const HOLD_MS = 500; // a handle held still this long is picked up to be moved
@@ -258,4 +258,28 @@ export function snapPlace(centre, area) {
 // A finger on the handle still counts as held still: within HOLD_SLOP px of the touch.
 export function heldStill(from, at) {
   return Math.hypot(at.x - from.x, at.y - from.y) <= HOLD_SLOP;
+}
+
+// ── Scrolling with the handle ("Scrolling" in "The mouse handle", docs/design/page-terminal-mouse-ball.md) ──
+// A vertical drag on the handle pulls it up or down from where it rests, like the old spring of the wheel strip: pulled up scrolls to older lines,
+// pulled down to newer, faster the further it is pulled; let go, it springs back and the scrolling stops.
+export const SPRING = Object.freeze({
+  dead: 6, // px of pull that do not scroll yet
+  rate: 8, // lines per second for each terminal row of pull beyond the dead zone
+  max: 200, // lines per second at most
+  reach: 0.42, // the pull counts up to this share of the visible terminal's height
+});
+export const SPRING_MS = 200; // the handle's spring back to its place after a scroll
+export const STALE_MS = 3000; // a finger with no pointer event for this long stops the scrolling (a lost pointerup must not keep it)
+// The pull for a finger `dy` px below the touch (negative: above it) in a visible terminal `height` px tall, at most SPRING.reach of it either way.
+export function springPull(dy, height) {
+  const reach = Math.max(0, height) * SPRING.reach;
+  return clamp(dy, -reach, reach);
+}
+// Lines per second for a pull of `pull` px with terminal rows `rowHeight` px tall: signed like the pull (negative: older lines), 0 inside the dead
+// zone, at most SPRING.max. Feed it to scrollStep with the time of each frame.
+export function springSpeed(pull, rowHeight) {
+  const beyond = Math.abs(pull) - SPRING.dead;
+  if (beyond <= 0) return 0;
+  return Math.sign(pull) * Math.min(SPRING.max, (SPRING.rate * beyond) / Math.max(1, rowHeight));
 }

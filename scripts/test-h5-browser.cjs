@@ -1180,234 +1180,158 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       assert.notEqual((await sent()).at(-1), '\r', 'no Enter after the links');
     }
 
-    // The wheel strip on the right edge is a scrollbar: a thumb in the normal buffer, a spring in the alternate buffer; a drag on the
-    // terminal body makes no wheel events. The touches are PointerEvents fired inside the page and the waits are the page's own timers
-    // (CDP touches arrive one per rendered frame, and headless Chromium draws slowly while the display sleeps).
-    const strip = page.locator('#h5-wheel');
-    assert.equal(await strip.count(), 1, 'the terminal has one wheel strip');
+    // The mouse handle scrolls (MouseBall.jsx, "Scrolling" in docs/design/page-terminal-mouse-ball.md): a vertical pull scrolls like the old
+    // spring of the wheel strip, in the normal buffer (term.scrollLines) and in the alternate buffer (wheel reports); a drag on the terminal body
+    // makes no wheel events. The touches are PointerEvents fired inside the page and the waits are the page's own timers (CDP touches arrive one
+    // per rendered frame, and headless Chromium draws slowly while the display sleeps).
+    assert.equal(await page.locator('#h5-wheel').count(), 0, 'the old wheel strip is gone');
+    await page.waitForFunction(() => { const el = document.getElementById('h5-mouse-handle'); return el && el.style.display === 'block'; });
     await page.evaluate(() => {
-      window.__wfire = (type, y, id = 77) => {
-        const el = document.querySelector('#h5-wheel');
+      window.__handle = () => document.getElementById('h5-mouse-handle');
+      window.__hfire = (type, y, id = 77) => {
+        const el = window.__handle();
         const box = el.getBoundingClientRect();
         el.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true, clientX: box.left + box.width / 2, clientY: y }));
       };
-      window.__wsleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-      // A drag in steps of at most 10 px, with a pause between the steps (ms), without pointerdown / pointerup.
-      window.__wmove = async (from, to, gap = 0, id = 77) => {
+      window.__hsleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+      // A drag in steps of at most 10 px, without pointerdown / pointerup.
+      window.__hmove = (from, to, id = 77) => {
         const step = from < to ? 10 : -10;
-        for (let y = from + step; step > 0 ? y < to : y > to; y += step) { window.__wfire('pointermove', y, id); if (gap) await window.__wsleep(gap); }
-        window.__wfire('pointermove', to, id);
+        for (let y = from + step; step > 0 ? y < to : y > to; y += step) window.__hfire('pointermove', y, id);
+        window.__hfire('pointermove', to, id);
       };
+      const box = window.__handle().getBoundingClientRect();
+      window.__hy = box.top + box.height / 2; // the middle of the handle at rest
+      window.__hrest = window.__handle().style.transform;
+      // The buffer line shown in the first row of the visible terminal ('line N').
+      window.__first = () => { const m = /^\s*line (\d+)/.exec(document.querySelector('.h5-xterm:not([hidden]) .xterm-rows > div')?.textContent || ''); return m ? Number(m[1]) : -1; };
     });
-    const bar = () => page.evaluate(() => {
-      const el = document.querySelector('#h5-wheel');
-      const box = el.getBoundingClientRect();
-      const thumb = el.querySelector('.h5-wheel-thumb').getBoundingClientRect();
-      const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
-      return { mode: el.dataset.mode, top: box.top, bottom: box.bottom, height: box.height, thumbTop: thumb.top - box.top, thumbHeight: thumb.height, thumbY: thumb.top + thumb.height / 2,
-        now: Number(el.getAttribute('aria-valuenow')), max: Number(el.getAttribute('aria-valuemax')), rows: document.querySelectorAll('.h5-xterm:not([hidden]) .xterm-rows > div').length,
-        atBottom: viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 1, visibility: getComputedStyle(el).visibility, pointerEvents: getComputedStyle(el).pointerEvents,
-        ariaHidden: el.getAttribute('aria-hidden'), thumbColor: getComputedStyle(el.querySelector('.h5-wheel-thumb')).backgroundColor };
+    const handleState = () => page.evaluate(() => {
+      const el = window.__handle();
+      const chevrons = [...el.querySelectorAll('.h5-mouse-handle-chevron')].map(node => ({ display: getComputedStyle(node).display, color: getComputedStyle(node).color }));
+      return { state: el.dataset.state, dir: el.dataset.dir || '', top: el.getBoundingClientRect().top, rest: el.style.transform === window.__hrest, bar: getComputedStyle(el.querySelector('.h5-mouse-handle-bar')).backgroundColor, chevrons };
     });
+    const backAtRest = async what => {
+      await page.waitForFunction(() => window.__handle().dataset.state === 'idle' && window.__handle().style.transform === window.__hrest && !window.__h5HandleScrolling(), null, { timeout: 3000 })
+        .catch(() => assert.fail(`the handle is back at its place and stopped ${what}`));
+    };
+    const first = () => page.evaluate(() => window.__first());
     const lastCols = () => page.evaluate(() => window.sockets[0].sent.map(item => { try { return JSON.parse(item); } catch { return null; } }).filter(item => item?.type === 'resize').pop()?.cols);
     const screenWidth = () => page.evaluate(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-screen').getBoundingClientRect().width);
-    const rowsText = () => page.locator('.h5-xterm:not([hidden]) .xterm-rows').textContent();
-
-    // No history yet: the strip is drawn all the same (the mouse ball comes out of it), the thumb filling the track.
-    await page.evaluate(() => window.sockets[0].emit('\x1b[?1049l\x1b[?1000l\x1b[H\x1b[2J\x1b[3J'));
-    await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar' && document.querySelector('#h5-wheel').getAttribute('aria-valuemax') === '0');
-    const idle = await page.evaluate(() => {
-      const el = document.querySelector('#h5-wheel');
-      const box = el.getBoundingClientRect();
-      const area = document.querySelector('#h5-terminal').getBoundingClientRect();
-      return { bg: getComputedStyle(el).backgroundColor, touchAction: getComputedStyle(el).touchAction, bottomGap: Math.abs(area.bottom - box.bottom), rightGap: area.right - box.right, width: box.width,
-        role: el.getAttribute('role'), label: el.getAttribute('aria-label'), orientation: el.getAttribute('aria-orientation') };
-    });
-    assert.equal(idle.bg, 'rgba(0, 0, 0, 0)', 'the strip has no background of its own');
-    assert.equal(idle.touchAction, 'none');
-    assert.ok(idle.bottomGap <= 1, `the wheel strip reaches the bottom of the terminal area (${idle.bottomGap}px short)`);
-    assert.ok(Math.abs(idle.rightGap - 2) <= 0.5, `the strip sits 2px in from the screen edge (${idle.rightGap}px)`);
-    assert.ok(idle.width >= 36 && idle.width <= 48, 'the strip is about 40px wide');
-    assert.deepEqual([idle.role, idle.label, idle.orientation], ['scrollbar', 'Scroll', 'vertical'], 'the strip is a vertical scrollbar named Scroll');
     assert.equal(await page.locator('[data-copy], #h5-scroll, .h5-scroll').count(), 0, 'the floating copy button is gone');
-    {
-      const empty = await bar();
-      assert.deepEqual([empty.visibility, empty.pointerEvents, empty.ariaHidden, empty.max, empty.now], ['visible', 'auto', null, 0, 0], 'without scrollback the strip is still drawn and takes touches');
-      assert.ok(Math.abs(empty.thumbHeight - empty.height) <= 1 && empty.thumbTop <= 0.5, `nothing to scroll: the thumb fills the track (${empty.thumbHeight} of ${empty.height})`);
-      // A drag scrolls nothing; a tap goes through to the terminal under it.
-      await page.evaluate(y => window.__wfire('pointerdown', y), empty.thumbY);
-      await page.evaluate(({ from, to }) => window.__wmove(from, to), { from: empty.thumbY, to: empty.thumbY - 200 });
-      await page.evaluate(y => window.__wfire('pointerup', y), empty.thumbY - 200);
-      assert.equal((await bar()).now, 0, 'a drag without history scrolls nothing');
-      await page.evaluate(() => { window.__emptyClicks = 0; document.querySelector('.h5-xterm:not([hidden])').addEventListener('click', () => { window.__emptyClicks++; }); });
-      await page.evaluate(y => { window.__wfire('pointerdown', y); window.__wfire('pointerup', y); }, empty.thumbY);
-      assert.ok(await page.evaluate(() => window.__emptyClicks) >= 1, 'a tap on the full thumb reaches the terminal under it');
-      await page.waitForFunction(() => !document.querySelector('#h5-wheel').classList.contains('active'), null, { timeout: 3000 });
-    }
+
+    await page.evaluate(() => window.sockets[0].emit('\x1b[?1049l\x1b[?1000l\x1b[H\x1b[2J\x1b[3J'));
     const cols0 = await lastCols();
     const width0 = await screenWidth();
+    const idle = await handleState();
+    assert.equal(idle.state, 'idle');
+    assert.ok(idle.chevrons.length === 2 && idle.chevrons.every(item => item.display === 'none'), 'no chevrons at rest');
 
-    // Normal buffer with history: the thumb size is rows / (rows + scrollback) and it sits at the bottom.
+    // Normal buffer with history: pulled up shows older lines, pulled down newer ones.
     await page.evaluate(() => window.sockets[0].emit(Array.from({ length: 200 }, (_, i) => 'line ' + i).join('\r\n')));
-    await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'bar' && Number(document.querySelector('#h5-wheel').getAttribute('aria-valuemax')) > 0);
-    let b = await bar();
-    assert.equal(b.visibility, 'visible', 'the bar shows when there is scrollback');
-    assert.equal(b.ariaHidden, null);
-    assert.equal(b.max, 200 - b.rows, `aria-valuemax is the scrollback in use (${b.max}, ${b.rows} rows)`);
-    assert.equal(b.now, b.max, 'the view is at the bottom');
-    const thumbSize = Math.max(32, Math.round(b.height * b.rows / (b.rows + b.max)));
-    assert.ok(Math.abs(b.thumbHeight - thumbSize) <= 1, `the thumb size follows the buffer (${b.thumbHeight} vs ${thumbSize})`);
-    assert.ok(Math.abs(b.thumbTop + b.thumbHeight - b.height) <= 1, 'the thumb sits at the bottom of the track');
-    assert.equal(await lastCols(), cols0, 'the visible bar does not take terminal columns');
-    assert.equal(await screenWidth(), width0, 'the terminal keeps its width with the bar shown');
-    const idleColor = b.thumbColor;
+    await page.waitForFunction(() => window.__first() > 0);
+    const newest = await first();
+    assert.equal(await lastCols(), cols0, 'the handle takes no terminal columns');
+    assert.equal(await screenWidth(), width0, 'the terminal keeps its width with the handle shown');
+    await page.evaluate(() => { window.__hfire('pointerdown', window.__hy); window.__hmove(window.__hy, window.__hy - 100); });
+    await page.waitForFunction(top => window.__first() < top, newest, { timeout: 8000 }).catch(() => assert.fail('pulling the handle up scrolls to older lines'));
+    let h = await handleState();
+    assert.equal(h.state, 'scroll', 'the handle is scrolling');
+    assert.equal(h.dir, 'up');
+    assert.ok(Math.abs(h.top - (idle.top - 100)) <= 0.5, `the handle follows the finger (${h.top} vs ${idle.top - 100})`);
+    assert.equal(h.bar, 'rgba(144, 202, 249, 0.9)', 'the handle is blue while it scrolls');
+    assert.deepEqual(h.chevrons.map(item => item.display), ['block', 'block'], 'a chevron above and below the handle');
+    assert.equal(h.chevrons[0].color, 'rgb(144, 202, 249)', 'the chevron of the pull is blue');
+    assert.equal(h.chevrons[1].color, 'rgba(255, 255, 255, 0.4)', 'the other one is dim');
+    assert.equal(await page.evaluate(() => window.__h5HandleScrolling()), true);
+    if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-handle-scroll.png') });
+    await page.evaluate(() => window.__hfire('pointerup', window.__hy - 100));
+    assert.equal(await page.evaluate(() => window.__h5HandleScrolling()), false, 'released, the scrolling stops');
+    assert.equal((await handleState()).state, 'spring', 'released, the handle springs back');
+    await backAtRest('after a pull up');
+    const stopped = await first();
+    await page.evaluate(() => window.__hsleep(300));
+    assert.equal(await first(), stopped, 'nothing scrolls after the release');
+    assert.ok(stopped < newest, `older lines are shown (${stopped} < ${newest})`);
+    // Pulled down: newer lines, back to the newest.
+    await page.evaluate(() => { window.__hfire('pointerdown', window.__hy); window.__hmove(window.__hy, window.__hy + 250); });
+    await page.waitForFunction(top => window.__first() === top, newest, { timeout: 8000 }).catch(() => assert.fail('pulling the handle down scrolls back to the newest lines'));
+    assert.equal((await handleState()).dir, 'down');
+    await page.evaluate(() => window.__hfire('pointerup', window.__hy + 250));
+    await backAtRest('after a pull down');
 
-    // Dragging the thumb: up = older (viewportY goes down), down = newer, and the thumb stays under the finger (1:1, not a speed wheel).
-    const bottomText = await rowsText();
-    const grabY = b.top + b.thumbTop + b.thumbHeight / 2;
-    await page.evaluate(y => window.__wfire('pointerdown', y), grabY);
-    assert.equal(await page.evaluate(() => document.querySelector('#h5-wheel').classList.contains('active')), true, 'the strip is active while touched');
-    await page.waitForFunction(idle => getComputedStyle(document.querySelector('#h5-wheel .h5-wheel-thumb')).backgroundColor === 'rgba(255, 255, 255, 0.62)', idleColor, { timeout: 2000 }).catch(() => assert.fail('the thumb is brighter while touched'));
-    const ups = [];
-    for (let y = grabY - 60; y > b.top + b.thumbHeight / 2 + 2; y -= 60) {
-      await page.evaluate(({ from, to }) => window.__wmove(from, to), { from: y + 60, to: y });
-      const now = await bar();
-      ups.push(now.now);
-      assert.ok(Math.abs(now.thumbY - y) <= 1 + now.height / now.max, `the thumb follows the finger (${now.thumbY.toFixed(1)} vs ${y.toFixed(1)})`);
-    }
-    assert.ok(ups.length >= 3 && ups.every((value, i) => value < (i ? ups[i - 1] : b.max)), `dragging up shows older output step by step (${ups.join(',')})`);
-    await page.evaluate(y => window.__wmove(y, y - 400), ups.length ? b.top + b.thumbHeight / 2 : b.top);
-    b = await bar();
-    assert.equal(b.now, 0, 'dragged to the top, the view shows the oldest line');
-    await page.waitForFunction(() => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent.startsWith('line 0'), null, { timeout: 3000 }).catch(() => assert.fail('the first line is at the top'));
-    assert.ok(b.thumbTop <= 0.5, 'the thumb is at the top of the track');
-    await page.evaluate(({ from, to }) => window.__wmove(from, to), { from: b.top, to: b.top + (b.height - b.thumbHeight) / 2 + b.thumbHeight / 2 });
-    b = await bar();
-    assert.ok(Math.abs(b.now - b.max / 2) <= 2, `half way down the track is half way through the history (${b.now} of ${b.max})`);
-    await page.evaluate(({ from, to }) => window.__wmove(from, to), { from: b.thumbY, to: b.bottom + 100 });
-    b = await bar();
-    assert.equal(b.now, b.max, 'dragging down brings the newest output back');
-    await page.waitForFunction(text => document.querySelector('.h5-xterm:not([hidden]) .xterm-rows').textContent === text, bottomText, { timeout: 3000 }).catch(() => assert.fail('the newest rows are drawn again'));
-    await page.evaluate(y => window.__wfire('pointerup', y), b.bottom + 100);
-    await page.waitForFunction(() => !document.querySelector('#h5-wheel').classList.contains('active'), null, { timeout: 3000 });
-    await page.waitForFunction(idle => getComputedStyle(document.querySelector('#h5-wheel .h5-wheel-thumb')).backgroundColor === idle, idleColor, { timeout: 2000 }).catch(() => assert.fail('the thumb dims again after release'));
-
-    // A tap on the track above the thumb is one page up, below it one page down; a tap on the thumb goes through to the terminal.
-    const stripTap = y => page.evaluate(y => { window.__wfire('pointerdown', y); window.__wfire('pointerup', y); }, y);
-    await stripTap(b.top + 20);
-    b = await bar();
-    assert.equal(b.now, b.max - (b.rows - 1), 'a tap above the thumb scrolls one page up (xterm pages by rows - 1)');
-    await stripTap(b.bottom - 4);
-    b = await bar();
-    assert.equal(b.now, b.max, 'a tap below the thumb scrolls one page down');
-    await page.evaluate(() => { window.__tapClicks = 0; document.querySelector('.h5-xterm:not([hidden])').addEventListener('click', () => { window.__tapClicks++; }); });
-    // On the part of the thumb the mouse handle leaves free (its default place is low on the right edge, over a thumb at the newest output; the
-    // pass-through hands the tap to whatever is under the point, which there would be the handle).
-    const freeThumbY = await page.evaluate(() => {
-      const thumb = document.querySelector('#h5-wheel .h5-wheel-thumb').getBoundingClientRect();
-      const handle = document.getElementById('h5-mouse-handle');
-      const h = handle && getComputedStyle(handle).display !== 'none' ? handle.getBoundingClientRect() : null;
-      if (!h || h.bottom <= thumb.top || h.top >= thumb.bottom) return thumb.top + thumb.height / 2;
-      return thumb.bottom - h.bottom >= h.top - thumb.top ? (h.bottom + thumb.bottom) / 2 : (thumb.top + h.top) / 2;
-    });
-    await stripTap(freeThumbY);
-    assert.ok(await page.evaluate(() => window.__tapClicks) >= 1, 'a tap on the thumb reaches the terminal under it');
-    assert.equal((await bar()).now, b.max, 'a tap on the thumb does not scroll');
-
-    // The thumb follows scrolling done elsewhere: a native scroll of the body, and new output (at the bottom it stays at the bottom).
-    // xterm applies the tap's scroll in a later frame and then ignores the next scroll event, so a single native scroll can be swallowed. Scroll to the top until the
-    // thumb follows (setting the same scrollTop again fires no event, so it alternates between 1px and the top; 1px is still the first row).
-    await page.waitForFunction(() => {
-      if (document.querySelector('#h5-wheel').getAttribute('aria-valuenow') === '0') return true;
-      const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport');
-      viewport.scrollTop = viewport.scrollTop === 0 ? 1 : 0;
-      return false;
-    }, null, { polling: 200 });
-    b = await bar();
-    assert.ok(b.thumbTop <= 0.5, 'a native scroll to the top moves the thumb to the top');
-    const max0 = b.max;
-    await page.evaluate(() => window.sockets[0].emit('\r\n' + Array.from({ length: 100 }, (_, i) => 'more ' + i).join('\r\n')));
-    await page.waitForFunction(max => Number(document.querySelector('#h5-wheel').getAttribute('aria-valuemax')) === max + 100, max0);
-    b = await bar();
-    assert.equal(b.now, 0, 'new output does not move a view that was scrolled up');
-    assert.ok(b.thumbHeight < thumbSize || b.thumbHeight === 32, 'the thumb gets smaller as the history grows');
-    await page.evaluate(() => { const viewport = document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport'); viewport.scrollTop = viewport.scrollHeight; });
-    await page.waitForFunction(() => { const el = document.querySelector('#h5-wheel'); return el.getAttribute('aria-valuenow') === el.getAttribute('aria-valuemax'); });
-    await page.evaluate(() => window.sockets[0].emit('\r\n' + Array.from({ length: 50 }, (_, i) => 'tail ' + i).join('\r\n')));
-    await page.waitForFunction(max => Number(document.querySelector('#h5-wheel').getAttribute('aria-valuemax')) === max + 150, max0);
-    b = await bar();
-    assert.equal(b.now, b.max, 'at the bottom, new output keeps the view and the thumb at the bottom');
-    assert.ok(Math.abs(b.thumbTop + b.thumbHeight - b.height) <= 1, 'the thumb is drawn at the bottom after new output');
-    if (process.env.H5_SHOT_DIR) {
-      await stripTap(b.top + 20); // a page up, so the thumb is not at an edge
-      await page.evaluate(() => { const el = document.querySelector('#h5-wheel'); el.classList.remove('active'); });
-      await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-wheel-bar.png') });
-      await stripTap((await bar()).bottom - 4);
+    // The speed grows with the pull (8 lines per second per row beyond 6px), and a pull inside the 6px dead zone does not scroll.
+    const pullUp = async (by, ms) => {
+      const before = await first();
+      await page.evaluate(async ({ by, ms }) => {
+        window.__hfire('pointerdown', window.__hy);
+        window.__hmove(window.__hy, window.__hy - by);
+        await window.__hsleep(ms);
+        window.__hfire('pointerup', window.__hy - by);
+      }, { by, ms });
+      const lines = before - (await first());
+      await backAtRest(`after a pull of ${by}px`);
+      // Back to the newest lines for the next pull.
+      await page.evaluate(() => { window.__hfire('pointerdown', window.__hy); window.__hmove(window.__hy, window.__hy + 250); });
+      await page.waitForFunction(top => window.__first() === top, newest, { timeout: 8000 });
+      await page.evaluate(() => window.__hfire('pointerup', window.__hy + 250));
+      await backAtRest('after going back down');
+      return lines;
+    };
+    const nearLines = await pullUp(30, 600);
+    const farLines = await pullUp(150, 600);
+    assert.ok(nearLines >= 1, `a short pull scrolls (${nearLines} lines)`);
+    assert.ok(farLines > nearLines * 2, `a longer pull scrolls faster (${nearLines} vs ${farLines} lines in the same time)`);
+    {
+      // 12px decides the axis (a scroll), then the finger goes back to 4px: inside the dead zone nothing more scrolls.
+      await page.evaluate(() => { window.__hfire('pointerdown', window.__hy); window.__hfire('pointermove', window.__hy - 12); window.__hfire('pointermove', window.__hy - 4); });
+      assert.equal((await handleState()).state, 'scroll');
+      const at = await first();
+      await page.evaluate(() => window.__hsleep(500));
+      assert.equal(await first(), at, 'a pull inside the dead zone does not scroll');
+      await page.evaluate(() => window.__hfire('pointerup', window.__hy - 4));
+      await backAtRest('after a pull in the dead zone');
     }
 
-    // A thumb drag that meets a switch to the alternate screen becomes the spring (the buffer type is read on every move).
+    // A tap on the handle does nothing: no scroll, no click on the terminal, nothing sent.
+    {
+      await page.evaluate(() => { window.__tapClicks = 0; document.querySelector('.h5-xterm:not([hidden])').addEventListener('click', () => { window.__tapClicks++; }); });
+      const sentBefore = await page.evaluate(() => window.sockets[0].sent.length);
+      const at = await first();
+      const box = await page.locator('#h5-mouse-handle').boundingBox();
+      await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForTimeout(300);
+      assert.equal(await page.evaluate(() => window.__tapClicks), 0, 'a tap on the handle does not reach the terminal');
+      assert.equal(await first(), at, 'a tap on the handle does not scroll');
+      assert.equal(await page.evaluate(() => window.sockets[0].sent.length), sentBefore, 'a tap on the handle sends nothing');
+      assert.equal((await handleState()).state, 'idle');
+    }
+
+    // Alternate buffer (a full-screen program with mouse reporting): pulled down sends wheel-down reports (newer), up wheel-up reports (older),
+    // faster the further; released, it stops.
     const wheels = () => page.evaluate(() => window.sockets[0].sent.filter(item => /^\x1b\[<6[45];/.test(item)).map(item => item.slice(3, 5)));
-    await page.evaluate(() => window.sockets[0].emit('\x1b[?1000h\x1b[?1006h'));
-    b = await bar();
-    const midBefore = (await wheels()).length;
-    await page.evaluate(y => { window.__wfire('pointerdown', y); window.__wfire('pointermove', y - 20); }, b.thumbY);
-    await page.evaluate(() => window.sockets[0].emit('\x1b[?1049h'));
-    await page.waitForFunction(() => document.querySelector('#h5-wheel').dataset.mode === 'spring');
-    await page.evaluate(async y => { await window.__wmove(y - 20, y + 80); }, b.thumbY);
-    await page.waitForFunction(before => window.sockets[0].sent.filter(item => /^\x1b\[<6[45];/.test(item)).length > before, midBefore, { timeout: 8000 }).catch(() => {});
-    await page.evaluate(y => window.__wfire('pointerup', y + 80), b.thumbY);
-    const mid = (await wheels()).slice(midBefore);
-    assert.ok(mid.length > 0 && mid.every(code => code === '65'), `after a switch to the alternate screen, pulling down sends wheel-down reports (${mid.join(',')})`);
-    await page.waitForFunction(() => !window.__h5WheelSpring());
-
-    // Alternate buffer: the thumb is a spring in the middle with chevrons; pull down = newer (wheel down), pull up = older (wheel up),
-    // faster the further it is pulled; released, it springs back and stops.
-    await page.evaluate(() => window.sockets[0].emit('\x1b[2J\x1b[Hfull screen app'));
-    await page.waitForFunction(() => !document.querySelector('#h5-wheel').classList.contains('active'), null, { timeout: 3000 });
-    const spring = await page.evaluate(() => {
-      const el = document.querySelector('#h5-wheel');
-      const box = el.getBoundingClientRect();
-      const thumb = el.querySelector('.h5-wheel-thumb').getBoundingClientRect();
-      const chevrons = [...el.querySelectorAll('.h5-wheel-chevron')].map(node => ({ display: getComputedStyle(node).display, y: node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2 }));
-      return { mode: el.dataset.mode, middle: box.top + box.height / 2, thumbY: thumb.top + thumb.height / 2, now: el.getAttribute('aria-valuenow'), chevrons };
-    });
-    assert.equal(spring.mode, 'spring');
-    assert.ok(Math.abs(spring.thumbY - spring.middle) <= 1, 'the spring thumb rests in the middle');
-    assert.equal(spring.now, '50', 'the spring reports the middle of its range');
-    assert.deepEqual(spring.chevrons.map(item => item.display), ['block', 'block'], 'the spring shows its chevrons');
-    assert.ok(spring.chevrons[0].y < spring.thumbY && spring.chevrons[1].y > spring.thumbY, 'one chevron above the thumb, one below');
-    if (process.env.H5_SHOT_DIR) await page.screenshot({ path: path.join(process.env.H5_SHOT_DIR, 'h5-wheel-spring.png') });
+    await page.evaluate(() => window.sockets[0].emit('\x1b[?1000h\x1b[?1006h\x1b[?1049h\x1b[2J\x1b[Hfull screen app'));
     const pull = async (by, ms) => {
       const before = (await wheels()).length;
-      const offset = await page.evaluate(async ({ y, by, ms }) => {
-        window.__wfire('pointerdown', y);
-        await window.__wmove(y, y + by);
-        await window.__wsleep(ms);
-        const value = document.querySelector('#h5-wheel').style.getPropertyValue('--h5-spring-offset');
-        window.__wfire('pointerup', y + by);
-        return value;
-      }, { y: spring.middle, by, ms });
-      return { codes: (await wheels()).slice(before), offset };
+      await page.evaluate(async ({ by, ms }) => {
+        window.__hfire('pointerdown', window.__hy);
+        window.__hmove(window.__hy, window.__hy + by);
+        await window.__hsleep(ms);
+        window.__hfire('pointerup', window.__hy + by);
+      }, { by, ms });
+      await backAtRest(`after a pull of ${by}px in the alternate buffer`);
+      return (await wheels()).slice(before);
     };
     const down = await pull(100, 500);
-    assert.ok(down.codes.length >= 3 && down.codes.every(code => code === '65'), `pulling the spring down sends wheel-down reports (newer) (${down.codes.join(',')})`);
-    assert.equal(down.offset, '100px', 'the spring thumb follows the pull');
-    assert.equal(await page.evaluate(() => document.querySelector('#h5-wheel').style.getPropertyValue('--h5-spring-offset')), '0px', 'released, the thumb springs back to the middle');
-    assert.equal(await page.evaluate(() => window.__h5WheelSpring()), false, 'released, the spring stops');
-    const stopped = (await wheels()).length;
-    await page.evaluate(() => window.__wsleep(300));
-    assert.equal((await wheels()).length, stopped, 'nothing is sent after the release');
+    assert.ok(down.length >= 3 && down.every(code => code === '65'), `pulling the handle down sends wheel-down reports (newer) (${down.join(',')})`);
+    const sentAfter = (await wheels()).length;
+    await page.evaluate(() => window.__hsleep(300));
+    assert.equal((await wheels()).length, sentAfter, 'nothing is sent after the release');
     const up = await pull(-100, 500);
-    assert.ok(up.codes.length >= 3 && up.codes.every(code => code === '64'), `pulling the spring up sends wheel-up reports (older) (${up.codes.join(',')})`);
-    const near = await pull(30, 600);
-    const far = await pull(200, 600);
-    assert.ok(far.codes.length > near.codes.length * 2, `a longer pull scrolls faster (${near.codes.length} vs ${far.codes.length} in the same time)`);
-    const dead = await pull(4, 400);
-    assert.equal(dead.codes.length, 0, 'a pull inside the dead zone does not scroll');
-    // A tap on the spring is handed to the element under it (a link of the program stays clickable).
-    await page.evaluate(() => { window.__tapClicks = 0; });
-    await stripTap(spring.middle - 150);
-    assert.ok(await page.evaluate(() => window.__tapClicks) >= 1, 'a tap on the spring reaches the terminal under it');
+    assert.ok(up.length >= 3 && up.every(code => code === '64'), `pulling the handle up sends wheel-up reports (older) (${up.join(',')})`);
+    const near = await pull(-30, 600);
+    const far = await pull(-150, 600);
+    assert.ok(far.length > near.length * 2, `a longer pull scrolls faster (${near.length} vs ${far.length} in the same time)`);
 
     // A drag on the terminal body sends no wheel reports.
     const cdp = await context.newCDPSession(page);
@@ -1417,11 +1341,11 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
       for (let y = from; y !== to; y += from < to ? 20 : -20) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await page.waitForTimeout(16); }
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     };
-    const afterStrip = (await wheels()).length;
+    const afterHandle = (await wheels()).length;
     await bodyDrag(150, 300, 500);
     await bodyDrag(150, 500, 300);
     await page.waitForTimeout(100);
-    assert.equal((await wheels()).length, afterStrip, 'dragging the terminal body sends no wheel reports');
+    assert.equal((await wheels()).length, afterHandle, 'dragging the terminal body sends no wheel reports');
 
     // The terminal's textarea never asks for the system keyboard, whatever the visual viewport does (Android back button, a viewport change): the terminal
     // keyboard is the page's own and stays until its key is tapped again.
@@ -1439,7 +1363,7 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     await page.locator('[data-action="keyboard"]').tap();
     await page.locator('#h5-osk').waitFor({ state: 'detached' });
 
-    // The terminal has no floating up/down buttons: scrolling is by the wheel strip.
+    // The terminal has no floating up/down buttons: scrolling is by the mouse handle and the terminal body.
     assert.equal(await page.locator('[data-scroll]').count(), 0, 'no scroll buttons are drawn');
 
     // A new terminal is a phone terminal and gets its own connection.

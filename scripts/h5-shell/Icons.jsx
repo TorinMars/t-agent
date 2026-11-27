@@ -48,7 +48,7 @@ export const PATHS = {
   file: 'M854.6 288.6L639.4 73.4c-6-6-14.1-9.4-22.6-9.4H192c-17.7 0-32 14.3-32 32v832c0 17.7 14.3 32 32 32h640c17.7 0 32-14.3 32-32V311.3c0-8.5-3.4-16.7-9.4-22.7zM790.2 326H602V137.8L790.2 326z m1.8 562H232V136h302v216c0 23.2 18.8 42 42 42h216v494z',
   // right (iconfont.cn icon 4767011): the chevron of a folder row (turned down when the folder is open); also the mouse ball's hint with the handle on the left edge (MouseBall.jsx)
   treeChevron: 'M765.7 486.8L314.9 134.7c-5.3-4.1-12.9-0.4-12.9 6.3v77.3c0 4.9 2.3 9.6 6.1 12.6l360 281.1-360 281.1c-3.9 3-6.1 7.7-6.1 12.6V883c0 6.7 7.7 10.4 12.9 6.3l450.8-352.1c16.4-12.8 16.4-37.6 0-50.4z',
-  // left (Ant Design LeftOutlined, the same icon in collection 9402): the first-time hint of the mouse ball, "Slide the mouse handle left" (MouseBall.jsx)
+  // left (Ant Design LeftOutlined, the same icon in collection 9402): the first-time hint of the mouse handle, "Drag to scroll, slide left for the mouse" (MouseBall.jsx)
   chevronLeft: 'M724 218.3V141c0-6.7-7.7-10.4-12.9-6.3L260.3 486.8a31.86 31.86 0 000 50.3l450.8 352.1c5.3 4.1 12.9.4 12.9-6.3v-77.3c0-4.9-2.3-9.6-6.1-12.6l-360-281 360-281.1c3.8-3 6.1-7.7 6.1-12.6z',
   // reload (iconfont.cn icon 4765852): read the tree again
   reload: 'M909.1 209.3l-56.4 44.1C775.8 155.1 656.2 92 521.9 92 290 92 102.3 279.5 102 511.5 101.7 743.7 289.8 932 521.9 932c181.3 0 335.8-115 394.6-276.1 1.5-4.2-0.7-8.9-4.9-10.3l-56.7-19.5c-4.1-1.4-8.6 0.7-10.1 4.8-1.8 5-3.8 10-5.9 14.9-17.3 41-42.1 77.8-73.7 109.4-31.6 31.6-68.4 56.4-109.3 73.8-42.3 17.9-87.4 27-133.8 27-46.5 0-91.5-9.1-133.8-27-40.9-17.3-77.7-42.1-109.3-73.8-31.6-31.6-56.4-68.4-73.7-109.4-17.9-42.4-27-87.4-27-133.9s9.1-91.5 27-133.9c17.3-41 42.1-77.8 73.7-109.4 31.6-31.6 68.4-56.4 109.3-73.8 42.3-17.9 87.4-27 133.8-27 46.5 0 91.5 9.1 133.8 27 40.9 17.3 77.7 42.1 109.3 73.8 9.9 9.9 19.2 20.4 27.8 31.4l-60.2 47c-5.3 4.1-3.5 12.5 3 14.1l175.6 43c5 1.2 9.9-2.6 9.9-7.7l0.8-180.9c-0.1-6.6-7.8-10.3-13-6.2z',
@@ -160,13 +160,13 @@ export const DRAWN = {
   keyShift: 'M12 3.5L3.5 12.5H8V20h8v-7.5h4.5z',
   // Caps lock (the terminal on-screen keyboard, Shift tapped twice): the Shift arrow, shorter, over a bar
   keyCapsLock: 'M12 3L3.5 11.5H8V16h8v-4.5h4.5z M8 20h8',
-  // Wheel strip in a full-screen program (the spring thumb): a chevron above it (pull up = older) and one below it (pull down = newer).
-  // Shown at 14px inside the thin strip, not 22px: they mark the direction and are not buttons.
+  // The mouse handle while it scrolls (MouseBall.jsx): a chevron above it (pull up = older) and one below it (pull down = newer); also the start
+  // command's expand button. Shown at 14px beside the handle, not 22px: they mark the direction and are not buttons.
   chevronUp: 'M6 15l6-6 6 6',
   chevronDown: 'M6 9l6 6 6-6',
   // Shell notebook (the session kind's mark, scripts/notebook/ and the session tiles): a lab flask, its neck and a liquid line. The library's
   // experiment icon has bubbles that blur at 18px; this one stays clear on the tiles and the 20px header.
-  // Mouse ball (the ball that comes out of the wheel strip over the terminal): a mouse pointer arrow. The library has no plain pointer.
+  // Mouse ball (the ball that comes out of the mouse handle over the terminal): a mouse pointer arrow. The library has no plain pointer.
   mouseBall: 'M7 3v14l3.5-3.2 2.5 5.8 2.3-1-2.5-5.8h4.7z',
   notebook: 'M9 3h6 M10 3v6.2L4.8 18.4A1.8 1.8 0 0 0 6.4 21h11.2a1.8 1.8 0 0 0 1.6-2.6L14 9.2V3 M7.2 15h9.6',
 };

@@ -2702,7 +2702,6 @@
     clearOwnerPrompt(s); // its "in use on another device" notice sits on the box every terminal shares: it must not stay over the next one (showing it again connects again and asks again)
     s.clipboard?.dismiss(); // a copy request of a terminal that is no longer shown goes away
     dropLinks(s); // and so do its links waiting on the link bar
-    scheduleWheelSync();
     syncPresence();
   }
   function showWarm(s) {
@@ -2712,7 +2711,6 @@
     ui.set({ empty: null });
     holdTerminalSize();
     refit(s);
-    scheduleWheelSync();
     sendResize(s); // the size may have changed (another view, the keyboard) while it was hidden
     if (!s.ws) { clearTimeout(s.timer); s.timer = null; open(s); }
     ackShown();
@@ -2833,8 +2831,7 @@
     // shows the bar with a preview first (`state.clipboard`). Only the shown terminal may copy.
     if (typeof TerminalClipboard !== 'undefined') s.clipboard = TerminalClipboard.attach(term, el, { isActive: () => session === s && !s.disposed && !s.el.hidden });
     attachFileLinks(s);
-    watchWheel(s); // the wheel strip's thumb follows this terminal's buffer while it is shown
-    attachGestures(s); // a sideways pan moves the wide terminal; vertical scrolling is the wheel strip's and xterm's
+    attachGestures(s); // a sideways pan moves the wide terminal; vertical scrolling is xterm's and the mouse handle's
     // Pasted images or files (long-press paste in the xterm textarea, files copied in the file manager) are uploaded like picked ones, all of them
     // in order (at most UPLOAD_MAX_FILES, checked by upload); plain text keeps xterm's own paste.
     el.addEventListener('paste', event => {
@@ -2855,7 +2852,7 @@
       if (!keyboardOpen || cursorFrame) return;
       cursorFrame = requestAnimationFrame(() => { cursorFrame = 0; if (session === s && !s.disposed) holdTerminalSize(); });
     });
-    s.observer = new ResizeObserver(() => { refit(s); if (session === s) scheduleWheelSync(); });
+    s.observer = new ResizeObserver(() => refit(s));
     s.observer.observe(el);
     holdTerminalSize();
     refit(s);
@@ -2875,302 +2872,6 @@
   }
   // A layer that opened by itself before the terminal took the focus (the "Updated to v…" dialog, UpdatedNotice.jsx) hands it back here once it is gone.
   ui.actions.focusTerminal = () => { if (session && !session.disposed) focusTerminalSoon(session); };
-  // The wheel strip: a scrollbar on the right edge of the terminal (drawn by the shell, scripts/h5-shell/Terminal.jsx), the same for a finger and a
-  // mouse (pointer events; a mouse drags with the left button), and the place the mouse ball comes out of.
-  // Its mode (`data-mode`) follows the shown terminal's buffer:
-  // - 'bar' (normal buffer): a thumb whose size is rows / (rows + scrollback in use) and whose position is viewportY / baseY.
-  //   Dragging the thumb moves the view like a scrollbar (down = newer, up = older), mapped 1:1 to the buffer; a tap on the track above or
-  //   below the thumb scrolls one page. The thumb also follows scrolling done elsewhere (new output, a native drag on the body, keys).
-  //   Without history (a fresh shell, a short output) it is drawn all the same, the thumb filling the track: there is nothing to scroll, so a
-  //   drag scrolls nothing and a tap goes through, but the strip is always there, because the mouse ball comes out of it (a slide to the left).
-  // - 'spring' (alternate buffer: Claude Code, Codex, vim, tmux ...; the page cannot know the program's position): the thumb rests in the
-  //   middle; pulling it down scrolls down (newer), up scrolls up (older), faster the further it is pulled; released, it springs back. The
-  //   steps are wheel events, which xterm forwards the way a desktop wheel would (mouse reports, or arrow keys without mouse mode). They point at the
-  //   middle of the visible terminal, not at the strip: a program that scrolls the pane under the mouse (opencode) has its main content there, and
-  //   the strip's own x is over its right-most columns (opencode's sidebar, which does not scroll the messages).
-  // - 'none' (no terminal shown): nothing is drawn and touches go through.
-  // A drag on the terminal body does not make wheel events; xterm's own touch handling scrolls the normal-buffer history there (touch-action: pan-y).
-  // Tuning. Change these to tune the feel.
-  const WHEEL_THUMB_MIN = 32; // px, the smallest bar thumb
-  const WHEEL_THUMB_SLOP = 8; // px around the bar thumb that still grab it
-  const WHEEL_FADE_MS = 700; // how long the strip stays bright after the finger is lifted
-  const WHEEL_MAX_EVENTS = 200; // wheel events sent per step in the alternate buffer (one per line)
-  const WHEEL_SPRING_DEAD = 6; // px of pull around the middle that do not scroll yet
-  const WHEEL_SPRING_RATE = 8; // lines per second for each terminal row of pull beyond the dead zone
-  const WHEEL_SPRING_MAX = 200; // lines per second at most
-  const WHEEL_SPRING_REACH = 0.42; // the spring thumb moves at most this share of the strip height from the middle
-  const WHEEL_TAP_SLOP = 8; // px of travel still counted as a tap
-  const WHEEL_TAP_MS = 400; // a tap is shorter than this
-  const WHEEL_STALE_MS = 3000; // a finger with no pointer event for this long dims the strip and stops the spring (a lost pointerup must not keep it)
-  const wheelStrip = () => document.getElementById('h5-wheel');
-  function lineHeight(s) {
-    const screen = s.el.querySelector('.xterm-screen');
-    return screen && s.term.rows ? Math.max(8, screen.clientHeight / s.term.rows) : 16;
-  }
-  function wheel(s, lines, x, y) {
-    const target = s.el.querySelector('.xterm-screen') || s.el;
-    for (let i = 0; i < Math.min(Math.abs(lines), WHEEL_MAX_EVENTS); i++) {
-      target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: Math.sign(lines), clientX: x, clientY: y }));
-    }
-  }
-  // One spring step. The buffer type is read here, at the moment of sending, so a program that leaves the alternate screen during a pull is followed.
-  function scrollStep(s, lines, x, y) {
-    if (s.term.buffer.active.type === 'alternate') wheel(s, lines, x, y);
-    else s.term.scrollLines(lines);
-  }
-  function wheelMode(s) {
-    if (!s || s.disposed || s.el.hidden) return 'none';
-    const buf = s.term.buffer.active;
-    return buf.type === 'alternate' ? 'spring' : 'bar'; // a normal buffer without history is a bar too (always drawn, the user's rule of 2026-11-27)
-  }
-  // The bar geometry in px of the strip: thumb size, the room it moves in, its top, and the buffer numbers behind them.
-  function wheelBar(s, el) {
-    const buf = s.term.buffer.active;
-    const height = el.clientHeight;
-    const rows = s.term.rows || 1;
-    const base = buf.baseY;
-    const thumb = Math.min(height, Math.max(WHEEL_THUMB_MIN, Math.round(height * rows / (rows + base))));
-    const room = Math.max(height - thumb, 0);
-    const top = base && room ? Math.round(room * Math.min(buf.viewportY, base) / base) : room;
-    return { height, thumb, room, top, base, line: buf.viewportY };
-  }
-  let wheelFrame = 0;
-  // Draws the strip for the shown terminal. Cheap: it only sets a data attribute, two CSS variables and the ARIA values.
-  function syncWheel() {
-    if (wheelFrame) cancelAnimationFrame(wheelFrame);
-    wheelFrame = 0;
-    const el = wheelStrip();
-    if (!el) return;
-    const s = session;
-    const mode = wheelMode(s);
-    if (el.dataset.mode !== mode) el.dataset.mode = mode;
-    if (mode === 'none') {
-      el.setAttribute('aria-hidden', 'true');
-      for (const name of ['aria-valuemin', 'aria-valuemax', 'aria-valuenow']) el.removeAttribute(name);
-      return;
-    }
-    el.removeAttribute('aria-hidden');
-    if (mode === 'bar') {
-      const bar = wheelBar(s, el);
-      el.style.setProperty('--h5-thumb-top', `${bar.top}px`);
-      el.style.setProperty('--h5-thumb-size', `${bar.thumb}px`);
-      el.setAttribute('aria-valuemin', '0');
-      el.setAttribute('aria-valuemax', String(bar.base));
-      el.setAttribute('aria-valuenow', String(Math.min(bar.line, bar.base)));
-    } else {
-      // The program's position is unknown: the spring rests in the middle of a 0-100 range.
-      el.setAttribute('aria-valuemin', '0');
-      el.setAttribute('aria-valuemax', '100');
-      el.setAttribute('aria-valuenow', '50');
-    }
-  }
-  const scheduleWheelSync = () => { if (!wheelFrame) wheelFrame = requestAnimationFrame(syncWheel); };
-  // Keeps the strip in step with one terminal: scrolls of any kind, new lines, a switch of buffer, a new size. The native scroll of the
-  // xterm viewport (a drag on the body) does not fire onScroll in xterm 5.5, so its DOM scroll event is listened to as well.
-  function watchWheel(s) {
-    const sync = () => { if (session === s) scheduleWheelSync(); };
-    s.term.onScroll(sync);
-    s.term.onLineFeed(sync);
-    s.term.onResize(sync);
-    s.term.buffer.onBufferChange(sync);
-    s.el.querySelector('.xterm-viewport')?.addEventListener('scroll', sync, { passive: true });
-    sync();
-  }
-  function bindWheelStrip() {
-    // The browser does not always end a touch: an Android system gesture (edge back swipe, notification shade, app switch),
-    // a hidden page, a dialog over the strip, a re-mounted strip or a second finger can swallow the pointerup / pointercancel.
-    // So a drag also ends on lostpointercapture, a hidden page, pagehide, window blur, a switched or closed terminal and a
-    // detached strip; a new touch always takes over from an old drag; and the strip is dimmed (and the spring stopped) when no
-    // pointer event came for WHEEL_STALE_MS (the next move of the same finger brings it back). Every element that got 'active' loses it.
-    let drag = null;
-    let fade = 0;
-    let watch = 0; // interval that checks the running drag (only while a finger is down)
-    let spring = 0; // requestAnimationFrame id of the running spring scroll
-    const shown = new Set(); // strip elements with the 'active' class
-    const strip = event => event.target.closest && event.target.closest('#h5-wheel');
-    const show = el => { el.classList.add('active'); shown.add(el); };
-    const hideAll = () => { for (const el of shown) el.classList.remove('active'); shown.clear(); };
-    const hideLater = () => { clearTimeout(fade); fade = setTimeout(() => { if (!drag) hideAll(); }, WHEEL_FADE_MS); };
-    const stopSpring = () => { if (spring) cancelAnimationFrame(spring); spring = 0; };
-    // The spring thumb back in the middle (the CSS transition makes it spring).
-    const release = el => { el.removeAttribute('data-pulling'); el.style.setProperty('--h5-spring-offset', '0px'); };
-    // Ends the drag without a tap.
-    const drop = () => {
-      if (!drag) return;
-      const { el } = drag;
-      drag = null;
-      clearInterval(watch);
-      stopSpring();
-      release(el);
-      hideLater();
-    };
-    const check = () => {
-      if (!drag) { clearInterval(watch); return; }
-      if (drag.s !== session || drag.s.disposed || !drag.el.isConnected) { drop(); return; }
-      if (performance.now() - drag.seen > WHEEL_STALE_MS) { hideAll(); drag.stale = true; stopSpring(); release(drag.el); return; }
-      tick(); // the spring keeps its speed when frames are throttled
-    };
-    // The spring scrolls by time: lines per second grow with the pull. Called every frame and on every move (frames may be slow).
-    const tick = () => {
-      if (!drag || drag.mode !== 'spring' || drag.stale) return;
-      const now = performance.now();
-      const dt = Math.min(now - drag.tick, 1000); // by real time: slow frames (a loaded machine, a sleeping display) do not slow the scroll
-      drag.tick = now;
-      const pull = Math.abs(drag.offset) - WHEEL_SPRING_DEAD;
-      if (pull <= 0) { drag.rest = 0; return; }
-      const speed = Math.min(WHEEL_SPRING_MAX, WHEEL_SPRING_RATE * pull / lineHeight(drag.s)); // lines per second
-      drag.rest += Math.sign(drag.offset) * speed * dt / 1000; // pulled down: positive, newer output
-      const lines = Math.trunc(drag.rest);
-      if (!lines) return;
-      drag.rest -= lines;
-      const rect = drag.el.getBoundingClientRect();
-      const box = drag.s.el.getBoundingClientRect(); // the visible terminal (a wide screen is moved inside it)
-      scrollStep(drag.s, lines, box.left + box.width / 2, rect.top + rect.height / 2);
-    };
-    const frame = () => {
-      spring = 0;
-      if (!drag || drag.mode !== 'spring' || drag.stale) return;
-      if (drag.s !== session || drag.s.disposed || !drag.el.isConnected) { drop(); return; }
-      tick();
-      spring = requestAnimationFrame(frame);
-    };
-    const startSpring = (y) => {
-      drag.mode = 'spring';
-      drag.from = y;
-      drag.offset = 0;
-      drag.rest = 0;
-      drag.tick = performance.now();
-      drag.el.setAttribute('data-pulling', '');
-    };
-    // Moves the bar thumb so that its grab point is under the finger, and scrolls the buffer to the matching line.
-    const barTo = (y) => {
-      const { s, el } = drag;
-      const rect = el.getBoundingClientRect();
-      const bar = wheelBar(s, el);
-      if (!bar.base) return;
-      const top = Math.max(0, Math.min(bar.room, y - rect.top - drag.grab));
-      const line = bar.room ? Math.round(top / bar.room * bar.base) : bar.base;
-      if (line !== s.term.buffer.active.viewportY) s.term.scrollToLine(line);
-      syncWheel();
-    };
-    // A tap that is not for the strip is handed to whatever is under it, for example a link.
-    const passTap = (event, el) => {
-      const old = el.style.pointerEvents;
-      el.style.pointerEvents = 'none';
-      const under = document.elementFromPoint(event.clientX, event.clientY);
-      el.style.pointerEvents = old;
-      if (!under) return;
-      for (const type of ['mousedown', 'mouseup', 'click']) {
-        under.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: event.clientX, clientY: event.clientY }));
-      }
-    };
-    const finish = event => {
-      if (!drag || event.pointerId !== drag.id) return;
-      if (event.type === 'pointerup' && drag.s === session && drag.el.isConnected) tick(); // the time held since the last frame counts
-      const { el, moved, started, s, mode, onThumb, y } = drag;
-      drop();
-      if (event.type !== 'pointerup' || s !== session || s.disposed || !el.isConnected) return;
-      if (moved >= WHEEL_TAP_SLOP || performance.now() - started >= WHEEL_TAP_MS) return;
-      // A tap: on the bar's track it scrolls one page toward the tap; on the thumb or on the spring it goes through.
-      if (mode === 'bar' && !onThumb && wheelMode(s) === 'bar') {
-        const bar = wheelBar(s, el);
-        s.term.scrollPages(y - el.getBoundingClientRect().top < bar.top ? -1 : 1);
-        syncWheel();
-      } else passTap(event, el);
-    };
-    document.addEventListener('pointerdown', event => {
-      const el = strip(event);
-      const s = session;
-      if (!el || !s || s.disposed || (event.pointerType === 'mouse' && event.button !== 0)) return;
-      drop(); // a drag still open here lost its end (or this is a second finger): the new touch takes over
-      syncWheel();
-      const mode = wheelMode(s);
-      if (mode === 'none') return;
-      const now = performance.now();
-      drag = { id: event.pointerId, el, s, mode, y: event.clientY, moved: 0, started: now, seen: now, stale: false, onThumb: false, grab: 0, dragging: false,
-        x0: event.clientX, y0: event.clientY, line0: s.term.buffer.active.viewportY, axis: null };
-      if (mode === 'bar') {
-        const bar = wheelBar(s, el);
-        const at = event.clientY - el.getBoundingClientRect().top;
-        drag.onThumb = at >= bar.top - WHEEL_THUMB_SLOP && at <= bar.top + bar.thumb + WHEEL_THUMB_SLOP;
-        drag.grab = drag.onThumb ? Math.max(0, Math.min(bar.thumb, at - bar.top)) : bar.thumb / 2;
-        drag.dragging = drag.onThumb; // a touch beside the thumb drags only once it travels (a tap pages)
-      } else startSpring(event.clientY);
-      clearTimeout(fade);
-      show(el);
-      watch = setInterval(check, 250);
-      try { el.setPointerCapture(event.pointerId); } catch { /* the pointer is gone already */ }
-      event.preventDefault();
-    });
-    document.addEventListener('pointermove', event => {
-      if (!drag || event.pointerId !== drag.id) return;
-      const s = session;
-      if (drag.s !== s || !s || s.disposed || !drag.el.isConnected) { drop(); return; }
-      event.preventDefault();
-      drag.seen = performance.now();
-      if (drag.stale) { drag.stale = false; if (drag.mode === 'spring') { drag.tick = drag.seen; drag.el.setAttribute('data-pulling', ''); } }
-      if (!shown.has(drag.el)) show(drag.el); // dimmed by the stale check while the finger was still
-      // A slide to the left takes the mouse ball out of the strip ("Mouse ball" in docs/design/page-terminal-mouse-ball.md; its chunk registers
-      // `stripMouse`). The axis is decided in the first px of travel and kept; until then the drag scrolls as always, and a bar scroll is undone
-      // when it becomes the mouse. From then on the ball's chunk has the finger (the strip keeps the pointer capture).
-      const mouse = ui.actions.stripMouse;
-      if (!drag.axis && mouse && (drag.axis = mouse.axis(event.clientX - drag.x0, event.clientY - drag.y0)) === 'mouse') {
-        if (drag.mode === 'bar' && s.term.buffer.active.viewportY !== drag.line0) s.term.scrollToLine(drag.line0);
-        syncWheel();
-        if (mouse.begin({ id: drag.id, el: drag.el, from: { x: drag.x0, y: drag.y0 }, at: { x: event.clientX, y: event.clientY }, sync: syncWheel })) { drop(); return; }
-      }
-      drag.moved += Math.abs(event.clientY - drag.y);
-      drag.y = event.clientY;
-      // The buffer type is read on every move: a program that switches screens during the drag switches the drag with it.
-      const mode = wheelMode(s);
-      if (mode === 'spring' && drag.mode !== 'spring') startSpring(event.clientY);
-      else if (mode === 'bar' && drag.mode !== 'bar') { stopSpring(); release(drag.el); drag.mode = 'bar'; drag.dragging = true; drag.grab = wheelBar(s, drag.el).thumb / 2; }
-      if (drag.mode === 'bar') {
-        if (!drag.dragging && drag.moved >= WHEEL_TAP_SLOP) drag.dragging = true;
-        if (drag.dragging && mode === 'bar') barTo(event.clientY);
-        return;
-      }
-      tick(); // the time pulled so far, at the old offset
-      const reach = drag.el.clientHeight * WHEEL_SPRING_REACH;
-      drag.offset = Math.max(-reach, Math.min(reach, event.clientY - drag.from));
-      drag.el.style.setProperty('--h5-spring-offset', `${Math.round(drag.offset)}px`);
-      if (!spring) spring = requestAnimationFrame(frame);
-    });
-    document.addEventListener('pointerup', finish);
-    document.addEventListener('pointercancel', finish);
-    // A mouse press on the strip keeps the keyboard where it is (the terminal) and starts no text selection.
-    document.addEventListener('mousedown', event => { if (strip(event)) event.preventDefault(); });
-    // A mouse wheel or trackpad over the strip (a computer, or a touch screen that also has a mouse or trackpad) goes to the
-    // terminal under it at the same point, as if the strip were not there: xterm scrolls, or reports the cell under the pointer to the program, and a
-    // sideways wheel moves the wide terminal. A pinch (ctrlKey) stays the browser's.
-    document.addEventListener('wheel', event => {
-      const el = strip(event);
-      if (!el || event.ctrlKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const old = el.style.pointerEvents;
-      el.style.pointerEvents = 'none';
-      const under = document.elementFromPoint(event.clientX, event.clientY);
-      el.style.pointerEvents = old;
-      if (!under || (under.closest && under.closest('#h5-wheel'))) return;
-      const { deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, shiftKey, altKey, metaKey, buttons } = event;
-      under.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, composed: true, view: window, deltaX, deltaY, deltaZ, deltaMode, clientX, clientY, screenX, screenY, shiftKey, altKey, metaKey, buttons }));
-    }, { capture: true, passive: false });
-    // Capture lost without a pointerup first (the strip was removed, or the browser took the pointer): the drag is over.
-    document.addEventListener('lostpointercapture', finish, true);
-    const away = () => { drop(); hideLater(); };
-    document.addEventListener('visibilitychange', () => { if (document.hidden) away(); });
-    window.addEventListener('pagehide', away);
-    window.addEventListener('blur', event => { if (event.target === window) drop(); });
-    // The strip is drawn by React and can be re-mounted (input mode, layout): every store change draws it again (once per frame at most).
-    ui.subscribe(scheduleWheelSync);
-    window.addEventListener('resize', scheduleWheelSync);
-    // Test hooks: whether the spring is scrolling, and a synchronous redraw.
-    window.__h5WheelSpring = () => Boolean(spring);
-    window.__h5WheelSync = syncWheel;
-  }
-  bindWheelStrip();
-
   // ── Sideways: the wide terminal (public/js/terminal-gestures.js; "Terminal width" in docs/design/page-terminal-and-bottom-bar.md) ──
   // Terminal width, one setting for this device (localStorage): 'fit' gives the PTY the columns that fit the screen; 'wide' gives it `cols`
   // (200 / 500 / 1000 / 2000, never fewer than fit), so programs that wrap their own output (Claude Code, Codex) keep whole sentences, and the screen,
@@ -3378,7 +3079,6 @@
     warm = warm.filter(item => item !== s);
     clearOwnerPrompt(s);
     s.disposed = true;
-    scheduleWheelSync();
     s.gestures?.dispose();
     clearTimeout(s.timer);
     s.imePairs?.dispose();
@@ -3729,7 +3429,7 @@
   // A click on the terminal gives it the focus (xterm does this on mouse down too; this also covers a click on its padding).
   terminalHost.addEventListener('click', event => {
     const s = session;
-    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-wheel, #h5-clipboard-bar'))) return;
+    if (!deskKeys() || !s || s.disposed || s.term.hasSelection() || (event.target.closest && event.target.closest('#h5-clipboard-bar'))) return;
     s.term.focus();
   });
 
@@ -4048,7 +3748,7 @@
     if (cell && selectAt(s, cell, chain) && s.term.hasSelection()) void s.clipboard?.copy(s.term.getSelection()); // inside this tap's user activation
   });
   // ── Mouse ball (docs/design/page-terminal-mouse-ball.md; scripts/h5-shell/MouseBall.jsx, a chunk of its own) ──
-  // It comes out of the wheel strip (a slide to the left, `bindWheelStrip`). The ball asks for the shown terminal at each touch: its xterm, its
+  // It comes out of the mouse handle (MouseBall.jsx: a slide toward the inside). The ball asks for the shown terminal at each touch: its xterm, its
   // screen, the copy path of the double tap (the same notice, the same refusal bar) and the gesture mark for a program's own copy, or null while no
   // terminal is shown (empty, the chat over it, the copy view, a notebook).
   ui.actions.mouseBallTarget = () => {

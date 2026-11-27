@@ -39,9 +39,9 @@
 | T-Attention (the phone drawer's row, `#h5-tasks-attention`) | carry out | 4766856 | `attention`, 24px |
 | Settings (the phone drawer's row `#h5-tasks-settings`, the navigation rail's `#h5-nav-settings`) | setting | 4765891 | `setting` in `Icons.jsx`, 24px in the drawer, 22px in the rail |
 | Tasks (the menu button of the phone app bar, `#h5-open-tasks`) | menu | 4767059 | `menu` in `Icons.jsx`, 22px |
-| Mouse ball (the ball that comes out of the wheel strip, `#h5-mouse-ball`, 22px) | self-drawn | - | `mouseBall` in `DRAWN`: a mouse pointer arrow; the library has no plain pointer |
-| Mouse ball hint ("Slide the mouse handle left", `#h5-mouse-ball-hint`) | left (Ant Design LeftOutlined, the same icon in collection 9402) | not looked up | `chevronLeft`, 18px, primary colour, decorative |
-| Mouse ball hint with the handle on the left edge ("Slide the mouse handle right") | right (iconfont.cn icon 4767011) | 4767011 | `treeChevron` (the same right chevron as the folder rows), 18px, primary colour, decorative |
+| Mouse ball (the ball that comes out of the mouse handle, `#h5-mouse-ball`, 22px) | self-drawn | - | `mouseBall` in `DRAWN`: a mouse pointer arrow; the library has no plain pointer |
+| Mouse handle hint ("Drag to scroll, slide left for the mouse", `#h5-mouse-ball-hint`) | left (Ant Design LeftOutlined, the same icon in collection 9402) | not looked up | `chevronLeft`, 18px, primary colour, decorative |
+| Mouse handle hint with the handle on the left edge ("Drag to scroll, slide right for the mouse") | right (iconfont.cn icon 4767011) | 4767011 | `treeChevron` (the same right chevron as the folder rows), 18px, primary colour, decorative |
 | Mouse handle glyph (the corner cursor inside the bar, `#h5-mouse-handle`, 7 x 9px) | self-drawn | - | part of the handle's drawing, inline in `MouseBall.jsx` (`HANDLE_GLYPH`, `M1 8 L1 1 L6 1`, 1.5px `currentColor`) like the ball's cursor lines, so it stays in the lazy chunk and out of the first screen; decorative (the handle has its own `aria-label`) |
 | More (the session header's "More", `#h5-header-more`) | ellipsis | 4767094 | `taskMore`, 22px; its "Refresh the page" item uses `reload` (4765852) at 20px, its phone "Update" item the Update icon below at 20px |
 | Add subtopic (mind map bar) | subnode | 8094810 | `subnode` |
@@ -113,7 +113,7 @@
 | Shell notebook: Stop, stop button of a running cell, Stop shell | border | not looked up | `stopSquare` (Ant Design BorderOutlined) |
 | Shell notebook: a cell that ended with exit 0 | check | not looked up | `check` (Ant Design CheckOutlined), 14px in the success colour |
 | Shell notebook: Restart shell, menu items Rename / Download .ipynb / Clear outputs | reload, edit, download, close | as listed above | the existing `reload`, `edit`, `download`, `close`; + Code, + Text, + Cell and Clear outputs are text labels |
-| Wheel strip spring (full-screen program): up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the spring thumb, 14px (direction marks inside the thin strip, not buttons) |
+| Mouse handle while it scrolls: up / down chevrons | self-drawn `chevronUp`, `chevronDown` | none | self-drawn: open chevrons above and below the handle's bar, 14px, the one of the pull's direction in the primary colour (direction marks, not buttons) |
 | Terminal width switch (header, Fit / Wide) | column-width | not looked up (Ant Design `ColumnWidthOutlined`, the same outline as in collection 9402) | `columnWidth` in `Icons.jsx`, 22px |
 | Add column ("+ Column", multi-column view bar) | plus | 7834345 | `add`, 14px, the start icon of the text button |
 | Close column (header of each column) | close | 4767096 | `close`, 14px |

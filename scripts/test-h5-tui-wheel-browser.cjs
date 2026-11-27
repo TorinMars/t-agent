@@ -1,14 +1,17 @@
 // The mouse wheel over a full-screen program that scrolls the pane under the mouse (opencode: a message pane, and a sidebar on the right that does not
 // scroll the messages), with the real task routes, the real terminal WebSocket handler, a real PTY and a fake TUI that turns on mouse reports
 // (1000, 1002, 1003 any motion, 1006 SGR) and shows on its screen the last wheel report it read (button;column;row) and how many motion reports came.
-// See "Wheel strip" and "Terminal width (Fit / Wide)" in docs/design/page-terminal-and-bottom-bar.md.
-// - Computer, Fit (1440 x 900, mouse; the 16px wheel strip drawn beside the terminal box): a wheel on the left, in the middle and on the last column reaches the program with the column under the pointer.
+// See "The mouse handle" in docs/design/page-terminal-mouse-ball.md and "Terminal width (Fit / Wide)" in docs/design/page-terminal-and-bottom-bar.md.
+// - Computer, Fit (1440 x 900, mouse): a wheel on the left, in the middle and on the last column reaches the program with the column under the pointer; a
+//   wheel over the mouse handle reaches the terminal cell under it; a drag of the handle with the left button (pulled up) sends wheel-up reports at the middle
+//   of the visible terminal.
 // - Computer, Wide (200 columns, the default): after Shift+wheel moved the screen to its right end, mouse moves (motion reports) and wheels over the right-most
 //   columns leave the view where it is (before, every mouse report counted as typing and pulled the view back to the program's cursor on the left), and
-//   each wheel names the column under the pointer; a typed key still brings the cursor back into view.
-// - Touch screen with a mouse (1280 x 800, touch input mode, the wheel strip drawn): a wheel over the strip reaches the terminal under it (before, the
-//   strip took it and nothing was sent); the strip's spring sends its wheel reports at the middle of the visible terminal, not at the strip's x (the
-//   program's last columns: opencode's sidebar, so the spring never scrolled opencode on a wide terminal).
+//   each wheel names the column under the pointer; the handle's pull scrolls at the middle of the visible part and leaves the view where it is; a typed
+//   key still brings the cursor back into view.
+// - Touch screen with a mouse (1280 x 800, touch input mode): a wheel over the handle reaches the terminal under it (the old wheel strip once took it and
+//   nothing was sent); a finger's pull on the handle sends its wheel reports at the middle of the visible terminal, not at the handle's x (the program's
+//   last columns: opencode's sidebar, so the old strip's spring never scrolled opencode on a wide terminal).
 // - Columns view (1440 x 900, one column): a wheel inside the pane names the column under the pointer.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -130,6 +133,23 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
   await wheelsAbove(frame, before);
   return status(frame);
 }
+// The mouse handle, shown (its box in the page).
+async function handleBox(page) {
+  await page.waitForFunction(() => { const el = document.getElementById('h5-mouse-handle'); return el && el.style.display === 'block'; });
+  return page.evaluate(() => { const box = document.getElementById('h5-mouse-handle').getBoundingClientRect(); return { left: box.left, top: box.top, width: box.width, height: box.height, x: box.left + box.width / 2, y: box.top + box.height / 2 }; });
+}
+// The handle dragged with the left mouse button by `dy` px (in steps), held until the program read more wheel reports, then let go; returns the status.
+async function mousePull(page, dy) {
+  const box = await handleBox(page);
+  const before = (await status(page)).wheels;
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x, box.y + dy, { steps: 6 });
+  await wheelsAbove(page, before + 1);
+  await page.mouse.up();
+  await page.waitForFunction(() => !window.__h5HandleScrolling());
+  return status(page);
+}
 
 (async () => {
   try {
@@ -149,13 +169,26 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
       await page.keyboard.press('Enter');
       await tuiShown(page);
       let st = await status(page);
-      await page.waitForFunction(() => document.querySelector('#h5-wheel')?.dataset.mode === 'spring');
-      assert.equal(await page.evaluate(() => document.querySelector('#h5-wheel').getBoundingClientRect().width), 16, 'the wheel strip is drawn in pointer mode too (16px, beside the terminal box)');
+      assert.equal(await page.locator('#h5-wheel').count(), 0, 'no wheel strip any more');
       const row = Math.round(st.rows / 2);
       for (const col of [3, Math.round(st.cols / 2), st.cols - 2, st.cols]) {
         const point = cellPoint(st, col, row);
         st = await wheelAt(page, page, point.x, point.y);
         assert.deepEqual([st.button, st.col, st.row], [65, col, row], `Fit: a wheel down over column ${col} of ${st.cols} reaches the program at that cell`);
+      }
+      // A wheel over the mouse handle reaches the terminal cell under it.
+      {
+        const box = await handleBox(page);
+        assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('#h5-mouse-handle')?.id, box), 'h5-mouse-handle', 'the point is over the handle');
+        st = await wheelAt(page, page, box.x, box.y);
+        const under = cellUnder(st, box.x, box.y);
+        assert.deepEqual([st.button, st.col, st.row], [65, under.col, under.row], `a wheel over the handle reaches the terminal cell under it (${under.col} of ${st.cols})`);
+      }
+      // The handle dragged up with the left button: wheel-up reports at the middle of the visible terminal.
+      st = await mousePull(page, -80);
+      {
+        const mid = cellUnder(st, st.box.left + st.box.width / 2, st.box.top + st.box.height / 2);
+        assert.deepEqual([st.button, st.col, st.row], [64, mid.col, mid.row], `Fit: the handle pulled up with the mouse scrolls up (older) at the middle cell (${st.col};${st.row})`);
       }
 
       // ── Computer, Wide: the screen moved to its right end stays there under the mouse ──
@@ -184,6 +217,14 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
         assert.deepEqual([now.col, now.row], [col, row], `Wide at the right end: a wheel over column ${col} reaches that cell`);
         assert.equal(now.offset, end, `Wide: the wheel over column ${col} leaves the view at the right end`);
       }
+      // The handle's pull at the right end: wheel-down reports at the middle of the visible part, and the view stays.
+      {
+        const now = await mousePull(page, 80);
+        const mid = cellUnder(now, now.box.left + now.box.width / 2, now.box.top + now.box.height / 2);
+        assert.deepEqual([now.button, now.col, now.row], [65, mid.col, mid.row], `Wide: the handle pulled down scrolls down at the middle of the visible part (${now.col};${now.row})`);
+        assert.ok(now.col > 100, `that is a right-hand column of the moved screen (${now.col})`);
+        assert.equal(now.offset, end, 'Wide: the handle\'s pull leaves the view at the right end');
+      }
       // A typed key is input: it brings the cursor (column 3 of the input line) back into view.
       await input.focus();
       await page.keyboard.press('x');
@@ -193,35 +234,32 @@ async function wheelAt(page, frame, x, y, { dx = 0, dy = 0 } = {}) {
       await context.close();
     }
 
-    // ── Touch screen with a mouse: the wheel strip ──
+    // ── Touch screen with a mouse: the mouse handle ──
     {
       const { context, page } = await newPage({ viewport: { width: 1280, height: 800 }, hasTouch: true });
       assert.equal(await page.evaluate(() => document.documentElement.dataset.input), 'touch');
       await tuiShown(page);
-      await page.waitForFunction(() => document.querySelector('#h5-wheel')?.dataset.mode === 'spring');
       let st = await status(page);
-      const strip = await page.evaluate(() => { const box = document.querySelector('#h5-wheel').getBoundingClientRect(); return { left: box.left, width: box.width, top: box.top, height: box.height }; });
-      const row = Math.round(st.rows / 2);
-      // A mouse wheel over the strip reaches the cell under it.
-      const over = { x: strip.left + strip.width / 2, y: st.screen.top + (row - 0.5) * st.cell.height };
-      assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.id, over), 'h5-wheel', 'the point is over the strip');
-      st = await wheelAt(page, page, over.x, over.y);
-      const under = cellUnder(st, over.x, over.y);
-      assert.deepEqual([st.button, st.col, st.row], [65, under.col, under.row], `a wheel over the strip reaches the terminal cell under it (${under.col} of ${st.cols})`);
-      // The spring's wheel reports point at the middle of the visible terminal.
+      const handle = await handleBox(page);
+      // A mouse wheel over the handle reaches the cell under it.
+      assert.equal(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('#h5-mouse-handle')?.id, handle), 'h5-mouse-handle', 'the point is over the handle');
+      st = await wheelAt(page, page, handle.x, handle.y);
+      const under = cellUnder(st, handle.x, handle.y);
+      assert.deepEqual([st.button, st.col, st.row], [65, under.col, under.row], `a wheel over the handle reaches the terminal cell under it (${under.col} of ${st.cols})`);
+      // A finger's pull on the handle: its wheel reports point at the middle of the visible terminal.
       const cdp = await context.newCDPSession(page);
       const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
       const before = st.wheels;
-      const sx = strip.left + strip.width / 2; const sy = strip.top + strip.height / 2;
-      await touch('touchStart', sx, sy);
-      for (let i = 1; i <= 5; i++) { await touch('touchMove', sx, sy + i * 20); await page.waitForTimeout(16); }
+      await touch('touchStart', handle.x, handle.y);
+      for (let i = 1; i <= 5; i++) { await touch('touchMove', handle.x, handle.y - i * 20); await page.waitForTimeout(16); }
       await wheelsAbove(page, before + 2);
       await touch('touchEnd');
-      await page.waitForFunction(() => !window.__h5WheelSpring());
+      await page.waitForFunction(() => !window.__h5HandleScrolling());
       st = await status(page);
-      const expected = cellUnder(st, st.box.left + st.box.width / 2, strip.top + strip.height / 2);
-      assert.equal(st.button, 65, 'pulled down: wheel down');
-      assert.deepEqual([st.col, st.row], [expected.col, expected.row], `the spring scrolls at the middle of the visible terminal (column ${st.col} of ${st.cols}), not at the strip's last columns`);
+      const expected = cellUnder(st, st.box.left + st.box.width / 2, st.box.top + st.box.height / 2);
+      assert.equal(st.button, 64, 'pulled up: wheel up (older)');
+      assert.deepEqual([st.col, st.row], [expected.col, expected.row], `the handle scrolls at the middle of the visible terminal (column ${st.col} of ${st.cols}), not at the handle's last columns`);
+      assert.ok(Math.abs(st.col - under.col) > 5, 'not at the handle\'s column');
       await cdp.detach();
       await context.close();
     }

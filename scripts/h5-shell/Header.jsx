@@ -21,6 +21,7 @@ import { DeviceTag } from './TaskDrawer.jsx';
 import { PlanUsageButton } from './PlanUsage.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore } from './use-store.mjs';
+import { localGet, localSet } from './local-keys.mjs';
 
 // The device of the shown task, as the task list tags it: its row's own engine tag (h5.js tags the rows whenever the order can be changed or more than one
 // device is listed), drawn by the same DeviceTag in its closed look. Without a tag (one device and no sorting, or a task its list does not show) the
@@ -32,7 +33,7 @@ const HEADER = state => {
     wide: state.wide, sidebarCollapsed: state.sidebarCollapsed, tasksOpen: state.tasksOpen, taskName: state.taskName, sourceLabel: state.sourceLabel,
     sessionName: state.sessionName, terminalWidth: state.terminalWidth, pane: state.pane, tag: shown ? shown.device : null,
     hasTarget: Boolean(state.shownTarget), agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot), notebook: state.notebook,
-    typing: state.keyboard === 'draft' && Boolean(state.softKeyboard),
+    typing: state.keyboard === 'draft' && Boolean(state.softKeyboard), touch: state.input === 'touch',
   };
 };
 
@@ -134,7 +135,7 @@ export function Header({ ui }) {
         ) : null}
         {wide && state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <PlanUsageButton ui={ui} phone={!wide} />
-        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} />
+        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} touch={state.touch} />
       </Toolbar>
     </AppBar>
   );
@@ -249,11 +250,15 @@ function StateWord({ ui }) {
 // On a phone, while a terminal is shown (`width`, h5.js `state.terminalWidth`), the terminal width comes first (`#h5-term-width`, "Terminal width:
 // 160 columns" with a ›, its icon in the primary colour while Wide): it replaces this menu with the width choices (`WidthMenu` with its Back row, at the
 // same place), since the bar has no room for the computer's switch.
+// After it, in touch input (`touch`), "Mouse ball sends the mouse to programs" (`#h5-mouse-ball-program`, a switch in its row with a helper line):
+// this device's choice whether the mouse ball's press goes to a program with mouse reporting on (localStorage `PROGRAM_KEY`, read by MouseBall.jsx
+// at each press; "Who gets the button" in docs/design/page-terminal-mouse-ball.md). A tap flips it and the row shows it at once; the menu stays.
 // While a terminal session is shown (`remember`), "Remember this" (a note with the time, the task and the session; h5.js `rememberShown`) comes
 // before Refresh the page ("Remember this" in docs/design/usage-time-page.md).
-function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false }) {
+function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false, touch = false }) {
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
+  const [program, setProgram] = useState(false); // the mouse ball's choice, read when the menu opens
   const [widthOpen, setWidthOpen] = useState(false);
   const label = t(notebook ? 'Notebook menu' : 'More');
   const dot = phone && updateDot;
@@ -267,7 +272,7 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, rememb
     <>
       <IconButton id="h5-header-more" ref={anchor} {...named(label)} aria-haspopup="menu" aria-expanded={open || (widthOpen && Boolean(widthItem))}
         aria-controls={open ? 'h5-header-more-menu' : widthOpen && widthItem ? 'h5-term-width-menu' : undefined}
-        data-attention={dot ? 'true' : undefined} onClick={() => setOpen(true)} sx={{ color: 'text.secondary' }}>
+        data-attention={dot ? 'true' : undefined} onClick={() => { setProgram(localGet(PROGRAM_KEY) === 'on'); setOpen(true); }} sx={{ color: 'text.secondary' }}>
         <Badge variant="dot" color="error" invisible={!dot} overlap="circular"><Icon name="taskMore" size={22} /></Badge>
       </IconButton>
       <Menu id="h5-header-more-menu" anchorEl={anchor.current} open={open} onClose={() => setOpen(false)} slotProps={{ list: { 'aria-label': label, dense: !phone }, transition: { onExited: afterClose } }}
@@ -278,6 +283,14 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, rememb
             <ListItemIcon sx={wideNow ? { color: 'primary.light' } : undefined}><Icon name="columnWidth" size={20} /></ListItemIcon>
             <ListItemText>{widthLabel(widthItem)}</ListItemText>
             <Box component="span" aria-hidden="true" sx={{ display: 'inline-flex', color: 'text.secondary', ml: 2 }}><Icon name="treeChevron" size={16} /></Box>
+          </MenuItem>
+        ) : null}
+        {widthItem && touch ? (
+          <MenuItem id="h5-mouse-ball-program" role="menuitemcheckbox" aria-checked={program} sx={SWITCH_ROW}
+            onClick={() => { localSet(PROGRAM_KEY, program ? null : 'on'); setProgram(!program); }}>
+            <ListItemIcon><Icon name="mouseBall" size={20} /></ListItemIcon>
+            <ListItemText primary={t('Mouse ball sends the mouse to programs')} secondary={t('Off: the page selects. On: a program with mouse reporting, such as Claude Code in full screen, selects by itself.')} />
+            <Box component="span" aria-hidden="true" data-on={program || undefined} sx={SWITCH} />
           </MenuItem>
         ) : null}
         {notebook ? NOTEBOOK_ITEMS.map(([name, text, iconName]) => (
@@ -313,6 +326,16 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, rememb
   );
 }
 
+// Per device (public/js/local-keys.js): 'on' or absent; MouseBall.jsx `PROGRAM_KEY` reads it.
+const PROGRAM_KEY = 'h5-mouse-ball-program';
+// A menu row with a helper line wraps within the menu (MenuItem keeps one line by default).
+const SWITCH_ROW = { minHeight: 44, maxWidth: 320, whiteSpace: 'normal', alignItems: 'center' };
+// The look of an MD2 switch (a 34 x 14 track, a 20px thumb; on: the primary colour) drawn by one span: MUI's Switch is not in the first screen.
+const SWITCH = theme => ({
+  position: 'relative', flex: '0 0 auto', ml: 2, width: 34, height: 14, borderRadius: 7, bgcolor: alpha(theme.palette.common.white, 0.3),
+  '&::after': { content: '""', position: 'absolute', top: -3, left: 0, width: 20, height: 20, borderRadius: '50%', bgcolor: 'grey.300', boxShadow: 1, transition: 'left 150ms' },
+  '&[data-on]': { bgcolor: alpha(theme.palette.primary.main, 0.5), '&::after': { left: 14, bgcolor: 'primary.main' } },
+});
 const WIDE_CHOICES = [200, 500, 1000, 2000]; // public/js/terminal-gestures.js `WIDE_CHOICES`
 // The current width in words: the phone's menu item and the computer's switch say it ("Terminal width: 160 columns").
 const widthLabel = width => (width.mode === 'wide' ? t(`Terminal width: ${width.cols} columns`) : t('Terminal width: Fit to screen'));

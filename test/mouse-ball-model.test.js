@@ -225,8 +225,8 @@ test('the button goes to the program while it reports the mouse, else to the pag
   assert.equal(buttonMode('none'), 'page', 'no mouse reporting: the page selects');
   assert.equal(buttonMode(undefined), 'page', 'an xterm without modes: the page');
   for (const mode of ['x10', 'vt200', 'drag', 'any']) assert.equal(buttonMode(mode), 'program', mode);
-  assert.deepEqual(programReports('x10'), { release: false, motion: false, wheel: false }, 'x10: the press only');
-  assert.deepEqual(programReports('vt200'), { release: true, motion: false, wheel: true }, 'vt200: press, release and wheel');
-  assert.deepEqual(programReports('drag'), { release: true, motion: true, wheel: true }, 'drag: and the motion with the button held');
-  assert.deepEqual(programReports('any'), { release: true, motion: true, wheel: true });
+  assert.deepEqual(programReports('x10'), { release: false, motion: false, wheel: false, hover: false }, 'x10: the press only');
+  assert.deepEqual(programReports('vt200'), { release: true, motion: false, wheel: true, hover: false }, 'vt200: press, release and wheel');
+  assert.deepEqual(programReports('drag'), { release: true, motion: true, wheel: true, hover: false }, 'drag: and the motion with the button held, no hover');
+  assert.deepEqual(programReports('any'), { release: true, motion: true, wheel: true, hover: true }, 'any (1003): and the hover with no button before the press');
 });

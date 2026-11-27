@@ -2015,6 +2015,8 @@ I18n.add({
   "Hold still to press": "停住不动即按下",
   "Selecting in the page": "正在页面中选择",
   "Mouse sent to the program": "鼠标事件发给程序",
+  "Mouse ball sends the mouse to programs": "鼠标球把鼠标事件发给程序",
+  "Off: the page selects. On: a program with mouse reporting, such as Claude Code in full screen, selects by itself.": "关:由页面选择。开:开启鼠标报告的程序(如全屏的 Claude Code)自己选择。",
   "Hear the sentence": "听这句话",
   "Show first letter": "显示首字母",
   "Hide": "收起",

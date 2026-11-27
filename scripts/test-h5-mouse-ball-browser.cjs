@@ -12,7 +12,10 @@
 // selection keeps its start; a refused write shows the copy bar; a paragraph a program wrapped is one line; with mouse reporting on (SGR drag
 // tracking) the button goes to the program instead (the press at the dwell, motions while held and the release at the lift as 1-based SGR reports,
 // wheel steps near the top edge, no page selection or copy, the program's OSC 52 copy on the release written at once, reporting turned off
-// mid-gesture keeps the gesture the program's, off again the page selects and copies); the spring strip of a full-screen program works the same
+// mid-gesture keeps the gesture the program's, off again the page selects and copies); the More menu's switch "Mouse ball sends the mouse to
+// programs" (touch only, off by default, writing h5-mouse-ball-program); with modes 1000/1002/1003/1004/1006 the bytes of a real mouse (hover
+// moves before the press, ESC[I once when the terminal did not have the focus, the press, drags, the release), no hover in 1002, and with the switch
+// off nothing reaches the program; the spring strip of a full-screen program works the same
 // and sends nothing to the program before the ball is out; no horizontal overflow. H5_SHOT_DIR=<dir> saves screenshots.
 const { chromium } = require('playwright');
 const fs = require('node:fs');
@@ -23,8 +26,8 @@ const ORIGIN = 'https://h5.test';
 const TYPES = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html' };
 const SHOTS = process.env.H5_SHOT_DIR;
 
-async function openPage(browser) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: SHOTS ? 3 : 1 });
+async function openPage(browser, { touch = true } = {}) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, ...(touch ? { isMobile: true, hasTouch: true } : {}), deviceScaleFactor: SHOTS ? 3 : 1 });
   const page = await context.newPage();
   const errors = [];
   const chunks = [];
@@ -71,10 +74,11 @@ async function openPage(browser) {
   await page.goto(`${ORIGIN}/h5`);
   return { context, page, errors, chunks };
 }
-async function openTerminal(page) {
+async function openTerminal(page, { touch = true } = {}) {
+  const press = locator => (touch ? locator.tap() : locator.click());
   await page.locator('#h5-tasks').waitFor({ state: 'visible' });
-  await page.locator('.h5-task-item', { hasText: 'Fix login' }).tap();
-  await page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }).tap();
+  await press(page.locator('.h5-task-item', { hasText: 'Fix login' }));
+  await press(page.locator('#h5-tasks .h5-terminal-list[aria-label="Fix login"] .h5-terminal-main', { hasText: 'Terminal 1' }));
   await page.locator('#h5-tasks').waitFor({ state: 'hidden' });
   await page.waitForFunction(() => window.sockets.length > 0 && window.sockets.at(-1).readyState === 1 && document.querySelector('.h5-xterm:not([hidden]) .xterm-rows'));
   await page.evaluate(() => {
@@ -153,6 +157,24 @@ const ROW2 = 'foxtrot golf hotel india juliet';
       return !el.dataset.mouse && ball.dataset.state === 'idle' && getComputedStyle(ball).display === 'none' && el.querySelector('.h5-wheel-thumb').style.background === '';
     }, null, { timeout: 3000 });
 
+    // The More menu's switch "Mouse ball sends the mouse to programs": opened, flipped to `on` (true) or off, closed; returns what the row showed.
+    const programSwitch = async on => {
+      await page.locator('#h5-header-more').tap();
+      const row = page.locator('#h5-mouse-ball-program');
+      await row.waitFor({ state: 'visible' });
+      const before = await row.getAttribute('aria-checked');
+      if (on !== undefined && (before === 'true') !== on) {
+        await row.tap();
+        await page.waitForFunction(on => document.getElementById('h5-mouse-ball-program').getAttribute('aria-checked') === String(on), on);
+        assert.equal(await page.locator('#h5-header-more-menu').isVisible(), true, 'the menu stays open: the row shows the new state at once');
+      }
+      const shown = await row.getAttribute('aria-checked');
+      if (SHOTS) { await page.waitForTimeout(400); await shot(`switch-${shown}`); }
+      await page.keyboard.press('Escape');
+      await page.locator('#h5-header-more-menu').waitFor({ state: 'detached' });
+      return { before, shown };
+    };
+
     // ── At start: no ball, no switch in the More menu; the chunk is there in touch input ──
     const g0 = await grid();
     const history = Array.from({ length: 300 }, (_, i) => `old ${i + 1}`).join('\r\n');
@@ -165,6 +187,14 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await page.locator('#h5-header-more').tap();
     await page.locator('#h5-header-more-menu').waitFor();
     assert.equal(await page.locator('#h5-mouse-ball-switch').count(), 0, 'no Mouse ball switch in the More menu');
+    const programRow = page.locator('#h5-mouse-ball-program');
+    await programRow.waitFor({ state: 'visible' });
+    assert.equal(await programRow.getAttribute('role'), 'menuitemcheckbox');
+    assert.equal(await programRow.getAttribute('aria-checked'), 'false', 'off by default');
+    assert.match(await programRow.innerText(), /Mouse ball sends the mouse to programs\s+Off: the page selects\. On: a program with mouse reporting, such as Claude Code in full screen, selects by itself\./);
+    const rowBox = await programRow.boundingBox();
+    const menuBox = await page.locator('#h5-header-more-menu .MuiPaper-root').boundingBox();
+    assert.ok(rowBox.height >= 44 && rowBox.x >= menuBox.x - 0.5 && rowBox.x + rowBox.width <= menuBox.x + menuBox.width + 0.5 && menuBox.x >= 0 && menuBox.x + menuBox.width <= 390, `a 44px row inside the menu, on the screen (${JSON.stringify({ rowBox, menuBox })})`);
     await page.keyboard.press('Escape');
     await page.locator('#h5-header-more-menu').waitFor({ state: 'detached' });
 
@@ -436,7 +466,9 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     await dockedAgain();
 
     // ── A program with mouse reporting on (drag tracking, SGR): with the device's choice 'on' the ball drives the program's own selection ──
-    await page.evaluate(() => localStorage.setItem('h5-mouse-ball-program', 'on'));
+    assert.deepEqual(await programSwitch(true), { before: 'false', shown: 'true' }, 'the switch turns on');
+    assert.equal(await page.evaluate(() => localStorage.getItem('h5-mouse-ball-program')), 'on', 'kept for this device');
+    assert.deepEqual(await programSwitch(), { before: 'true', shown: 'true' }, 'and shown on when the menu opens again');
     await emit(`\x1b[2J\x1b[HMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n`);
     await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
     await page.evaluate(() => document.querySelector('.h5-xterm:not([hidden])').dispatchEvent(new MouseEvent('click', { bubbles: true }))); // no old highlight
@@ -456,7 +488,7 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.equal(await page.locator('#h5-mouse-ball').getAttribute('data-mode'), 'program', 'the button went to the program');
     assert.equal(await page.locator('#h5-mouse-ball-status').innerText(), 'Mouse sent to the program', 'the pill says so');
     assert.equal(view.color, 'rgb(144, 202, 249)', 'the same pressed look');
-    assert.deepEqual(await reports(from), [[0, 9, 7, 'M']], 'the press at the dwell, at the cursor cell');
+    assert.deepEqual(await reports(from), [[0, 9, 7, 'M']], 'the press at the dwell, at the cursor cell; no hover in mode 1002');
     await glide(fingerFor(mid(8, 6)), fingerFor(mid(14, 8)));
     let sent = await reports(from);
     assert.ok(sent.slice(1).length >= 2 && sent.slice(1).every(r => r[0] === 32 && r[3] === 'M'), `motions with the left button held (${JSON.stringify(sent)})`);
@@ -521,9 +553,54 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.equal((await copied()).length, copiesBefore + 1, 'nothing copied');
     await dockedAgain();
 
-    // By default (the choice absent) the page selects even while the program has mouse reporting on: Claude Code did not select with the synthetic mouse
-    // of the ball, so the text is chosen and copied by the page.
-    await page.evaluate(() => localStorage.removeItem('h5-mouse-ball-program'));
+    // ── The bytes of a real mouse: with any-event tracking (1003) and focus reports (1004) the ball sends what a mouse would ──
+    // Seen with a real mouse in this page: a hover at the cell first, ESC[I when the click focuses the terminal, the press, drags, the release.
+    await emit(`\x1b[2J\x1b[H\r\nMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h`);
+    await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; if (document.activeElement) document.activeElement.blur(); });
+    await page.waitForTimeout(200);
+    gm = await grid();
+    // Every mouse report and focus report the page sent since `from`, in order: [button, col, row, M/m] or 'I' / 'O'.
+    const events = from => page.evaluate(from => window.sockets.at(-1).sent.slice(from).flatMap(item => [...item.matchAll(/\x1b\[<(\d+);(\d+);(\d+)([Mm])|\x1b\[([IO])/g)]
+      .map(m => (m[5] ? m[5] : [Number(m[1]), Number(m[2]), Number(m[3]), m[4]]))), from);
+    from = await sentCount();
+    assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('.h5-xterm:not([hidden]) textarea')), false, 'the terminal has no focus');
+    await enter(fingerFor(mid(8, 6)));
+    let seen = await events(from);
+    assert.ok(seen.length >= 2 && seen.every(e => Array.isArray(e) && e[0] === 35 && e[3] === 'M'), `hover moves with no button while the ball is out (${JSON.stringify(seen)})`);
+    assert.deepEqual(seen.at(-1), [35, 9, 7, 'M'], 'the last hover at the cursor cell');
+    assert.equal(new Set(seen.map(e => `${e[1]};${e[2]}`)).size, seen.length, 'one hover per cell');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    seen = await events(from);
+    const press = seen.findIndex(e => Array.isArray(e) && e[0] === 0);
+    assert.ok(press > 0, `a press (${JSON.stringify(seen)})`);
+    assert.deepEqual(seen.slice(press - 1), ['I', [0, 9, 7, 'M']], 'the focus, then the press at the hovered cell');
+    assert.equal(seen.filter(e => e === 'I').length, 1, 'one focus report');
+    assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('.h5-xterm:not([hidden]) textarea')), true, 'the terminal has the focus');
+    await glide(fingerFor(mid(8, 6)), fingerFor(mid(14, 8)));
+    await touch('touchEnd');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle');
+    await page.waitForTimeout(200);
+    seen = await events(from);
+    const after = seen.slice(press + 1);
+    assert.ok(after.length >= 3 && after.slice(0, -1).every(e => Array.isArray(e) && e[0] === 32 && e[3] === 'M'), `drags with the button held (${JSON.stringify(after)})`);
+    assert.deepEqual(after.at(-1), [0, 15, 9, 'm'], 'the release at the lift, and nothing after it');
+    await dockedAgain();
+    // A second press while the terminal has the focus: no focus report again.
+    await page.waitForTimeout(1600); // past the gesture window of the lift above
+    from = await sentCount();
+    await enter(fingerFor(mid(5, 3)));
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'pressed', null, { timeout: 3000 });
+    await touch('touchEnd');
+    await page.waitForFunction(() => document.getElementById('h5-mouse-ball').dataset.state === 'idle');
+    seen = await events(from);
+    assert.ok(!seen.includes('I') && seen.some(e => e[0] === 0 && e[3] === 'M') && seen.at(-1)[3] === 'm', `the focus was there already (${JSON.stringify(seen)})`);
+    await dockedAgain();
+    await emit('\x1b[?1003l\x1b[?1004l');
+
+    // Switched off in the More menu: the page selects even while the program has mouse reporting on (the default; Claude Code did not select with
+    // the synthetic mouse of the ball), so the text is chosen and copied by the page and nothing reaches the program.
+    assert.deepEqual(await programSwitch(false), { before: 'true', shown: 'false' }, 'the switch turns off');
+    assert.equal(await page.evaluate(() => localStorage.getItem('h5-mouse-ball-program')), null, 'the key is removed');
     await emit(`\x1b[2J\x1b[H\r\nMOUSE MODE\r\n${ROW1}\r\n${ROW2}\r\n\x1b[?1000h\x1b[?1002h\x1b[?1006h`);
     await page.evaluate(() => { document.querySelector('.h5-xterm:not([hidden]) .xterm-viewport').scrollTop = 1e9; });
     await page.waitForTimeout(200);
@@ -606,6 +683,17 @@ const ROW2 = 'foxtrot golf hotel india juliet';
     assert.equal(await page.locator('#h5-mouse-ball-switch').count(), 0);
     assert.deepEqual(errors, [], 'no page errors');
     await context.close();
+
+    // ── Pointer input on a phone-sized window: no mouse ball, and no switch for it in the More menu ──
+    const pointer = await openPage(browser, { touch: false });
+    await openTerminal(pointer.page, { touch: false });
+    await pointer.page.waitForFunction(() => window.H5UI.get().input === 'pointer');
+    await pointer.page.locator('#h5-header-more').click();
+    await pointer.page.locator('#h5-refresh').waitFor({ state: 'visible' });
+    assert.equal(await pointer.page.locator('#h5-term-width').count(), 1, 'the terminal is shown');
+    assert.equal(await pointer.page.locator('#h5-mouse-ball-program').count(), 0, 'the switch is for touch input only');
+    assert.deepEqual(pointer.errors, []);
+    await pointer.context.close();
     console.log('h5 mouse ball browser test passed');
   } finally {
     await browser.close();

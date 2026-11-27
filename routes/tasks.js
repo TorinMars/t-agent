@@ -282,6 +282,25 @@ router.get('/:id/terminals/:terminalId/cwd', async (req, res) => {
   catch (error) { res.status(error.statusCode || 400).json({ error: error.message || 'TERMINAL_CWD_FAILED' }); }
 });
 
+// VS Code in the browser on this engine ("Launch" in docs/design/vscode-web-proxy.md): start, status and the one-time licence confirmation go to the
+// engine's VS Code manager in-process (services/vscode-local-transport.js); a ready answer gets `open_url` with a single-use launch ticket.
+for (const [method, suffix, call] of [['post', '', 'start'], ['get', '', 'status'], ['post', '/accept-license', 'acceptLicense']]) {
+  router[method](`/:id/terminals/:terminalId/vscode${suffix}`, async (req, res) => {
+    const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, ownerFilter(req));
+    if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+    const proxy = require('../services/vscode-proxy').getVscodeProxy();
+    const origin = proxy.publicOrigin(req);
+    if (!origin) return res.status(400).json({ error: 'VSCODE_HOST_INVALID' });
+    res.set('Cache-Control', 'no-store');
+    try {
+      const answer = await require('../services/vscode-local-transport')[call]({ taskId: task.id, terminalId: req.params.terminalId, host: origin.host, proto: origin.proto, owner: ownerFilter(req) });
+      res.json(call === 'acceptLicense' ? answer : proxy.launchAnswer(answer, { sessionId: req.sessionID, owner: ownerFilter(req), target: { kind: 'local' } }));
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ error: /^[A-Z0-9_]{1,64}$/.test(error.message || '') ? error.message : 'VSCODE_START_FAILED' });
+    }
+  });
+}
+
 router.post('/:id/terminal/control', (req, res) => {
   const uid = ownerFilter(req);
   const task = db.prepare('SELECT id FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, uid);

@@ -158,8 +158,9 @@ app.use('/api/tcli', require('./routes/open-link').createOpenLinkRelayRouter());
 // The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps), /v1/attention (routes/attention.js,
 // the token is checked first), /v1/linked-services (routes/linked-services.js) and /v1/oss/files (routes/tcli.js, a streamed upload of any type) parse their
 // own bodies after the gates or the token check, with their own limits: a body this parser has read would make theirs do nothing. Every other route keeps
-// these parsers. Case-insensitive, like Express routing.
-const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services|v1\/oss\/files)(?:\/|$)/i;
+// these parsers. Case-insensitive, like Express routing. VS Code in the browser (/vscode, routes/vscode-web.js, and the engine's /v1/vscode) streams
+// its bodies through unread.
+const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services|v1\/oss\/files|vscode|v1\/vscode)(?:\/|$)/i;
 const exceptOwnParsers = parser => (req, res, next) => (OWN_PARSERS.test(req.path) ? next() : parser(req, res, next));
 app.use(exceptOwnParsers(express.json({ limit: '32mb' })));
 app.use(exceptOwnParsers(express.urlencoded({ extended: true })));
@@ -179,17 +180,26 @@ const sessionMiddleware = session({
   },
 });
 
-app.use(sessionMiddleware);
-app.use((req, res, next) => {
+// VS Code in the browser (/vscode, routes/vscode-web.js) has its own cookie, bound to a session, and no page session of its own: its hundreds of
+// requests must not touch or renew the session, nor set its cookie on VS Code's answers.
+const VSCODE_PATH = /^\/vscode(?:\/|$)/i;
+const exceptVscode = middleware => (req, res, next) => (VSCODE_PATH.test(req.path) ? next() : middleware(req, res, next));
+app.use(exceptVscode(sessionMiddleware));
+app.use(exceptVscode((req, res, next) => {
   // Local enrollment also works in production over direct loopback HTTP.
   // Remote HTTP requires an explicit opt-in; HTTPS always keeps Secure cookies.
   req.session.cookie.secure = isSecureClientCookie(req);
   req.session.cookie.sameSite = clientCookieSameSite(req, config.clientFrameOrigins);
   getClientAuth().renew(req.session);
   next();
-});
+}));
 // In local-only / mode-not-chosen state, non-local requests always get 404; in local-only mode sessions from this machine are trusted automatically.
 app.use(createAccessGate({ getMode: () => getClientAuth().accessMode() }));
+// VS Code in the browser: after the access gate (local-only mode keeps it to this machine), before the access log and the login gate. It checks its own
+// cookie and answers anything else with the login gate's 404 ("VS Code in the browser: the page server" in docs/design/vscode-web-proxy.md).
+const vscodeWeb = require('./routes/vscode-web');
+const vscodeProxy = require('./services/vscode-proxy').getVscodeProxy();
+app.use('/vscode', vscodeWeb.createVscodeWebRouter({ proxy: () => vscodeProxy }));
 // The access log (services/access-log.js, "Access log" in docs/design/access-log.md): which devices use this server and from where, on this machine
 // only. The client address of a request through the SSH tunnel or frp (a loopback peer) is the one the VPS's proxy appended, while a tunnel, frp or
 // a public page address is set up (TRUSTED_PROXY=auto) or TRUSTED_PROXY=on (lib/client-ip.js).
@@ -606,9 +616,11 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 const tunnelWss = new WebSocket.Server({ noServer: true, ...TUNNEL_WS_OPTIONS }); // the frame limit of the service link tunnel
 app.locals.disconnectClientSession = sid => {
+  vscodeProxy.forgetSession(sid);
   for (const ws of wss.clients) if (ws.clientSessionId === sid) ws.close(1008, 'Authentication required');
 };
 app.locals.disconnectAllClientSessions = () => {
+  vscodeProxy.forgetAll();
   for (const ws of wss.clients) if (ws.clientSessionId) ws.close(1008, 'Authenticator changed');
 };
 
@@ -699,6 +711,8 @@ server.on('upgrade', (req, socket, head) => {
     });
     return;
   }
+  // VS Code in the browser: its own cookie and Origin check (services/vscode-proxy.js). Matched on the raw path, before any normalisation.
+  if (vscodeWeb.handleVscodeUpgrade(req, socket, head, wss, { proxy: () => vscodeProxy })) return;
   if (engineUrl.pathname !== '/terminal/ws') {
     socket.destroy();
     return;

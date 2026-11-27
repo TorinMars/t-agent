@@ -353,6 +353,36 @@ test('a raw file stream passes the Range request and its answer headers', async 
   assert.equal(headers['x-other'], undefined);
 });
 
+test('a message from the local server above the WebSocket limit reaches A as a 1009 close, and the tunnel goes on', async t => {
+  const limits = { maxWsMessageBytes: 4096 };
+  const link = await startLink(t, {
+    hub: createHub(limits),
+    client: limits,
+    onSocket(ws) { ws.on('message', data => ws.send(data.toString() === 'big' ? Buffer.alloc(8192) : data)); },
+  });
+  const fromB = await openSocket(link.hub, link.linkId, '/v1/terminal-sessions/1/stream');
+  fromB.send('big');
+  assert.equal((await fromB.closedWith).code, 1009);
+  const small = await openSocket(link.hub, link.linkId, '/v1/terminal-sessions/1/stream');
+  small.send('ok');
+  await until(() => small.messages.length === 1, 'the echo');
+  small.close(1000);
+});
+
+test('a redirect keeps its location across the tunnel, and set-cookie still stays behind', async t => {
+  const link = await startLink(t, {
+    handler(req, res) {
+      res.writeHead(302, { location: '/vscode/engine-1/?folder=%2Ftmp', 'set-cookie': 'vscode-tkn=secret', 'service-worker-allowed': '/' });
+      res.end();
+    },
+  });
+  const answer = await hubCall(link.hub, link.linkId, '/v1/vscode/web/aG9zdA/vscode/engine-1');
+  assert.equal(answer.status, 302);
+  assert.equal(answer.headers.location, '/vscode/engine-1/?folder=%2Ftmp');
+  assert.equal(answer.headers['set-cookie'], undefined);
+  assert.equal(answer.headers['service-worker-allowed'], undefined);
+});
+
 test('a stream to an offline link answers 502 with the code', async t => {
   const port = await startStreamApp(t, tunnelBase(crypto.randomUUID()), '/v1/events', { sse: true });
   const { status, body } = await new Promise((resolve, reject) => {
@@ -853,7 +883,7 @@ const FORBIDDEN_PATHS = [
   // Backslashes
   '/v1\\..\\api', '/v1/tasks\\1', '\\v1\\tasks', '/v1/tasks?x=\\',
   // Absolute URLs and hosts
-  'http://127.0.0.1:1/v1/tasks', 'https://evil.example/v1/tasks', '//evil.example/v1/tasks', 'evil.example/v1/tasks', '/v1//tasks', '/v1/tasks//1', '/v1/http://evil.example/x',
+  'http://127.0.0.1:1/v1/tasks', 'https://evil.example/v1/tasks', '//evil.example/v1/tasks', 'evil.example/v1/tasks', '/v1//tasks', '/v1/tasks//1', '/v1/tasks//', '/v1/http://evil.example/x',
   '/v1/@evil.example', '/v1/evil.example:80/x', '/v1/a:b',
   // Control characters and other bytes that do not belong in a request line
   '/v1/tasks\r\nX-Evil: 1', '/v1/tasks\n', '/v1/tasks\t', '/v1/tasks 1', '/v1/tasks%00', '/v1/tasks%0a', '/v1/tasks%0d%0aX: 1', '/v1/tasks%7f', '/v1/tasks?x=\r\n', '/v1/café',
@@ -891,6 +921,9 @@ const ALLOWED_PATHS = [
   '/v1/tasks/ab%20c/todos',
   '/v1/pairing-notes',
   '/v1/file-sync/manifest',
+  // VS Code in the browser (services/vscode-proxy.js): its root ends with one slash, and `@` in a path arrives encoded
+  '/v1/vscode/web/aG9zdA/vscode/engine-1/?folder=%2Ftmp%2Fa',
+  '/v1/vscode/web/aG9zdA/vscode/engine-1/static/node_modules/%40vscode/x.js',
 ];
 
 test('checkTunnelTarget refuses every forbidden target and keeps the real ones', () => {

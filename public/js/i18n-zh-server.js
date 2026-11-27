@@ -54,6 +54,10 @@ I18n.add({
   "REMOTE_OFFLINE": "对方服务当前离线",
   "REMOTE_TUNNEL_BUSY": "关联通道正忙，请稍后再试",
   "REMOTE_CANCELLED": "请求已取消",
+  // VS Code in the browser, the page server's part (services/vscode-proxy.js, routes/tasks.js, routes/remote-servers.js)
+  "VSCODE_WEB_UNSUPPORTED": "这台电脑需要先更新，才能在浏览器中打开 VS Code",
+  "VSCODE_HOST_INVALID": "无法识别这个页面的地址，不能打开 VS Code",
+  "REMOTE_TIMEOUT": "对方服务没有及时响应",
   "TUNNEL_PATH_FORBIDDEN": "关联通道不允许访问这个地址",
   "TUNNEL_HEADER_FORBIDDEN": "关联通道不允许这个请求头",
   "TUNNEL_METHOD_FORBIDDEN": "关联通道不允许这个请求方法",

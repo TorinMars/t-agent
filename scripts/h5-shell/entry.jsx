@@ -49,12 +49,13 @@ ui.recent = { max: RECENT_MAX, key: recentKey, note: noteRecent, prune: pruneRec
 let notices = 0;
 // `action`: one action of the notice, `{ label, run }` (an English label, a function), shown as a text button ("Floating notices" in docs/design/toast.md).
 // With an action also: `lead` (English words before the message, which is then a name drawn in bold and never translated), `detail` (a second line),
-// `close` (a close button) and `ms` (how long it stays), for the "Continue <session>" hint (docs/design/continue-and-drafts.md).
+// `close` (a close button), for the "Continue <session>" hint (docs/design/continue-and-drafts.md). `ms`: how long any notice stays (that hint, and
+// "Starting VS Code…", which the launcher takes back with `notice: null`).
 ui.notify = (message, type = 'info', { action = null, lead = '', detail = '', close = false, ms = 0 } = {}) => {
   const text = String(message === undefined || message === null ? '' : message).trim();
   const one = action && typeof action.run === 'function' && action.label ? { label: String(action.label), run: action.run } : null;
-  const more = one && (lead || detail || close || ms) ? { lead: String(lead || ''), detail: String(detail || ''), close: Boolean(close), ms: Number(ms) || 0 } : null;
-  if (text) ui.set({ notice: { id: ++notices, message: text, type, action: one, ...more } });
+  const more = one && (lead || detail || close) ? { lead: String(lead || ''), detail: String(detail || ''), close: Boolean(close) } : null;
+  if (text) ui.set({ notice: { id: ++notices, message: text, type, action: one, ms: Number(ms) || 0, ...more } });
 };
 window.H5UI = ui;
 // Voice input turned off (voice-input.js owns the setting, but runs after the first paint can happen): the microphone button must not show and then vanish.

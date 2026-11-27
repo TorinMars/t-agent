@@ -443,6 +443,7 @@ async function computer(browser, base, engine) {
   await page.locator('#h5-header-more-menu .h5-notebook-action').first().waitFor(WAIT);
   assert.deepEqual(await page.locator('#h5-header-more-menu .h5-notebook-action').allTextContents(), ['Rename', 'Download .ipynb', 'Clear outputs', 'Stop shell', 'Restart shell']);
   assert.equal(await page.locator('#h5-header-more').getAttribute('aria-label'), 'Notebook menu');
+  assert.equal(await page.locator('#h5-header-vscode').count(), 0, 'no Open in VS Code for a notebook');
   await shot(page, 'computer-7-menu.png');
   const ipynb = page.waitForEvent('download');
   await page.locator('#h5-header-more-menu .h5-notebook-action', { hasText: 'Download .ipynb' }).click();
@@ -699,7 +700,7 @@ async function phone(browser, base, engine) {
   await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
     await computer(browser, base, engine);
     console.log('ok computer: New session, run, queue, input, stop, run all, restart, long output, full screen, remote ops, menu, keys, folding long cells, delete');

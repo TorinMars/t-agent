@@ -22,6 +22,7 @@ import { PlanUsageButton } from './PlanUsage.jsx';
 import { shallowEqual } from './store.mjs';
 import { countRender, useStore } from './use-store.mjs';
 import { localGet, localSet } from './local-keys.mjs';
+import { openVscode } from './lazy-screens.jsx';
 
 // The device of the shown task, as the task list tags it: its row's own engine tag (h5.js tags the rows whenever the order can be changed or more than one
 // device is listed), drawn by the same DeviceTag in its closed look. Without a tag (one device and no sorting, or a task its list does not show) the
@@ -33,8 +34,13 @@ const HEADER = state => {
     wide: state.wide, sidebarCollapsed: state.sidebarCollapsed, tasksOpen: state.tasksOpen, taskName: state.taskName, sourceLabel: state.sourceLabel,
     sessionName: state.sessionName, terminalWidth: state.terminalWidth, pane: state.pane, tag: shown ? shown.device : null,
     hasTarget: Boolean(state.shownTarget), agent: state.terminalAgent || '', updateDot: Boolean(state.updateDot), notebook: state.notebook,
-    typing: state.keyboard === 'draft' && Boolean(state.softKeyboard), touch: state.input === 'touch',
+    typing: state.keyboard === 'draft' && Boolean(state.softKeyboard), touch: state.input === 'touch', vscodeOff: vscodeKnownOff(state),
   };
+};
+// "Open in VS Code" is left out for a remote engine whose `/info` was read and lists no 'vscode:web'; one not read yet shows it (it answers 501).
+const vscodeKnownOff = ({ shownTarget: shown, sources }) => {
+  const from = shown && sources.find(item => item.key === shown.sourceKey);
+  return Boolean(from && from.capabilities && !from.capabilities.includes('vscode:web'));
 };
 
 // The session header ("Session header" in docs/design/page-navigation.md).
@@ -135,7 +141,7 @@ export function Header({ ui }) {
         ) : null}
         {wide && state.terminalWidth ? <WidthButton width={state.terminalWidth} ui={ui} /> : null}
         <PlanUsageButton ui={ui} phone={!wide} />
-        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} />
+        <MoreMenu ui={ui} phone={!wide} updateDot={state.updateDot} width={wide ? null : state.terminalWidth} remember={state.hasTarget} vscode={!state.vscodeOff} />
       </Toolbar>
     </AppBar>
   );
@@ -253,9 +259,11 @@ function StateWord({ ui }) {
 // After it, while a terminal is shown (`remember`; phone and computer), "Mouse ball sends the mouse to programs" (`#h5-mouse-ball-program`, a switch in its row with a helper line):
 // this device's choice whether the mouse ball's press goes to a program with mouse reporting on (on unless localStorage `PROGRAM_KEY` is 'off'; read by MouseBall.jsx
 // at each press; "Who gets the button" in docs/design/page-terminal-mouse-ball.md). A tap flips it and the row shows it at once; the menu stays.
+// Then, while a terminal session is shown and its engine is not known to lack it (`vscode`), "Open in VS Code" (`#h5-header-vscode`): lazy-screens.jsx
+// `openVscode` ("Page" in docs/design/vscode-web-proxy.md).
 // While a terminal session is shown (`remember`), "Remember this" (a note with the time, the task and the session; h5.js `rememberShown`) comes
 // before Refresh the page ("Remember this" in docs/design/usage-time-page.md).
-function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false }) {
+function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, remember = false, vscode = false }) {
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
   const [program, setProgram] = useState(true); // the mouse ball's choice, read when the menu opens
@@ -291,6 +299,12 @@ function MoreMenu({ ui, phone, updateDot, notebook = false, width = null, rememb
             <ListItemIcon><Icon name="mouseBall" size={20} /></ListItemIcon>
             <ListItemText primary={t('Mouse ball sends the mouse to programs')} secondary={t('Off: the page selects. On: a program with mouse reporting, such as Claude Code in full screen, selects by itself.')} />
             <Box component="span" aria-hidden="true" data-on={program || undefined} sx={SWITCH} />
+          </MenuItem>
+        ) : null}
+        {remember && vscode ? (
+          <MenuItem id="h5-header-vscode" onClick={() => { setOpen(false); openVscode(ui); }} sx={{ minHeight: 44 }}>
+            <ListItemIcon><Icon name="code" size={20} /></ListItemIcon>
+            <ListItemText>{t('Open in VS Code')}</ListItemText>
           </MenuItem>
         ) : null}
         {notebook ? NOTEBOOK_ITEMS.map(([name, text, iconName]) => (

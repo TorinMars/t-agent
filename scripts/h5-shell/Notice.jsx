@@ -67,14 +67,14 @@ export function Notice({ state }) {
   const notice = state.notice;
   const [shown, setShown] = useState(null);
   const [expandedId, setExpandedId] = useState(null); // by id, so a newer notice starts collapsed
-  useEffect(() => { if (notice) setShown(notice); }, [notice]);
+  useEffect(() => setShown(notice), [notice]); // `notice: null` takes a notice back (the VS Code launcher's "Starting…" once it is ready)
   const close = (event, reason) => { if (reason !== 'clickaway') setShown(null); };
   const type = shown && DURATIONS[shown.type] ? shown.type : 'info';
   const expanded = Boolean(shown) && expandedId === shown.id;
   const action = shown && shown.action ? shown.action : null;
   return (
     <Snackbar
-      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : action ? shown.ms || ACTION_MS : DURATIONS[type]}
+      key={shown ? shown.id : 'none'} open={Boolean(shown)} onClose={close} autoHideDuration={expanded ? null : (shown && shown.ms) || (action ? ACTION_MS : DURATIONS[type])}
       anchorOrigin={{ vertical: 'top', horizontal: 'center' }} sx={{ top: 'max(12px, env(safe-area-inset-top))', ...(type === 'info' && !action ? { pointerEvents: 'none' } : null) }}
     >
       {action ? <ActionNotice message={shown.message} action={action} lead={shown.lead} detail={shown.detail} close={shown.close} onClose={() => setShown(null)} />

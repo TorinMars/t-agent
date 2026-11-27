@@ -196,6 +196,8 @@ const REVIEWED_ROUTES = new Set([
   'POST /tasks/validate-path', 'POST /tasks', 'POST /task-groups', 'DELETE /task-groups/:id',
   'GET /tokens', 'POST /tokens', 'DELETE /tokens/:id',
   'GET /workspace/unmanaged', 'POST /workspace/import',
+  // VS Code of this engine (docs/design/vscode-web.md): one process for all tasks; its start route is under /tasks/:id and guarded.
+  'POST /vscode/stop', 'GET /vscode/settings', 'PUT /vscode/settings',
   // Filtered with visibleTo / hiddenFrom / withVisibleCounts.
   'GET /tasks', 'GET /task-groups', 'PUT /task-groups/:id', 'GET /terminal-activity', 'GET /terminal-activity/stream', 'GET /terminal-subagents',
   'GET /workspace/cleanup', 'POST /workspace/cleanup', 'POST /workspace/restore',
@@ -221,10 +223,12 @@ const REVIEWED_ROUTES = new Set([
 // /task-move: moving a task between linked services (routes/task-move.js), link tokens only, and a move answers only the link it is with; the
 // routes that give out the task's content (manifest, files) and the commit check that its task is visible to that link (services/task-move.js
 // `assertVisible`); /capacity gives only free space and limits.
+// /vscode/web: the proxied VS Code of this engine (routes/vscode-web-engine.js). Its start route under /tasks/:id is guarded, but VS Code itself
+// opens any folder by path (?folder=), like /fs: the same known limit ("Per-task visibility" in docs/design/service-links.md).
 // /agent-usage: the plan windows of this engine's Claude and Codex logins with a hash of the account (routes/agent-usage.js), never a task.
 // /updated-notice: this service's "Updated to v…" notice (versions, a time and release notes from DESIGN.md; routes/updated-notice.js), never a task,
 // and link tokens only.
-const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/usage-sync/time', '/attention-copy', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/task-move', '/sign-in-handover', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files', '/agent-usage']);
+const REVIEWED_MOUNTS = new Set(['/file-sync', '/linked-services', '/task-order', '/settings-sync', '/learn-sync', '/usage-sync', '/usage-sync/time', '/attention-copy', '/mindmap-sync', '/page-state', '/updated-notice', '/device-settings', '/task-move', '/sign-in-handover', '/apps', '/agent-config', '/fs', '/peer-fs', '/mindmaps', '/rule-sync', '/attention', '/attention/notify-relay', '/oss/files', '/agent-usage', '/vscode/web']);
 const GUARDED = /^\/(tasks|terminal-sessions)\/:id(\/|$)/;
 
 test('every /v1 route has been reviewed, and the guard runs before all of them', () => {

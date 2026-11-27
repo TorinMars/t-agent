@@ -328,6 +328,15 @@ A remote upgrade is a host administration operation and every connection has tha
 
 Mind maps are saved as one JSON file each in `<data folder>/mindmaps/` (`~/.tagent/mindmaps/` by default), through `/api/mindmaps` behind the normal login. They are independent of tasks, terminals and agent chat. A map stays on the service that made it: the mind map list also shows the maps of each connected service (a remote Engine or a service link, in the order of the task list, without the devices turned off in "Show in task list"), and such a map is opened and edited in place, through `/api/remote-servers/:id/mindmaps` on this side and `/v1/mindmaps` (capability `mindmaps`) on the owner; nothing is copied. A service too old for this (`MINDMAPS_UNSUPPORTED`) is left out of the list, and an offline one shows "Offline". Deleted maps go to `mindmaps/trash/`, and moving a file back to `mindmaps/<id>.json` restores it. The database backups taken before an update do not include these files. See "Mind maps" in `docs/design/mind-maps.md`.
 
+## Open in VS Code
+
+A terminal's folder can be opened in VS Code for the browser, served by the machine that has the folder (`code serve-web`) and shown on the T-Agent page under `/vscode/<engine id>/`. The machine needs the VS Code command line tool `code`, version 1.86 or later (`code serve-web --help` must list `--server-base-path`):
+
+- **With VS Code desktop installed**: on a Mac, run "Shell Command: Install 'code' command in PATH" from the command palette (or T-Agent finds the CLI inside `/Applications/Visual Studio Code.app`); on Linux and Windows the installer puts `code` on the PATH.
+- **On a server without a desktop**: download the standalone "CLI" build for your system and architecture from https://code.visualstudio.com/Download (for example "CLI Linux x64"), unpack it and put the `code` binary in `~/.local/bin` (or anywhere on the PATH of the service), or point `VSCODE_CLI_PATH` at it in `.env`.
+
+The first start of VS Code on a machine asks once to accept the VS Code Server license, then downloads the server (about 60 to 100 MB, so the machine needs internet once). VS Code runs as the terminal user, keeps its data under `<data folder>/vscode/`, and stops after 30 idle minutes (an engine setting; it can also be turned off per engine). Use HTTPS (or `localhost`) for the page: some parts of VS Code need a secure context. See `docs/design/vscode-web.md`.
+
 ## Mac app
 
 On a Mac, T-Agent can also run as a native app, `T-Agent.app`: a window with the T-Agent page, a menu bar item that starts, restarts and stops the service, and `t-agent://` links. It needs the Xcode command line tools (`xcode-select --install`), not Xcode. In the install directory:

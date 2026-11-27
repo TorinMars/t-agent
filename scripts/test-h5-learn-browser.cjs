@@ -1031,9 +1031,10 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();
       await context.close();
     }
-    // Fill the gap reads its sentence at the start by default, so a refused start offers "Tap to play" there too (once a page: a fresh one).
-    {
-      const { context, page, mock } = await openPage(browser, { viewport: { width: 390, height: 844 }, touch: true });
+    // Fill the gap reads its sentence at the start by default, so a refused start offers "Tap to play" there too (once a page: a fresh one), in
+    // sight above the page's keyboard on a tall and on a small phone.
+    for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
+      const { context, page, mock } = await openPage(browser, { viewport, touch: true });
       mock.translator = true;
       await toTerminal(page);
       await page.evaluate(() => { window.refuseSpeech = true; });
@@ -1042,6 +1043,21 @@ async function toTerminal(page) {
       await page.locator('#h5-learn-gap-input').waitFor();
       await page.locator('#h5-learn-tap-play').waitFor({ timeout: 4000 });
       assert.ok(await page.evaluate(s => window.spoken.some(item => item.text === s), SENTENCES[0].en), 'the whole sentence was asked for at the start');
+      // With the page's keyboard open, "Tap to play" is in sight: inside the screen, above the keyboard and the pinned actions, not covered.
+      await page.locator('#h5-learn-keys').waitFor();
+      await page.waitForTimeout(100); // the scroll into sight happens in the next frame
+      const sight = await page.evaluate(() => {
+        const button = document.querySelector('#h5-learn-tap-play').getBoundingClientRect();
+        const keys = document.querySelector('.h5-learn-keys-bar').getBoundingClientRect();
+        const check = document.querySelector('#h5-learn-check').getBoundingClientRect();
+        const hit = document.elementFromPoint(button.left + button.width / 2, button.top + button.height / 2);
+        const gap = document.querySelector('.h5-learn-gap').getBoundingClientRect();
+        const bar = document.querySelector('.MuiAppBar-root').getBoundingClientRect();
+        return { top: button.top, bottom: button.bottom, keysTop: keys.top, checkTop: check.top, height: innerHeight, hit: Boolean(hit && hit.closest('#h5-learn-tap-play')), gapTop: gap.top, barBottom: bar.bottom };
+      });
+      assert.ok(sight.gapTop >= sight.barBottom, `the gap stays in sight: ${JSON.stringify(sight)}`);
+      assert.ok(sight.top >= 0 && sight.bottom <= Math.min(sight.keysTop, sight.checkTop, sight.height), `"Tap to play" in sight above the keyboard: ${JSON.stringify(sight)}`);
+      assert.ok(sight.hit, '"Tap to play" is not covered');
       await page.evaluate(() => { window.refuseSpeech = false; });
       await page.locator('#h5-learn-tap-play').tap();
       await page.locator('#h5-learn-hear[data-playing="true"]').waitFor();

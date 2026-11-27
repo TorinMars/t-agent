@@ -1056,3 +1056,41 @@ test('a home whose coach is made on first use still answers a company computer (
   const answered = await K.sync.askHome('coach?limit=1', {});
   assert.equal(answered.translator, true, JSON.stringify(answered));
 });
+
+test('schema 29 (sentences at the start): the migrated settings reach a linked engine and win over an old copy with "After the answer"', async t => {
+  const { A, B } = await makeNetwork(t, ['A', 'B'], { links: [['A', 'B']] });
+  await noStarter(A);
+  // Before the migration: 'after' stored on both (saved with another setting while it was the default), the same version on both.
+  await A.page('PUT', '/learn/settings', { daily_goal: 33, audio_sentences_at: 'after' });
+  await A.sync.syncAll();
+  await until(async () => (await B.page('GET', '/learn/settings')).body.audio_sentences_at === 'after', 'the old value on B');
+  const oldVersion = A.db.prepare("SELECT value FROM system_state WHERE key = 'learn_v1_sync:me'").pluck().get();
+  const at = side => JSON.parse(side.db.prepare("SELECT value FROM system_state WHERE key = 'learn_v1_sync:me'").pluck().get()).at;
+
+  // A is updated first and migrates; B is not yet: the sync carries 'start' to B, the other settings unchanged.
+  assert.equal(syncStore.migrateSentencesAtStart(A.db), 1);
+  await A.sync.syncAll();
+  await until(async () => (await B.page('GET', '/learn/settings')).body.audio_sentences_at === 'start', 'the migrated value on B');
+  assert.equal((await B.page('GET', '/learn/settings')).body.daily_goal, 33);
+  // A peer that sends its old copy (the version from before the migration) loses on both.
+  const old = JSON.parse(oldVersion);
+  const stale = { settings: { value: { collect: true, daily_goal: 33, starter: null, audio_sentences_at: 'after' }, at: old.at, by: B.instanceId } };
+  A.sync.applyPage(stale, B.instanceId);
+  B.sync.applyPage({ settings: { ...stale.settings, by: A.instanceId } }, A.instanceId);
+  for (const side of [A, B]) assert.equal((await side.page('GET', '/learn/settings')).body.audio_sentences_at, 'start', side.name);
+  // B migrates later: nothing is left to change, and the two stay equal.
+  assert.equal(syncStore.migrateSentencesAtStart(B.db), 0);
+  assert.equal(at(A), at(B), 'the same version (clock time) on both');
+
+  // Two engines that migrate apart (neither synced since) both write 'start': after they meet the settings are equal.
+  await A.page('PUT', '/learn/settings', { audio_sentences_at: 'after' });
+  await A.sync.syncAll();
+  await until(async () => (await B.page('GET', '/learn/settings')).body.audio_sentences_at === 'after', 'after again on B');
+  assert.equal(syncStore.migrateSentencesAtStart(A.db), 1);
+  assert.equal(syncStore.migrateSentencesAtStart(B.db), 1);
+  await A.sync.syncAll();
+  await B.sync.syncAll();
+  const [onA, onB] = [(await A.page('GET', '/learn/settings')).body, (await B.page('GET', '/learn/settings')).body];
+  assert.deepEqual(onA, onB);
+  assert.equal(onA.audio_sentences_at, 'start');
+});

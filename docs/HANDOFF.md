@@ -4,6 +4,11 @@ For the Claude / developer taking over: read `AGENTS.md` (development and releas
 
 The design document is split (2026-11-18): `DESIGN.md` is a small index (topic table, cross-cutting rules, development notes, "Recent versions"), and the text of each area is in its own file under `docs/design/` (for example `terminals.md`, `page-task-list.md`, `attention-notifiers.md`). Open only the files of your area; never read them all.
 
+## Sentences at the start for everyone (schema 29, branch fix/audio-start-migration, not released yet)
+
+- The 28 → 29 migration turns a stored `audio_sentences_at` 'after' into 'start' once, with a new settings version for the Learn sync (`migrateSentencesAtStart` in `services/learn-sync-store.js`); skipped on a company computer. "Tap to play" on a phone now scrolls into sight above the pinned actions and the page keyboard (it was hidden behind them at 375 x 667).
+- Known limit: an engine not yet updated that saves a learning setting before it received the migrated copy sends 'after' again; it is fixed when that engine migrates. A deliberate "After the answer" picked during the update window can be turned back once by a later-migrating engine. Not checked on a real iPhone.
+
 ## Word-only review and phone audio (v2.172.1)
 
 - Active Learn queues, grades, due counts, allowance, progress, mistakes and coach data are word-only. Existing sentence text and historical answers stay stored. Examples with repeated targets are left out of single-blank exercises.

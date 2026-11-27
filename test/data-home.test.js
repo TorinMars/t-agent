@@ -1172,3 +1172,83 @@ test('schema 28 gives older terminals an empty start command and preserves saved
   }
   assert.deepEqual(fs.readdirSync(path.join(root, 'backups')), backups);
 });
+
+test('schema 29 turns a stored "After the answer" of the sentence audio into the default "When the card appears" once, with a new settings version', t => {
+  const root = temp(t, 'sentences-at-start');
+  const env = { TAGENT_HOME: root };
+  assert.equal(openDb(env).status, 0);
+  const file = path.join(root, 'db.sqlite');
+  const put = (db, key, value) => db.prepare('INSERT OR REPLACE INTO system_state (key, value) VALUES (?, ?)').run(key, JSON.stringify(value));
+  const read = (db, key) => JSON.parse(db.prepare('SELECT value FROM system_state WHERE key = ?').pluck().get(key));
+  // A database of the previous generation: one owner saved another setting (so 'after' was stored with it), one has 'start', and the level of
+  // the first owner carries the highest change number stored.
+  const old = new Database(file);
+  put(old, 'learn_v1:me', { collect: true, daily_goal: 33, starter: 'dev', audio_sentences: true, audio_sentences_at: 'after', audio_repeat: 3 });
+  put(old, 'learn_v1_sync:me', { at: 1000, by: '', seq: 40 });
+  put(old, 'learn_level_v1:me', { level: 'B1', at: 2000, by: '', seq: 70 });
+  put(old, 'learn_v1:other', { collect: false, daily_goal: 20, starter: null, audio_sentences_at: 'start' });
+  put(old, 'learn_v1_sync:other', { at: 900, by: 'peer', seq: 12 });
+  old.pragma('user_version = 28');
+  old.close();
+
+  const migrated = openDb(env);
+  assert.equal(migrated.status, 0, migrated.stderr);
+  assert.match(migrated.stdout, new RegExp(`schema 28 is migrated to ${CODE_SCHEMA}`));
+  assert.match(migrated.stdout, /the sentences of 1 learning settings are read when the card appears/);
+  const after = new Database(file);
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.deepEqual(read(after, 'learn_v1:me'), { collect: true, daily_goal: 33, starter: 'dev', audio_sentences: true, audio_sentences_at: 'start', audio_repeat: 3 }, 'only the sentence timing changes');
+  const version = read(after, 'learn_v1_sync:me');
+  assert.equal(version.by, '');
+  assert.ok(version.at > 2000 && version.at >= Date.now() - 60_000, 'a new hybrid clock time, after every one stored');
+  assert.ok(version.seq > 70, 'a change number after every one stored, so every peer is sent it');
+  assert.deepEqual(read(after, 'learn_v1:other'), { collect: false, daily_goal: 20, starter: null, audio_sentences_at: 'start' }, "'start' is left alone");
+  assert.deepEqual(read(after, 'learn_v1_sync:other'), { at: 900, by: 'peer', seq: 12 }, 'and keeps its version');
+  // The person now chooses "After the answer" on purpose: later starts keep it (the schema number is the marker).
+  put(after, 'learn_v1:me', { ...read(after, 'learn_v1:me'), audio_sentences_at: 'after' });
+  after.close();
+  const again = openDb(env);
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /is migrated|learning settings are read/);
+  const kept = new Database(file, { readonly: true });
+  assert.equal(read(kept, 'learn_v1:me').audio_sentences_at, 'after', 'an explicit choice at schema 29 is kept');
+  assert.deepEqual(read(kept, 'learn_v1_sync:me'), version);
+  kept.close();
+});
+
+test('schema 29: a company computer keeps its read-only copy of the learning settings (its home migrates them)', t => {
+  const root = temp(t, 'sentences-at-start-company');
+  const env = { TAGENT_HOME: root };
+  assert.equal(openDb(env).status, 0);
+  const file = path.join(root, 'db.sqlite');
+  const old = new Database(file);
+  old.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run('device_tier_v1', JSON.stringify({ company: true }));
+  old.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run('learn_v1:me', JSON.stringify({ audio_sentences_at: 'after' }));
+  old.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run('learn_v1_sync:me', JSON.stringify({ at: 1000, by: 'home', seq: 5 }));
+  old.pragma('user_version = 28');
+  old.close();
+  const migrated = openDb(env);
+  assert.equal(migrated.status, 0, migrated.stderr);
+  const after = new Database(file, { readonly: true });
+  assert.equal(after.pragma('user_version', { simple: true }), CODE_SCHEMA);
+  assert.equal(JSON.parse(after.prepare("SELECT value FROM system_state WHERE key = 'learn_v1:me'").pluck().get()).audio_sentences_at, 'after');
+  assert.deepEqual(JSON.parse(after.prepare("SELECT value FROM system_state WHERE key = 'learn_v1_sync:me'").pluck().get()), { at: 1000, by: 'home', seq: 5 });
+  after.close();
+});
+
+test('a database created at schema 29 has nothing to migrate: the default is "When the card appears" and an explicit "After the answer" is kept', t => {
+  const root = temp(t, 'sentences-at-start-new');
+  const env = { TAGENT_HOME: root };
+  const first = openDb(env);
+  assert.equal(first.status, 0, first.stderr);
+  assert.doesNotMatch(first.stdout, /learning settings are read/);
+  const file = path.join(root, 'db.sqlite');
+  const db = new Database(file);
+  db.prepare('INSERT INTO system_state (key, value) VALUES (?, ?)').run('learn_v1:me', JSON.stringify({ audio_sentences_at: 'after' }));
+  db.close();
+  assert.equal(openDb(env).status, 0);
+  const after = new Database(file, { readonly: true });
+  assert.equal(JSON.parse(after.prepare("SELECT value FROM system_state WHERE key = 'learn_v1:me'").pluck().get()).audio_sentences_at, 'after');
+  after.close();
+  assert.equal(require('../services/learn').AUDIO_SETTINGS.audio_sentences_at.default, 'start');
+});

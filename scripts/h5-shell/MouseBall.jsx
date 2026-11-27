@@ -43,6 +43,7 @@ const THUMB_DIM = 'rgba(255, 255, 255, 0.15)'; // the strip's thumb while the ba
 const HINT_KEY = 'h5-mouse-ball-hinted'; // per device (public/js/local-keys.js): the first-time hint was shown
 const HINT_MS = 4000;
 const HINT_TEXT = 'Slide the scrollbar left for the mouse';
+const STATUS = { wait: 'Hold still to press', page: 'Selecting in the page', program: 'Mouse sent to the program' }; // what the ball is doing, shown at the top of the terminal
 const DESCRIPTION = 'Slide left for the mouse'; // the strip's aria-description, set while this chunk is there
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const rectOf = el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
@@ -67,7 +68,7 @@ function geometry(ui) {
 
 // The imperative part: the finger handed over by the strip, the stretch, the dwell clock, the selection, the scrolling, the glide back, the hint.
 function control(nodes, ui) {
-  const { ball, overlay, line, cursor, ring, tail, hint } = nodes;
+  const { ball, overlay, line, cursor, ring, tail, hint, status } = nodes;
   let drag = null;
   let frame = 0;
   let glide = null; // { el, timer } while the ball glides back into the strip
@@ -83,6 +84,14 @@ function control(nodes, ui) {
     const p = reducedMotion() ? (progress >= 1 ? 1 : 0) : progress;
     ring.style.strokeDashoffset = `${RING * (1 - p)}px`;
     ring.style.opacity = p > 0 ? '1' : '0';
+  };
+  // The status pill at the top of the terminal while the ball is out: waiting for the press, then who gets the button (the page's selection or the program).
+  const setStatus = name => {
+    if (!name || !drag) { status.style.display = 'none'; delete status.dataset.status; return; }
+    status.dataset.status = name;
+    status.textContent = t(STATUS[name]);
+    status.style.display = 'flex';
+    status.style.top = `${drag.geo.area.top + 8}px`;
   };
   const moveBall = (point, scale = 1) => { ball.style.transform = `translate(${point.x - BALL_SIZE / 2}px, ${point.y - BALL_SIZE / 2}px) scale(${scale})`; };
   // The strip while the ball is out of it: `data-mouse` says what (stretch, ball, glide) and the thumb is dimmed at its place; null puts it back.
@@ -176,6 +185,7 @@ function control(nodes, ui) {
       drag.program = { screen: target.screen, gesture: target.gesture, reports: programReports(tracking), released: false };
       report('mousedown', 1);
       setState('pressed', 'program');
+      setStatus('program');
       setRing(1);
       keyTick();
       return;
@@ -185,6 +195,7 @@ function control(nodes, ui) {
     target.hookSelection(); // h5.js clears the highlight on new output; ours draws it again right after (below)
     drag.output = term.onWriteParsed(() => { if (drag && drag.anchor) select(); });
     setState('pressed', 'page');
+    setStatus('page');
     setRing(1);
     keyTick();
   }
@@ -217,6 +228,7 @@ function control(nodes, ui) {
     tail.style.display = 'none';
     stripState(drag.el, 'ball');
     setState('drag');
+    setStatus('wait');
     if (!follow(at.x, at.y)) { end(); return; }
     frame = requestAnimationFrame(tick);
   }
@@ -274,6 +286,7 @@ function control(nodes, ui) {
     if (output) output.dispose();
     listen(false);
     setRing(0);
+    setStatus(null);
     glideBack(el);
     drag = null;
     if (!glide) setState('idle');
@@ -443,6 +456,13 @@ const OVERLAY = theme => ({
   '& path': { fill: 'none', strokeLinecap: 'butt', strokeLinejoin: 'miter' },
   '& .h5-mouse-ball-outline': { stroke: theme.palette.common.black },
 });
+// The status pill: centred at the top of the terminal while the ball is out, never taking a touch.
+const STATUS_PILL = theme => ({
+  position: 'fixed', left: '50%', transform: 'translateX(-50%)', zIndex: theme.zIndex.speedDial, minHeight: 32, boxSizing: 'border-box', display: 'none', alignItems: 'center', px: 2,
+  borderRadius: '16px', pointerEvents: 'none', whiteSpace: 'nowrap', maxWidth: 'calc(100vw - 32px)', ...theme.typography.body2,
+  '&[data-status="wait"]': { color: theme.palette.text.secondary },
+  '&[data-status="page"], &[data-status="program"]': { bgcolor: theme.palette.notice.main, color: theme.palette.notice.contrastText },
+});
 // The first-time hint: a pill left of the thumb, never taking a touch.
 const HINT = theme => ({
   position: 'fixed', zIndex: theme.zIndex.speedDial, height: 44, boxSizing: 'border-box', display: 'none', alignItems: 'center', gap: 1, px: 2,
@@ -461,9 +481,10 @@ export function MouseBall({ state, ui }) {
   const ring = useRef(null);
   const tail = useRef(null);
   const hint = useRef(null);
+  const status = useRef(null);
   useEffect(() => {
     if (!live) return undefined;
-    const handle = control({ ball: ball.current, overlay: overlay.current, line: line.current, cursor: cursor.current, ring: ring.current, tail: tail.current, hint: hint.current }, ui);
+    const handle = control({ ball: ball.current, overlay: overlay.current, line: line.current, cursor: cursor.current, ring: ring.current, tail: tail.current, hint: hint.current, status: status.current }, ui);
     return () => handle.dispose();
   }, [live, ui]);
   if (!live) return null;
@@ -481,6 +502,7 @@ export function MouseBall({ state, ui }) {
         <svg className="h5-mouse-ball-ring" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><circle ref={ring} cx="32" cy="32" r={RING_R} /></svg>
         <Icon name="mouseBall" size={22} />
       </Box>
+      <Paper ref={status} id="h5-mouse-ball-status" role="status" elevation={6} sx={STATUS_PILL} />
       <Paper ref={hint} id="h5-mouse-ball-hint" role="status" elevation={6} sx={HINT}>
         <span className="h5-mouse-ball-hint-icon" aria-hidden="true"><Icon name="chevronLeft" size={18} /></span>
         <span>{t(HINT_TEXT)}</span>

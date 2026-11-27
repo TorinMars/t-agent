@@ -286,6 +286,13 @@ async function toTerminal(page) {
       assert.equal(await page.locator('#h5-learn-feedback').getAttribute('data-correct'), 'false');
       assert.equal(await text(page, '.h5-learn-del'), 'zz');
       assert.equal(await text(page, '.h5-learn-ins'), reviewGap);
+      // The slots keep what was typed, the wrong (and missing) letters are red; the right word stands above the blanks, in the success colour.
+      assert.equal(await text(page, '#h5-learn-gap .h5-learn-gap-answer'), reviewGap, 'the right word above the blanks');
+      assert.equal(await page.locator('#h5-learn-gap .h5-learn-gap-answer-letter').count(), reviewGap.length);
+      assert.deepEqual(await page.locator('#h5-learn-gap .h5-learn-gap-letter').evaluateAll(list => list.map(el => [el.textContent.trim(), el.dataset.right])),
+        [...reviewGap].map((_, at) => [at < 2 ? 'z' : '', 'false']), 'the typed letters stay in the slots, all of them wrong');
+      assert.notEqual(await page.locator('#h5-learn-gap .h5-learn-gap-letter').first().evaluate(el => getComputedStyle(el).color),
+        await page.locator('#h5-learn-gap .h5-learn-gap-answer-letter').first().evaluate(el => getComputedStyle(el).color), 'wrong letters and the right word differ in colour');
       assert.equal(await page.evaluate(() => document.activeElement.id), 'h5-learn-grade-again', 'the offered grade (wrong: Again) has the focus');
       await shot(page, 'learn-desktop-review-fill.png');
       await page.keyboard.press('2');

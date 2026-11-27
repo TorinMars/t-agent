@@ -2042,29 +2042,40 @@ function SentenceGap({ word, parts = null }) {
   );
 }
 // The gap of Fill the gap: SentenceGap's primary underlines grouped by syllable (gapLayout), each wide enough for one letter, with the letters typed
-// so far in them (the hidden field over them takes the typing); after Check the right word in them, in the success colour when right and the error
-// colour when wrong, as in Spell's sentence layout. See "Fill the gap" in docs/design/learn-english-page.md.
+// so far in them (the hidden field over them takes the typing). After Check the slots keep what was typed: a right letter is in the success colour, a
+// misspelled or missing one in the error colour; a wrong answer also shows the right word above the blanks (success colour, the same syllable groups).
+// See "Fill the gap" in docs/design/learn-english-page.md.
 function GapSlots({ word, parts, value, result, focused, children }) {
   const { count, space, groupSpace, breaks } = gapLayout(word, parts);
   const starts = new Set(breaks);
   const letters = [...word];
   const typed = [...value];
-  const tone = result ? (result.correct ? 'success.light' : 'error.light') : null;
+  const wrong = Boolean(result && !result.correct);
+  const same = at => typed[at] !== undefined && String(typed[at]).toLowerCase() === String(letters[at]).toLowerCase();
+  const rowSx = { display: 'inline-flex', columnGap: `${space}em`, fontFamily: MONO, whiteSpace: 'nowrap' };
+  const cellSx = at => ({ display: 'inline-block', width: '0.62em', textAlign: 'center', ...(starts.has(at) ? { ml: `${Math.max(0, groupSpace - space)}em` } : {}) });
   return (
     <Box component="span" id="h5-learn-gap" data-letters={count} data-parts={breaks.length + 1} data-correct={result ? String(Boolean(result.correct)) : undefined}
-      sx={{ position: 'relative', display: 'inline-flex', columnGap: `${space}em`, mx: 0.5, fontFamily: MONO, whiteSpace: 'nowrap', verticalAlign: 'baseline' }}>
-      {letters.map((char, at) => {
-        const caret = !result && focused && at === Math.min(typed.length, count - 1);
-        return (
-          <Box key={at} component="span" aria-hidden="true" className="h5-learn-gap-letter" data-part-start={starts.has(at) ? 'true' : undefined}
-            sx={theme => ({ display: 'inline-block', width: '0.62em', textAlign: 'center', borderBottom: 2, borderColor: tone || 'primary.main', color: tone || 'text.primary',
-              bgcolor: caret ? alpha(theme.palette.primary.main, 0.12) : 'transparent', '&:empty::before': { content: '"\\00a0"' },
-              ...(starts.has(at) ? { ml: `${Math.max(0, groupSpace - space)}em` } : {}) })}>
-            {result ? char : typed[at] || ''}
-          </Box>
-        );
-      })}
-      {children}
+      sx={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', mx: 0.5, verticalAlign: wrong ? 'bottom' : 'baseline' }}>
+      {wrong ? (
+        <Box component="span" className="h5-learn-gap-answer" lang="en" translate="no" sx={{ ...rowSx, lineHeight: 1.3 }}>
+          {letters.map((char, at) => <Box key={at} component="span" className="h5-learn-gap-answer-letter" sx={{ ...cellSx(at), color: 'success.light' }}>{char}</Box>)}
+        </Box>
+      ) : null}
+      <Box component="span" sx={{ ...rowSx, position: 'relative' }}>
+        {letters.map((char, at) => {
+          const caret = !result && focused && at === Math.min(typed.length, count - 1);
+          const tone = !result ? null : !wrong || same(at) ? 'success.light' : 'error.light';
+          return (
+            <Box key={at} component="span" aria-hidden="true" className="h5-learn-gap-letter" data-part-start={starts.has(at) ? 'true' : undefined} data-right={result ? String(!wrong || same(at)) : undefined}
+              sx={theme => ({ ...cellSx(at), borderBottom: 2, borderColor: tone || 'primary.main', color: tone || 'text.primary',
+                bgcolor: caret ? alpha(theme.palette.primary.main, 0.12) : 'transparent', '&:empty::before': { content: '"\\00a0"' } })}>
+              {result && !wrong ? char : typed[at] || ''}
+            </Box>
+          );
+        })}
+        {children}
+      </Box>
     </Box>
   );
 }

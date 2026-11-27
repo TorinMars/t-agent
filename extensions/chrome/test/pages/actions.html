@@ -1,0 +1,46 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Actions fixture</title>
+<style>body{margin:0;font:14px sans-serif}#card,#knob{width:60px;height:40px;background:#ccc;display:inline-block}#zone,#pzone{width:120px;height:60px;border:1px solid #333;display:inline-block}iframe{width:300px;height:120px;border:2px solid #000}</style></head>
+<body><h1>Actions</h1>
+<form id="form">
+<label>First <input id="first" name="first"></label>
+<label>Email <input id="email" name="email" type="email"></label>
+<textarea id="note" name="note"></textarea>
+<select id="size" name="size"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select>
+<select id="multi" name="multi" multiple><option value="a">A</option><option value="b">B</option><option value="c">C</option></select>
+<label><input id="agree" type="checkbox" name="agree"> Agree</label>
+<label><input id="basic" type="radio" name="plan" value="basic"> Basic</label>
+<label><input id="pro" type="radio" name="plan" value="pro"> Pro</label>
+<input id="when" type="date" name="when"><input id="at" type="time" name="at">
+<input id="file" type="file" multiple>
+</form>
+<p id="status">Ready</p><button id="change-me">Old label</button><button id="remove-me">Remove me</button>
+<shadow-box id="host"></shadow-box>
+<iframe id="frame" src="/frame"></iframe>
+<div><div id="card" draggable="true">Card</div><div id="zone">Drop here</div></div>
+<div><div id="knob">Knob</div><div id="pzone">Pointer zone</div></div>
+<script>
+window.log = [];
+window.events = [];
+for (const id of ['first', 'email', 'note', 'size', 'multi', 'agree', 'basic', 'pro', 'when', 'at']) {
+  const e = document.getElementById(id);
+  e.addEventListener('input', () => window.events.push(`input ${id}`));
+  e.addEventListener('change', () => window.events.push(`change ${id}`));
+}
+customElements.define('shadow-box', class extends HTMLElement {
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: 'open' });
+    root.innerHTML = '<button id="inner">Shadow button</button><input id="sinput" aria-label="Shadow input">';
+    root.querySelector('#inner').addEventListener('click', () => window.log.push('shadow'));
+  }
+});
+const card = document.getElementById('card'), zone = document.getElementById('zone');
+card.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', 'card-1'));
+zone.addEventListener('dragover', e => e.preventDefault());
+zone.addEventListener('drop', e => { e.preventDefault(); window.dropped = e.dataTransfer.getData('text/plain'); });
+let start = null;
+document.getElementById('knob').addEventListener('mousedown', e => { start = { x: e.clientX, y: e.clientY, trusted: e.isTrusted }; });
+document.addEventListener('mousemove', e => { if (start) window.moves = (window.moves || 0) + 1; });
+document.addEventListener('mouseup', e => { if (start) { window.moved = { dx: Math.round(e.clientX - start.x), dy: Math.round(e.clientY - start.y), trusted: start.trusted, on: e.target.id }; start = null; } });
+document.getElementById('file').addEventListener('change', e => { window.files = [...e.target.files].map(f => `${f.name}:${f.size}`); });
+</script></body></html>

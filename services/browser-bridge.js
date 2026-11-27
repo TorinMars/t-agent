@@ -24,6 +24,7 @@ const path = require('node:path');
 const WebSocket = require('ws');
 const { redactDeep, redactUrl } = require('../lib/browser-redact');
 const { createTabCare } = require('./browser-tab-care');
+const { checkUploadFiles } = require('./browser-upload');
 
 const MANIFEST = path.resolve(__dirname, '..', 'extensions', 'chrome', 'manifest.json');
 // The version of the extension in this install's folder, read at each hello (a git update changes it without a restart).
@@ -62,6 +63,8 @@ const METHODS = Object.freeze([
   // Added in extension 1.0.3: bring the tab of a T-Agent page to the front (the desktop window's Open session, routes/attention-widget.js). An older
   // extension does not list it in its hello, so command() answers UNKNOWN_METHOD and the caller falls back.
   'tabs.reveal',
+  // Added in extension 1.0.8 ("Actions: drag, upload, fill, check, dialogs" in docs/design/browser-extension.md).
+  'input.drag', 'input.upload', 'input.fill', 'input.check', 'page.dialog',
 ]);
 // Options newer than the method itself: param -> [the feature the extension must list in its hello, the tcli flag]. An extension before
 // 1.0.4 sends no `features` and would ignore these params silently, so command() refuses them with UNKNOWN_METHOD and a message to reload
@@ -73,6 +76,10 @@ const PARAM_FEATURES = Object.freeze({
     drop_other_types: ['record.types', 'record start --drop-other-types'],
     max_body_bytes: ['record.max_body', 'record start --max-body'],
   },
+  // 1.0.8.
+  'page.snapshot': { filter: ['snapshot.filter', 'snapshot --filter'], diff: ['snapshot.diff', 'snapshot --diff'] },
+  'page.screenshot': { zoom: ['shot.zoom', 'shot --zoom'], scale: ['shot.zoom', 'shot --scale'], annotate: ['shot.annotate', 'shot --annotate'] },
+  'page.console': { pattern: ['console.filter', 'console --pattern'], levels: ['console.filter', 'console --level'] },
 });
 // Answers that the server redacts again unless the caller asked for `raw: true` (they carry headers, URLs and bodies).
 const REDACT_AGAIN = new Set(['net.list', 'net.get', 'page.fetch']);
@@ -80,7 +87,7 @@ const REDACT_AGAIN = new Set(['net.list', 'net.get', 'page.fetch']);
 // HTTP statuses of the extension's error codes, for the relay (routes/browser-ext.js).
 const EXTENSION_STATUS = {
   TAB_NOT_ALLOWED: 403, TAB_NOT_SCRIPTABLE: 403, TAB_NOT_FOUND: 404, REF_NOT_FOUND: 404, ELEMENT_NOT_FOUND: 404, REQUEST_NOT_FOUND: 404,
-  ELEMENT_NOT_INTERACTABLE: 409, DEBUGGER_BUSY: 409, NOT_CAPTURING: 409, BAD_PARAMS: 400, UNKNOWN_METHOD: 400, EVAL_FAILED: 422, TIMEOUT: 504, INTERNAL: 502,
+  ELEMENT_NOT_INTERACTABLE: 409, DEBUGGER_BUSY: 409, NOT_CAPTURING: 409, NO_DIALOG: 409, BAD_PARAMS: 400, UNKNOWN_METHOD: 400, EVAL_FAILED: 422, TIMEOUT: 504, INTERNAL: 502,
 };
 
 class BridgeError extends Error {
@@ -416,6 +423,10 @@ function createBrowserBridge({
       if (rest[param] !== undefined && !conn.features.has(feature)) {
         return Promise.reject(new BridgeError('UNKNOWN_METHOD', `The extension is older than this command (version ${conn.version || '?'} does not support ${flag}): reload it in chrome://extensions`, 400));
       }
+    }
+    // input.upload: only real files within the limits, never a credential ("Upload" in docs/design/browser-extension.md).
+    if (method === 'input.upload') {
+      try { rest.files = checkUploadFiles(rest.files); } catch (error) { return Promise.reject(ERRORS.BAD_PARAMS(error.message)); }
     }
     const timeout = timeoutFor(method, rest, timeoutMs);
     seq += 1;

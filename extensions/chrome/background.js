@@ -1,6 +1,7 @@
 import { redact, cut } from './redact.js';
 import { pageAction, installRecorder } from './page.js';
 import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summary, detail, matches, takeDialogs } from './capture.js';
+import { runAction, ACTION_METHODS } from './actions.js';
 // Features beyond the method names, sent in the hello: the bridge refuses a new option that an older extension would silently ignore
 // (PARAM_FEATURES in services/browser-bridge.js). 1.0.4: `tabs.open` with `record`, record type filters and a body size limit, agent
 // actions in recordings (source 'agent' / 'user'), click target context and the texts of what appeared in DOM change items.
@@ -10,8 +11,12 @@ import { captures, cdp, attach, detach, setCaptureEmitter, setPageListener, summ
 // 1.0.7: a closed T-Agent tab leaves its group first (`closeTab`), so Chrome keeps no saved "T-Agent" group in the bookmarks bar.
 // 1.0.6: `tabs.open` with `window` ('front' / 'back': a recording's own window, "The recording's own window" in docs/design/browser-extension.md)
 // and recordings that follow the tabs and windows the recorded page opens (`tab.opened`, "A recording follows the windows the page opens").
-export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload', 'open.window', 'record.tabs'];
-export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal'];
+// 1.0.8 ("Actions: drag, upload, fill, check, dialogs" in docs/design/browser-extension.md): the methods input.drag, input.upload,
+// input.fill, input.check and page.dialog (actions.js); page.screenshot with `zoom` / `scale` and `annotate`; page.snapshot with `filter`
+// and `diff`, elements of open shadow roots and same-origin iframes, and refs that stay the same for the same node; page.console with
+// `pattern` and `levels`.
+export const features = ['open.record', 'record.types', 'record.max_body', 'record.agent_actions', 'record.dom_text', 'open.keep', 'close.auto', 'shot.inactive', 'dialog.answer', 'tab.used', 'reload', 'open.window', 'record.tabs', 'input.drag', 'input.upload', 'input.fill', 'input.check', 'page.dialog', 'shot.zoom', 'shot.annotate', 'snapshot.filter', 'snapshot.diff', 'snapshot.frames', 'snapshot.stable_refs', 'console.filter'];
+export const methods = ['tabs.list', 'tabs.open', 'tabs.close', 'tabs.navigate', 'tabs.activate', 'page.snapshot', 'page.query', 'input.click', 'input.type', 'input.press', 'input.hover', 'input.scroll', 'input.select', 'page.eval', 'page.wait', 'page.screenshot', 'page.console', 'net.start', 'net.stop', 'net.list', 'net.get', 'page.fetch', 'record.start', 'record.stop', 'debug.detach', 'tabs.reveal', ...ACTION_METHODS];
 const recordings = new Map(),
   owned = new Set(),
   handed = new Set(),
@@ -190,7 +195,7 @@ const page = async (id, method, p = {}) => {
     if (!r.result?.ok) throw new Error(r.result?.error || 'INTERNAL: Page script returned no result');
     return r.result.result;
   } catch (e) {
-    if (/(REF_NOT_FOUND|ELEMENT_NOT_FOUND|ELEMENT_NOT_INTERACTABLE|UNKNOWN_METHOD):/.test(e.message)) throw e;
+    if (/^(REF_NOT_FOUND|ELEMENT_NOT_FOUND|ELEMENT_NOT_INTERACTABLE|UNKNOWN_METHOD|BAD_PARAMS):/.test(e.message)) throw e;
     throw new Error(`BAD_PARAMS: ${e.message}`);
   }
 };
@@ -643,6 +648,7 @@ chrome.webNavigation?.onCreatedNavigationTarget?.addListener(d => {
 // Actions of tcli commands in a recording ("Recording" in docs/design/browser-extension.md): one item per command, source 'agent',
 // emitted before the action so the requests it causes come after it. The page recorder leaves out the events the command causes:
 // agentWindow marks the tab's isolated world for `ms` milliseconds (page.js installRecorder reads __tagentAgentUntil).
+const CONSOLE_LEVELS = ['log', 'info', 'warn', 'warning', 'error', 'debug', 'dialog'];
 const AGENT_KINDS = {
   'input.click': 'click',
   'input.type': 'input',
@@ -1000,6 +1006,31 @@ async function run(method, p, meta) {
   if (p.count !== undefined && (!Number.isInteger(p.count) || p.count < 1 || p.count > 3)) fail('BAD_PARAMS', 'count must be 1, 2, or 3');
   if (p.modifiers !== undefined && (!Array.isArray(p.modifiers) || p.modifiers.some(m => !['Control', 'Meta', 'Shift', 'Alt'].includes(m)))) fail('BAD_PARAMS', 'Invalid modifiers');
   for (const types of [p.types, p.filter?.types]) if (types !== undefined && !Array.isArray(types)) fail('BAD_PARAMS', 'types must be an array');
+  if (method === 'page.snapshot') {
+    if (p.filter !== undefined && p.filter !== 'interactive') fail('BAD_PARAMS', 'filter must be interactive');
+    if (p.diff !== undefined && typeof p.diff !== 'boolean') fail('BAD_PARAMS', 'diff must be true or false');
+  }
+  if (method === 'page.console') {
+    if (p.levels !== undefined && (!Array.isArray(p.levels) || !p.levels.length || p.levels.some(l => !CONSOLE_LEVELS.includes(l)))) fail('BAD_PARAMS', `levels must be a list of ${CONSOLE_LEVELS.join(', ')}`);
+    if (p.pattern !== undefined) {
+      if (typeof p.pattern !== 'string' || !p.pattern || p.pattern.length > 500) fail('BAD_PARAMS', 'pattern must be a regular expression of at most 500 characters');
+      try {
+        new RegExp(p.pattern, 'i');
+      } catch (e) {
+        fail('BAD_PARAMS', `pattern is not a regular expression: ${e.message}`);
+      }
+    }
+  }
+  if (method === 'page.screenshot') {
+    if (p.zoom !== undefined) {
+      const z = p.zoom;
+      if (!z || typeof z !== 'object' || !['x', 'y', 'w', 'h'].every(k => Number.isFinite(z[k])) || z.w <= 0 || z.h <= 0) fail('BAD_PARAMS', 'zoom must be { x, y, w, h } with a positive w and h');
+      if (p.full_page || p.target) fail('BAD_PARAMS', 'zoom takes neither full_page nor target');
+    }
+    if (p.scale !== undefined && (!Number.isFinite(p.scale) || p.scale < 0.1 || p.scale > 4)) fail('BAD_PARAMS', 'scale must be 0.1 to 4');
+    if (p.scale !== undefined && !p.zoom && !p.target) fail('BAD_PARAMS', 'scale needs zoom or target');
+    if (p.annotate !== undefined && typeof p.annotate !== 'boolean') fail('BAD_PARAMS', 'annotate must be true or false');
+  }
   if (method === 'tabs.list') {
     const tabs = [];
     for (const t of await chrome.tabs.query({})) try {
@@ -1162,6 +1193,14 @@ async function run(method, p, meta) {
   const t = await getTab(p.tab_id),
     id = t.id;
   using(meta, t);
+  if (ACTION_METHODS.includes(method)) return runAction(method, id, p, {
+    page: (m, q) => page(id, m, q),
+    recording: recordings.has(id),
+    item: (kind, data) => item(id, kind, data),
+    brief,
+    markAgent: ms => markAgent(id, ms),
+    held: () => recordings.has(id) || !!captures.get(id)?.manual
+  });
   if (method === 'tabs.close') {
     // T-Agent's own closing (the bridge, when the agent's turn ended or the terminal closed): only an owned tab that is not kept, never a
     // handed one (which a person's `close` would release). It leaves the command's last tab as it was.
@@ -1355,9 +1394,14 @@ async function run(method, p, meta) {
   if (method === 'net.list' || method === 'net.get' || method === 'page.console') {
     const s = captures.get(id);
     if (!s) fail('NOT_CAPTURING', 'Start capture first');
-    if (method === 'page.console') return {
-      entries: s.console.filter(e => !p.since || e.at >= p.since).slice(-Math.max(1, Math.min(p.limit ?? 200, 2000)))
-    };
+    if (method === 'page.console') {
+      // --level and --pattern (case-insensitive) filter before the limit; `warn` is CDP's `warning`.
+      const levels = p.levels ? new Set(p.levels.map(l => l === 'warn' ? 'warning' : l)) : null;
+      const re = p.pattern ? new RegExp(p.pattern, 'i') : null;
+      return {
+        entries: s.console.filter(e => (!p.since || e.at >= p.since) && (!levels || levels.has(e.level)) && (!re || re.test(String(e.text)))).slice(-Math.max(1, Math.min(p.limit ?? 200, 2000)))
+      };
+    }
     if (method === 'net.list') return {
       requests: [...s.requests.values()].filter(r => matches(r, p)).slice(-Math.max(1, Math.min(p.limit ?? 200, 2000))).map(summary)
     };
@@ -1413,93 +1457,16 @@ async function run(method, p, meta) {
     }
   }
   if (method === 'page.screenshot') {
-    const format = p.format || 'png';
-    if (!['png', 'jpeg'].includes(format)) fail('BAD_PARAMS', 'Unsupported screenshot format');
-    if (!p.full_page && !p.target) {
-      // The visible area through the debugger, so the tab need not be active or its window in front (nothing is brought forward). Only when the
-      // debugger cannot attach (DevTools is open on the tab) and the tab is the active one of its window does captureVisibleTab take it.
-      const v = await page(id, 'viewport');
-      const size = {
-        mime: `image/${format}`,
-        width: Math.round(v.width * v.device_scale_factor),
-        height: Math.round(v.height * v.device_scale_factor)
-      };
-      let temporary = false;
-      try {
-        temporary = !captures.has(id);
-        if (temporary) await attach(id, {
-          bodies: false
-        });
-      } catch (e) {
-        if (!/DEBUGGER_BUSY/.test(e.message) || !(await chrome.tabs.get(id)).active) throw e;
-        const data = await chrome.tabs.captureVisibleTab(t.windowId, {
-          format,
-          ...(p.quality !== undefined ? {
-            quality: p.quality
-          } : {})
-        });
-        return {
-          data_base64: data.split(',')[1],
-          ...size
-        };
-      }
-      try {
-        let timer;
-        const r = await Promise.race([cdp(id, 'Page.captureScreenshot', {
-          format,
-          ...(p.quality !== undefined ? {
-            quality: p.quality
-          } : {})
-        }), new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('TIMEOUT: The tab did not draw a picture in time; activate it (tcli browser activate) and try again')), 15000);
-        })]).finally(() => clearTimeout(timer));
-        return {
-          data_base64: r.data,
-          ...size
-        };
-      } finally {
-        if (temporary && !recordings.has(id) && !captures.get(id)?.manual) await detach(id);
-      }
-    }
-    const temporary = !captures.has(id);
-    if (temporary) await attach(id, {
-      bodies: false
-    });
+    // shot --annotate: the refs of the last snapshot are drawn on the page for the moment of the picture.
+    const marks = p.annotate ? await page(id, 'annotate') : null;
     try {
-      let clip;
-      if (p.target) {
-        const d = await page(id, 'resolve', p);
-        const m = await cdp(id, 'Page.getLayoutMetrics');
-        clip = {
-          x: d.rect.x + m.cssLayoutViewport.pageX,
-          y: d.rect.y + m.cssLayoutViewport.pageY,
-          width: d.rect.w,
-          height: d.rect.h,
-          scale: 1
-        };
-      } else {
-        const m = await cdp(id, 'Page.getLayoutMetrics');
-        clip = {
-          ...m.cssContentSize,
-          scale: 1
-        };
-      }
-      const r = await cdp(id, 'Page.captureScreenshot', {
-        format,
-        captureBeyondViewport: true,
-        clip,
-        ...(p.quality !== undefined ? {
-          quality: p.quality
-        } : {})
-      });
-      return {
-        data_base64: r.data,
-        mime: `image/${format}`,
-        width: Math.round(clip.width),
-        height: Math.round(clip.height)
-      };
+      const r = await screenshot(id, t, p);
+      return marks ? {
+        ...r,
+        annotated: marks.annotated
+      } : r;
     } finally {
-      if (temporary && !recordings.has(id) && !captures.get(id)?.manual) await detach(id);
+      if (marks) await page(id, 'annotate.clear').catch(() => {});
     }
   }
   if (captures.has(id) && ['input.click', 'input.hover', 'input.type', 'input.press', 'input.scroll'].includes(method)) {
@@ -1523,6 +1490,107 @@ async function run(method, p, meta) {
     agentItem(id, method, p, brief(d));
   }
   return page(id, method, p);
+}
+// page.screenshot: the viewport, the whole page, an element (`target`) or a part of the viewport (`zoom`).
+async function screenshot(id, t, p) {
+  const format = p.format || 'png';
+  if (!['png', 'jpeg'].includes(format)) fail('BAD_PARAMS', 'Unsupported screenshot format');
+  if (!p.full_page && !p.target && !p.zoom) {
+    // The visible area through the debugger, so the tab need not be active or its window in front (nothing is brought forward). Only when the
+    // debugger cannot attach (DevTools is open on the tab) and the tab is the active one of its window does captureVisibleTab take it.
+    const v = await page(id, 'viewport');
+    const size = {
+      mime: `image/${format}`,
+      width: Math.round(v.width * v.device_scale_factor),
+      height: Math.round(v.height * v.device_scale_factor)
+    };
+    let temporary = false;
+    try {
+      temporary = !captures.has(id);
+      if (temporary) await attach(id, {
+        bodies: false
+      });
+    } catch (e) {
+      if (!/DEBUGGER_BUSY/.test(e.message) || !(await chrome.tabs.get(id)).active) throw e;
+      const data = await chrome.tabs.captureVisibleTab(t.windowId, {
+        format,
+        ...(p.quality !== undefined ? {
+          quality: p.quality
+        } : {})
+      });
+      return {
+        data_base64: data.split(',')[1],
+        ...size
+      };
+    }
+    try {
+      let timer;
+      const r = await Promise.race([cdp(id, 'Page.captureScreenshot', {
+        format,
+        ...(p.quality !== undefined ? {
+          quality: p.quality
+        } : {})
+      }), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('TIMEOUT: The tab did not draw a picture in time; activate it (tcli browser activate) and try again')), 15000);
+      })]).finally(() => clearTimeout(timer));
+      return {
+        data_base64: r.data,
+        ...size
+      };
+    } finally {
+      if (temporary && !recordings.has(id) && !captures.get(id)?.manual) await detach(id);
+    }
+  }
+  const temporary = !captures.has(id);
+  if (temporary) await attach(id, {
+    bodies: false
+  });
+  try {
+    let clip;
+    if (p.target) {
+      const d = await page(id, 'resolve', p);
+      const m = await cdp(id, 'Page.getLayoutMetrics');
+      clip = {
+        x: d.rect.x + m.cssLayoutViewport.pageX,
+        y: d.rect.y + m.cssLayoutViewport.pageY,
+        width: d.rect.w,
+        height: d.rect.h,
+        scale: p.scale ?? 1
+      };
+    } else if (p.zoom) {
+      // shot --zoom x,y,w,h: that part of the viewport (CSS pixels, like x,y targets) at `scale` (2 by default).
+      const m = await cdp(id, 'Page.getLayoutMetrics');
+      clip = {
+        x: p.zoom.x + m.cssLayoutViewport.pageX,
+        y: p.zoom.y + m.cssLayoutViewport.pageY,
+        width: p.zoom.w,
+        height: p.zoom.h,
+        scale: p.scale ?? 2
+      };
+    } else {
+      const m = await cdp(id, 'Page.getLayoutMetrics');
+      clip = {
+        ...m.cssContentSize,
+        scale: 1
+      };
+    }
+    const r = await cdp(id, 'Page.captureScreenshot', {
+      format,
+      captureBeyondViewport: true,
+      clip,
+      ...(p.quality !== undefined ? {
+        quality: p.quality
+      } : {})
+    });
+    return {
+      data_base64: r.data,
+      mime: `image/${format}`,
+      width: Math.round(clip.width * clip.scale),
+      height: Math.round(clip.height * clip.scale)
+    };
+  } finally {
+    if (temporary && !recordings.has(id) && !captures.get(id)?.manual) await detach(id);
+  }
 }
 // Mouse and keyboard through the debugger (trusted events). `rec`: the tab is recording, so the agent item is written before the input.
 async function cdpInput(id, method, p, rec = false) {
@@ -1707,7 +1775,7 @@ async function connect() {
         } : {})
       }, m.method === 'net.get' && m.params?.raw === true);
     } catch (e) {
-      const match = e.message.match(/(TAB_NOT_ALLOWED|TAB_NOT_FOUND|TAB_NOT_SCRIPTABLE|REF_NOT_FOUND|ELEMENT_NOT_FOUND|ELEMENT_NOT_INTERACTABLE|TIMEOUT|EVAL_FAILED|DEBUGGER_BUSY|NOT_CAPTURING|REQUEST_NOT_FOUND|BAD_PARAMS|UNKNOWN_METHOD|INTERNAL):\s*(.*)/s);
+      const match = e.message.match(/(TAB_NOT_ALLOWED|TAB_NOT_FOUND|TAB_NOT_SCRIPTABLE|REF_NOT_FOUND|ELEMENT_NOT_FOUND|ELEMENT_NOT_INTERACTABLE|TIMEOUT|EVAL_FAILED|DEBUGGER_BUSY|NOT_CAPTURING|NO_DIALOG|REQUEST_NOT_FOUND|BAD_PARAMS|UNKNOWN_METHOD|INTERNAL):\s*(.*)/s);
       send({
         type: 'result',
         id: m.id,

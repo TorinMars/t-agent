@@ -136,7 +136,7 @@ test('unpacked extension contract in local headless Chromium', {
   for (let n = 0; n < 100 && !hello; n++) await delay(50);
   assert.equal(hello?.protocol, 1);
   assert.equal(hello?.version, require('../manifest.json').version, 'hello carries the manifest version');
-  assert.equal(hello.methods.length, 26);
+  assert.equal(hello.methods.length, 31);
   assert(hello.features.includes('open.record') && hello.features.includes('record.types'), 'hello lists the 1.0.4 features');
   assert(hello.features.includes('close.auto') && hello.features.includes('reload'), 'hello lists the 1.0.5 features');
   assert.equal(hello.install_type, 'development', 'loaded unpacked');

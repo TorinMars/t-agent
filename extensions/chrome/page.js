@@ -2,7 +2,7 @@
 export async function pageAction(method, p) {
   // The events an input command dispatches here are the command's own: a running page recorder (installRecorder) leaves them out, because
   // background.js records the command once, with source 'agent'.
-  const acting = typeof method === 'string' && method.startsWith('input.');
+  const acting = typeof method === 'string' && (method.startsWith('input.') || method.startsWith('drag.'));
   if (acting) globalThis.__tagentAgentBusy = (globalThis.__tagentAgentBusy || 0) + 1;
   try {
     return {
@@ -21,33 +21,143 @@ export async function pageAction(method, p) {
     const fail = (code, message) => {
       throw new Error(`${code}: ${message}`);
     };
+    // Refs ("Snapshot" in docs/design/browser-extension.md): `refs` maps a ref to its element, `ids` (a WeakMap) the element to its ref, so
+    // the same DOM node keeps the same ref in every snapshot of the document until the address changes (`invalidate`). `last`: the refs of
+    // the last snapshot (shot --annotate draws them); `prev`: the last snapshot of each --selector / --filter in short, for snapshot --diff.
     const state = globalThis.__tagentPage ||= {
       refs: new Map(),
       next: 1
     };
-    const visible = e => !!(e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none');
+    state.ids ||= new WeakMap();
+    state.last ||= [];
+    // The window of an element (an element of a same-origin iframe has its own), its root (a document or an open shadow root), and where
+    // the frames it is in put it in the top viewport.
+    const style = e => (e.ownerDocument?.defaultView || globalThis).getComputedStyle(e);
+    const rootOf = e => e.getRootNode?.() || document;
+    const inShadow = e => !!rootOf(e).host;
+    const frameDepth = e => {
+      let n = 0;
+      for (let d = e.ownerDocument; d && d !== document && n < 10; n++) d = d.defaultView?.frameElement?.ownerDocument;
+      return n;
+    };
+    const offset = e => {
+      let x = 0,
+        y = 0;
+      for (let d = e.ownerDocument, n = 0; d && d !== document && n < 10; n++) {
+        const f = d.defaultView?.frameElement;
+        if (!f) break;
+        const r = f.getBoundingClientRect();
+        x += r.left + (f.clientLeft || 0);
+        y += r.top + (f.clientTop || 0);
+        d = f.ownerDocument;
+      }
+      return {
+        x,
+        y
+      };
+    };
+    const rectOf = e => {
+      const r = e.getBoundingClientRect(),
+        o = offset(e);
+      return {
+        x: r.x + o.x,
+        y: r.y + o.y,
+        w: r.width,
+        h: r.height
+      };
+    };
+    // Every element under a root, with what is inside open shadow roots and same-origin iframes (a cross-origin frame cannot be read; a
+    // closed shadow root neither). The inner elements follow their host or frame.
+    const deep = (root, out = [], depth = 0) => {
+      for (const e of root.querySelectorAll('*')) {
+        if (out.length >= 50000) break;
+        out.push(e);
+        if (depth >= 8) continue;
+        if (e.shadowRoot) deep(e.shadowRoot, out, depth + 1);
+        if (e.localName === 'iframe' || e.localName === 'frame') {
+          let d = null;
+          try {
+            d = e.contentDocument;
+          } catch {/* Cross-origin. */}
+          if (d?.documentElement) deep(d, out, depth + 1);
+        }
+      }
+      return out;
+    };
+    // css: targets look into open shadow roots and same-origin iframes when the document itself has no match.
+    const deepQuery = s => {
+      const hit = document.querySelector(s);
+      if (hit) return hit;
+      for (const e of deep(document)) {
+        const inner = e.shadowRoot?.querySelector(s) || ((e.localName === 'iframe' || e.localName === 'frame') && (() => {
+          try {
+            return e.contentDocument?.querySelector(s);
+          } catch {
+            return null;
+          }
+        })());
+        if (inner) return inner;
+      }
+      return null;
+    };
+    // The element at a point of the top viewport, inside shadow roots and same-origin iframes.
+    const elementAt = (x, y) => {
+      let e = document.elementFromPoint(x, y);
+      for (let n = 0; e && n < 10; n++) {
+        const inner = e.shadowRoot?.elementFromPoint?.(x - offset(e).x, y - offset(e).y);
+        if (inner && inner !== e) {
+          e = inner;
+          continue;
+        }
+        if (e.localName === 'iframe' || e.localName === 'frame') {
+          let d = null;
+          try {
+            d = e.contentDocument;
+          } catch {/* Cross-origin. */}
+          const r = e.getBoundingClientRect();
+          const o = offset(e);
+          const hit = d?.elementFromPoint(x - o.x - r.left - (e.clientLeft || 0), y - o.y - r.top - (e.clientTop || 0));
+          if (hit) {
+            e = hit;
+            continue;
+          }
+        }
+        break;
+      }
+      return e;
+    };
+    const visible = e => !!(e.getClientRects().length && style(e).visibility !== 'hidden' && style(e).display !== 'none');
     const selector = e => {
+      const root = rootOf(e);
       if (e.id) return `#${CSS.escape(e.id)}`;
       for (const k of ['data-testid', 'data-test', 'aria-label', 'name']) if (e.getAttribute(k)) {
         const s = `${e.localName}[${k}=${JSON.stringify(e.getAttribute(k))}]`;
-        if (document.querySelectorAll(s).length === 1) return s;
+        if (root.querySelectorAll(s).length === 1) return s;
       }
       const path = [];
       for (let n = e; n && n.nodeType === 1; n = n.parentElement) {
         path.unshift(`${n.localName}:nth-of-type(${[...(n.parentElement?.children || [n])].filter(x => x.localName === n.localName).indexOf(n) + 1})`);
-        if (document.querySelectorAll(path.join(' > ')).length === 1) break;
+        if (root.querySelectorAll(path.join(' > ')).length === 1) break;
       }
       return path.join(' > ');
+    };
+    // The native value setter (React and other frameworks track the value through it). By tag, not instanceof: an element of an iframe has
+    // the classes of its own window.
+    const valueSetter = e => Object.getOwnPropertyDescriptor(e.localName === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')?.set;
+    const refOf = e => {
+      let ref = state.ids.get(e);
+      if (!ref || state.refs.get(ref) !== e) {
+        ref = `e${state.next++}`;
+        state.ids.set(e, ref);
+        state.refs.set(ref, e);
+      }
+      return ref;
     };
     const secret = e => /(token|secret|session|passw|pwd|api[-_]?key|auth|signature|csrf|xsrf|cookie|ticket|code_verifier)/i.test(`${e.name || ''} ${e.id || ''} ${e.autocomplete || ''}`);
     const safeValue = e => secret(e) ? `<redacted:${String(e.value ?? '').length}>` : e.value;
     const describe = e => {
-      let ref = [...state.refs].find(([, v]) => v === e)?.[0];
-      if (!ref) {
-        ref = `e${state.next++}`;
-        state.refs.set(ref, e);
-      }
-      const r = e.getBoundingClientRect();
+      const ref = refOf(e);
+      const r = rectOf(e);
       const d = {
         ref,
         tag: e.localName,
@@ -73,31 +183,114 @@ export async function pageAction(method, p) {
         name: e.getAttribute('aria-label') || e.getAttribute('alt') || e.labels?.[0]?.innerText || e.getAttribute('name') || (e.innerText || '').slice(0, 300),
         text: (e.innerText || '').slice(0, 2000),
         selector: selector(e),
-        rect: {
-          x: r.x,
-          y: r.y,
-          w: r.width,
-          h: r.height
-        },
-        in_viewport: r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth
+        rect: r,
+        in_viewport: r.y + r.h > 0 && r.x + r.w > 0 && r.y < innerHeight && r.x < innerWidth
       };
       if ('value' in e && e.type !== 'password') d.value = safeValue(e);
       for (const k of ['href', 'type', 'checked', 'disabled']) if (k in e) d[k] = e[k];
+      const frame = frameDepth(e);
+      if (frame) d.frame = frame;
+      if (inShadow(e)) d.shadow = true;
       return d;
     };
-    const target = t => {
+    const target = (t, {
+      scroll = true
+    } = {}) => {
       let e;
       if (t?.ref) {
         e = state.refs.get(t.ref);
         if (!e?.isConnected) fail('REF_NOT_FOUND', 'Unknown or stale ref');
-      } else if (t?.selector) e = document.querySelector(t.selector);else if (t?.text) e = [...document.querySelectorAll('body *')].filter(visible).find(n => (n.innerText || '').trim() === t.text && ![...n.children].some(c => (c.innerText || '').trim() === t.text));else if (Number.isFinite(t?.x) && Number.isFinite(t?.y)) e = document.elementFromPoint(t.x, t.y);
+      } else if (t?.selector) e = deepQuery(t.selector);else if (t?.text) e = deep(document).filter(n => n.localName !== 'head' && visible(n)).find(n => (n.innerText || '').trim() === t.text && ![...n.children].some(c => (c.innerText || '').trim() === t.text));else if (Number.isFinite(t?.x) && Number.isFinite(t?.y)) e = elementAt(t.x, t.y);
       if (!e) fail('ELEMENT_NOT_FOUND', 'No matching element');
       if (!visible(e) || e.disabled) fail('ELEMENT_NOT_INTERACTABLE', 'Element is hidden or disabled');
-      e.scrollIntoView({
+      if (scroll) e.scrollIntoView({
         block: 'center',
         inline: 'nearest'
       });
       return e;
+    };
+    const fire = (e, ...types) => {
+      for (const type of types) e.dispatchEvent(new Event(type, {
+        bubbles: true
+      }));
+    };
+    // A checkbox, a radio, a label of one, or an ARIA checkbox / switch / radio: its state, and a click when it must change (the page's own
+    // handlers run as for a person's click). A radio is turned off directly (a click cannot do that).
+    const checkable = e => {
+      const box = e.localName === 'label' && e.control ? e.control : e;
+      if (box.localName === 'input' && ['checkbox', 'radio'].includes(box.type)) return box;
+      if (['checkbox', 'switch', 'radio', 'menuitemcheckbox', 'menuitemradio'].includes(box.getAttribute?.('role'))) return box;
+      return null;
+    };
+    const isChecked = box => box.localName === 'input' ? box.checked : box.getAttribute('aria-checked') === 'true';
+    const setChecked = (e, on) => {
+      const box = checkable(e);
+      if (!box) fail('ELEMENT_NOT_INTERACTABLE', 'Not a checkbox or radio');
+      if (isChecked(box) !== on) {
+        if (!on && box.localName === 'input' && box.type === 'radio') {
+          box.checked = false;
+          fire(box, 'input', 'change');
+        } else e.click();
+      }
+      if (isChecked(box) !== on) fail('ELEMENT_NOT_INTERACTABLE', 'The page did not change it');
+      return on;
+    };
+    const asBool = v => v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
+    // One field of input.fill: text inputs and textareas (the native setter, input and change events, as `type` does), a select by value or
+    // label, a checkbox or radio by true / false, date / time / number inputs by their string value, contenteditable text.
+    const VALUE_TYPES = ['date', 'time', 'datetime-local', 'month', 'week', 'number', 'range', 'color'];
+    const setField = (e, v) => {
+      const type = String(e.type || '').toLowerCase();
+      if (e.localName === 'select') {
+        const wanted = (Array.isArray(v) ? v : [v]).map(String);
+        if (!e.multiple && wanted.length !== 1) fail('BAD_PARAMS', 'This select takes one value');
+        const options = [...e.options];
+        const chosen = wanted.map(w => options.find(o => o.value === w) || options.find(o => (o.label || o.text || '').trim() === w.trim()));
+        const missing = wanted.find((w, i) => !chosen[i]);
+        if (missing !== undefined) fail('BAD_PARAMS', `No option with the value or label ${JSON.stringify(missing.slice(0, 80))}`);
+        for (const o of options) o.selected = chosen.includes(o);
+        fire(e, 'input', 'change');
+        return {
+          kind: 'select',
+          value: secret(e) ? `<redacted:${String(e.value).length}>` : e.multiple ? chosen.map(o => o.value) : e.value
+        };
+      }
+      if (checkable(e)) {
+        const on = asBool(v);
+        if (on === null) fail('BAD_PARAMS', 'A checkbox or radio takes true or false');
+        return {
+          kind: checkable(e).type || checkable(e).getAttribute('role'),
+          checked: setChecked(e, on)
+        };
+      }
+      if (type === 'file') fail('ELEMENT_NOT_INTERACTABLE', 'A file input: use upload');
+      if (v !== null && typeof v === 'object') fail('BAD_PARAMS', 'A text field takes a string');
+      const text = String(v ?? '');
+      if (e.isContentEditable) {
+        e.focus();
+        e.textContent = text;
+        e.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: text
+        }));
+        return {
+          kind: 'contenteditable'
+        };
+      }
+      if (!['input', 'textarea'].includes(e.localName) || e.readOnly) fail('ELEMENT_NOT_INTERACTABLE', 'Not an editable form field');
+      e.focus();
+      valueSetter(e).call(e, text);
+      if (text && !e.value && VALUE_TYPES.includes(type)) fail('BAD_PARAMS', `Not a valid ${type} value (the browser cleared it; a date is YYYY-MM-DD, a time HH:MM)`);
+      e.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText',
+        data: type === 'password' ? null : text
+      }));
+      fire(e, 'change');
+      return {
+        kind: e.localName === 'textarea' ? 'textarea' : type || 'text'
+      };
     };
     if (method === 'viewport') return {
       width: innerWidth,
@@ -106,15 +299,16 @@ export async function pageAction(method, p) {
     };
     if (method === 'invalidate') {
       state.refs.clear();
+      state.ids = new WeakMap();
       state.next = 1;
+      state.last = [];
+      state.prev = new Map();
       return;
     }
     if (method === 'page.snapshot' || method === 'page.query') {
-      if (method === 'page.snapshot') {
-        state.refs.clear();
-        state.next = 1;
-      }
-      const root = p.selector && method === 'page.snapshot' ? document.querySelector(p.selector) : document;
+      // Refs stay: an element that is still in the document keeps its ref; the refs of elements that left it are dropped.
+      if (method === 'page.snapshot') for (const [ref, e] of state.refs) if (!e.isConnected) state.refs.delete(ref);
+      const root = p.selector && method === 'page.snapshot' ? deepQuery(p.selector) : document;
       if (!root) fail('ELEMENT_NOT_FOUND', 'Snapshot root missing');
       const base = {
         url: location.href,
@@ -160,7 +354,10 @@ export async function pageAction(method, p) {
           truncated: c.truncated
         };
       }
-      const nodes = method === 'page.query' ? [...document.querySelectorAll(p.selector)].slice(0, p.all ? Math.min(p.limit ?? 50, 1000) : 1) : [...root.querySelectorAll('*')].filter(e => e.matches('a,button,input,textarea,select,[role],main,nav,header,footer,section,article,h1,h2,h3,p,li,label,summary,dialog,form,[contenteditable]') || [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()));
+      // --filter interactive: only what can be clicked or typed in (links, buttons, form fields, ARIA widgets, contenteditable, tabindex,
+      // onclick, draggable).
+      const INTERACTIVE = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=tab],[role=checkbox],[role=radio],[role=switch],[role=option],[role=treeitem],[role=combobox],[role=textbox],[role=searchbox],[role=slider],[role=spinbutton],[contenteditable=""],[contenteditable="true"],[tabindex]:not([tabindex="-1"]),[onclick],[draggable="true"]';
+      const nodes = method === 'page.query' ? [...document.querySelectorAll(p.selector)].slice(0, p.all ? Math.min(p.limit ?? 50, 1000) : 1) : deep(root).filter(p.filter === 'interactive' ? e => e.matches(INTERACTIVE) : e => e.matches('a,button,input,textarea,select,[role],main,nav,header,footer,section,article,h1,h2,h3,p,li,label,summary,dialog,form,[contenteditable]') || [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()));
       if (method === 'page.snapshot' && root !== document) nodes.unshift(root);
       const elements = [];
       let size = 0,
@@ -174,18 +371,268 @@ export async function pageAction(method, p) {
         }
         elements.push(d);
       }
-      return method === 'page.query' ? {
+      if (method === 'page.query') return {
         elements
-      } : {
+      };
+      // snapshot --diff: what was added, removed or changed since the last snapshot of this document with the same --selector and --filter
+      // (same ref = same node, so a changed element is one whose name, text, value or state changed). Without one, the whole snapshot.
+      const FIELDS = ['tag', 'role', 'name', 'text', 'value', 'checked', 'disabled', 'href'];
+      const short = d => Object.fromEntries(FIELDS.filter(k => d[k] !== undefined).map(k => [k, k === 'text' ? String(d.text).slice(0, 300) : d[k]]));
+      const key = `${p.selector || ''}|${p.filter || ''}`;
+      if (!(state.prev instanceof Map)) state.prev = new Map();
+      const before = p.diff ? state.prev.get(key) : null;
+      const now = new Map(elements.map(d => [d.ref, short(d)]));
+      // The last snapshot of each --selector / --filter pair, at most 5.
+      state.prev.delete(key);
+      state.prev.set(key, now);
+      if (state.prev.size > 5) state.prev.delete(state.prev.keys().next().value);
+      state.last = elements.map(d => d.ref);
+      const out = {
         ...base,
         viewport: {
           width: innerWidth,
           height: innerHeight,
           device_scale_factor: devicePixelRatio
         },
-        elements,
         truncated
       };
+      if (!p.diff) return {
+        ...out,
+        elements
+      };
+      if (!before) return {
+        ...out,
+        elements,
+        diff: {
+          base: false
+        }
+      };
+      const added = [],
+        changed = [];
+      let same = 0;
+      for (const d of elements) {
+        const old = before.get(d.ref);
+        if (!old) {
+          added.push(d);
+          continue;
+        }
+        const current = short(d),
+          was = {};
+        for (const k of FIELDS) if (JSON.stringify(old[k]) !== JSON.stringify(current[k])) was[k] = old[k] ?? null;
+        if (Object.keys(was).length) changed.push({
+          ...d,
+          was
+        });else same++;
+      }
+      const removed = [...before].filter(([ref]) => !now.has(ref)).map(([ref, d]) => ({
+        ref,
+        ...d
+      }));
+      return {
+        ...out,
+        diff: {
+          base: true,
+          added,
+          removed,
+          changed,
+          same
+        }
+      };
+    }
+    // shot --annotate: the refs of the last snapshot drawn on the page as numbered boxes for the moment of the screenshot (an overlay that
+    // takes no clicks; `annotate.clear` removes it). The recorder leaves the overlay out of its DOM items.
+    if (method === 'annotate' || method === 'annotate.clear') {
+      document.querySelectorAll('[data-tagent-overlay]').forEach(n => n.remove());
+      if (method === 'annotate.clear') return {};
+      const box = document.createElement('div');
+      box.setAttribute('data-tagent-overlay', '');
+      box.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483647;pointer-events:none;';
+      let annotated = 0;
+      for (const ref of state.last) {
+        const e = state.refs.get(ref);
+        if (!e?.isConnected || !visible(e)) continue;
+        const r = rectOf(e);
+        if (r.w <= 0 || r.h <= 0) continue;
+        const x = r.x + scrollX,
+          y = r.y + scrollY;
+        const frame = document.createElement('div');
+        frame.style.cssText = `position:absolute;box-sizing:border-box;left:${x}px;top:${y}px;width:${r.w}px;height:${r.h}px;border:2px solid #e91e63;border-radius:2px;`;
+        const label = document.createElement('div');
+        label.textContent = ref;
+        label.style.cssText = `position:absolute;left:${x}px;top:${Math.max(0, y - 16)}px;font:bold 11px/16px monospace;color:#fff;background:#e91e63;padding:0 4px;border-radius:2px;white-space:nowrap;`;
+        box.append(frame, label);
+        if (++annotated >= 500) break;
+      }
+      document.documentElement.appendChild(box);
+      return {
+        annotated
+      };
+    }
+    // upload: the file input is marked so the worker finds it through the debugger (DOM.setFileInputFiles needs the node in the page's world).
+    if (method === 'upload.mark') {
+      const e = target(p.target);
+      if (e.localName !== 'input' || e.type !== 'file') fail('ELEMENT_NOT_INTERACTABLE', 'Not a file input (input type=file)');
+      if (p.count > 1 && !e.multiple) fail('BAD_PARAMS', 'This file input takes one file');
+      e.setAttribute('data-tagent-upload', p.marker);
+      return describe(e);
+    }
+    if (method === 'upload.unmark') {
+      for (const e of deep(document)) if (e.getAttribute?.('data-tagent-upload') === p.marker) e.removeAttribute('data-tagent-upload');
+      return {};
+    }
+    if (method === 'input.fill') {
+      const fields = [];
+      for (const f of p.fields) {
+        try {
+          fields.push({
+            target: f.label,
+            ok: true,
+            ...setField(target(f.target), f.value)
+          });
+        } catch (error) {
+          const m = /^([A-Z_]+): (.*)$/s.exec(error.message);
+          fields.push({
+            target: f.label,
+            ok: false,
+            code: m ? m[1] : 'BAD_PARAMS',
+            error: m ? m[2] : error.message
+          });
+        }
+      }
+      return {
+        fields,
+        filled: fields.filter(f => f.ok).length
+      };
+    }
+    if (method === 'input.check') {
+      const e = target(p.target);
+      const d = describe(e);
+      return {
+        checked: setChecked(e, p.checked !== false),
+        target: {
+          ref: d.ref,
+          tag: d.tag,
+          name: d.name
+        }
+      };
+    }
+    // drag: the points of the source and the target in the top viewport (the source scrolled into view, the target not, unless it is off
+    // screen), and whether the source is an HTML5 draggable (draggable="true").
+    if (method === 'drag.resolve') {
+      const from = target(p.target);
+      const point = (e, t) => {
+        if (!e) return {
+          x: t.x,
+          y: t.y
+        };
+        const r = rectOf(e);
+        return {
+          x: r.x + r.w / 2,
+          y: r.y + r.h / 2
+        };
+      };
+      const pointTarget = Number.isFinite(p.to?.x) && Number.isFinite(p.to?.y) && !p.to.ref && !p.to.selector && !p.to.text;
+      let to = pointTarget ? null : target(p.to, {
+        scroll: false
+      });
+      let a = point(from),
+        b = point(to, p.to);
+      const inside = q => q.x >= 0 && q.y >= 0 && q.x < innerWidth && q.y < innerHeight;
+      if (!inside(b) && to) {
+        to.scrollIntoView({
+          block: 'nearest',
+          inline: 'nearest'
+        });
+        a = point(from);
+        b = point(to);
+      }
+      if (!inside(a) || !inside(b)) fail('ELEMENT_NOT_INTERACTABLE', 'The source and the target do not fit in the viewport together; scroll, or drag in steps');
+      const d = describe(from);
+      return {
+        from: a,
+        to: b,
+        html5: !!from.closest?.('[draggable="true"]'),
+        source: {
+          ref: d.ref,
+          tag: d.tag,
+          name: d.name
+        },
+        target: to ? (({
+          ref,
+          tag,
+          name
+        }) => ({
+          ref,
+          tag,
+          name
+        }))(describe(to)) : null
+      };
+    }
+    // An HTML5 drag and drop (dragstart, dragenter, dragover, drop, dragend with one DataTransfer): Chrome starts no native drag for input
+    // the debugger sends, so the page's drag handlers get these events instead.
+    if (method === 'drag.html5') {
+      const src = elementAt(p.from.x, p.from.y)?.closest?.('[draggable="true"]') || elementAt(p.from.x, p.from.y);
+      const dt = new DataTransfer();
+      const send = (type, el, q) => {
+        const o = offset(el);
+        return el.dispatchEvent(new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clientX: q.x - o.x,
+          clientY: q.y - o.y,
+          dataTransfer: dt
+        }));
+      };
+      if (!src) fail('ELEMENT_NOT_FOUND', 'No element at the source point');
+      if (!send('dragstart', src, p.from)) return {
+        dropped: false,
+        reason: 'the page cancelled dragstart'
+      };
+      send('drag', src, p.from);
+      const over = elementAt(p.to.x, p.to.y);
+      if (!over) fail('ELEMENT_NOT_FOUND', 'No element at the target point');
+      send('dragenter', over, p.to);
+      const accepted = !send('dragover', over, p.to);
+      if (accepted) send('drop', over, p.to);
+      send('dragend', src, p.to);
+      return {
+        dropped: accepted,
+        ...(accepted ? {} : {
+          reason: 'the target did not accept the drop (no dragover handler called preventDefault)'
+        })
+      };
+    }
+    // A drag with dispatched pointer and mouse events, when the debugger cannot attach (DevTools is open on the tab).
+    if (method === 'drag.events') {
+      const steps = p.steps ?? 10;
+      const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+      const at = (type, q, buttons) => {
+        const el = elementAt(q.x, q.y);
+        if (!el) return;
+        const o = offset(el);
+        const init = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clientX: q.x - o.x,
+          clientY: q.y - o.y,
+          button: 0,
+          buttons,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true
+        };
+        el.dispatchEvent(new P(`pointer${type}`, init));
+        el.dispatchEvent(new MouseEvent(`mouse${type}`, init));
+      };
+      at('down', p.from, 1);
+      for (let i = 1; i <= steps; i++) at('move', {
+        x: p.from.x + (p.to.x - p.from.x) * i / steps,
+        y: p.from.y + (p.to.y - p.from.y) * i / steps
+      }, 1);
+      at('up', p.to, 0);
+      return {};
     }
     if (method === 'resolve') {
       const e = target(p.target);
@@ -204,7 +651,16 @@ export async function pageAction(method, p) {
       return null;
     }
     if (method === 'input.press') {
-      const e = document.activeElement;
+      // The focused element, inside shadow roots and same-origin iframes.
+      let e = document.activeElement;
+      for (let n = 0; e && n < 10; n++) {
+        let inner = e.shadowRoot?.activeElement;
+        if (!inner && (e.localName === 'iframe' || e.localName === 'frame')) try {
+          inner = e.contentDocument?.activeElement;
+        } catch {/* Cross-origin. */}
+        if (!inner || inner === e) break;
+        e = inner;
+      }
       const opts = {
         key: p.key,
         bubbles: true,
@@ -223,7 +679,7 @@ export async function pageAction(method, p) {
           if (p.key === 'Backspace' && start === end) start = Math.max(0, start - 1);
           if (p.key === 'Delete' && start === end) end = Math.min(e.value.length, end + 1);
           const text = p.key.length === 1 ? p.key : '';
-          const setter = Object.getOwnPropertyDescriptor(e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')?.set;
+          const setter = valueSetter(e);
           if (setter) {
             setter.call(e, e.value.slice(0, start) + text + e.value.slice(end));
             e.setSelectionRange?.(start + text.length, start + text.length);
@@ -254,12 +710,13 @@ export async function pageAction(method, p) {
     const e = target(p.target);
     if (method !== 'input.hover') e.focus();
     const d = describe(e),
-      r = e.getBoundingClientRect();
+      r = e.getBoundingClientRect(),
+      o = offset(e);
     const opts = {
       bubbles: true,
       cancelable: true,
-      clientX: p.target?.x ?? r.x + r.width / 2,
-      clientY: p.target?.y ?? r.y + r.height / 2,
+      clientX: (p.target?.x ?? r.x + r.width / 2 + o.x) - o.x,
+      clientY: (p.target?.y ?? r.y + r.height / 2 + o.y) - o.y,
       button: {
         left: 0,
         middle: 1,
@@ -293,7 +750,7 @@ export async function pageAction(method, p) {
     if (method === 'input.type') {
       if (e.readOnly || !('value' in e) && !e.isContentEditable) fail('ELEMENT_NOT_INTERACTABLE', 'Element is not editable');
       if (e.isContentEditable) e.textContent = (p.clear ? '' : e.textContent) + p.text;else {
-        const setter = Object.getOwnPropertyDescriptor(e instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')?.set;
+        const setter = valueSetter(e);
         if (!setter) fail('ELEMENT_NOT_INTERACTABLE', 'Element is not a text input');
         setter.call(e, (p.clear ? '' : e.value) + p.text);
       }
@@ -580,8 +1037,11 @@ export function installRecorder(recordingId, options = {}) {
       more
     };
   }
+  // The overlay of shot --annotate is T-Agent's own, not the page's.
+  const overlay = n => n?.nodeType === 1 && !!(n.hasAttribute?.('data-tagent-overlay') || n.closest?.('[data-tagent-overlay]'));
   const observer = options.dom === false ? null : new MutationObserver(records => {
     for (const r of records) {
+      if (overlay(r.target) || r.type === 'childList' && [...r.addedNodes, ...r.removedNodes].some(overlay)) continue;
       if (r.type === 'childList') {
         added += r.addedNodes.length;
         removed += r.removedNodes.length;

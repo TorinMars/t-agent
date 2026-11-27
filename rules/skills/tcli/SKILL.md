@@ -189,6 +189,8 @@ Every other tab answers `TAB_NOT_ALLOWED` (exit `2`); `chrome://` pages, the Chr
 - Your tabs close by themselves 2 minutes after your turn ends (if you did not use them since), when your terminal closes, or after 30 minutes unused. To leave a page open for the user, open it with `browser open <url> --keep` and tell them it is there (the "T-Agent" group in T-Agent's window).
 - A tab the user clicks, types in or brings to the front becomes theirs: it leaves the group, and you can no longer use it (`TAB_NOT_ALLOWED`). Open the page again, or ask them to hand that tab over.
 - Page dialogs (alert, confirm, prompt, "leave this page?") are answered for you while network capture, a recording, `shot` or `wait --idle` runs: an alert and "leave" are accepted, a confirm and a prompt are dismissed. Each one is printed as `dialog: confirm "Delete all?" (dismissed)` on stderr. If you needed to agree to a confirm, tell the user and let them do that step.
+- Otherwise a dialog blocks the page and commands time out: `browser dialog` says whether one is open, `dialog dismiss` closes it, and `dialog accept --text T` answers a prompt. Accepting a confirm agrees to something for the user: ask them first, as for any change.
+- `upload` sends only files the user named or you made for this task; T-Agent refuses credentials (SSH keys, `.env` files) and files over 100 MiB.
 
 ### Commands
 
@@ -201,6 +203,8 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser back                         # also:
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot                     # one line per element: e12 button "Sign in"
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot --text              # the readable text (--html for HTML)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot --selector main     # only part of the page
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot --filter interactive # only what you can click or type in
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser snapshot --diff              # only what changed since the last snapshot (+ - ~)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser query 'table tr' --all       # elements matching a CSS selector
 
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser click e12
@@ -208,18 +212,26 @@ ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser type e7 'red shoes' --clear --submit
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser press Enter                  # Tab, Escape, ArrowDown, a (--modifiers Meta)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser select e9 large              # also: hover <target>, scroll [--dy 600]
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser wait --text 'Order placed' --timeout 20000   # or --selector, --url, --idle MS
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser fill e3=Ann e5='a@b.c' e7=true e9=Large   # several fields at once (or --json '{"e3":"Ann"}')
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser check e7                     # tick a checkbox or radio (--off to untick)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser drag e4 e8                   # drag to an element or to x,y (--steps N)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser upload e6 ./report.pdf       # files for a file input (only files the user named)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser dialog                       # is an alert / confirm / prompt blocking the page?
 
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser eval 'document.title'        # JS in the page (--file f.js)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser shot -o page.png             # screenshot (--full for the whole page)
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser shot --annotate -o refs.png  # the refs of the last snapshot drawn on it
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser shot --zoom 0,0,400,300 -o zoom.png   # a part of the viewport, enlarged (--scale 3)
 ${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser console                      # console lines and uncaught errors
+${TA_TCLI:+node} "${TA_TCLI:-tcli}" browser console --level error,warn --pattern 'timeout' --since 60000   # last minute's errors
 ```
 
-A `<target>` is a ref from the last snapshot (`e12`), `css:<selector>`, `text:<visible text>` (the first match) or `x,y` in viewport pixels. Refs are best.
+A `<target>` is a ref from the last snapshot (`e12`), `css:<selector>`, `text:<visible text>` (the first match) or `x,y` in viewport pixels. Refs are best. The snapshot includes elements inside open shadow DOM and same-origin iframes (marked `(in frame)` / `(in shadow DOM)`), and their refs work like any other.
 
 ### How to work on a page
 
 1. `snapshot` to see the page; act on refs (`click e12`, `type e7 ...`).
-2. After anything that changes the page (a click that opens a dialog, a navigation, a submit), `snapshot` again. Refs are only valid until the next snapshot or navigation: `REF_NOT_FOUND` means take a new snapshot.
+2. After anything that changes the page (a click that opens a dialog, a navigation, a submit), `snapshot` again (`--diff` shows only what changed). An element keeps its ref while it stays in the page; a navigation starts again at `e1`. `REF_NOT_FOUND` means take a new snapshot.
 3. When a page loads content late, `wait` for it (`--text`, `--selector`, `--idle 1000`) instead of sleeping.
 4. Prefer `snapshot --text` or `--selector` over `--html`: HTML is large and costs context. `shot` when the layout matters or the user wants to see it.
 5. `ELEMENT_NOT_INTERACTABLE`: the element is hidden or covered; scroll to it, close the dialog in front of it, or choose another element.

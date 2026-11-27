@@ -252,7 +252,7 @@ test('worker protocol, tab policy and capture lifecycle without network', {
     assert.equal(socket.messages[0].version, require('../manifest.json').version, 'hello carries the manifest version');
     assert.deepEqual(socket.messages[0].methods, methods);
     assert.deepEqual(socket.messages[0].features, features, 'hello lists the features of options newer than their method');
-    assert.equal(methods.length, 26);
+    assert.equal(methods.length, 31);
     intervals.find(i => i.ms === 20000).fn();
     assert.equal(socket.messages.at(-1).type, 'ping');
     assert.equal((await dispatch('tabs.list')).tabs[0].how, 'handed');

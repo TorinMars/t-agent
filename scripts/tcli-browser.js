@@ -8,6 +8,9 @@ const path = require('node:path');
 const DEFAULT_TIMEOUT_MS = 30_000;
 const HTTP_EXTRA_MS = 15_000; // the relay answers a timeout itself; this only guards against a T-Agent that stopped answering
 const BODY_PREVIEW = 4000;
+const UPLOAD_MAX_BYTES = 100 * 1024 * 1024; // the limit of services/browser-upload.js, checked there again
+const SINCE_EPOCH = 1e11; // console --since below this is a duration (ms back from now), above an epoch time
+const CONSOLE_LEVELS = ['error', 'warn', 'warning', 'log', 'info', 'debug', 'dialog'];
 
 const HELP = `tcli browser: drive this computer's browser
 through the T-Agent extension (pair it in
@@ -52,13 +55,23 @@ over with the extension button)
   clicks or types in becomes theirs. Page
   dialogs are answered while the debugger runs
   (alert accepted, confirm and prompt dismissed)
-  and reported as "dialog: <type> <message>".
+  and reported as "dialog: <type> <message>";
+  else a dialog blocks the page: see dialog.
 
 Page
   snapshot               one line per element:
                          e12 button "Sign in"
+                         (with open shadow DOM and
+                         same-origin iframes; a
+                         node keeps its ref until
+                         the address changes)
     --text | --html      text or HTML instead
     --selector S         only inside S
+    --filter interactive only what you can click
+                         or type in
+    --diff               only what was added (+),
+                         removed (-) or changed (~)
+                         since the last snapshot
     --max-bytes N        (200000)
   query <selector>       elements matching S
     --all [--limit N]    every match (50)
@@ -70,6 +83,25 @@ Page
   hover <target>
   scroll [target]        --dy N (600) --dx N
   select <target> <value...>
+  fill <target>=<value>...  several fields at once:
+                         text, select (value or
+                         label), checkbox / radio
+                         (true|false), date
+                         (2026-01-31), time (09:30)
+    --json '{"e3":"Ann"}'  the fields as JSON (also
+                         --fields; then --json is
+                         the output)
+  check <target>         tick a checkbox or radio
+    --off                untick it
+  drag <target> <to>     to a target or x,y
+    --steps N (10)       mouse moves on the way
+    --html5 | --mouse    force the kind of drag
+  upload <target> <file...>  files for an
+                         input type=file (at most
+                         20, 100 MiB each)
+  dialog [status]        is an alert / confirm /
+                         prompt blocking the page?
+  dialog accept [--text T] | dialog dismiss
   eval <js>              run JS in the page
     --file f.js          from a file
     --no-await           do not await a promise
@@ -81,8 +113,16 @@ Page
                          --quality N; -o - for
                          stdout); the tab need
                          not be active
+    --zoom x,y,w,h       a part of the viewport,
+                         enlarged (--scale N, 2)
+    --annotate           the refs of the last
+                         snapshot drawn on it
   console                console lines and errors
-    --since MS --limit N
+    --level error,warn,log,info  only these
+    --pattern RE         matching text (any case)
+    --since MS           the last MS milliseconds
+                         (or since an epoch time)
+    --limit N
 
   <target> is e12 (a ref of the last snapshot),
   css:<selector>, text:<visible text> or x,y.
@@ -208,6 +248,20 @@ function createBrowserGroup(h) {
     if (point) return { x: Number(point[1]), y: Number(point[2]) };
     throw usage(`"${text}" is not a target: use e12 (a ref from snapshot), css:<selector>, text:<visible text> or x,y`);
   }
+  // fill: the `=` between target and value is the first one outside [...] and quotes, so css:input[name=email]=a@b.c works.
+  function splitPair(text) {
+    let depth = 0;
+    let quoteChar = null;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (quoteChar) { if (ch === quoteChar) quoteChar = null; continue; }
+      if (ch === '"' || ch === "'") quoteChar = ch;
+      else if (ch === '[' || ch === '(') depth += 1;
+      else if (ch === ']' || ch === ')') depth = Math.max(0, depth - 1);
+      else if (ch === '=' && depth === 0) return i;
+    }
+    return -1;
+  }
   const modifiers = value => (value ? String(value).split(',').map(item => item.trim()).filter(Boolean) : undefined);
   const list = value => (value ? String(value).split(',').map(item => item.trim()).filter(Boolean) : undefined);
   const prune = object => Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
@@ -314,7 +368,20 @@ function createBrowserGroup(h) {
     if (element.checked) parts.push('[checked]');
     if (element.disabled) parts.push('[disabled]');
     if (element.in_viewport === false) parts.push('(off screen)');
+    if (element.frame) parts.push('(in frame)');
+    if (element.shadow) parts.push('(in shadow DOM)');
     return parts.join(' ');
+  }
+  // snapshot --diff: + added, - removed, ~ changed (with what it was).
+  function diffLines(diff) {
+    const lines = [];
+    for (const element of diff.added || []) lines.push(`+ ${elementLine(element)}`);
+    for (const element of diff.removed || []) lines.push(`- ${elementLine(element)}`);
+    for (const element of diff.changed || []) {
+      const was = Object.entries(element.was || {}).map(([key, value]) => `${key}=${value === null ? '-' : quote(oneLine(value, 60))}`).join(' ');
+      lines.push(`~ ${elementLine(element)}  (was ${was})`);
+    }
+    return lines;
   }
 
   // `status` without --verbose: the connection, each paired browser (name, extension version, browser, paired, connected since) and counts; the
@@ -521,20 +588,28 @@ function createBrowserGroup(h) {
       return { tab_id: tabNumber(positional[0]) };
     }, navText),
     snapshot: {
-      values: ['selector', 'max-bytes'], bools: ['text', 'html'],
+      values: ['selector', 'max-bytes', 'filter'], bools: ['text', 'html', 'diff'],
       async run(ctx, flags, positional) {
-        none(positional, 'tcli browser snapshot [--text|--html] [--selector S] [--tab T]');
+        none(positional, 'tcli browser snapshot [--text|--html] [--selector S] [--filter interactive] [--diff] [--tab T]');
         if (flags.text && flags.html) throw usage('Choose --text or --html, not both');
+        if (flags.filter !== undefined && flags.filter !== 'interactive') throw usage('--filter takes interactive');
+        if ((flags.filter || flags.diff) && (flags.text || flags.html)) throw usage('--filter and --diff are for the element list, not --text or --html');
         const mode = flags.text ? 'text' : flags.html ? 'html' : 'outline';
-        const answer = await cmd(ctx, 'page.snapshot', prune({ ...common(flags), mode, selector: flags.selector, max_bytes: wholeNumber(flags['max-bytes'], '--max-bytes', { min: 1 }) }), { timeoutMs: timeoutOf(flags) });
+        const answer = await cmd(ctx, 'page.snapshot', prune({ ...common(flags), mode, selector: flags.selector, filter: flags.filter, diff: flags.diff ? true : undefined, max_bytes: wholeNumber(flags['max-bytes'], '--max-bytes', { min: 1 }) }), { timeoutMs: timeoutOf(flags) });
         return print(ctx, flags, answer, result => {
           const head = `${oneLine(result.title, 100) || '(no title)'}  ${result.url || ''}`;
           const tail = result.truncated ? ['(cut at the size limit: narrow it with --selector, or raise --max-bytes)'] : [];
           if (mode === 'text') return [head, '', result.text || '', ...tail].join('\n');
           if (mode === 'html') return [result.html || '', ...tail].join('\n');
+          if (result.diff && result.diff.base) {
+            const d = result.diff;
+            const lines = diffLines(d);
+            return [head, `${(d.added || []).length} added, ${(d.removed || []).length} removed, ${(d.changed || []).length} changed, ${d.same || 0} the same`, ...lines, ...tail].join('\n');
+          }
+          const note = result.diff ? ['(no earlier snapshot of this page to compare with: the whole snapshot)'] : [];
           const elements = result.elements || [];
           const viewport = result.viewport ? ` · viewport ${result.viewport.w || result.viewport.width}x${result.viewport.h || result.viewport.height}` : '';
-          return [head, `${elements.length} elements${viewport}`, ...elements.map(elementLine), ...tail].join('\n');
+          return [head, ...note, `${elements.length} elements${viewport}`, ...elements.map(elementLine), ...tail].join('\n');
         });
       },
     },
@@ -619,12 +694,25 @@ function createBrowserGroup(h) {
       },
     },
     shot: {
-      values: ['output', 'target', 'quality', 'format'], bools: ['full', 'jpeg', 'force'],
+      values: ['output', 'target', 'quality', 'format', 'zoom', 'scale'], bools: ['full', 'jpeg', 'force', 'annotate'],
       async run(ctx, flags, positional) {
-        none(positional, 'tcli browser shot [--full] [-o file.png]');
+        none(positional, 'tcli browser shot [--full] [--zoom x,y,w,h [--scale N]] [--annotate] [-o file.png]');
         const format = flags.jpeg ? 'jpeg' : flags.format;
         if (format !== undefined && !['png', 'jpeg'].includes(format)) throw usage('--format is png or jpeg');
-        const params = prune({ ...common(flags), full_page: flags.full ? true : undefined, target: flags.target ? target(flags.target) : undefined, format, quality: wholeNumber(flags.quality, '--quality', { min: 0 }) });
+        let zoom;
+        if (flags.zoom !== undefined) {
+          const parts = String(flags.zoom).split(',').map(Number);
+          if (parts.length !== 4 || parts.some(n => !Number.isFinite(n)) || parts[2] <= 0 || parts[3] <= 0) throw usage('--zoom is x,y,w,h in viewport pixels, such as 0,0,400,300');
+          if (flags.full || flags.target) throw usage('--zoom takes neither --full nor --target');
+          zoom = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+        }
+        let scale;
+        if (flags.scale !== undefined) {
+          scale = Number(flags.scale);
+          if (!Number.isFinite(scale) || scale < 0.1 || scale > 4) throw usage('--scale is 0.1 to 4');
+          if (!zoom && !flags.target) throw usage('--scale needs --zoom or --target');
+        }
+        const params = prune({ ...common(flags), full_page: flags.full ? true : undefined, target: flags.target ? target(flags.target) : undefined, zoom, scale, annotate: flags.annotate ? true : undefined, format, quality: wholeNumber(flags.quality, '--quality', { min: 0 }) });
         const toStdout = flags.output === '-';
         let file = null;
         if (!toStdout) {
@@ -639,18 +727,128 @@ function createBrowserGroup(h) {
         fs.writeFileSync(file, bytes);
         const { data_base64: _data, ...rest } = answer;
         const result = { ...rest, file, size: bytes.length };
-        return print(ctx, flags, result, () => `Saved ${file} (${answer.width}x${answer.height}, ${humanSize(bytes.length)})${answer.truncated ? ' (cut at the size limit)' : ''}`);
+        if (flags.annotate && answer.annotated === 0) ctx.stderr.write('tcli: no refs were drawn: take a snapshot first (shot --annotate draws the refs of the last one)\n');
+        return print(ctx, flags, result, () => `Saved ${file} (${answer.width}x${answer.height}, ${humanSize(bytes.length)})${answer.truncated ? ' (cut at the size limit)' : ''}${Number.isFinite(answer.annotated) ? ` with ${answer.annotated} refs drawn` : ''}`);
       },
     },
     console: {
-      values: ['since', 'limit'],
+      values: ['since', 'limit', 'pattern', 'level'],
       async run(ctx, flags, positional) {
-        none(positional, 'tcli browser console [--since MS] [--limit N]');
-        const answer = await cmd(ctx, 'page.console', prune({ ...common(flags), since: wholeNumber(flags.since, '--since'), limit: wholeNumber(flags.limit, '--limit', { min: 1 }) }), { timeoutMs: timeoutOf(flags) });
+        none(positional, 'tcli browser console [--level error,warn] [--pattern RE] [--since MS] [--limit N]');
+        // --since: a small number is the last MS milliseconds, a large one an epoch time in ms (what it always took).
+        let since = wholeNumber(flags.since, '--since');
+        if (since !== undefined && since < SINCE_EPOCH) since = Date.now() - since;
+        const levels = list(flags.level);
+        if (flags.level !== undefined) {
+          if (!levels || !levels.length) throw usage('--level takes a list such as error,warn');
+          for (const level of levels) if (!CONSOLE_LEVELS.includes(level)) throw usage(`--level: "${level}" is not one of ${CONSOLE_LEVELS.join(', ')}`);
+        }
+        if (flags.pattern !== undefined) {
+          if (!flags.pattern || flags.pattern.length > 500) throw usage('--pattern takes a regular expression of at most 500 characters');
+          try { new RegExp(flags.pattern, 'i'); } catch (error) { throw usage(`--pattern is not a regular expression: ${error.message}`); }
+        }
+        const answer = await cmd(ctx, 'page.console', prune({ ...common(flags), since, levels, pattern: flags.pattern, limit: wholeNumber(flags.limit, '--limit', { min: 1 }) }), { timeoutMs: timeoutOf(flags) });
         return print(ctx, flags, answer, result => {
           const entries = (result && result.entries) || [];
-          if (!entries.length) return 'No console lines (they are collected while net capture or a recording runs, and for uncaught errors)';
+          if (!entries.length) return levels || flags.pattern || flags.since !== undefined ? 'No console lines match' : 'No console lines (they are collected while net capture or a recording runs, and for uncaught errors)';
           return entries.map(entry => `${time(entry.at)} ${String(entry.level || 'log').padEnd(5)} ${entry.text}`).join('\n');
+        });
+      },
+    },
+    fill: {
+      values: ['fields'],
+      async run(ctx, flags, positional) {
+        // --json '{"e3":"Ann"}' is the fields as JSON (then the output is text); --fields '{...}' --json gives the JSON answer.
+        const objects = positional.filter(arg => arg.trim().startsWith('{'));
+        const pairs = positional.filter(arg => !arg.trim().startsWith('{'));
+        if (flags.fields !== undefined) objects.push(flags.fields);
+        if (!objects.length && !pairs.length) throw usage('Usage: tcli browser fill <target>=<value>... | --json \'{"e3":"Ann","e7":true}\'');
+        const fields = [];
+        for (const text of objects) {
+          let map;
+          try { map = JSON.parse(text); } catch (error) { throw usage(`The fields are not JSON: ${error.message}`); }
+          if (!map || typeof map !== 'object' || Array.isArray(map)) throw usage('The fields JSON is an object of target: value');
+          for (const [key, value] of Object.entries(map)) {
+            if (!(typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' || (Array.isArray(value) && value.every(item => typeof item === 'string')))) throw usage(`${key}: a value is a string, true / false, or a list of strings`);
+            fields.push({ label: key, target: target(key), value });
+          }
+        }
+        for (const pair of pairs) {
+          const at = splitPair(pair);
+          if (at <= 0) throw usage(`"${pair}" is not <target>=<value> (such as e3=Ann or css:#email=a@b.c)`);
+          fields.push({ label: pair.slice(0, at), target: target(pair.slice(0, at)), value: pair.slice(at + 1) });
+        }
+        if (fields.length > 100) throw usage('At most 100 fields at once');
+        const jsonOut = flags.json && (flags.fields !== undefined || !objects.length);
+        const answer = await cmd(ctx, 'input.fill', prune({ ...common(flags), fields }), { timeoutMs: timeoutOf(flags) });
+        const results = (answer && answer.fields) || [];
+        if (jsonOut) ctx.out(JSON.stringify(answer, null, 2));
+        else {
+          ctx.out(results.map(field => {
+            if (!field.ok) return `${field.target}: failed: ${field.error} (${field.code})`;
+            const extra = field.checked !== undefined ? `, ${field.checked ? 'checked' : 'not checked'}` : field.value !== undefined ? `, ${Array.isArray(field.value) ? field.value.join(',') : field.value}` : '';
+            return `${field.target}: ok (${field.kind}${extra})`;
+          }).join('\n'));
+          ctx.out(`Filled ${answer && Number.isFinite(answer.filled) ? answer.filled : 0} of ${fields.length} fields`);
+        }
+        return results.some(field => !field.ok) ? EXIT.usage : EXIT.ok;
+      },
+    },
+    check: {
+      bools: ['off'],
+      async run(ctx, flags, positional) {
+        if (positional.length !== 1) throw usage('Usage: tcli browser check <target> [--off]');
+        const answer = await cmd(ctx, 'input.check', prune({ ...common(flags), target: target(positional[0]), checked: !flags.off }), { timeoutMs: timeoutOf(flags) });
+        return print(ctx, flags, answer, result => `${result && result.checked ? 'Checked' : 'Unchecked'} ${positional[0]}`);
+      },
+    },
+    drag: {
+      values: ['steps'], bools: ['html5', 'mouse'],
+      async run(ctx, flags, positional) {
+        if (positional.length !== 2) throw usage('Usage: tcli browser drag <target> <to: target or x,y> [--steps N] [--html5|--mouse]');
+        if (flags.html5 && flags.mouse) throw usage('Choose --html5 or --mouse, not both');
+        const params = prune({ ...common(flags), target: target(positional[0]), to: target(positional[1]), steps: wholeNumber(flags.steps, '--steps', { min: 1 }), mode: flags.html5 ? 'html5' : flags.mouse ? 'mouse' : undefined });
+        if (params.steps > 100) throw usage('--steps is at most 100');
+        const answer = await cmd(ctx, 'input.drag', params, { timeoutMs: timeoutOf(flags) });
+        return print(ctx, flags, answer, result => {
+          const how = { html5: 'an HTML5 drag and drop', mouse: 'the mouse', events: 'dispatched mouse events (DevTools holds the debugger)' }[result && result.how] || 'the mouse';
+          const lines = [`Dragged ${positional[0]} to ${positional[1]} with ${how}`];
+          if (result && result.dropped === false) lines.push(`The drop did not happen: ${result.reason || 'the target refused it'}`);
+          return lines.join('\n');
+        });
+      },
+    },
+    upload: {
+      async run(ctx, flags, positional) {
+        if (positional.length < 2) throw usage('Usage: tcli browser upload <target> <file...>');
+        // Only the files named here, each an existing regular file; T-Agent checks them again (limits, no credentials).
+        const files = positional.slice(1).map(name => {
+          const file = path.resolve(ctx.cwd, name);
+          let stat;
+          try { stat = fs.statSync(file); } catch { throw usage(`${name} does not exist`); }
+          if (!stat.isFile()) throw usage(`${name} is not a file`);
+          if (stat.size > UPLOAD_MAX_BYTES) throw usage(`${name} is larger than ${UPLOAD_MAX_BYTES / 1024 / 1024} MiB`);
+          return file;
+        });
+        if (files.length > 20) throw usage('At most 20 files at once');
+        const answer = await cmd(ctx, 'input.upload', prune({ ...common(flags), target: target(positional[0]), files }), { timeoutMs: timeoutOf(flags) });
+        return print(ctx, flags, answer, result => `Set ${files.length} file${files.length === 1 ? '' : 's'} on ${positional[0]}: ${((result && result.files) || files.map(file => path.basename(file))).join(', ')}`);
+      },
+    },
+    dialog: {
+      values: ['text'],
+      async run(ctx, flags, positional) {
+        const action = positional[0] || 'status';
+        if (positional.length > 1 || !['status', 'accept', 'dismiss'].includes(action)) throw usage('Usage: tcli browser dialog [status] | dialog accept [--text T] | dialog dismiss');
+        if (flags.text !== undefined && action !== 'accept') throw usage('--text goes with dialog accept (the answer to a prompt)');
+        const answer = await cmd(ctx, 'page.dialog', prune({ ...common(flags), action, text: flags.text }), { timeoutMs: timeoutOf(flags) });
+        return print(ctx, flags, answer, result => {
+          const what = result.type ? `${result.type} ${quote(oneLine(result.message, 200))}` : 'dialog';
+          if (action !== 'status') return `${result.handled === 'accepted' ? 'Accepted' : 'Dismissed'} the ${what}`;
+          if (result.automatic) return 'No dialog is waiting: while net capture or a recording runs, dialogs are answered at once';
+          if (!result.open) return 'No dialog is open';
+          if (result.known === false) return 'The page is blocked, most likely by a dialog that opened before T-Agent looked (its text cannot be read): dialog accept or dialog dismiss';
+          return `Open: ${what}${result.default_prompt ? ` (default ${quote(oneLine(result.default_prompt, 80))})` : ''}`;
         });
       },
     },

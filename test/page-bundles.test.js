@@ -33,7 +33,7 @@ test('the first screen loads the shell and a few chunks, much less than the old 
   // The single bundle was 1,067 KB (2026-11-18); the split moved Settings, T-Attention, the design and file sheets into chunks of their own.
   assert.ok(bytes < 762 * 1024, `the first screen is ${bytes} bytes`);
   const text = eager.map(read).join('\n');
-  for (const [marker, screen] of [['h5-usage-layout', 'the Usage data group'], ['.MuiSwitch-switchBase,.MuiCheckbox-root', 'the usage data recorder'], ['h5-settings-tabs', 'Settings'], ['h5-attention-reject', 'the T-Attention panel'], ['h5-design-outline', 'the design sheet'], ['h5-files-tree', 'the file tree'], ['registerAttentionSettings needs', 'the T-Attention settings slots'], ['h5-learn-pool', 'the Learn page'], ['h5-update-auto-switch', 'the Update dialog'], ['h5-copy-wrap-hint', 'the copy view and the other terminal dialogs']]) {
+  for (const [marker, screen] of [['h5-usage-layout', 'the Usage data group'], ['.MuiSwitch-switchBase,.MuiCheckbox-root', 'the usage data recorder'], ['h5-settings-tabs', 'Settings'], ['h5-attention-reject', 'the T-Attention panel'], ['h5-design-outline', 'the design sheet'], ['h5-files-tree', 'the file tree'], ['registerAttentionSettings needs', 'the T-Attention settings slots'], ['h5-learn-pool', 'the Learn page'], ['h5-update-auto-switch', 'the Update dialog'], ['h5-copy-wrap-hint', 'the copy view and the other terminal dialogs'], ['h5-vscode-license', 'the VS Code launcher']]) {
     assert.ok(!text.includes(marker), `${screen} is not in the first download`);
   }
   // React (react-dom) is there once, in a chunk; the chat imports the same chunk.
@@ -68,9 +68,10 @@ test('React and highlight.js exist once among the bundles, and every chunk on di
   // screen-skew is the task list's banner of an engine on an older version (VersionSkew.jsx), loaded only while one is named;
 // screen-start-command is the unfolded initial command field of the New session dialog, loaded when it is first unfolded;
 // key-feedback is the haptic tick and the key bubble of the page's own keyboard (Osk.jsx), loaded at the first key press;
-// screen-mouse-ball is the mouse ball of the phone terminal (MouseBall.jsx), loaded only while it is on.
+// screen-mouse-ball is the mouse ball of the phone terminal (MouseBall.jsx), loaded only while it is on;
+// screen-vscode is the launcher of "Open in VS Code" (VscodeLaunch.jsx), loaded when it is first chosen.
   const dynamic = new Set(files.flatMap(url => importsOf(read(url)).dynamics).map(url => url.replace(/-[A-Z0-9]{8}\.js$/, '').replace('/js/chunks/', '')));
-  assert.deepEqual([...dynamic].sort(), ['key-feedback', 'markdown-view-entry', 'screen-attention', 'screen-design', 'screen-dialogs', 'screen-files', 'screen-learn', 'screen-mouse-ball', 'screen-recent', 'screen-settings', 'screen-skew', 'screen-start-command', 'screen-switcher', 'screen-task-dialog', 'screen-update', 'screen-updated', 'usage-recorder', 'usage-time-sender']);
+  assert.deepEqual([...dynamic].sort(), ['key-feedback', 'markdown-view-entry', 'screen-attention', 'screen-design', 'screen-dialogs', 'screen-files', 'screen-learn', 'screen-mouse-ball', 'screen-recent', 'screen-settings', 'screen-skew', 'screen-start-command', 'screen-switcher', 'screen-task-dialog', 'screen-update', 'screen-updated', 'screen-vscode', 'usage-recorder', 'usage-time-sender']);
 });
 
 test('shell-core.mjs names every module entry.jsx imports, so the first screen stays in one shared chunk', () => {

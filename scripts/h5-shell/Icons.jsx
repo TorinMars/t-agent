@@ -169,6 +169,8 @@ export const DRAWN = {
   // Mouse ball (the ball that comes out of the mouse handle over the terminal): a mouse pointer arrow. The library has no plain pointer.
   mouseBall: 'M7 3v14l3.5-3.2 2.5 5.8 2.3-1-2.5-5.8h4.7z',
   notebook: 'M9 3h6 M10 3v6.2L4.8 18.4A1.8 1.8 0 0 0 6.4 21h11.2a1.8 1.8 0 0 0 1.6-2.6L14 9.2V3 M7.2 15h9.6',
+  // Open in VS Code (the session header's More): "</>". The library's code icon is the boxed prompt already used for the terminal keyboard.
+  code: 'M8 7l-5 5 5 5 M16 7l5 5-5 5 M13.5 4.5l-3 15',
 };
 
 export function Icon({ name, size = 24 }) {

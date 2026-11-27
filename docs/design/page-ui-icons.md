@@ -40,6 +40,7 @@
 | Settings (the phone drawer's row `#h5-tasks-settings`, the navigation rail's `#h5-nav-settings`) | setting | 4765891 | `setting` in `Icons.jsx`, 24px in the drawer, 22px in the rail |
 | Tasks (the menu button of the phone app bar, `#h5-open-tasks`) | menu | 4767059 | `menu` in `Icons.jsx`, 22px |
 | Mouse ball (the ball that comes out of the mouse handle, `#h5-mouse-ball`, 22px) | self-drawn | - | `mouseBall` in `DRAWN`: a mouse pointer arrow; the library has no plain pointer |
+| Open in VS Code (the session header's More, `#h5-header-vscode`, 20px) | self-drawn | - | `code` in `DRAWN`: "</>" (two chevrons and a slash on the 24 grid); the library has no "</>", and its code icon (the boxed prompt, 4765970) is already the terminal keyboard |
 | Mouse handle hint ("Drag to scroll, slide left for the mouse", `#h5-mouse-ball-hint`) | left (Ant Design LeftOutlined, the same icon in collection 9402) | not looked up | `chevronLeft`, 18px, primary colour, decorative |
 | Mouse handle hint with the handle on the left edge ("Drag to scroll, slide right for the mouse") | right (iconfont.cn icon 4767011) | 4767011 | `treeChevron` (the same right chevron as the folder rows), 18px, primary colour, decorative |
 | Mouse handle glyph (the corner cursor inside the bar, `#h5-mouse-handle`, 7 x 9px) | self-drawn | - | part of the handle's drawing, inline in `MouseBall.jsx` (`HANDLE_GLYPH`, `M1 8 L1 1 L6 1`, 1.5px `currentColor`) like the ball's cursor lines, so it stays in the lazy chunk and out of the first screen; decorative (the handle has its own `aria-label`) |

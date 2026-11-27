@@ -95,6 +95,21 @@ export const MouseBallScreen = screen(() => import('./screen-mouse-ball.jsx'), '
 // chunk asks for the notice, waits until the page is free and draws the dialog in a root of its own. A chunk that cannot be loaded shows nothing.
 export const showUpdatedNotice = ui => import('./screen-updated.jsx').then(module => module.showUpdatedNotice(ui), () => {});
 
+// "Open in VS Code" (Header.jsx More; "Page" in docs/design/vscode-web-proxy.md). What has to happen inside the click happens here: one launch at a
+// time per session (a second tap meanwhile does nothing), and the blank tab a browser allows only inside the click. None in the Mac app (it opens
+// links itself, without a click) or a Home Screen app on an iPhone (a link opens Safari, public/js/open-link.js). The launch is its own chunk.
+const vscodeRuns = new Set();
+const vscodeTab = () => (typeof OpenLink === 'undefined' || OpenLink.target(location.href, OpenLink.environment()).how === 'window' ? window.open('', '_blank') : null);
+export function openVscode(ui) {
+  const shown = ui.get().shownTarget;
+  const key = shown && `${shown.sourceKey}|${shown.taskId}|${shown.terminalId}`;
+  if (!key || vscodeRuns.has(key)) return;
+  vscodeRuns.add(key);
+  const tab = vscodeTab();
+  import('./screen-vscode.jsx').then(module => module.runVscode(ui, shown, tab, vscodeTab), () => { if (tab) tab.close(); ui.notify(t(FAILED), 'error'); })
+    .finally(() => vscodeRuns.delete(key));
+}
+
 // The buttons that open each screen (by id, so their components need not know about chunks). `pointerover` covers a mouse resting on it,
 // `pointerdown` a finger (about 100 ms before the click), `focusin` the keyboard. The terminal's dialogs open from the terminal itself (a long press
 // opens the copy view, a pasted or dropped file the upload), the image button, the saved commands (Paste text) and the session menus (Copy text).

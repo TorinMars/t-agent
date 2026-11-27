@@ -1,5 +1,6 @@
 // The mouse ball of the phone terminal (scripts/h5-shell/mouse-ball-model.mjs): the cursor offset with its edge fade, the clamp, the strip's axis,
-// the stretch out of the strip and the glide back, the cell under a point, the selection range over one or several rows (also in a scrolled view), the dwell reducer with a fake clock and the scroll speed.
+// the stretch out of the strip and the glide back, the cell under a point, the selection range over one or several rows (also in a scrolled view), the dwell reducer with a fake clock and the scroll speed,
+// and the mouse handle (the axis and the stretch on either edge, its default place, the snap to the nearest edge, the long press slop, the stored place).
 // The real page is scripts/test-h5-mouse-ball-browser.cjs.
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -229,4 +230,73 @@ test('the button goes to the program while it reports the mouse, else to the pag
   assert.deepEqual(programReports('vt200'), { release: true, motion: false, wheel: true, hover: false }, 'vt200: press, release and wheel');
   assert.deepEqual(programReports('drag'), { release: true, motion: true, wheel: true, hover: false }, 'drag: and the motion with the button held, no hover');
   assert.deepEqual(programReports('any'), { release: true, motion: true, wheel: true, hover: true }, 'any (1003): and the hover with no button before the press');
+});
+
+test('the mouse handle on either edge: the axis and the stretch point toward the inside', async () => {
+  const { stripAxis, stretchProgress, stretchShape, HANDLE, BALL_SIZE } = await load();
+  assert.equal(stripAxis(-12, 0), 'mouse', 'the default side is the right edge: to the left');
+  assert.equal(stripAxis(-12, 0, 'right'), 'mouse');
+  assert.equal(stripAxis(12, 0, 'right'), 'scroll', 'toward the right edge: no mouse');
+  assert.equal(stripAxis(12, 0, 'left'), 'mouse', 'a handle on the left edge: to the right');
+  assert.equal(stripAxis(-12, 0, 'left'), 'scroll', 'toward the left edge: no mouse');
+  assert.equal(stripAxis(9, 4, 'left'), null, 'under 10px: not decided yet');
+  assert.equal(stripAxis(7, 8, 'left'), 'scroll', 'more down than sideways');
+  near(stretchProgress({ x: 10, y: 0 }, { x: 30, y: 0 }, 'left'), 0.5, 'half of the 40px to the right');
+  assert.equal(stretchProgress({ x: 10, y: 0 }, { x: 0, y: 0 }, 'left'), 0, 'back toward the edge: 0');
+  assert.equal(stretchProgress({ x: 10, y: 0 }, { x: 80, y: 0 }, 'left'), 1);
+  near(stretchProgress({ x: 380, y: 0 }, { x: 360, y: 0 }), 0.5, 'the strip as before');
+  const root = { x: 7.5, y: 400 };
+  const left = stretchShape(root, { x: 2, y: 410 }, 0, 'left', HANDLE.width);
+  assert.deepEqual(left.head, { x: 7.5, y: 410 }, 'never left of a handle on the left edge');
+  assert.equal(left.size, HANDLE.width, 'it starts at the handle\'s width');
+  const out = stretchShape(root, { x: 40, y: 400 }, 1, 'left', HANDLE.width);
+  assert.equal(out.size, BALL_SIZE);
+  assert.equal(out.head.x, 40);
+  assert.equal(stretchShape({ x: 382, y: 0 }, { x: 390, y: 0 }, 0).head.x, 382, 'never right of the strip');
+});
+
+test('the mouse handle\'s place: the default height, the nearest edge, kept inside the terminal', async () => {
+  const { handleCentre, snapPlace, nearestEdge, clampCentre, HANDLE, DEFAULT_PLACE } = await load();
+  const area = { left: 0, top: 56, right: 390, bottom: 740 }; // the design's phone: the terminal from 56 to 740
+  assert.deepEqual(handleCentre(DEFAULT_PLACE, area), { x: 382.5, y: 672 }, 'the right edge 2px in, the bar from 640 to 704 as in the design');
+  assert.deepEqual(handleCentre({ edge: 'left', y: 0.5 }, area), { x: 7.5, y: 398 }, 'the left edge, half way down');
+  assert.equal(handleCentre({ edge: 'right', y: 0 }, area).y, 56 + HANDLE.hitHeight / 2, 'the touch box stays below the header');
+  assert.equal(handleCentre({ edge: 'right', y: 1 }, area).y, 740 - HANDLE.hitHeight / 2, 'and above the key row');
+  assert.equal(handleCentre(DEFAULT_PLACE, { left: 0, top: 0, right: 390, bottom: 60 }).y, 30, 'a terminal too small: its middle');
+  assert.equal(nearestEdge(194, area), 'left');
+  assert.equal(nearestEdge(195, area), 'right', 'the middle goes right, where it starts');
+  const snap = snapPlace({ x: 100, y: 300 }, area);
+  assert.equal(snap.place.edge, 'left');
+  near(snap.place.y, (300 - 56) / 684, 'the height as a fraction of the terminal');
+  assert.deepEqual(snap.centre, { x: 7.5, y: 300 }, 'on the left edge at that height');
+  const low = snapPlace({ x: 300, y: 900 }, area);
+  assert.deepEqual([low.place.edge, low.centre.y], ['right', 740 - HANDLE.hitHeight / 2], 'let go below the terminal: kept inside');
+  assert.deepEqual(clampCentre({ x: -50, y: 10 }, area, 18, 84), { x: 9, y: 98 }, 'a moved handle stays inside');
+  assert.deepEqual(clampCentre({ x: 500, y: 900 }, area, 18, 84), { x: 381, y: 698 });
+});
+
+test('the mouse handle\'s long press: held still within 6px', async () => {
+  const { heldStill, HOLD_SLOP, HOLD_MS, SNAP_MS } = await load();
+  assert.deepEqual([HOLD_SLOP, HOLD_MS, SNAP_MS], [6, 500, 160]);
+  assert.equal(heldStill({ x: 0, y: 0 }, { x: 0, y: 0 }), true);
+  assert.equal(heldStill({ x: 0, y: 0 }, { x: 3, y: 4 }), true, '5px: still');
+  assert.equal(heldStill({ x: 0, y: 0 }, { x: 6, y: 0 }), true, 'exactly 6px: still');
+  assert.equal(heldStill({ x: 0, y: 0 }, { x: 5, y: 4 }), false, 'more than 6px: a slide');
+});
+
+test('the mouse handle\'s stored place: read back safely, garbage is the default', async () => {
+  const { parsePlace, serializePlace, DEFAULT_PLACE } = await load();
+  assert.deepEqual(parsePlace('{"edge":"left","y":0.25}'), { edge: 'left', y: 0.25 });
+  assert.deepEqual(parsePlace('{"edge":"right","y":null}'), { edge: 'right', y: null });
+  assert.deepEqual(parsePlace('{"edge":"right"}'), { edge: 'right', y: null });
+  for (const bad of [null, undefined, '', 'not json', '42', 'null', '[]', '{"edge":"top","y":0.5}', '{"y":0.5}', '{"edge":1}']) {
+    assert.deepEqual(parsePlace(bad), DEFAULT_PLACE, `falls back to the default: ${bad}`);
+  }
+  for (const bad of ['{"edge":"left","y":1.5}', '{"edge":"left","y":-0.1}', '{"edge":"left","y":"0.5"}', '{"edge":"left","y":true}']) {
+    assert.deepEqual(parsePlace(bad), { edge: 'left', y: null }, `a bad height keeps the edge: ${bad}`);
+  }
+  assert.equal(serializePlace({ edge: 'left', y: 0.123456 }), '{"edge":"left","y":0.123}');
+  assert.equal(serializePlace({ edge: 'right', y: null }), '{"edge":"right","y":null}');
+  assert.equal(serializePlace({ edge: 'up', y: 2 }), '{"edge":"right","y":1}', 'written only as a valid place');
+  assert.deepEqual(parsePlace(serializePlace({ edge: 'left', y: 0.8 })), { edge: 'left', y: 0.8 }, 'round trip');
 });

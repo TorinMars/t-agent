@@ -1301,7 +1301,16 @@ async function openPage(browser, { remoteTerminals, remoteChat = false, viewport
     b = await bar();
     assert.equal(b.now, b.max, 'a tap below the thumb scrolls one page down');
     await page.evaluate(() => { window.__tapClicks = 0; document.querySelector('.h5-xterm:not([hidden])').addEventListener('click', () => { window.__tapClicks++; }); });
-    await stripTap(b.thumbY);
+    // On the part of the thumb the mouse handle leaves free (its default place is low on the right edge, over a thumb at the newest output; the
+    // pass-through hands the tap to whatever is under the point, which there would be the handle).
+    const freeThumbY = await page.evaluate(() => {
+      const thumb = document.querySelector('#h5-wheel .h5-wheel-thumb').getBoundingClientRect();
+      const handle = document.getElementById('h5-mouse-handle');
+      const h = handle && getComputedStyle(handle).display !== 'none' ? handle.getBoundingClientRect() : null;
+      if (!h || h.bottom <= thumb.top || h.top >= thumb.bottom) return thumb.top + thumb.height / 2;
+      return thumb.bottom - h.bottom >= h.top - thumb.top ? (h.bottom + thumb.bottom) / 2 : (thumb.top + h.top) / 2;
+    });
+    await stripTap(freeThumbY);
     assert.ok(await page.evaluate(() => window.__tapClicks) >= 1, 'a tap on the thumb reaches the terminal under it');
     assert.equal((await bar()).now, b.max, 'a tap on the thumb does not scroll');
 

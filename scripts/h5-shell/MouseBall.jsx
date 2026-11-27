@@ -11,7 +11,7 @@
 //   - page (no mouse reporting): moving selects from the press point to the cursor with xterm's own selection; near the top or bottom edge the
 //     terminal scrolls and the selection stays anchored to its buffer cell. Lift: the selection is copied through the copy path of the double
 //     tap (h5.js `mouseBallTarget().copy`, inside the pointerup, so the user activation is there; the same notice and refusal bar).
-//   - program (only with this device's switch on, More > "Mouse ball sends the mouse to programs", and the program turned mouse reporting on:
+//   - program (unless this device's switch is off (it is on by default), More > "Mouse ball sends the mouse to programs", and the program turned mouse reporting on:
 //     Claude Code in fullscreen, vim, tmux): real mouse events at the cursor go to xterm's screen, which reports them to the program in its own
 //     encoding, in the order a real mouse makes them: hover moves with no button while the ball is out (mode 1003 only), the terminal's focus
 //     (`ESC[I` when the program asked for focus reports), the press, the motion with the button held, wheel steps near the top or bottom edge,
@@ -44,7 +44,7 @@ const CURSOR = 'M0 19V0H19'; // the cursor: 19px of a square's top edge and left
 const WHEEL_MAX = 40; // wheel steps sent to a program in one frame at most
 const THUMB_DIM = 'rgba(255, 255, 255, 0.15)'; // the strip's thumb while the ball is out of it
 const HINT_KEY = 'h5-mouse-ball-hinted'; // per device (public/js/local-keys.js): the first-time hint was shown
-const PROGRAM_KEY = 'h5-mouse-ball-program'; // per device: 'on' sends the mouse to a program that has mouse reporting on; absent (the default): the page always selects. Set by the switch in the More menu (Header.jsx `PROGRAM_KEY`)
+const PROGRAM_KEY = 'h5-mouse-ball-program'; // per device: absent (the default) sends the mouse to a program that has mouse reporting on; 'off': the page always selects. A program without mouse reporting is always selected in the page. Set by the switch in the More menu (Header.jsx `PROGRAM_KEY`)
 const HINT_MS = 4000;
 const HINT_TEXT = 'Slide the scrollbar left for the mouse';
 const STATUS = { wait: 'Hold still to press', page: 'Selecting in the page', program: 'Mouse sent to the program' }; // what the ball is doing, shown at the top of the terminal
@@ -190,7 +190,7 @@ function control(nodes, ui) {
     const { target } = drag.geo;
     const { term } = target;
     const tracking = trackingOf(term);
-    if (localGet(PROGRAM_KEY) === 'on' && buttonMode(tracking) === 'program') {
+    if (localGet(PROGRAM_KEY) !== 'off' && buttonMode(tracking) === 'program') {
       term.clearSelection(); // an old page highlight goes, as a mouse press in the terminal clears it; the program draws its own
       drag.program = { screen: target.screen, gesture: target.gesture, reports: programReports(tracking), released: false };
       // As a real click: the terminal takes the focus first (xterm sends ESC[I when the program asked for focus reports), then the mouse is at the
@@ -238,7 +238,7 @@ function control(nodes, ui) {
   }
   function detach(at) {
     const now = performance.now();
-    const program = localGet(PROGRAM_KEY) === 'on' && buttonMode(trackingOf(drag.geo.target.term)) === 'program'; // hover moves until the press
+    const program = localGet(PROGRAM_KEY) !== 'off' && buttonMode(trackingOf(drag.geo.target.term)) === 'program'; // hover moves until the press
     Object.assign(drag, { phase: 'ball', start: at, grab: { x: 0, y: 0 }, scale: 1, last: now, hover: program, dwell: dwellStep(DWELL_IDLE, { type: 'down', x: at.x, y: at.y, t: now }) });
     delete ball.dataset.progress;
     ball.style.opacity = '';

@@ -22,7 +22,7 @@
     ['h5-terminal-wide-cols', 'local', 'hardware', 'the fixed terminal width of this screen', true],
     ['h5-terminal-width-noted', 'local', 'hardware', 'a one-time hint about the gesture of this device (long press or right click)', false],
     ['h5-mouse-ball-hinted', 'local', 'hardware', 'the one-time hint that the scrollbar slides out as a mouse was shown: a hint about the gesture of this touch screen', false],
-    ['h5-mouse-ball-program', 'local', 'hardware', 'the mouse ball sends its hover, press and drag to a program with mouse reporting on (the More menu switch; off by default: the page selects); a choice for the touch screen of this device', false],
+    ['h5-mouse-ball-program', 'local', 'hardware', 'the mouse ball sends its hover, press and drag to a program with mouse reporting on (the More menu switch, phone and computer; on by default, `off` makes the page select); a choice for this device', false],
     ['h5-sidebar-collapsed', 'local', 'cache-of-shared-state', 'the folded task sidebar (a column keeps its own, which stays in this browser)', true],
     ['h5-recent-sessions', 'local', 'cache-of-shared-state', 'the Recent list kept before the shared page state: read once to import it, then removed', false],
     ['h5-task-list-tab', 'local', 'cache-of-shared-state', 'the chosen tab of the task list', false],

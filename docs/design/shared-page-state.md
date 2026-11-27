@@ -100,6 +100,7 @@ Every localStorage and sessionStorage key of the page and its chunks (`public/js
 | `h5-terminal-width`, `h5-terminal-wide-cols` | local, pane | hardware | the screen's size (fit or a fixed width) |
 | `h5-terminal-width-noted` | local | hardware | a one-time hint about this device's gesture |
 | `h5-mouse-ball-hinted` | local | hardware | the one-time hint that the scrollbar slides out as a mouse was shown ([page-terminal-mouse-ball.md](page-terminal-mouse-ball.md)): a hint about the gesture of this touch screen |
+| `h5-mouse-ball-program` | local | hardware | the mouse ball sends its press and drag to a program with mouse reporting on (off by default: the page selects) ([page-terminal-mouse-ball.md](page-terminal-mouse-ball.md)); a choice for the touch screen of this device |
 | `voice-enabled`, `voice-keep-mic` | local | hardware | this device's microphone and its permission |
 | `h5-key-haptics` | local | hardware | how strongly the page's own keys vibrate (Settings → Keyboard, "This device only"): what this device's vibration motor can play; a phone and a tablet want their own |
 | `h5-attention-sound` | local | device-setting | Settings offers it as "Reminders on this device" (scope device): a phone in a meeting and a computer at home want different sounds |

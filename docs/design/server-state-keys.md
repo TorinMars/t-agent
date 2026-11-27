@@ -68,6 +68,9 @@ The server keeps small pieces of state in two key / value tables: `system_state`
 | `updated_notice_v1:<owner>` | system_state | device | the update of this machine the person has not acknowledged yet; the dialog of any linked page acknowledges it here through /v1/updated-notice | `services/updated-notice.js` |
 | `task_link_visibility_v1` | system_state | device | which links may see which task of this machine (its own tasks and links) | `services/task-visibility.js` |
 | `terminal_order_v1:<task>` | system_state | device | the order of the terminals of a task of this machine; other engines read it through the link with the task | `routes/terminal.js` |
+| `vscode_web_enabled` | system_state | device | whether "Open in VS Code" may start the VS Code CLI on this machine: a choice about a program of this machine, set per engine | `services/vscode-web.js` |
+| `vscode_web_idle_minutes` | system_state | device | after how many idle minutes this machine's VS Code process stops: about the processes of this machine, set per engine | `services/vscode-web.js` |
+| `vscode_license_accepted` | system_state | device | the one-time confirmation of the VS Code Server license for the CLI of this machine (the license is accepted for each machine that runs it) | `services/vscode-web.js` |
 | `remote_engine_names_v1` | system_state | device | which `remote_servers` rows of this machine take their name from their engine (row ids are machine-relative) | `services/engine-name.js` |
 | `updated_running_v1` | system_state | runtime | the version this service ran at its last start, to notice an update | `services/updated-notice.js` |
 | `update_state` | system_state | runtime | the progress and result of the last update of this machine | `services/update-manager.js` |

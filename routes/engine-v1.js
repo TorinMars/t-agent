@@ -26,6 +26,8 @@ const { serveFileWatch } = require('../lib/file-watch-sse');
 const { createPm2Handlers } = require('./pm2');
 const { Pm2Error } = require('../services/pm2-manager');
 const { createAppsHandlers, mountAppsRoutes, defaultService: defaultAppsService } = require('./apps');
+const { getVscodeWeb } = require('../services/vscode-web');
+const vscodeWebEngine = require('./vscode-web-engine');
 
 const versionSkew = require('../services/version-skew');
 const MINDMAPS = 'mindmaps';
@@ -290,6 +292,10 @@ function infoHandler(req, res) {
       // access:log: this engine keeps an access log of its own (services/access-log.js; its page reads it on /api/access, nothing on /v1), and takes
       // the switch "Alert me about new devices" through the settings sync (group access-alerts).
       'access:log',
+      // vscode:web: "Open in VS Code" (docs/design/vscode-web.md): GET|POST /v1/tasks/:id/terminals/:terminalId/vscode (+ /accept-license),
+      // POST /v1/vscode/stop, GET|PUT /v1/vscode/settings and the proxied VS Code at /v1/vscode/web/<hostB64>/... (HTTP and WebSocket). Listed
+      // whether or not the VS Code CLI is installed: the status answers VSCODE_NOT_INSTALLED then.
+      require('../services/vscode-web').CAPABILITY,
       'engine:update', 'pm2:manage', 'apps:manage', 'agent-config:manage', 'file-sync:manage', 'workspace:manage', 'agent-chat:manage',
     ],
   });
@@ -621,6 +627,42 @@ router.get('/tasks/:id/terminals/:terminalId/cwd', requireEngineAuth('terminal:e
   try { res.json(await terminal.terminalCwd(task, req.params.terminalId)); }
   catch (error) { errorResponse(res, error); }
 });
+
+// "Open in VS Code" (docs/design/vscode-web.md, Contract A). GET reads the status, POST `{ host, proto }` starts VS Code; the folder is the
+// terminal's own directory, else the task folder (routes/vscode-web-engine.js resolveFolder), never one the client names. Under /tasks/:id, so the
+// visibility guard answers TASK_NOT_FOUND for a hidden task.
+const vscodeAnswer = start => async (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  res.set('Cache-Control', 'no-store');
+  try { res.json(await vscodeWebEngine.vscodeTerminalAnswer({ task, terminalId: req.params.terminalId, start, body: req.body || {} })); }
+  catch (error) { errorResponse(res, error); }
+};
+router.get('/tasks/:id/terminals/:terminalId/vscode', requireEngineAuth('terminal:execute'), vscodeAnswer(false));
+router.post('/tasks/:id/terminals/:terminalId/vscode', requireEngineAuth('terminal:execute'), vscodeAnswer(true));
+// The one-time confirmation of the VS Code Server license for this engine (vscode_license_accepted).
+router.post('/tasks/:id/terminals/:terminalId/vscode/accept-license', requireEngineAuth('terminal:execute'), (req, res) => {
+  const task = tasks.ownedTask(principal(req), req.params.id);
+  if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+  try { vscodeWebEngine.resolveFolder(task, req.params.terminalId); res.json(getVscodeWeb().acceptLicense()); }
+  catch (error) { errorResponse(res, error); }
+});
+router.post('/vscode/stop', requireEngineAuth('terminal:execute'), async (req, res) => {
+  try { res.json(await getVscodeWeb().stop()); }
+  catch (error) { errorResponse(res, error); }
+});
+// The switch and the idle minutes of VS Code on this engine: `{ enabled?, idle_minutes? }` -> `{ enabled, idle_minutes, license_accepted }`. Host
+// administration, like the other per-engine settings. server.js keeps the body parsers off /v1/vscode/, so the body is read here.
+router.get('/vscode/settings', requireEngineAuth('engine:admin'), (req, res) => {
+  try { res.json(getVscodeWeb().settings()); }
+  catch (error) { errorResponse(res, error); }
+});
+router.put('/vscode/settings', requireEngineAuth('engine:admin'), express.json({ limit: '16kb' }), async (req, res) => {
+  try { res.json(await getVscodeWeb().setSettings(req.body)); }
+  catch (error) { errorResponse(res, error); }
+});
+// The proxied VS Code (Contract B); its WebSocket upgrade is in server.js.
+router.use('/vscode/web', vscodeWebEngine.createVscodeWebEngineRouter());
 
 router.get('/terminal-activity', requireEngineAuth('terminal:execute'), (req, res) => {
   // `?kinds=1`: { activity, waiting_kind } ("Two waiting kinds" in docs/design/terminals.md); without it the bare activity, as older Clients read it.

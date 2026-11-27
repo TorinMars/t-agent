@@ -158,8 +158,9 @@ app.use('/api/tcli', require('./routes/open-link').createOpenLinkRelayRouter());
 // The mind map routes (routes/mindmap.js: /api/mindmaps, /v1/mindmaps and the proxy /api/remote-servers/:id/mindmaps), /v1/attention (routes/attention.js,
 // the token is checked first), /v1/linked-services (routes/linked-services.js) and /v1/oss/files (routes/tcli.js, a streamed upload of any type) parse their
 // own bodies after the gates or the token check, with their own limits: a body this parser has read would make theirs do nothing. Every other route keeps
-// these parsers. Case-insensitive, like Express routing.
-const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services|v1\/oss\/files)(?:\/|$)/i;
+// these parsers. /v1/vscode (routes/vscode-web-engine.js, routes/engine-v1.js) streams the bodies of the proxied VS Code untouched and reads its own
+// settings body. Case-insensitive, like Express routing.
+const OWN_PARSERS = /^\/(?:api\/mindmaps|api\/remote-servers\/[^/]+\/mindmaps|v1\/mindmaps|v1\/attention|v1\/linked-services|v1\/oss\/files|v1\/vscode)(?:\/|$)/i;
 const exceptOwnParsers = parser => (req, res, next) => (OWN_PARSERS.test(req.path) ? next() : parser(req, res, next));
 app.use(exceptOwnParsers(express.json({ limit: '32mb' })));
 app.use(exceptOwnParsers(express.urlencoded({ extended: true })));
@@ -691,6 +692,11 @@ server.on('upgrade', (req, socket, head) => {
     });
     return;
   }
+  // The WebSocket of the proxied VS Code (Contract B in docs/design/vscode-web.md): the same Bearer check as requireEngineAuth, scope terminal:execute.
+  if (/^\/v1\/vscode\/web\//i.test(engineUrl.pathname)) {
+    require('./routes/vscode-web-engine').handleVscodeUpgrade(req, socket, head);
+    return;
+  }
   if (engineUrl.pathname.match(/^\/api\/remote-servers\/\d+\/terminal\/ws$/)) {
     browserUpgrade(req, socket, head, user => {
       handleRemoteTerminalUpgrade(req, socket, head, wss, user).catch(() => {
@@ -859,5 +865,5 @@ server.listen(config.port, config.host, () => {
 });
 
 // Do not let frpc or a terminal's foreground job (Codex ignores SIGHUP and holds its session lock) become an orphan after the Client exits.
-process.on('exit', () => { usageClock.stop(); const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); require('./services/agent-usage').stopShared(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.usageSyncEnabled) usageTimeSync().stop(); usageDigest.stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
+process.on('exit', () => { require('./services/vscode-web').shutdownShared(); usageClock.stop(); const publisher = appInfo.sharedPublisher(); if (publisher) publisher.stop(); terminal.shutdownTerminals(); require('./services/agent-chat').shutdown(); require('./services/agent-usage').stopShared(); browserBridge.closeAll(); attentionWidget.stop(); macAppRebuild.stop(); frpRouter.service.stop(); sshTunnelRouter.service.stop(); attentionMarket.stop(); serviceLinks.stop(); require('./services/task-order').getTaskOrder().stop(); require('./services/settings-sync').getSettingsSync().stop(); if (config.learnSyncEnabled) require('./services/learn-sync').getLearnSync().stop(); if (config.usageSyncEnabled) usageSync().stop(); if (config.usageSyncEnabled) usageTimeSync().stop(); usageDigest.stop(); if (config.attentionCopyEnabled) require('./services/attention-copy').getAttentionCopy().stop(); if (config.mindmapSyncEnabled) require('./services/mindmap-sync').getMindmapSync().stop(); require('./services/learn-analysis').stopShared(); require('./services/learn-pick').stopShared(); require('./services/learn-prefill').stopShared(); require('./services/attention-scheduler').sharedScheduler().stop(); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));

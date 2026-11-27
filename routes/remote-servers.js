@@ -799,6 +799,28 @@ router.get('/:id/tasks/:taskId/terminals/:terminalId/cwd', async (req, res) => {
   } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
 });
 
+// VS Code in the browser on a remote engine ("Launch" in docs/design/vscode-web-proxy.md): that engine's start, status and licence routes with its
+// token (an engine without the capability 'vscode:web' answers 501 here). A ready answer gets `open_url` with a single-use launch ticket for this
+// page server, which then carries the traffic of /vscode/<engine id>/ to the engine (services/vscode-proxy.js).
+for (const [method, suffix] of [['post', ''], ['get', ''], ['post', '/accept-license']]) {
+  router[method](`/:id/tasks/:taskId/terminals/:terminalId/vscode${suffix}`, async (req, res) => {
+    const target = remoteTarget(req, res);
+    if (!target) return;
+    const supported = await remoteHas(target, res, 'vscode:web');
+    if (supported === null) return;
+    if (!supported) return res.status(501).json({ error: 'VSCODE_WEB_UNSUPPORTED' });
+    const proxy = require('../services/vscode-proxy').getVscodeProxy();
+    const origin = proxy.publicOrigin(req);
+    if (!origin) return res.status(400).json({ error: 'VSCODE_HOST_INVALID' });
+    res.set('Cache-Control', 'no-store');
+    try {
+      const body = method === 'get' ? undefined : (suffix ? {} : { host: origin.host, proto: origin.proto });
+      const answer = await request(target.row.base_url, `${remoteTerminalPath(req)}/vscode${suffix}`, target.token, { method: method.toUpperCase(), ...(body === undefined ? {} : { body }) });
+      res.json(suffix ? answer : proxy.launchAnswer(answer, { sessionId: req.sessionID, owner: owner(req), target: { kind: 'remote', serverId: target.row.id } }));
+    } catch (error) { res.status(error.statusCode || 502).json({ error: safeError(error) }); }
+  });
+}
+
 router.post('/:id/tasks/:taskId/terminal/control', async (req, res) => {
   const row = getServer(req);
   if (!row) return res.status(404).json({ error: 'REMOTE_NOT_FOUND' });

@@ -40,7 +40,7 @@
 | File | What is in it | Size |
 | --- | --- | --- |
 | [service-links.md](docs/design/service-links.md) | Two services that operate each other as remote Engines: joining, tokens, linked capabilities, per-task visibility, shared task order. | 16 KB |
-| [service-links-tunnel.md](docs/design/service-links-tunnel.md) | The reverse WebSocket tunnel that lets a service behind NAT be reached by its linked service. | 6 KB |
+| [service-links-tunnel.md](docs/design/service-links-tunnel.md) | The reverse WebSocket tunnel that lets a service behind NAT be reached by its linked service. | 7 KB |
 | [settings-sync.md](docs/design/settings-sync.md) | One set of settings for all linked devices: what is shared, registry, rounds, conflict rule, encryption, known limits. | 11 KB |
 | [shared-page-state.md](docs/design/shared-page-state.md) | The page's remembered state on the server, the same on every device and engine: recent sessions by engine instance id, the moved keys, merge per entry, the page client and its cache, the page push (live on every page), the sync, the registry of browser storage and its key audit (what stays per browser and why), Remove from Recent and Clear list (the clear mark). | 26 KB |
 | [server-state-keys.md](docs/design/server-state-keys.md) | The registry of every `system_state` and `engine_identity` key with its scope (shared, personal, device, runtime) and the sync or reason, the guard that refuses an undeclared key, the keys whose scope looks wrong, and the other stores. | 13 KB |
@@ -109,6 +109,7 @@
 | [site-library.md](docs/design/site-library.md) | What agents learn about each website (`tcli site`): entry shape, storage, sync. | 6 KB |
 | [upload-oss.md](docs/design/upload-oss.md) | Image and file upload to OSS: configuration, policies, limits. | 6 KB |
 | [vscode-web.md](docs/design/vscode-web.md) | Open in VS Code (browser), the engine side: one `code serve-web` per engine (finding and probing the CLI, flags, Unix socket and token, the terminal user, states, readiness, idle stop, exit cleanup), its three settings and the one-time license confirmation, Contract A (`/v1/tasks/:id/terminals/:terminalId/vscode`, capability `vscode:web`), Contract B (the proxy at `/v1/vscode/web/<hostB64>/...` with its header rules and WebSocket), the in-process interface for a local engine, security notes, known limits. | 15 KB |
+| [vscode-web-proxy.md](docs/design/vscode-web-proxy.md) | VS Code in the browser, the page server's part: the start routes, the single-use launch ticket and the `ta_vscode` cookie, the proxy of `/vscode/<engine id>/` (refusals, headers, `location`, compression, timeouts) and its transports (in-process, direct, tunnel with its semaphore and the 1009 limit). | 9 KB |
 | [machine-tools.md](docs/design/machine-tools.md) | Tools whose pages were removed in 2.88.0 but whose routes stay (frp, SSH tunnel, PM2, apps, file sync and more). | 1 KB |
 | [update-check-and-versions.md](docs/design/update-check-and-versions.md) | Version source, update check and apply, release rule, automatic update, automatic refresh after an update, the "Updated to v…" notice, engines on different versions (banner, nudge, Update all). | 28 KB |
 | [mac-app.md](docs/design/mac-app.md) | The macOS shell app T-Agent.app: why, window and web view, menu bar and web addresses, deep links, not-running view, service control, self-test, build and install, the automatic rebuild of an installed app after an update, app.json and the web addresses the server publishes, the Mac app card, the floating window opening pages in the app, English input while spelling. | 38 KB |
@@ -302,3 +303,4 @@ One line per release, added by `scripts/release.js`. Older notes are in `git log
 > v2.178.0 Mouse handle: a separate bar at the screen edge that pulls out the mouse ball, moves with a long press and snaps to the nearest edge
 > v2.179.0 The mouse handle scrolls the terminal (drag up or down) and the floating scroll strip is removed
 > v2.180.0 tcli browser: drag, upload, fill, check, dialog, snapshot filter/diff, shot zoom/annotate, console filters, recording pictures with an offline replay, and hints on errors (extension 1.0.8)
+> v2.181.0 Open in VS Code in the browser: the engine's VS Code web server, the page server's proxy for a local, direct or linked engine, one-time license confirmation (no page button yet)

@@ -3992,7 +3992,10 @@
       // touch screen the on-screen keyboard stays open and the box stays shown. The bar buttons keep the box's focus on press (mousedown is cancelled), and
       // the focus is put back here in case something else took it. A column the person left while its translation ran does not take the focus back
       // (restingColumn: not the focused column): its box is blurred instead.
-      if (target === session && !target.disposed && !restingColumn()) {
+      // Exception (the user's rule, 2026-11-28): on a touch screen with its on-screen keyboard up, a translate-and-send that finished closes the keyboard (the
+      // box is blurred, so a third-party keyboard goes down too). The send arrow, a computer and a hardware keyboard keep the focus.
+      const closeKeyboard = translateFirst && !hardwareEnter();
+      if (target === session && !target.disposed && !restingColumn() && !closeKeyboard) {
         if (document.activeElement !== translateInput) translateInput.focus({ preventScroll: true });
       } else if (document.activeElement === translateInput) translateInput.blur();
       autosize();
